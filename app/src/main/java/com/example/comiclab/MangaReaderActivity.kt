@@ -33,6 +33,7 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 class MangaReaderActivity : AppCompatActivity() {
@@ -71,6 +72,8 @@ class MangaReaderActivity : AppCompatActivity() {
     private var restoreRetryScheduled = false
     private var currentReaderPosition = 0
     private var currentReaderOffset = 0
+    private var readerScrollDirection = SCROLL_DIRECTION_FORWARD
+    private var readerScrollState = RecyclerView.SCROLL_STATE_IDLE
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -184,10 +187,24 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun configureReaderActions() {
         listReaderPages.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                readerScrollState = newState
                 if (newState == RecyclerView.SCROLL_STATE_DRAGGING ||
                     newState == RecyclerView.SCROLL_STATE_SETTLING
                 ) {
                     clearPendingReaderPosition()
+                }
+
+                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
+                    val firstVisibleItem = readerLayoutManager.findFirstVisibleItemPosition()
+                        .takeIf { it != RecyclerView.NO_POSITION }
+                        ?: 0
+                    pageAdapter?.preloadAround(
+                        firstVisiblePosition = firstVisibleItem,
+                        visibleItemCount = visibleReaderItemCount(),
+                        scrollDirection = readerScrollDirection,
+                        isFastScroll = false,
+                        isIdle = true
+                    )
                 }
             }
 
@@ -199,7 +216,25 @@ class MangaReaderActivity : AppCompatActivity() {
                 val totalItemCount = pageAdapter?.itemCount ?: 0
                 updateCurrentReaderPosition(firstVisibleItem)
                 updateReaderProgress(firstVisibleItem, totalItemCount)
-                pageAdapter?.preloadAround(firstVisibleItem, visibleItemCount)
+
+                val direction = when {
+                    dy > 0 -> SCROLL_DIRECTION_FORWARD
+                    dy < 0 -> SCROLL_DIRECTION_BACKWARD
+                    else -> readerScrollDirection
+                }
+                if (dy != 0) {
+                    readerScrollDirection = direction
+                }
+                val fastThreshold = (recyclerView.height / 4).coerceAtLeast(FAST_SCROLL_DY_THRESHOLD_PX)
+                val isFastScroll = readerScrollState == RecyclerView.SCROLL_STATE_SETTLING ||
+                    abs(dy) >= fastThreshold
+                pageAdapter?.preloadAround(
+                    firstVisiblePosition = firstVisibleItem,
+                    visibleItemCount = visibleItemCount,
+                    scrollDirection = direction,
+                    isFastScroll = isFastScroll,
+                    isIdle = false
+                )
             }
         })
         listReaderPages.onTransformChanged = { scale, horizontalPanX ->
@@ -525,6 +560,8 @@ class MangaReaderActivity : AppCompatActivity() {
         private val failedPreviewPages = Collections.synchronizedSet(mutableSetOf<Int>())
         private val failedFullPages = Collections.synchronizedSet(mutableSetOf<Int>())
         private val tiledPages = Collections.synchronizedSet(mutableSetOf<Int>())
+        private val boundPositions = Collections.synchronizedSet(mutableSetOf<Int>())
+        private val pendingRefreshPositions = Collections.synchronizedSet(mutableSetOf<Int>())
         private val pageBounds = Collections.synchronizedMap(mutableMapOf<Int, ComicArchive.ImageBounds>())
         private val cacheLock = Any()
         private val previewBitmapCache = object : LruCache<Int, Bitmap>(previewBitmapCacheSizeKb()) {
@@ -551,6 +588,25 @@ class MangaReaderActivity : AppCompatActivity() {
 
         @Volatile
         private var preloadWindowEnd = -1
+
+        @Volatile
+        private var visibleWindowStart = 0
+
+        @Volatile
+        private var visibleWindowEnd = -1
+
+        @Volatile
+        private var protectedWindowStart = 0
+
+        @Volatile
+        private var protectedWindowEnd = -1
+
+        @Volatile
+        private var refreshScheduled = false
+
+        private val flushRefreshRunnable = Runnable {
+            flushPendingRefreshes()
+        }
 
         private var zoomScale = ZoomableReaderRecyclerView.MIN_ZOOM
         private var horizontalPanX = 0f
@@ -594,19 +650,32 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         override fun onBindViewHolder(holder: PageViewHolder, position: Int) {
+            if (holder.boundPosition != RecyclerView.NO_POSITION) {
+                boundPositions.remove(holder.boundPosition)
+            }
             holder.boundPosition = position
+            boundPositions.add(position)
             bindBestAvailable(holder, position)
             ensureVisiblePage(position)
         }
 
         override fun onViewRecycled(holder: PageViewHolder) {
+            if (holder.boundPosition != RecyclerView.NO_POSITION) {
+                boundPositions.remove(holder.boundPosition)
+            }
             holder.boundPosition = RecyclerView.NO_POSITION
             holder.imageView.setImageDrawable(null)
             holder.tileContainer.removeAllViews()
             super.onViewRecycled(holder)
         }
 
-        fun preloadAround(firstVisiblePosition: Int, visibleItemCount: Int) {
+        fun preloadAround(
+            firstVisiblePosition: Int,
+            visibleItemCount: Int,
+            scrollDirection: Int = 1,
+            isFastScroll: Boolean = false,
+            isIdle: Boolean = false
+        ) {
             if (entries.isEmpty() || closed) {
                 return
             }
@@ -615,20 +684,33 @@ class MangaReaderActivity : AppCompatActivity() {
             val lastVisible = (firstVisible + visibleItemCount.coerceAtLeast(1) - 1)
                 .coerceIn(firstVisible, entries.lastIndex)
             val generation = preloadGeneration.incrementAndGet()
-            preloadWindowStart = (firstVisible - READER_PRELOAD_BEFORE_COUNT).coerceAtLeast(0)
-            preloadWindowEnd = (lastVisible + READER_PRELOAD_AFTER_COUNT).coerceAtMost(entries.lastIndex)
+            val window = PreloadWindow.from(
+                firstVisible = firstVisible,
+                lastVisible = lastVisible,
+                lastIndex = entries.lastIndex,
+                scrollDirection = scrollDirection,
+                isFastScroll = isFastScroll,
+                isIdle = isIdle
+            )
 
-            val preloadPositions = mutableListOf<Int>()
-            for (position in (lastVisible + 1)..preloadWindowEnd) {
-                preloadPositions.add(position)
-            }
-            for (position in (firstVisible - 1) downTo preloadWindowStart) {
-                preloadPositions.add(position)
-            }
+            visibleWindowStart = firstVisible
+            visibleWindowEnd = lastVisible
+            protectedWindowStart = window.protectedStart
+            protectedWindowEnd = window.protectedEnd
+            preloadWindowStart = window.previewStart
+            preloadWindowEnd = window.previewEnd
 
-            preloadPositions.forEach { position ->
+            cancelStalePreloadTasks(generation)
+            trimDistantCaches()
+
+            window.previewPositions.forEach { position ->
                 ensurePreview(position, PRIORITY_PRELOAD_PREVIEW, generation, isPreload = true)
-                ensureFullOrTiledPage(position, PRIORITY_PRELOAD, generation, isPreload = true)
+            }
+
+            if (!isFastScroll || isIdle) {
+                window.fullPositions.forEach { position ->
+                    ensureFullOrTiledPage(position, PRIORITY_PRELOAD, generation, isPreload = true)
+                }
             }
         }
 
@@ -687,6 +769,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
         fun close() {
             closed = true
+            mainHandler.removeCallbacks(flushRefreshRunnable)
             decodeExecutor.shutdownNow()
             synchronized(cacheLock) {
                 previewBitmapCache.evictAll()
@@ -699,6 +782,8 @@ class MangaReaderActivity : AppCompatActivity() {
             failedPreviewPages.clear()
             failedFullPages.clear()
             tiledPages.clear()
+            boundPositions.clear()
+            pendingRefreshPositions.clear()
             pageBounds.clear()
             session.close()
         }
@@ -815,16 +900,30 @@ class MangaReaderActivity : AppCompatActivity() {
             generation: Int,
             isPreload: Boolean
         ) {
+            if (!isPreload) {
+                cancelQueuedPreloadForPosition(position, DecodeTaskKind.PREVIEW)
+            }
+
             if (position !in entries.indices ||
                 closed ||
                 position in failedPreviewPages ||
-                previewBitmap(position) != null ||
-                !loadingPreviewPages.add(position)
+                previewBitmap(position) != null
             ) {
                 return
             }
 
-            submitTask(priority) {
+            val registeredLoading = loadingPreviewPages.add(position)
+            if (!registeredLoading && isPreload) {
+                return
+            }
+
+            submitTask(
+                priority = priority,
+                position = position,
+                generation = generation,
+                kind = DecodeTaskKind.PREVIEW,
+                cancelable = isPreload
+            ) {
                 try {
                     if (isPreload && !isUsefulPreload(position, generation)) {
                         return@submitTask
@@ -839,10 +938,17 @@ class MangaReaderActivity : AppCompatActivity() {
                         return@submitTask
                     }
 
+                    if (isPreload && !isUsefulPreload(position, generation)) {
+                        bitmap.recycle()
+                        return@submitTask
+                    }
+
                     putPreviewBitmap(position, bitmap)
-                    notifyItemChangedOnMain(position)
+                    requestItemRefresh(position, immediate = !isPreload)
                 } finally {
-                    loadingPreviewPages.remove(position)
+                    if (registeredLoading) {
+                        loadingPreviewPages.remove(position)
+                    }
                 }
             }
         }
@@ -853,17 +959,31 @@ class MangaReaderActivity : AppCompatActivity() {
             generation: Int,
             isPreload: Boolean
         ) {
+            if (!isPreload) {
+                cancelQueuedPreloadForPosition(position, DecodeTaskKind.FULL)
+            }
+
             if (position !in entries.indices ||
                 closed ||
                 position in failedFullPages ||
                 position in tiledPages ||
-                fullBitmap(position) != null ||
-                !loadingFullPages.add(position)
+                fullBitmap(position) != null
             ) {
                 return
             }
 
-            submitTask(priority) {
+            val registeredLoading = loadingFullPages.add(position)
+            if (!registeredLoading && isPreload) {
+                return
+            }
+
+            submitTask(
+                priority = priority,
+                position = position,
+                generation = generation,
+                kind = DecodeTaskKind.FULL,
+                cancelable = isPreload
+            ) {
                 try {
                     if (isPreload && !isUsefulPreload(position, generation)) {
                         return@submitTask
@@ -879,14 +999,21 @@ class MangaReaderActivity : AppCompatActivity() {
                         return@submitTask
                     }
 
+                    if (isPreload && !isUsefulPreload(position, generation)) {
+                        return@submitTask
+                    }
+
                     if (shouldUseTiledPage(bounds)) {
                         if (previewBitmap(position) == null) {
                             runCatching {
                                 session.decodePreviewForWidth(entries[position], previewDecodeWidth())
                             }.getOrNull()?.let { putPreviewBitmap(position, it) }
                         }
+                        if (isPreload && !isUsefulPreload(position, generation)) {
+                            return@submitTask
+                        }
                         tiledPages.add(position)
-                        notifyPageReady(position)
+                        notifyPageReady(position, immediate = !isPreload)
                         return@submitTask
                     }
 
@@ -899,10 +1026,17 @@ class MangaReaderActivity : AppCompatActivity() {
                         return@submitTask
                     }
 
+                    if (isPreload && !isUsefulPreload(position, generation)) {
+                        bitmap.recycle()
+                        return@submitTask
+                    }
+
                     putFullBitmap(position, bitmap)
-                    notifyPageReady(position)
+                    notifyPageReady(position, immediate = !isPreload)
                 } finally {
-                    loadingFullPages.remove(position)
+                    if (registeredLoading) {
+                        loadingFullPages.remove(position)
+                    }
                 }
             }
         }
@@ -923,7 +1057,14 @@ class MangaReaderActivity : AppCompatActivity() {
                 return
             }
 
-            submitTask(PRIORITY_TILE) {
+            submitTask(
+                priority = PRIORITY_TILE,
+                position = position,
+                generation = preloadGeneration.get(),
+                kind = DecodeTaskKind.TILE,
+                cancelable = false,
+                tileKey = key
+            ) {
                 try {
                     val bitmap = runCatching {
                         session.decodeRegionForWidth(entries[position], tile.sourceRect, imageWidth)
@@ -941,20 +1082,54 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         }
 
-        private fun notifyPageReady(position: Int) {
+        private fun notifyPageReady(position: Int, immediate: Boolean) {
             mainHandler.post {
                 if (closed || position !in entries.indices) {
                     return@post
                 }
 
-                notifyItemChanged(position)
+                requestItemRefresh(position, immediate)
                 onPageReady(position)
             }
         }
 
-        private fun notifyItemChangedOnMain(position: Int) {
+        private fun requestItemRefresh(position: Int, immediate: Boolean) {
+            if (closed || position !in entries.indices || !shouldRefreshPosition(position)) {
+                return
+            }
+
+            if (immediate) {
+                mainHandler.post {
+                    if (!closed && position in entries.indices && shouldRefreshPosition(position)) {
+                        notifyItemChanged(position)
+                    }
+                }
+                return
+            }
+
             mainHandler.post {
-                if (!closed && position in entries.indices) {
+                if (closed || position !in entries.indices || !shouldRefreshPosition(position)) {
+                    return@post
+                }
+
+                pendingRefreshPositions.add(position)
+                if (!refreshScheduled) {
+                    refreshScheduled = true
+                    mainHandler.postDelayed(flushRefreshRunnable, UI_REFRESH_THROTTLE_MS)
+                }
+            }
+        }
+
+        private fun flushPendingRefreshes() {
+            refreshScheduled = false
+            val positions = synchronized(pendingRefreshPositions) {
+                pendingRefreshPositions.toList().also {
+                    pendingRefreshPositions.clear()
+                }
+            }
+
+            positions.forEach { position ->
+                if (!closed && position in entries.indices && shouldRefreshPosition(position)) {
                     notifyItemChanged(position)
                 }
             }
@@ -968,7 +1143,15 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         }
 
-        private fun submitTask(priority: Int, block: () -> Unit) {
+        private fun submitTask(
+            priority: Int,
+            position: Int,
+            generation: Int,
+            kind: DecodeTaskKind,
+            cancelable: Boolean,
+            tileKey: TileKey? = null,
+            block: () -> Unit
+        ) {
             if (closed) {
                 return
             }
@@ -977,6 +1160,11 @@ class MangaReaderActivity : AppCompatActivity() {
                 decodeExecutor.execute(
                     DecodeTask(
                         priority = priority,
+                        position = position,
+                        generation = generation,
+                        kind = kind,
+                        cancelable = cancelable,
+                        tileKey = tileKey,
                         sequence = taskSequence.getAndIncrement(),
                         block = block
                     )
@@ -988,6 +1176,68 @@ class MangaReaderActivity : AppCompatActivity() {
             return !closed &&
                 generation == preloadGeneration.get() &&
                 position in preloadWindowStart..preloadWindowEnd
+        }
+
+        private fun shouldRefreshPosition(position: Int): Boolean {
+            return position in visibleWindowStart..visibleWindowEnd || position in boundPositions
+        }
+
+        private fun cancelStalePreloadTasks(currentGeneration: Int) {
+            val queue = decodeExecutor.queue
+            queue.toList().forEach { runnable ->
+                val task = runnable as? DecodeTask ?: return@forEach
+                if (!task.cancelable) {
+                    return@forEach
+                }
+
+                if (task.generation != currentGeneration ||
+                    task.position !in preloadWindowStart..preloadWindowEnd
+                ) {
+                    if (queue.remove(task)) {
+                        task.cancelled = true
+                        clearLoadingForCanceledTask(task)
+                    }
+                }
+            }
+        }
+
+        private fun cancelQueuedPreloadForPosition(position: Int, kind: DecodeTaskKind) {
+            val queue = decodeExecutor.queue
+            queue.toList().forEach { runnable ->
+                val task = runnable as? DecodeTask ?: return@forEach
+                if (task.cancelable && task.position == position && task.kind == kind) {
+                    if (queue.remove(task)) {
+                        task.cancelled = true
+                        clearLoadingForCanceledTask(task)
+                    }
+                }
+            }
+        }
+
+        private fun clearLoadingForCanceledTask(task: DecodeTask) {
+            when (task.kind) {
+                DecodeTaskKind.PREVIEW -> loadingPreviewPages.remove(task.position)
+                DecodeTaskKind.FULL -> loadingFullPages.remove(task.position)
+                DecodeTaskKind.TILE -> task.tileKey?.let { loadingTiles.remove(it) }
+            }
+        }
+
+        private fun trimDistantCaches() {
+            if (protectedWindowEnd < protectedWindowStart) {
+                return
+            }
+
+            synchronized(cacheLock) {
+                tileBitmapCache.snapshot().keys
+                    .filter { it.position !in protectedWindowStart..protectedWindowEnd }
+                    .forEach { tileBitmapCache.remove(it) }
+
+                if (fullBitmapCache.size() >= fullBitmapCache.maxSize() * FULL_CACHE_TRIM_THRESHOLD_PERCENT / 100) {
+                    fullBitmapCache.snapshot().keys
+                        .filter { it !in protectedWindowStart..protectedWindowEnd }
+                        .forEach { fullBitmapCache.remove(it) }
+                }
+            }
         }
 
         private fun buildTiles(
@@ -1142,13 +1392,153 @@ class MangaReaderActivity : AppCompatActivity() {
             val imageWidth: Int
         )
 
+        private enum class DecodeTaskKind {
+            PREVIEW,
+            FULL,
+            TILE
+        }
+
+        private data class PreloadWindow(
+            val previewStart: Int,
+            val previewEnd: Int,
+            val protectedStart: Int,
+            val protectedEnd: Int,
+            val previewPositions: List<Int>,
+            val fullPositions: List<Int>
+        ) {
+            companion object {
+                fun from(
+                    firstVisible: Int,
+                    lastVisible: Int,
+                    lastIndex: Int,
+                    scrollDirection: Int,
+                    isFastScroll: Boolean,
+                    isIdle: Boolean
+                ): PreloadWindow {
+                    val movingForward = scrollDirection >= 0
+                    val fullBefore: Int
+                    val fullAfter: Int
+                    val previewBefore: Int
+                    val previewAfter: Int
+
+                    when {
+                        isIdle -> {
+                            fullBefore = IDLE_FULL_PRELOAD_BEFORE_COUNT
+                            fullAfter = IDLE_FULL_PRELOAD_AFTER_COUNT
+                            previewBefore = IDLE_PREVIEW_PRELOAD_BEFORE_COUNT
+                            previewAfter = IDLE_PREVIEW_PRELOAD_AFTER_COUNT
+                        }
+
+                        isFastScroll && movingForward -> {
+                            fullBefore = 0
+                            fullAfter = 0
+                            previewBefore = FAST_PREVIEW_PRELOAD_BEFORE_COUNT
+                            previewAfter = FAST_PREVIEW_PRELOAD_FORWARD_COUNT
+                        }
+
+                        isFastScroll -> {
+                            fullBefore = 0
+                            fullAfter = 0
+                            previewBefore = FAST_PREVIEW_PRELOAD_FORWARD_COUNT
+                            previewAfter = FAST_PREVIEW_PRELOAD_BEFORE_COUNT
+                        }
+
+                        movingForward -> {
+                            fullBefore = NORMAL_FULL_PRELOAD_BEFORE_COUNT
+                            fullAfter = NORMAL_FULL_PRELOAD_FORWARD_COUNT
+                            previewBefore = NORMAL_PREVIEW_PRELOAD_BEFORE_COUNT
+                            previewAfter = NORMAL_PREVIEW_PRELOAD_FORWARD_COUNT
+                        }
+
+                        else -> {
+                            fullBefore = NORMAL_FULL_PRELOAD_FORWARD_COUNT
+                            fullAfter = NORMAL_FULL_PRELOAD_BEFORE_COUNT
+                            previewBefore = NORMAL_PREVIEW_PRELOAD_FORWARD_COUNT
+                            previewAfter = NORMAL_PREVIEW_PRELOAD_BEFORE_COUNT
+                        }
+                    }
+
+                    val fullStart = (firstVisible - fullBefore).coerceAtLeast(0)
+                    val fullEnd = (lastVisible + fullAfter).coerceAtMost(lastIndex)
+                    val previewStart = (firstVisible - previewBefore).coerceAtLeast(0)
+                    val previewEnd = (lastVisible + previewAfter).coerceAtMost(lastIndex)
+                    val protectedStart = (firstVisible - CACHE_PROTECTED_BEFORE_COUNT).coerceAtLeast(0)
+                    val protectedEnd = (lastVisible + CACHE_PROTECTED_AFTER_COUNT).coerceAtMost(lastIndex)
+
+                    val previewPositions = orderedPreloadPositions(
+                        firstVisible = firstVisible,
+                        lastVisible = lastVisible,
+                        start = previewStart,
+                        end = previewEnd,
+                        movingForward = movingForward
+                    )
+                    val fullPositions = orderedPreloadPositions(
+                        firstVisible = firstVisible,
+                        lastVisible = lastVisible,
+                        start = fullStart,
+                        end = fullEnd,
+                        movingForward = movingForward
+                    )
+
+                    return PreloadWindow(
+                        previewStart = previewStart,
+                        previewEnd = previewEnd,
+                        protectedStart = protectedStart,
+                        protectedEnd = protectedEnd,
+                        previewPositions = previewPositions,
+                        fullPositions = fullPositions
+                    )
+                }
+
+                private fun orderedPreloadPositions(
+                    firstVisible: Int,
+                    lastVisible: Int,
+                    start: Int,
+                    end: Int,
+                    movingForward: Boolean
+                ): List<Int> {
+                    if (end < start) {
+                        return emptyList()
+                    }
+
+                    val forwardPositions = if (lastVisible + 1 <= end) {
+                        (lastVisible + 1..end).toList()
+                    } else {
+                        emptyList()
+                    }
+                    val backwardPositions = if (firstVisible - 1 >= start) {
+                        (firstVisible - 1 downTo start).toList()
+                    } else {
+                        emptyList()
+                    }
+
+                    return if (movingForward) {
+                        forwardPositions + backwardPositions
+                    } else {
+                        backwardPositions + forwardPositions
+                    }
+                }
+            }
+        }
+
         private class DecodeTask(
             private val priority: Int,
+            val position: Int,
+            val generation: Int,
+            val kind: DecodeTaskKind,
+            val cancelable: Boolean,
+            val tileKey: TileKey?,
             private val sequence: Long,
             private val block: () -> Unit
         ) : Runnable, Comparable<DecodeTask> {
 
+            @Volatile
+            var cancelled = false
+
             override fun run() {
+                if (cancelled) {
+                    return
+                }
                 block()
             }
 
@@ -1163,13 +1553,25 @@ class MangaReaderActivity : AppCompatActivity() {
 
         companion object {
             private const val READER_DECODE_THREAD_COUNT = 2
-            private const val READER_PRELOAD_BEFORE_COUNT = 1
-            private const val READER_PRELOAD_AFTER_COUNT = 3
             private const val ESTIMATED_READER_PAGE_HEIGHT_RATIO = 1.45f
             private const val MIN_READER_PAGE_HEIGHT = 320
             private const val PLACEHOLDER_COLOR = 0xFF101010.toInt()
             private const val MIN_PREVIEW_DECODE_WIDTH = 240
             private const val MAX_PREVIEW_DECODE_WIDTH = 720
+            private const val NORMAL_FULL_PRELOAD_BEFORE_COUNT = 1
+            private const val NORMAL_FULL_PRELOAD_FORWARD_COUNT = 2
+            private const val NORMAL_PREVIEW_PRELOAD_BEFORE_COUNT = 1
+            private const val NORMAL_PREVIEW_PRELOAD_FORWARD_COUNT = 6
+            private const val FAST_PREVIEW_PRELOAD_BEFORE_COUNT = 1
+            private const val FAST_PREVIEW_PRELOAD_FORWARD_COUNT = 10
+            private const val IDLE_FULL_PRELOAD_BEFORE_COUNT = 2
+            private const val IDLE_FULL_PRELOAD_AFTER_COUNT = 4
+            private const val IDLE_PREVIEW_PRELOAD_BEFORE_COUNT = 3
+            private const val IDLE_PREVIEW_PRELOAD_AFTER_COUNT = 8
+            private const val CACHE_PROTECTED_BEFORE_COUNT = 2
+            private const val CACHE_PROTECTED_AFTER_COUNT = 6
+            private const val FULL_CACHE_TRIM_THRESHOLD_PERCENT = 88
+            private const val UI_REFRESH_THROTTLE_MS = 24L
             private const val PRIORITY_VISIBLE = 100
             private const val PRIORITY_VISIBLE_PREVIEW = 90
             private const val PRIORITY_TILE = 80
@@ -1212,6 +1614,9 @@ class MangaReaderActivity : AppCompatActivity() {
         private const val RESTORE_READER_POSITION_MAX_ATTEMPTS = 16
         private const val RESTORE_READER_POSITION_RETRY_MS = 250L
         private const val READER_VIEW_CACHE_SIZE = 6
+        private const val FAST_SCROLL_DY_THRESHOLD_PX = 160
+        private const val SCROLL_DIRECTION_FORWARD = 1
+        private const val SCROLL_DIRECTION_BACKWARD = -1
 
         fun hasSavedReadingProgress(context: Context, file: File): Boolean {
             val prefs = context.getSharedPreferences(READER_PREFS_NAME, Context.MODE_PRIVATE)
