@@ -2,53 +2,48 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="56dp"
-    android:orientation="horizontal"
     android:gravity="center_vertical"
+    android:orientation="horizontal"
     android:paddingStart="8dp"
     android:paddingEnd="8dp">
 
-    <!-- 左侧图标 -->
     <ImageView
         android:id="@+id/imgIcon"
         android:layout_width="32dp"
         android:layout_height="32dp"
         android:layout_marginEnd="8dp"
-        android:contentDescription="Icon" />
+        android:contentDescription="@string/file_item" />
 
-    <!-- 中间文本区域 -->
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
         android:orientation="vertical">
 
-        <!-- 文件名 -->
         <TextView
             android:id="@+id/tvName"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textSize="16sp"
+            android:ellipsize="end"
             android:maxLines="1"
-            android:ellipsize="end" />
+            android:textSize="16sp" />
 
-        <!-- 文件信息 -->
         <TextView
             android:id="@+id/tvInfo"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textSize="12sp"
+            android:ellipsize="end"
+            android:maxLines="1"
             android:textColor="#888888"
-            android:maxLines="1" />
+            android:textSize="12sp" />
     </LinearLayout>
 
-    <!-- 右侧修改日期 -->
     <TextView
         android:id="@+id/tvDate"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="01-10"
-        android:textSize="12sp"
+        android:layout_marginStart="8dp"
         android:textColor="#888888"
-        android:layout_marginStart="8dp" />
+        android:textSize="12sp" />
 
 </LinearLayout>

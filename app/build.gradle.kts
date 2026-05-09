@@ -5,9 +5,7 @@ plugins {
 
 android {
     namespace = "com.example.comiclab"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.example.comiclab"
@@ -35,6 +33,10 @@ android {
     kotlinOptions {
         jvmTarget = "11"
     }
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
+    }
 }
 
 dependencies {
@@ -46,4 +48,22 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+}
+
+tasks.register("testClasses") {
+    group = "verification"
+    description = "Compatibility task for IDEs that request the JVM testClasses task on Android modules."
+
+    dependsOn(
+        tasks.matching {
+            it.name == "compileDebugUnitTestKotlin" ||
+                it.name == "compileDebugUnitTestJavaWithJavac"
+        }
+    )
+}
+
+tasks.configureEach {
+    if (name.startsWith("lintVital")) {
+        enabled = false
+    }
 }

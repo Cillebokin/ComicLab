@@ -1,67 +1,60 @@
 package com.example.comiclab
 
+import android.app.AlertDialog
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.widget.*
+import android.os.Environment
+import android.provider.Settings
+import android.webkit.MimeTypeMap
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ListView
-import androidx.activity.result.contract.ActivityResultContracts
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.documentfile.provider.DocumentFile
+import androidx.core.content.FileProvider
 import java.io.File
-
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var listView: ListView
     private lateinit var etPath: EditText
     private lateinit var btnBack: ImageButton
+    private lateinit var btnOptions: ImageButton
+    private lateinit var btnSearch: ImageButton
 
     private val fileItems = mutableListOf<FileItem>()
 
-    private val permissions = mutableListOf<String>()
+    private var browserInitialized = false
+    private var currentPath = STORAGE_ROOT_PATH
 
-    private var useSaf = false
-    // =========================
-    // File（Android 12-）
-    // =========================
-    private var currentPath: String = CommonData.mainHomePath
-    // =========================
-    // SAF（Android 13+）
-    // =========================
-    private var currentDocDir: DocumentFile? = null
-    private val docStack = ArrayDeque<DocumentFile>()
     private val prefs by lazy {
-        getSharedPreferences("saf_prefs", MODE_PRIVATE)
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
     }
 
-    //==============================================================================================
-
     override fun onCreate(savedInstanceState: Bundle?) {
-
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
-        //==========================================================================================
 
         listView = findViewById(R.id.listFiles)
         etPath = findViewById(R.id.etPath)
         btnBack = findViewById(R.id.btnBack)
+        btnOptions = findViewById(R.id.btnOptions)
+        btnSearch = findViewById(R.id.btnSearch)
 
-        // 入口逻辑
-        if (Build.VERSION.SDK_INT >= 33) {
-            tryRestoreSaf()
-        } else {
-            loadFilesByFile()
-        }
-
-        //==========================================================================================
+        listView.adapter = FileListAdapter(this, fileItems)
 
         btnBack.setOnClickListener {
             goParent()
+        }
+
+        btnOptions.setOnClickListener {
+            openManageAllFilesAccessSettings()
+        }
+
+        btnSearch.setOnClickListener {
+            loadCurrentDirectory()
         }
 
         listView.setOnItemClickListener { _, _, position, _ ->
@@ -72,162 +65,178 @@ class MainActivity : AppCompatActivity() {
                 return@setOnItemClickListener
             }
 
-            // ========== File ==========
-            item.file?.let { file ->
-                if (file.isDirectory) {
-                    currentPath = file.absolutePath
-                    loadFilesByFile()
-                } else {
-                    Toast.makeText(this, "文件：${file.name}", Toast.LENGTH_SHORT).show()
-                }
-                return@setOnItemClickListener
+            val file = item.file ?: return@setOnItemClickListener
+            if (file.isDirectory) {
+                currentPath = file.absolutePath
+                loadCurrentDirectory()
+            } else {
+                openFile(file)
             }
+        }
 
-            // ========== SAF ==========
-            item.docFile?.let { doc ->
-                if (doc.isDirectory) {
-                    currentDocDir?.let { docStack.addLast(it) }
-                    openSafDir(doc)
-                } else {
-                    Toast.makeText(this, "文件：${doc.name}", Toast.LENGTH_SHORT).show()
-                }
-            }
+        if (!showStoragePermissionNoticeIfNeeded()) {
+            initializeBrowserIfPermitted()
         }
     }
 
-    //==============================================================================================
+    override fun onResume() {
+        super.onResume()
+        if (prefs.getBoolean(KEY_STORAGE_PERMISSION_PROMPTED, false)) {
+            initializeBrowserIfPermitted()
+        }
+    }
 
-    private fun goParent() {
-        if (!useSaf) {
-            if (currentPath != CommonData.mainHomePath) {
-                currentPath = File(currentPath).parent ?: currentPath
-                loadFilesByFile()
+    private fun showStoragePermissionNoticeIfNeeded(): Boolean {
+        if (prefs.getBoolean(KEY_STORAGE_PERMISSION_PROMPTED, false)) {
+            return false
+        }
+
+        if (Environment.isExternalStorageManager()) {
+            prefs.edit()
+                .putBoolean(KEY_STORAGE_PERMISSION_PROMPTED, true)
+                .apply()
+            return false
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.storage_permission_title)
+            .setMessage(R.string.storage_permission_message)
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                prefs.edit()
+                    .putBoolean(KEY_STORAGE_PERMISSION_PROMPTED, true)
+                    .apply()
+                openManageAllFilesAccessSettings()
             }
+            .setCancelable(false)
+            .show()
+
+        return true
+    }
+
+    private fun openManageAllFilesAccessSettings() {
+        val appSettingsIntent = Intent(
+            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+            Uri.parse("package:$packageName")
+        )
+
+        try {
+            startActivity(appSettingsIntent)
+        } catch (_: ActivityNotFoundException) {
+            startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+        }
+    }
+
+    private fun initializeBrowserIfPermitted() {
+        if (!Environment.isExternalStorageManager()) {
+            etPath.setText(R.string.storage_permission_required)
+            fileItems.clear()
+            notifyListChanged()
             return
         }
 
-        if (docStack.isNotEmpty()) {
-            val parent = docStack.removeLast()
-            openSafDir(parent)
+        if (browserInitialized) {
+            loadCurrentDirectory()
+            return
         }
+
+        browserInitialized = true
+        currentPath = STORAGE_ROOT_PATH
+        loadCurrentDirectory()
     }
 
-    private fun updatePath() {
-        etPath.setText(currentPath)
+    private fun goParent() {
+        if (!Environment.isExternalStorageManager()) {
+            openManageAllFilesAccessSettings()
+            return
+        }
+
+        val current = File(currentPath)
+        val root = File(STORAGE_ROOT_PATH)
+        if (current.absolutePath == root.absolutePath) {
+            loadCurrentDirectory()
+            return
+        }
+
+        currentPath = current.parentFile?.absolutePath ?: STORAGE_ROOT_PATH
+        loadCurrentDirectory()
     }
 
-    //==============================================================================================
-
-    private fun loadFilesByFile() {
-        useSaf = false
+    private fun loadCurrentDirectory() {
+        if (!Environment.isExternalStorageManager()) {
+            etPath.setText(R.string.storage_permission_required)
+            fileItems.clear()
+            notifyListChanged()
+            return
+        }
 
         Thread {
-            val dir = File(currentPath)
-            val files = dir.listFiles()?.filter { !it.name.startsWith(".") }
-                ?.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
-                ?: emptyList()
+            val directory = File(currentPath).takeIf { it.isDirectory } ?: File(STORAGE_ROOT_PATH)
+            currentPath = directory.absolutePath
+
+            val files = try {
+                directory.listFiles()
+                    ?.filter { !it.name.startsWith(".") }
+                    ?.sortedWith(compareBy<File>({ !it.isDirectory }, { it.name.lowercase() }))
+                    ?: emptyList()
+            } catch (_: SecurityException) {
+                emptyList()
+            }
 
             val items = mutableListOf<FileItem>()
-            if (currentPath != CommonData.mainHomePath) {
+            if (directory.absolutePath != File(STORAGE_ROOT_PATH).absolutePath) {
                 items.add(FileItem(isParent = true))
             }
             files.forEach { items.add(FileItem(file = it)) }
 
-            // 回到主线程更新 UI
             runOnUiThread {
                 fileItems.clear()
                 fileItems.addAll(items)
-
-                // Adapter 不建议每次 new 一个
-                if (listView.adapter == null) {
-                    listView.adapter = FileListAdapter(this, fileItems)
-                } else {
-                    (listView.adapter as FileListAdapter).notifyDataSetChanged()
-                }
-
-                etPath.setText(currentPath)
+                etPath.setText(directory.absolutePath)
+                notifyListChanged()
             }
         }.start()
     }
 
-    //==============================================================================================
-
-    private fun tryRestoreSaf() {
-        val uriStr = prefs.getString("tree_uri", null)
-        if (uriStr != null) {
-            try {
-                val uri = Uri.parse(uriStr)
-                val doc = DocumentFile.fromTreeUri(this, uri)
-                if (doc != null && doc.isDirectory) {
-                    useSaf = true
-                    docStack.clear()
-                    openSafDir(doc)
-                    return
-                }
-            } catch (_: Exception) {
-            }
-        }
-        openSafRoot()
-    }
-
-    private fun openSafRoot() {
-        openTreeLauncher.launch(null)
-    }
-
-    private val openTreeLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-            if (uri == null) {
-                Toast.makeText(this, "未选择目录", Toast.LENGTH_SHORT).show()
-                return@registerForActivityResult
-            }
-
-            contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
-
-            prefs.edit()
-                .putString("tree_uri", uri.toString())
-                .apply()
-
-            val root = DocumentFile.fromTreeUri(this, uri)
-            if (root == null || !root.isDirectory) {
-                Toast.makeText(this, "无效目录", Toast.LENGTH_SHORT).show()
-                return@registerForActivityResult
-            }
-
-            useSaf = true
-            docStack.clear()
-            openSafDir(root)
+    private fun openFile(file: File) {
+        val uri = try {
+            FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+        } catch (_: IllegalArgumentException) {
+            showMessage(getString(R.string.message_invalid_file))
+            return
         }
 
-    private fun openSafDir(dir: DocumentFile) {
-        useSaf = true
-        currentDocDir = dir
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, getMimeType(file))
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
 
-        Thread {
-            val docs = dir.listFiles()?.filter { it.name?.startsWith(".") == false }
-                ?.sortedWith(compareBy({ !it.isDirectory }, { it.name?.lowercase() }))
-                ?: emptyList()
+        try {
+            startActivity(Intent.createChooser(intent, getString(R.string.open_with)))
+        } catch (_: ActivityNotFoundException) {
+            showMessage(getString(R.string.message_no_app_for_file))
+        }
+    }
 
-            val items = mutableListOf<FileItem>()
-            if (docStack.isNotEmpty()) {
-                items.add(FileItem(isParent = true))
-            }
-            docs.forEach { items.add(FileItem(docFile = it)) }
+    private fun getMimeType(file: File): String {
+        val extension = file.extension.lowercase()
+        if (extension.isBlank()) {
+            return "*/*"
+        }
 
-            runOnUiThread {
-                fileItems.clear()
-                fileItems.addAll(items)
+        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "*/*"
+    }
 
-                if (listView.adapter == null) {
-                    listView.adapter = FileListAdapter(this, fileItems)
-                } else {
-                    (listView.adapter as FileListAdapter).notifyDataSetChanged()
-                }
+    private fun notifyListChanged() {
+        (listView.adapter as FileListAdapter).notifyDataSetChanged()
+    }
 
-                etPath.setText(dir.name ?: "SAF")
-            }
-        }.start()
+    private fun showMessage(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    companion object {
+        private const val PREFS_NAME = "saf_prefs"
+        private const val KEY_STORAGE_PERMISSION_PROMPTED = "storage_permission_prompted"
+        private val STORAGE_ROOT_PATH = Environment.getExternalStorageDirectory().absolutePath
     }
 }

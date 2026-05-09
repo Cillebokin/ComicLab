@@ -1,16 +1,15 @@
 package com.example.comiclab
 
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 object CommonFunc {
 
-    // 格式化文件大小
     fun formatFileSize(size: Long): String {
-        if (size <= 0)
+        if (size <= 0L) {
             return "0 B"
+        }
 
         val kb = 1024.0
         val mb = kb * 1024
@@ -24,12 +23,8 @@ object CommonFunc {
         }
     }
 
-    // 格式化日期
     fun formatDate(timeMillis: Long): String {
-        val sdf = SimpleDateFormat("yyyy/MM/dd", Locale.getDefault())
-        return sdf.format(Date(timeMillis))
+        val formatter = SimpleDateFormat("yyyy/MM/dd", Locale.getDefault())
+        return formatter.format(Date(timeMillis))
     }
-
-    //==============================================================================================
-
 }
