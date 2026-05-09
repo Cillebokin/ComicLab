@@ -190,7 +190,8 @@ class MangaPreviewActivity : AppCompatActivity() {
         val margin = resources.getDimensionPixelSize(R.dimen.preview_image_margin)
         val imageView = ImageView(this).apply {
             setImageBitmap(bitmap)
-            scaleType = ImageView.ScaleType.CENTER_CROP
+            setBackgroundColor(android.graphics.Color.BLACK)
+            scaleType = ImageView.ScaleType.FIT_CENTER
             adjustViewBounds = false
         }
 

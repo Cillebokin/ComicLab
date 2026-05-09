@@ -35,9 +35,9 @@
                     android:layout_width="128dp"
                     android:layout_height="match_parent"
                     android:layout_gravity="start"
-                    android:background="#EEEEEE"
+                    android:background="@color/black"
                     android:contentDescription="@string/comic_cover"
-                    android:scaleType="centerCrop" />
+                    android:scaleType="fitCenter" />
             </FrameLayout>
 
             <LinearLayout

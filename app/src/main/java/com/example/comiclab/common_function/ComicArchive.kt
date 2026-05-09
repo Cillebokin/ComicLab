@@ -61,7 +61,7 @@ object ComicArchive {
             bytes = bytes,
             preferredConfig = Bitmap.Config.RGB_565,
             sampleSize = { width, height -> calculateInSampleSize(width, height, maxSize) }
-        )
+        )?.scaleToFitMaxSize(maxSize)
     }
 
     fun decodeImageForWidth(file: File, entryName: String, targetWidth: Int): Bitmap? {
@@ -70,7 +70,7 @@ object ComicArchive {
             bytes = bytes,
             preferredConfig = Bitmap.Config.ARGB_8888,
             sampleSize = { width, _ -> calculateInSampleSizeForWidth(width, targetWidth) }
-        )
+        )?.scaleToWidthIfLarger(targetWidth)
     }
 
     fun decodeImages(
@@ -122,7 +122,7 @@ object ComicArchive {
                 bytes = bytes,
                 preferredConfig = Bitmap.Config.RGB_565,
                 sampleSize = { width, _ -> calculateInSampleSizeForWidth(width, targetWidth) }
-            )
+            )?.scaleToWidthIfLarger(targetWidth)
         }
 
         fun decodeImageForWidth(entryName: String, targetWidth: Int): Bitmap? {
@@ -131,7 +131,7 @@ object ComicArchive {
                 bytes = bytes,
                 preferredConfig = Bitmap.Config.ARGB_8888,
                 sampleSize = { width, _ -> calculateInSampleSizeForWidth(width, targetWidth) }
-            )
+            )?.scaleToWidthIfLarger(targetWidth)
         }
 
         fun decodeRegionForWidth(entryName: String, sourceRect: Rect, targetWidth: Int): Bitmap? {
@@ -155,7 +155,7 @@ object ComicArchive {
                     inSampleSize = calculateInSampleSizeForWidth(boundedRect.width(), targetWidth)
                     inPreferredConfig = Bitmap.Config.ARGB_8888
                 }
-                decoder.decodeRegion(boundedRect, options)
+                decoder.decodeRegion(boundedRect, options)?.scaleToWidthIfLarger(targetWidth)
             } finally {
                 decoder.recycle()
             }
@@ -380,7 +380,7 @@ object ComicArchive {
             bytes = bytes,
             preferredConfig = Bitmap.Config.RGB_565,
             sampleSize = { width, height -> calculateInSampleSize(width, height, maxSize) }
-        )
+        )?.scaleToFitMaxSize(maxSize)
     }
 
     private fun decodeBitmap(
@@ -530,7 +530,7 @@ object ComicArchive {
         var sampledWidth = width
         var sampledHeight = height
 
-        while (sampledWidth / 2 >= maxSize && sampledHeight / 2 >= maxSize) {
+        while (sampledWidth / 2 >= maxSize || sampledHeight / 2 >= maxSize) {
             sampleSize *= 2
             sampledWidth /= 2
             sampledHeight /= 2
@@ -549,5 +549,46 @@ object ComicArchive {
             sampleSize *= 2
         }
         return sampleSize
+    }
+
+    private fun Bitmap.scaleToFitMaxSize(maxSize: Int): Bitmap {
+        if (maxSize <= 0 || width <= 0 || height <= 0) {
+            return this
+        }
+
+        val maxDimension = maxOf(width, height)
+        if (maxDimension <= maxSize) {
+            return this
+        }
+
+        val scale = maxSize.toFloat() / maxDimension.toFloat()
+        val targetWidth = (width * scale).toInt().coerceAtLeast(1)
+        val targetHeight = (height * scale).toInt().coerceAtLeast(1)
+        return createScaledBitmapSafely(targetWidth, targetHeight)
+    }
+
+    private fun Bitmap.scaleToWidthIfLarger(targetWidth: Int): Bitmap {
+        if (targetWidth <= 0 || width <= 0 || height <= 0 || width <= targetWidth) {
+            return this
+        }
+
+        val targetHeight = (targetWidth.toFloat() / width.toFloat() * height.toFloat())
+            .toInt()
+            .coerceAtLeast(1)
+        return createScaledBitmapSafely(targetWidth, targetHeight)
+    }
+
+    private fun Bitmap.createScaledBitmapSafely(targetWidth: Int, targetHeight: Int): Bitmap {
+        if (targetWidth == width && targetHeight == height) {
+            return this
+        }
+
+        val scaledBitmap = runCatching {
+            Bitmap.createScaledBitmap(this, targetWidth, targetHeight, true)
+        }.getOrNull() ?: return this
+        if (scaledBitmap != this) {
+            recycle()
+        }
+        return scaledBitmap
     }
 }
