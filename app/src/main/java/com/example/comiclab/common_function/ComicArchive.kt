@@ -53,6 +53,25 @@ object ComicArchive {
         }
     }
 
+    fun decodeImageForWidth(file: File, entryName: String, targetWidth: Int): Bitmap? {
+        ZipFile(file).use { zipFile ->
+            val entry = zipFile.getEntry(entryName) ?: return null
+            val bytes = zipFile.getInputStream(entry).use { it.readBytes() }
+
+            val bounds = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+
+            val decodeOptions = BitmapFactory.Options().apply {
+                inSampleSize = calculateInSampleSizeForWidth(bounds.outWidth, targetWidth)
+                inPreferredConfig = Bitmap.Config.RGB_565
+            }
+
+            return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+        }
+    }
+
     private fun ZipEntry.isImageEntry(): Boolean {
         val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
         return extension in imageExtensions
@@ -152,6 +171,18 @@ object ComicArchive {
             sampledHeight /= 2
         }
 
+        return sampleSize
+    }
+
+    private fun calculateInSampleSizeForWidth(width: Int, targetWidth: Int): Int {
+        if (width <= 0 || targetWidth <= 0) {
+            return 1
+        }
+
+        var sampleSize = 1
+        while (width / (sampleSize * 2) >= targetWidth) {
+            sampleSize *= 2
+        }
         return sampleSize
     }
 }

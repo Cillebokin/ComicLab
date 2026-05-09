@@ -55,6 +55,10 @@ class MangaPreviewActivity : AppCompatActivity() {
         archiveFile = file
         tvComicName.text = file.nameWithoutExtension
 
+        btnFullRead.setOnClickListener {
+            openMangaReader(file)
+        }
+
         btnExitPreview.setOnClickListener {
             returnToFileBrowser()
         }
@@ -193,6 +197,13 @@ class MangaPreviewActivity : AppCompatActivity() {
         }
         startActivity(intent)
         finish()
+    }
+
+    private fun openMangaReader(file: File) {
+        val intent = Intent(this, MangaReaderActivity::class.java).apply {
+            putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
+        }
+        startActivity(intent)
     }
 
     companion object {

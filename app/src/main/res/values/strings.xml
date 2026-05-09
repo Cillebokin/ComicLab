@@ -26,7 +26,10 @@
     <string name="preview_all">预览全部</string>
     <string name="collapse_preview">收起预览</string>
     <string name="loading_preview">正在加载预览...</string>
+    <string name="loading_reading">正在加载阅读...</string>
     <string name="no_preview_images">压缩包中没有可预览的图片</string>
+    <string name="no_reading_images">压缩包中没有可阅读的图片</string>
     <string name="unsupported_archive_format">当前仅支持 ZIP/CBZ 格式漫画包</string>
     <string name="comic_cover">漫画封面</string>
+    <string name="reader_image">漫画页</string>
 </resources>
