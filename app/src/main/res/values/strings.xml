@@ -20,6 +20,9 @@
     <string name="storage_permission_message">ComicLab需要读写手机存储权限以便进行读取、修改和删除等操作</string>
     <string name="storage_permission_required">请授予管理所有文件权限</string>
     <string name="confirm">确定</string>
+    <string name="copy_file_name">复制文件名</string>
+    <string name="copied_path">已复制路径</string>
+    <string name="copied_file_name">已复制文件名</string>
     <string name="read">阅读</string>
     <string name="full_read">阅读</string>
     <string name="exit_preview">退出</string>
@@ -33,6 +36,8 @@
     <string name="comic_cover">漫画封面</string>
     <string name="reader_image">漫画页</string>
     <string name="reader_page_progress">%1$d / %2$d</string>
+    <string name="preview_reading_progress">%1$d:%2$d</string>
+    <string name="preview_reading_progress_empty">0:0</string>
     <string name="reader_progress_dialog_title">阅读进度</string>
     <string name="reader_progress_dialog_message">检测到上次阅读进度，是否继续阅读？</string>
     <string name="continue_reading">继续阅读</string>

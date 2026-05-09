@@ -52,6 +52,9 @@
             android:background="@android:color/transparent"
             android:clickable="false"
             android:focusable="false"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:singleLine="true"
             android:text="@string/path_placeholder"
             android:textColor="@android:color/white"
             android:textSize="16sp" />

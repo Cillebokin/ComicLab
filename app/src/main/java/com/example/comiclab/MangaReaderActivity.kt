@@ -1625,6 +1625,21 @@ class MangaReaderActivity : AppCompatActivity() {
             return position > 0 || offset != 0
         }
 
+        fun savedReadingPageCount(context: Context, file: File, totalCount: Int): Int {
+            if (totalCount <= 0) {
+                return 0
+            }
+
+            val prefs = context.getSharedPreferences(READER_PREFS_NAME, Context.MODE_PRIVATE)
+            val position = prefs.getInt(readerPositionKeyFor(file), 0)
+                .coerceIn(0, totalCount - 1)
+            val offset = prefs.getInt(readerOffsetKeyFor(file), 0)
+            if (position <= 0 && offset == 0) {
+                return 0
+            }
+            return (position + 1).coerceIn(0, totalCount)
+        }
+
         private fun clearSavedReadingProgress(context: Context, file: File) {
             context.getSharedPreferences(READER_PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()

@@ -7,6 +7,7 @@ import android.view.View
 import android.widget.Button
 import android.widget.GridLayout
 import android.widget.ImageView
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -19,6 +20,8 @@ class MangaPreviewActivity : AppCompatActivity() {
     private lateinit var tvComicName: TextView
     private lateinit var btnFullRead: Button
     private lateinit var btnExitPreview: Button
+    private lateinit var progressReading: ProgressBar
+    private lateinit var tvReadingProgress: TextView
     private lateinit var gridPreview: GridLayout
     private lateinit var btnTogglePreview: Button
     private lateinit var tvStatus: TextView
@@ -43,6 +46,8 @@ class MangaPreviewActivity : AppCompatActivity() {
         tvComicName = findViewById(R.id.tvComicName)
         btnFullRead = findViewById(R.id.btnFullRead)
         btnExitPreview = findViewById(R.id.btnExitPreview)
+        progressReading = findViewById(R.id.progressReading)
+        tvReadingProgress = findViewById(R.id.tvReadingProgress)
         gridPreview = findViewById(R.id.gridPreview)
         btnTogglePreview = findViewById(R.id.btnTogglePreview)
         tvStatus = findViewById(R.id.tvStatus)
@@ -73,6 +78,11 @@ class MangaPreviewActivity : AppCompatActivity() {
         loadArchive(file)
     }
 
+    override fun onResume() {
+        super.onResume()
+        updateReadingProgress()
+    }
+
     private fun loadArchive(file: File) {
         tvStatus.text = getString(R.string.loading_preview)
         tvStatus.visibility = View.VISIBLE
@@ -96,10 +106,27 @@ class MangaPreviewActivity : AppCompatActivity() {
 
                 imageEntries = entries
                 tvStatus.visibility = View.INVISIBLE
+                updateReadingProgress()
                 loadCover(entries.first())
                 renderPreviewGrid()
             }
         }.start()
+    }
+
+    private fun updateReadingProgress() {
+        val file = archiveFile
+        val totalCount = imageEntries.size
+        if (file == null || totalCount <= 0) {
+            progressReading.max = 0
+            progressReading.progress = 0
+            tvReadingProgress.text = getString(R.string.preview_reading_progress, 0, 0)
+            return
+        }
+
+        val readCount = MangaReaderActivity.savedReadingPageCount(this, file, totalCount)
+        progressReading.max = totalCount
+        progressReading.progress = readCount
+        tvReadingProgress.text = getString(R.string.preview_reading_progress, readCount, totalCount)
     }
 
     private fun loadCover(entryName: String) {

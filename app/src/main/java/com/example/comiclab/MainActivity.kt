@@ -2,6 +2,8 @@ package com.example.comiclab
 
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -69,6 +71,15 @@ class MainActivity : AppCompatActivity() {
 
         btnSearch.setOnClickListener {
             loadCurrentDirectory()
+        }
+
+        etPath.setOnLongClickListener {
+            copyToClipboard(
+                label = getString(R.string.path_placeholder),
+                text = currentPath,
+                copiedMessage = getString(R.string.copied_path)
+            )
+            true
         }
 
         listView.setOnItemClickListener { _, view, position, _ ->
@@ -295,7 +306,17 @@ class MainActivity : AppCompatActivity() {
     private fun showArchiveMenu(file: File) {
         val dialog = BottomSheetDialog(this)
         val content = layoutInflater.inflate(R.layout.bottom_sheet_archive_actions, null)
+        val btnCopyFileName = content.findViewById<TextView>(R.id.btnCopyFileName)
         val btnRead = content.findViewById<TextView>(R.id.btnReadComic)
+
+        btnCopyFileName.setOnClickListener {
+            copyToClipboard(
+                label = getString(R.string.copy_file_name),
+                text = file.name,
+                copiedMessage = getString(R.string.copied_file_name)
+            )
+            dialog.dismiss()
+        }
 
         btnRead.setOnClickListener {
             dialog.dismiss()
@@ -358,6 +379,12 @@ class MainActivity : AppCompatActivity() {
         view.isPressed = false
         view.isSelected = false
         view.isActivated = false
+    }
+
+    private fun copyToClipboard(label: String, text: String, copiedMessage: String) {
+        val clipboard = getSystemService(ClipboardManager::class.java) ?: return
+        clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+        showMessage(copiedMessage)
     }
 
     private fun dpToPx(value: Int): Int {

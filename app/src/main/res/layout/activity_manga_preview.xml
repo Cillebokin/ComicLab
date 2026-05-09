@@ -19,11 +19,11 @@
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="208dp"
+            android:layout_height="188dp"
             android:background="@color/comiclab_blue"
             android:gravity="top"
             android:orientation="horizontal"
-            android:padding="16dp">
+            android:padding="12dp">
 
             <FrameLayout
                 android:layout_width="0dp"
@@ -62,11 +62,47 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:paddingStart="12dp"
+            android:paddingTop="10dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="12dp">
+
+            <LinearLayout
+                android:id="@+id/layoutReadingProgress"
+                android:layout_width="match_parent"
+                android:layout_height="22dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <ProgressBar
+                    android:id="@+id/progressReading"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="0dp"
+                    android:layout_height="6dp"
+                    android:layout_weight="1"
+                    android:indeterminate="false"
+                    android:max="0"
+                    android:progress="0"
+                    android:progressBackgroundTint="#DDDDDD"
+                    android:progressTint="@color/comiclab_blue" />
+
+                <TextView
+                    android:id="@+id/tvReadingProgress"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:ellipsize="end"
+                    android:gravity="end"
+                    android:maxLines="1"
+                    android:text="@string/preview_reading_progress_empty"
+                    android:textColor="#666666"
+                    android:textSize="12sp" />
+            </LinearLayout>
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -83,24 +119,30 @@
                 <Button
                     android:id="@+id/btnFullRead"
                     android:layout_width="wrap_content"
-                    android:layout_height="36dp"
+                    android:layout_height="40dp"
+                    android:background="@drawable/bg_preview_action_button"
+                    android:backgroundTint="@null"
                     android:minHeight="0dp"
                     android:minWidth="80dp"
                     android:paddingStart="24dp"
                     android:paddingEnd="24dp"
                     android:text="@string/full_read"
+                    android:textColor="@color/white"
                     android:textSize="12sp" />
 
                 <Button
                     android:id="@+id/btnExitPreview"
                     android:layout_width="wrap_content"
-                    android:layout_height="36dp"
+                    android:layout_height="40dp"
                     android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_preview_action_button"
+                    android:backgroundTint="@null"
                     android:minHeight="0dp"
                     android:minWidth="80dp"
                     android:paddingStart="24dp"
                     android:paddingEnd="24dp"
                     android:text="@string/exit_preview"
+                    android:textColor="@color/white"
                     android:textSize="12sp" />
             </LinearLayout>
 
@@ -108,7 +150,7 @@
                 android:id="@+id/gridPreview"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
+                android:layout_marginTop="8dp"
                 android:columnCount="3"
                 android:useDefaultMargins="false" />
 
@@ -116,7 +158,7 @@
                 android:id="@+id/btnTogglePreview"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="10dp"
                 android:text="@string/preview_all"
                 android:visibility="gone" />
         </LinearLayout>
