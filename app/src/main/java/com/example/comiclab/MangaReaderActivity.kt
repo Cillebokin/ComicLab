@@ -84,6 +84,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private var readerScrollState = RecyclerView.SCROLL_STATE_IDLE
     private var readingDirection = AppSettings.READING_DIRECTION_TOP_TO_BOTTOM
     private var volumeKeyPageTurnEnabled = true
+    private var autoHideSystemBarsEnabled = true
     private var lastVolumePageTurnAt = 0L
     private var customReaderBrightnessEnabled = false
     private var isUpdatingBrightnessControls = false
@@ -93,6 +94,7 @@ class MangaReaderActivity : AppCompatActivity() {
         setContentView(R.layout.activity_manga_reader)
         readingDirection = AppSettings.getReadingDirection(this)
         volumeKeyPageTurnEnabled = AppSettings.isVolumeKeyPageTurnEnabled(this)
+        autoHideSystemBarsEnabled = AppSettings.isAutoHideSystemBarsEnabled(this)
         customReaderBrightnessEnabled = AppSettings.isCustomReaderBrightnessEnabled(this)
 
         bindViews()
@@ -122,6 +124,8 @@ class MangaReaderActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         volumeKeyPageTurnEnabled = AppSettings.isVolumeKeyPageTurnEnabled(this)
+        autoHideSystemBarsEnabled = AppSettings.isAutoHideSystemBarsEnabled(this)
+        updateSystemBarsVisibilityForReaderControls()
         applyReaderBrightnessSetting()
         updateBrightnessControls()
     }
@@ -151,7 +155,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus && !readerControlsVisible) {
+        if (hasFocus && autoHideSystemBarsEnabled && !readerControlsVisible) {
             setSystemBarsVisible(false)
         }
     }
@@ -697,7 +701,11 @@ class MangaReaderActivity : AppCompatActivity() {
         if (visible) {
             updateBrightnessControls()
         }
-        setSystemBarsVisible(visible)
+        updateSystemBarsVisibilityForReaderControls()
+    }
+
+    private fun updateSystemBarsVisibilityForReaderControls() {
+        setSystemBarsVisible(!autoHideSystemBarsEnabled || readerControlsVisible)
     }
 
     private fun setSystemBarsVisible(visible: Boolean) {

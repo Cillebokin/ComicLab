@@ -123,6 +123,15 @@
             android:textSize="15sp" />
 
         <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchAutoHideSystemBars"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:gravity="center_vertical"
+            android:text="@string/auto_hide_system_bars"
+            android:textColor="#333333"
+            android:textSize="15sp" />
+
+        <androidx.appcompat.widget.SwitchCompat
             android:id="@+id/switchCustomReaderBrightness"
             android:layout_width="match_parent"
             android:layout_height="48dp"

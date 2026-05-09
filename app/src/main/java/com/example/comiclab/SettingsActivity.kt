@@ -14,6 +14,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var btnBack: ImageButton
     private lateinit var radioReadingDirection: RadioGroup
     private lateinit var switchVolumeKeyPageTurn: SwitchCompat
+    private lateinit var switchAutoHideSystemBars: SwitchCompat
     private lateinit var switchCustomReaderBrightness: SwitchCompat
     private lateinit var sliderSettingsReaderBrightness: SeekBar
     private lateinit var tvSettingsBrightnessValue: TextView
@@ -31,6 +32,7 @@ class SettingsActivity : AppCompatActivity() {
         btnBack = findViewById(R.id.btnBack)
         radioReadingDirection = findViewById(R.id.radioReadingDirection)
         switchVolumeKeyPageTurn = findViewById(R.id.switchVolumeKeyPageTurn)
+        switchAutoHideSystemBars = findViewById(R.id.switchAutoHideSystemBars)
         switchCustomReaderBrightness = findViewById(R.id.switchCustomReaderBrightness)
         sliderSettingsReaderBrightness = findViewById(R.id.sliderSettingsReaderBrightness)
         tvSettingsBrightnessValue = findViewById(R.id.tvSettingsBrightnessValue)
@@ -41,6 +43,7 @@ class SettingsActivity : AppCompatActivity() {
 
         bindReadingDirection()
         bindVolumeKeyPageTurn()
+        bindAutoHideSystemBars()
         bindCustomReaderBrightness()
     }
 
@@ -66,6 +69,13 @@ class SettingsActivity : AppCompatActivity() {
         switchVolumeKeyPageTurn.isChecked = AppSettings.isVolumeKeyPageTurnEnabled(this)
         switchVolumeKeyPageTurn.setOnCheckedChangeListener { _, isChecked ->
             AppSettings.setVolumeKeyPageTurnEnabled(this, isChecked)
+        }
+    }
+
+    private fun bindAutoHideSystemBars() {
+        switchAutoHideSystemBars.isChecked = AppSettings.isAutoHideSystemBarsEnabled(this)
+        switchAutoHideSystemBars.setOnCheckedChangeListener { _, isChecked ->
+            AppSettings.setAutoHideSystemBarsEnabled(this, isChecked)
         }
     }
 
