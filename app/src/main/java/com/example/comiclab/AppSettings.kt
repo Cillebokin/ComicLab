@@ -9,6 +9,7 @@ object AppSettings {
 
     private const val PREFS_NAME = "app_settings"
     private const val KEY_READING_DIRECTION = "reading_direction"
+    private const val KEY_VOLUME_KEY_PAGE_TURN = "volume_key_page_turn"
 
     fun getReadingDirection(context: Context): String {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -26,6 +27,18 @@ object AppSettings {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_READING_DIRECTION, normalizedDirection)
+            .apply()
+    }
+
+    fun isVolumeKeyPageTurnEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_VOLUME_KEY_PAGE_TURN, true)
+    }
+
+    fun setVolumeKeyPageTurnEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_VOLUME_KEY_PAGE_TURN, enabled)
             .apply()
     }
 }

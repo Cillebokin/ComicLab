@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.LruCache
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -76,11 +77,13 @@ class MangaReaderActivity : AppCompatActivity() {
     private var readerScrollDirection = SCROLL_DIRECTION_FORWARD
     private var readerScrollState = RecyclerView.SCROLL_STATE_IDLE
     private var readingDirection = AppSettings.READING_DIRECTION_TOP_TO_BOTTOM
+    private var volumeKeyPageTurnEnabled = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_manga_reader)
         readingDirection = AppSettings.getReadingDirection(this)
+        volumeKeyPageTurnEnabled = AppSettings.isVolumeKeyPageTurnEnabled(this)
 
         bindViews()
         configureImmersiveSystemBars()
@@ -103,6 +106,11 @@ class MangaReaderActivity : AppCompatActivity() {
 
         loadArchive(file)
         showReaderControlsTemporarily()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        volumeKeyPageTurnEnabled = AppSettings.isVolumeKeyPageTurnEnabled(this)
     }
 
     override fun onPause() {
@@ -132,6 +140,22 @@ class MangaReaderActivity : AppCompatActivity() {
         if (hasFocus && !readerControlsVisible) {
             setSystemBarsVisible(false)
         }
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (!volumeKeyPageTurnEnabled || !isVolumePageTurnKey(event.keyCode)) {
+            return super.dispatchKeyEvent(event)
+        }
+
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            val delta = if (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+                1
+            } else {
+                -1
+            }
+            turnReaderPage(delta)
+        }
+        return true
     }
 
     private fun bindViews() {
@@ -425,6 +449,23 @@ class MangaReaderActivity : AppCompatActivity() {
         pageAdapter?.preloadAround(targetPosition, visibleItemCount = 1)
     }
 
+    private fun turnReaderPage(delta: Int) {
+        if (imageEntries.isEmpty()) {
+            return
+        }
+
+        clearPendingReaderPosition()
+        val currentPosition = readerLayoutManager.findFirstVisibleItemPosition()
+            .takeIf { it != RecyclerView.NO_POSITION }
+            ?: currentReaderPosition
+        val targetPosition = (currentPosition + delta).coerceIn(0, imageEntries.lastIndex)
+        if (targetPosition == currentPosition) {
+            return
+        }
+
+        jumpReaderToPage(targetPosition)
+    }
+
     private fun saveReaderPosition() {
         val file = archiveFile ?: return
         if (imageEntries.isEmpty()) {
@@ -541,6 +582,10 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun isHorizontalReading(): Boolean {
         return readingDirection == AppSettings.READING_DIRECTION_RIGHT_TO_LEFT ||
             readingDirection == AppSettings.READING_DIRECTION_LEFT_TO_RIGHT
+    }
+
+    private fun isVolumePageTurnKey(keyCode: Int): Boolean {
+        return keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_UP
     }
 
     private fun showReaderControlsTemporarily() {
