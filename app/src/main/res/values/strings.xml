@@ -60,4 +60,8 @@
     <string name="auto_hide_system_bars">自动隐藏状态栏/导航栏</string>
     <string name="custom_brightness">自定义亮度</string>
     <string name="brightness_percent">%1$d%%</string>
+    <string name="about">关于</string>
+    <string name="app_author">作者：Cillebokin / swcillebokin@gmail.com</string>
+    <string name="app_version">版本：1.0.0.0509_Base</string>
+    <string name="app_link">链接：</string>
 </resources>
