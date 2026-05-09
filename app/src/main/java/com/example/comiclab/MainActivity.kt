@@ -28,6 +28,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etPath: EditText
     private lateinit var btnBack: ImageButton
     private lateinit var btnOptions: ImageButton
+    private lateinit var btnSort: ImageButton
     private lateinit var btnSearch: ImageButton
 
     private val fileItems = mutableListOf<FileItem>()
@@ -52,6 +53,7 @@ class MainActivity : AppCompatActivity() {
         etPath = findViewById(R.id.etPath)
         btnBack = findViewById(R.id.btnBack)
         btnOptions = findViewById(R.id.btnOptions)
+        btnSort = findViewById(R.id.btnSort)
         btnSearch = findViewById(R.id.btnSearch)
 
         listView.adapter = FileListAdapter(this, fileItems)
@@ -67,6 +69,10 @@ class MainActivity : AppCompatActivity() {
 
         btnOptions.setOnClickListener {
             openSettings()
+        }
+
+        btnSort.setOnClickListener {
+            showSortDialog()
         }
 
         btnSearch.setOnClickListener {
@@ -232,7 +238,7 @@ class MainActivity : AppCompatActivity() {
             val files = try {
                 directory.listFiles()
                     ?.filter { !it.name.startsWith(".") }
-                    ?.sortedWith(compareBy<File>({ !it.isDirectory }, { it.name.lowercase() }))
+                    ?.let { sortFiles(it) }
                     ?: emptyList()
             } catch (_: SecurityException) {
                 emptyList()
@@ -265,6 +271,76 @@ class MainActivity : AppCompatActivity() {
         listView.post {
             centerListPosition(targetIndex)
         }
+    }
+
+    private fun showSortDialog() {
+        val sortModes = FileSortMode.values()
+        val labels = sortModes.map { getString(it.labelResId) }.toTypedArray()
+        val currentMode = currentSortMode()
+        val checkedItem = sortModes.indexOf(currentMode).coerceAtLeast(0)
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.sort)
+            .setSingleChoiceItems(labels, checkedItem) { dialog, which ->
+                val selectedMode = sortModes.getOrNull(which) ?: return@setSingleChoiceItems
+                prefs.edit()
+                    .putString(KEY_SORT_MODE, selectedMode.name)
+                    .apply()
+                dialog.dismiss()
+                loadCurrentDirectory()
+            }
+            .show()
+    }
+
+    private fun sortFiles(files: List<File>): List<File> {
+        val mode = currentSortMode()
+        return files.sortedWith(Comparator { left, right ->
+            val typeComparison = left.fileTypeOrder().compareTo(right.fileTypeOrder())
+            if (typeComparison != 0) {
+                return@Comparator typeComparison
+            }
+
+            when (mode) {
+                FileSortMode.NAME_ASC -> compareFileNames(left, right)
+                FileSortMode.NAME_DESC -> compareFileNames(right, left)
+                FileSortMode.MODIFIED_DESC -> compareByModifiedTime(right, left)
+                FileSortMode.MODIFIED_ASC -> compareByModifiedTime(left, right)
+                FileSortMode.SIZE_DESC -> compareBySize(right, left)
+                FileSortMode.SIZE_ASC -> compareBySize(left, right)
+            }
+        })
+    }
+
+    private fun compareFileNames(left: File, right: File): Int {
+        return left.name.lowercase().compareTo(right.name.lowercase())
+            .takeIf { it != 0 }
+            ?: left.name.compareTo(right.name)
+    }
+
+    private fun compareByModifiedTime(left: File, right: File): Int {
+        return left.lastModified().compareTo(right.lastModified())
+            .takeIf { it != 0 }
+            ?: compareFileNames(left, right)
+    }
+
+    private fun compareBySize(left: File, right: File): Int {
+        return left.fileSortSize().compareTo(right.fileSortSize())
+            .takeIf { it != 0 }
+            ?: compareFileNames(left, right)
+    }
+
+    private fun File.fileTypeOrder(): Int {
+        return if (isDirectory) 0 else 1
+    }
+
+    private fun File.fileSortSize(): Long {
+        return if (isFile) length() else 0L
+    }
+
+    private fun currentSortMode(): FileSortMode {
+        val savedMode = prefs.getString(KEY_SORT_MODE, null)
+        return FileSortMode.values().firstOrNull { it.name == savedMode }
+            ?: FileSortMode.NAME_ASC
     }
 
     private fun centerListPosition(position: Int) {
@@ -402,8 +478,18 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val PREFS_NAME = "saf_prefs"
         private const val KEY_STORAGE_PERMISSION_PROMPTED = "storage_permission_prompted"
+        private const val KEY_SORT_MODE = "sort_mode"
         private const val CLEAR_CLICK_STATE_DELAY_MS = 120L
         private const val FILE_ITEM_HEIGHT_DP = 75
         private val STORAGE_ROOT_PATH = Environment.getExternalStorageDirectory().absolutePath
+    }
+
+    private enum class FileSortMode(val labelResId: Int) {
+        NAME_ASC(R.string.sort_by_name_asc),
+        NAME_DESC(R.string.sort_by_name_desc),
+        MODIFIED_DESC(R.string.sort_by_modified_desc),
+        MODIFIED_ASC(R.string.sort_by_modified_asc),
+        SIZE_DESC(R.string.sort_by_size_desc),
+        SIZE_ASC(R.string.sort_by_size_asc)
     }
 }

@@ -59,6 +59,31 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:text="@string/file_browser"
+                android:textColor="#222222"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switchDetectMangaCollections"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="8dp"
+                android:gravity="center_vertical"
+                android:text="@string/detect_manga_collections"
+                android:textColor="#333333"
+                android:textSize="15sp" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="14dp"
+                android:layout_marginBottom="14dp"
+                android:background="#E0E0E0" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
                 android:text="@string/reading_direction"
                 android:textColor="#222222"
                 android:textSize="16sp"
@@ -101,31 +126,6 @@
                     android:textColor="#333333"
                     android:textSize="15sp" />
             </RadioGroup>
-
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="14dp"
-                android:layout_marginBottom="14dp"
-                android:background="#E0E0E0" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/file_browser"
-                android:textColor="#222222"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/switchDetectMangaCollections"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="8dp"
-                android:gravity="center_vertical"
-                android:text="@string/detect_manga_collections"
-                android:textColor="#333333"
-                android:textSize="15sp" />
 
             <View
                 android:layout_width="match_parent"
