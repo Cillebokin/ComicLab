@@ -18,6 +18,7 @@ class MangaPreviewActivity : AppCompatActivity() {
 
     private lateinit var imgCover: ImageView
     private lateinit var tvComicName: TextView
+    private lateinit var tvComicFileSize: TextView
     private lateinit var btnFullRead: Button
     private lateinit var btnExitPreview: Button
     private lateinit var progressReading: ProgressBar
@@ -44,6 +45,7 @@ class MangaPreviewActivity : AppCompatActivity() {
 
         imgCover = findViewById(R.id.imgCover)
         tvComicName = findViewById(R.id.tvComicName)
+        tvComicFileSize = findViewById(R.id.tvComicFileSize)
         btnFullRead = findViewById(R.id.btnFullRead)
         btnExitPreview = findViewById(R.id.btnExitPreview)
         progressReading = findViewById(R.id.progressReading)
@@ -61,6 +63,7 @@ class MangaPreviewActivity : AppCompatActivity() {
 
         archiveFile = file
         tvComicName.text = file.nameWithoutExtension
+        tvComicFileSize.text = CommonFunc.formatFileSize(file.length())
 
         btnFullRead.setOnClickListener {
             handleReadClick(file)
