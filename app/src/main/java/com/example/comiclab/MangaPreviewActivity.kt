@@ -9,6 +9,7 @@ import android.widget.GridLayout
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
 
@@ -57,7 +58,7 @@ class MangaPreviewActivity : AppCompatActivity() {
         tvComicName.text = file.nameWithoutExtension
 
         btnFullRead.setOnClickListener {
-            openMangaReader(file)
+            handleReadClick(file)
         }
 
         btnExitPreview.setOnClickListener {
@@ -220,9 +221,31 @@ class MangaPreviewActivity : AppCompatActivity() {
         finish()
     }
 
-    private fun openMangaReader(file: File) {
+    private fun handleReadClick(file: File) {
+        if (MangaReaderActivity.hasSavedReadingProgress(this, file)) {
+            showReadingProgressDialog(file)
+        } else {
+            openMangaReader(file, startFromBeginning = false)
+        }
+    }
+
+    private fun showReadingProgressDialog(file: File) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.reader_progress_dialog_title)
+            .setMessage(R.string.reader_progress_dialog_message)
+            .setPositiveButton(R.string.continue_reading) { _, _ ->
+                openMangaReader(file, startFromBeginning = false)
+            }
+            .setNegativeButton(R.string.read_from_beginning) { _, _ ->
+                openMangaReader(file, startFromBeginning = true)
+            }
+            .show()
+    }
+
+    private fun openMangaReader(file: File, startFromBeginning: Boolean) {
         val intent = Intent(this, MangaReaderActivity::class.java).apply {
             putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
+            putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
         }
         startActivity(intent)
     }

@@ -57,6 +57,13 @@ class MangaReaderActivity : AppCompatActivity() {
     private var readerControlsVisible = true
     private var suppressReaderTap = false
     private var isDraggingReaderSlider = false
+    private var shouldStartFromBeginning = false
+    private var pendingRestorePosition: Int? = null
+    private var pendingRestoreOffset = 0
+    private var restoreAttemptCount = 0
+    private var restoreRetryScheduled = false
+    private var currentReaderPosition = 0
+    private var currentReaderOffset = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,6 +83,10 @@ class MangaReaderActivity : AppCompatActivity() {
 
         archiveFile = file
         tvReaderTitle.text = file.nameWithoutExtension
+        shouldStartFromBeginning = intent.getBooleanExtra(EXTRA_START_FROM_BEGINNING, false)
+        if (shouldStartFromBeginning) {
+            clearSavedReadingProgress(this, file)
+        }
 
         loadArchive(file)
         showReaderControlsTemporarily()
@@ -140,6 +151,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun configureBackHandling() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                saveReaderPosition()
                 finish()
             }
         })
@@ -158,7 +170,13 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         }
         listReaderPages.setOnScrollListener(object : AbsListView.OnScrollListener {
-            override fun onScrollStateChanged(view: AbsListView?, scrollState: Int) = Unit
+            override fun onScrollStateChanged(view: AbsListView?, scrollState: Int) {
+                if (scrollState == AbsListView.OnScrollListener.SCROLL_STATE_TOUCH_SCROLL ||
+                    scrollState == AbsListView.OnScrollListener.SCROLL_STATE_FLING
+                ) {
+                    clearPendingReaderPosition()
+                }
+            }
 
             override fun onScroll(
                 view: AbsListView?,
@@ -166,6 +184,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 visibleItemCount: Int,
                 totalItemCount: Int
             ) {
+                updateCurrentReaderPosition(firstVisibleItem)
                 updateReaderProgress(firstVisibleItem, totalItemCount)
             }
         })
@@ -181,6 +200,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
             override fun onStartTrackingTouch(seekBar: SeekBar) {
                 isDraggingReaderSlider = true
+                clearPendingReaderPosition()
                 handler.removeCallbacks(autoHideControlsRunnable)
             }
 
@@ -231,13 +251,22 @@ class MangaReaderActivity : AppCompatActivity() {
             archiveFile = file,
             entries = entries,
             baseDisplayWidth = displayWidth,
-            decodeWidth = decodeWidth
+            decodeWidth = decodeWidth,
+            onPageReady = { position ->
+                if (position == pendingRestorePosition) {
+                    applyPendingReaderPosition()
+                }
+            }
         )
         listReaderPages.adapter = pageAdapter
         sliderReaderProgress.max = (entries.size - 1).coerceAtLeast(0)
         sliderReaderProgress.progress = 0
-        restoreReaderPosition()
-        updateReaderProgress(listReaderPages.firstVisiblePosition, entries.size)
+        if (shouldStartFromBeginning) {
+            updateReaderProgress(0, entries.size)
+        } else {
+            restoreReaderPosition()
+            updateReaderProgress(listReaderPages.firstVisiblePosition, entries.size)
+        }
     }
 
     private fun updateReaderZoom(scale: Float) {
@@ -287,8 +316,11 @@ class MangaReaderActivity : AppCompatActivity() {
             return
         }
 
+        clearPendingReaderPosition()
         val targetPosition = position.coerceIn(0, imageEntries.lastIndex)
         listReaderPages.setSelectionFromTop(targetPosition, 0)
+        currentReaderPosition = targetPosition
+        currentReaderOffset = 0
         updateReaderProgress(targetPosition, imageEntries.size)
     }
 
@@ -298,17 +330,21 @@ class MangaReaderActivity : AppCompatActivity() {
             return
         }
 
-        val firstVisiblePosition = listReaderPages.firstVisiblePosition.coerceAtLeast(0)
-        val firstChildTop = if (listReaderPages.childCount > 0) {
-            listReaderPages.getChildAt(0).top - listReaderPages.paddingTop
-        } else {
-            0
-        }
+        updateCurrentReaderPosition(listReaderPages.firstVisiblePosition.coerceAtLeast(0))
 
         readerPrefs.edit()
-            .putInt(readerPositionKey(file), firstVisiblePosition)
-            .putInt(readerOffsetKey(file), firstChildTop)
+            .putInt(readerPositionKey(file), currentReaderPosition)
+            .putInt(readerOffsetKey(file), currentReaderOffset)
             .apply()
+    }
+
+    private fun updateCurrentReaderPosition(firstVisiblePosition: Int) {
+        currentReaderPosition = firstVisiblePosition.coerceAtLeast(0)
+        currentReaderOffset = if (listReaderPages.childCount > 0) {
+            listReaderPages.getChildAt(0).top - listReaderPages.paddingTop
+        } else {
+            currentReaderOffset
+        }
     }
 
     private fun restoreReaderPosition() {
@@ -317,10 +353,58 @@ class MangaReaderActivity : AppCompatActivity() {
             .coerceIn(0, imageEntries.lastIndex.coerceAtLeast(0))
         val offset = readerPrefs.getInt(readerOffsetKey(file), 0)
 
-        listReaderPages.post {
-            listReaderPages.setSelectionFromTop(position, offset)
-            updateReaderProgress(position, imageEntries.size)
+        currentReaderPosition = position
+        currentReaderOffset = offset
+        pendingRestorePosition = position
+        pendingRestoreOffset = offset
+        restoreAttemptCount = 0
+        applyPendingReaderPosition()
+    }
+
+    private fun applyPendingReaderPosition() {
+        val position = pendingRestorePosition ?: return
+        if (imageEntries.isEmpty()) {
+            clearPendingReaderPosition()
+            return
         }
+
+        listReaderPages.post {
+            if (pendingRestorePosition != position) {
+                return@post
+            }
+
+            listReaderPages.setSelectionFromTop(position, pendingRestoreOffset)
+            updateReaderProgress(position, imageEntries.size)
+
+            if (restoreAttemptCount < RESTORE_READER_POSITION_MAX_ATTEMPTS) {
+                restoreAttemptCount++
+                schedulePendingReaderPositionRetry()
+            } else {
+                clearPendingReaderPosition()
+            }
+        }
+    }
+
+    private fun schedulePendingReaderPositionRetry() {
+        if (restoreRetryScheduled) {
+            return
+        }
+
+        restoreRetryScheduled = true
+        handler.postDelayed(
+            {
+                restoreRetryScheduled = false
+                applyPendingReaderPosition()
+            },
+            RESTORE_READER_POSITION_RETRY_MS
+        )
+    }
+
+    private fun clearPendingReaderPosition() {
+        pendingRestorePosition = null
+        pendingRestoreOffset = 0
+        restoreAttemptCount = 0
+        restoreRetryScheduled = false
     }
 
     private fun showReaderControlsTemporarily() {
@@ -352,15 +436,11 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun readerPositionKey(file: File): String {
-        return "${readerArchiveKey(file)}:position"
+        return readerPositionKeyFor(file)
     }
 
     private fun readerOffsetKey(file: File): String {
-        return "${readerArchiveKey(file)}:offset"
-    }
-
-    private fun readerArchiveKey(file: File): String {
-        return "reader:${file.absolutePath}:${file.lastModified()}:${file.length()}"
+        return readerOffsetKeyFor(file)
     }
 
     private class MangaPageAdapter(
@@ -368,7 +448,8 @@ class MangaReaderActivity : AppCompatActivity() {
         private val archiveFile: File,
         private val entries: List<String>,
         private val baseDisplayWidth: Int,
-        private val decodeWidth: Int
+        private val decodeWidth: Int,
+        private val onPageReady: (position: Int) -> Unit
     ) : BaseAdapter() {
 
         private val executor = Executors.newFixedThreadPool(READER_DECODE_THREAD_COUNT)
@@ -468,6 +549,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 container.post {
                     if (holder.position == position) {
                         bindBitmap(container, holder.imageView, bitmap)
+                        onPageReady(position)
                     }
                 }
             }
@@ -544,11 +626,41 @@ class MangaReaderActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_ARCHIVE_PATH = "archive_path"
+        const val EXTRA_START_FROM_BEGINNING = "start_from_beginning"
 
         private const val READER_PREFS_NAME = "reader_prefs"
         private const val MIN_READER_IMAGE_WIDTH = 320
         private const val READER_PAGE_DECODE_SCALE = 3
         private const val READER_CONTROLS_AUTO_HIDE_MS = 2600L
         private const val SUPPRESS_TAP_AFTER_ZOOM_MS = 250L
+        private const val RESTORE_READER_POSITION_MAX_ATTEMPTS = 16
+        private const val RESTORE_READER_POSITION_RETRY_MS = 250L
+
+        fun hasSavedReadingProgress(context: Context, file: File): Boolean {
+            val prefs = context.getSharedPreferences(READER_PREFS_NAME, Context.MODE_PRIVATE)
+            val position = prefs.getInt(readerPositionKeyFor(file), 0)
+            val offset = prefs.getInt(readerOffsetKeyFor(file), 0)
+            return position > 0 || offset != 0
+        }
+
+        private fun clearSavedReadingProgress(context: Context, file: File) {
+            context.getSharedPreferences(READER_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .remove(readerPositionKeyFor(file))
+                .remove(readerOffsetKeyFor(file))
+                .apply()
+        }
+
+        private fun readerPositionKeyFor(file: File): String {
+            return "${readerArchiveKeyFor(file)}:position"
+        }
+
+        private fun readerOffsetKeyFor(file: File): String {
+            return "${readerArchiveKeyFor(file)}:offset"
+        }
+
+        private fun readerArchiveKeyFor(file: File): String {
+            return "reader:${file.absolutePath}:${file.lastModified()}:${file.length()}"
+        }
     }
 }
