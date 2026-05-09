@@ -29,6 +29,7 @@ class MangaPreviewActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_manga_preview)
+        SystemBars.fitContentBelowSystemBars(this, findViewById<View>(R.id.main))
 
         imgCover = findViewById(R.id.imgCover)
         tvComicName = findViewById(R.id.tvComicName)

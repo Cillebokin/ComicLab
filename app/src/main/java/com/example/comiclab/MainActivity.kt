@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
 import android.webkit.MimeTypeMap
+import android.view.View
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ListView
@@ -38,6 +39,11 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        SystemBars.fitContentBelowSystemBars(
+            this,
+            findViewById<View>(R.id.main),
+            findViewById<View>(R.id.statusBarBackground)
+        )
 
         listView = findViewById(R.id.listFiles)
         etPath = findViewById(R.id.etPath)
