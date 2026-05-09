@@ -184,8 +184,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         val current = File(currentPath)
+        val pathToCenter = current.absolutePath
         currentPath = current.parentFile?.absolutePath ?: STORAGE_ROOT_PATH
-        loadCurrentDirectory()
+        loadCurrentDirectory(pathToCenter)
     }
 
     private fun handleSystemBack() {
@@ -201,7 +202,7 @@ class MainActivity : AppCompatActivity() {
         return File(currentPath).absolutePath == File(STORAGE_ROOT_PATH).absolutePath
     }
 
-    private fun loadCurrentDirectory() {
+    private fun loadCurrentDirectory(pathToCenter: String? = null) {
         if (!Environment.isExternalStorageManager()) {
             etPath.setText(R.string.storage_permission_required)
             fileItems.clear()
@@ -233,8 +234,42 @@ class MainActivity : AppCompatActivity() {
                 fileItems.addAll(items)
                 etPath.setText(directory.absolutePath)
                 notifyListChanged()
+                pathToCenter?.let { centerFileItemIfPresent(it) }
             }
         }.start()
+    }
+
+    private fun centerFileItemIfPresent(path: String) {
+        val targetIndex = fileItems.indexOfFirst { item ->
+            item.file?.absolutePath == path
+        }
+        if (targetIndex < 0) {
+            return
+        }
+
+        listView.post {
+            centerListPosition(targetIndex)
+        }
+    }
+
+    private fun centerListPosition(position: Int) {
+        val itemCount = fileItems.size
+        val listHeight = listView.height
+        if (position !in 0 until itemCount || listHeight <= 0) {
+            return
+        }
+
+        val itemHeight = (listView.getChildAt(0)?.height ?: dpToPx(FILE_ITEM_HEIGHT_DP))
+            .coerceAtLeast(1)
+        val rowHeight = itemHeight + listView.dividerHeight.coerceAtLeast(0)
+        val contentHeight = itemCount * rowHeight
+        val maxScrollTop = (contentHeight - listHeight).coerceAtLeast(0)
+        val desiredScrollTop = position * rowHeight - (listHeight - itemHeight) / 2
+        val scrollTop = desiredScrollTop.coerceIn(0, maxScrollTop)
+        val firstVisiblePosition = scrollTop / rowHeight
+        val firstVisibleTop = -(scrollTop % rowHeight)
+
+        listView.setSelectionFromTop(firstVisiblePosition, firstVisibleTop)
     }
 
     private fun openFile(file: File) {
@@ -325,6 +360,10 @@ class MainActivity : AppCompatActivity() {
         view.isActivated = false
     }
 
+    private fun dpToPx(value: Int): Int {
+        return (value * resources.displayMetrics.density).toInt()
+    }
+
     private fun showMessage(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
@@ -333,6 +372,7 @@ class MainActivity : AppCompatActivity() {
         private const val PREFS_NAME = "saf_prefs"
         private const val KEY_STORAGE_PERMISSION_PROMPTED = "storage_permission_prompted"
         private const val CLEAR_CLICK_STATE_DELAY_MS = 120L
+        private const val FILE_ITEM_HEIGHT_DP = 75
         private val STORAGE_ROOT_PATH = Environment.getExternalStorageDirectory().absolutePath
     }
 }
