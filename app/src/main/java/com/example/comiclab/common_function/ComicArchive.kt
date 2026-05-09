@@ -55,6 +55,15 @@ object ComicArchive {
         }
     }
 
+    fun firstImageEntryIfFirstFileIsImage(file: File): String? {
+        return when (file.extension.lowercase(Locale.ROOT)) {
+            in zipArchiveExtensions -> zipFileEntries(file)
+            in sevenZipArchiveExtensions -> sevenZipFileEntries(file)
+            else -> emptyList()
+        }.firstOrNull()
+            ?.takeIf { it.isImageEntryName() }
+    }
+
     fun decodeImage(file: File, entryName: String, maxSize: Int): Bitmap? {
         val bytes = imageBytes(file, entryName) ?: return null
         return decodeBitmap(
@@ -237,6 +246,16 @@ object ComicArchive {
         }
     }
 
+    private fun zipFileEntries(file: File): List<String> {
+        ZipFile(file).use { zipFile ->
+            return zipFile.entries().asSequence()
+                .filter { !it.isDirectory }
+                .map { it.name }
+                .sortedWith(naturalEntryNameComparator)
+                .toList()
+        }
+    }
+
     private fun sevenZipImageEntries(file: File): List<String> {
         return withSevenZipArchive(file) { archive ->
             (0 until archive.numberOfItems)
@@ -244,6 +263,17 @@ object ComicArchive {
                 .filter { !archive.isFolder(it) }
                 .mapNotNull { archive.entryPath(it) }
                 .filter { it.isImageEntryName() }
+                .sortedWith(naturalEntryNameComparator)
+                .toList()
+        }
+    }
+
+    private fun sevenZipFileEntries(file: File): List<String> {
+        return withSevenZipArchive(file) { archive ->
+            (0 until archive.numberOfItems)
+                .asSequence()
+                .filter { !archive.isFolder(it) }
+                .mapNotNull { archive.entryPath(it) }
                 .sortedWith(naturalEntryNameComparator)
                 .toList()
         }

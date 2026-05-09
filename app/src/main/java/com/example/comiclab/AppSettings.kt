@@ -11,6 +11,7 @@ object AppSettings {
     private const val KEY_READING_DIRECTION = "reading_direction"
     private const val KEY_VOLUME_KEY_PAGE_TURN = "volume_key_page_turn"
     private const val KEY_AUTO_HIDE_SYSTEM_BARS = "auto_hide_system_bars"
+    private const val KEY_DETECT_MANGA_COLLECTIONS = "detect_manga_collections"
     private const val KEY_CUSTOM_READER_BRIGHTNESS_ENABLED = "custom_reader_brightness_enabled"
     private const val KEY_CUSTOM_READER_BRIGHTNESS = "custom_reader_brightness"
     const val DEFAULT_READER_BRIGHTNESS = 128
@@ -57,6 +58,18 @@ object AppSettings {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_AUTO_HIDE_SYSTEM_BARS, enabled)
+            .apply()
+    }
+
+    fun isDetectMangaCollectionsEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_DETECT_MANGA_COLLECTIONS, false)
+    }
+
+    fun setDetectMangaCollectionsEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_DETECT_MANGA_COLLECTIONS, enabled)
             .apply()
     }
 

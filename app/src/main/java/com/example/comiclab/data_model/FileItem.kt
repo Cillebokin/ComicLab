@@ -11,6 +11,7 @@ import android.widget.ImageView
 import android.widget.TextView
 import java.io.File
 import java.util.Collections
+import java.util.Locale
 import java.util.concurrent.Executors
 
 data class FileItem(
@@ -39,6 +40,7 @@ class FileListAdapter(
         val imgIcon = view.findViewById<ImageView>(R.id.imgIcon)
         val tvName = view.findViewById<TextView>(R.id.tvName)
         val tvInfo = view.findViewById<TextView>(R.id.tvInfo)
+        val tvTypeMarker = view.findViewById<TextView>(R.id.tvTypeMarker)
         val tvDate = view.findViewById<TextView>(R.id.tvDate)
 
         val item = items[position]
@@ -50,6 +52,7 @@ class FileListAdapter(
             imgIcon.setImageResource(R.drawable.png_back_icon)
             tvName.text = ".."
             tvInfo.text = context.getString(R.string.parent_directory)
+            tvTypeMarker.text = "(D)"
             tvDate.text = ""
             return view
         }
@@ -62,18 +65,17 @@ class FileListAdapter(
             imgIcon.setImageResource(R.drawable.png_file_icon)
             tvName.text = context.getString(R.string.unknown_item)
             tvInfo.text = ""
+            tvTypeMarker.text = ""
             tvDate.text = ""
             return view
         }
 
         tvName.text = file.name
+        tvTypeMarker.text = if (file.isDirectory) "(D)" else "(F)"
         tvDate.text = CommonFunc.formatDate(file.lastModified())
 
         if (file.isDirectory) {
-            imgIcon.tag = null
-            setDefaultIconLayout(imgIcon)
-            imgIcon.scaleType = ImageView.ScaleType.CENTER_INSIDE
-            imgIcon.setImageResource(R.drawable.png_directory_icon)
+            bindDirectoryIcon(file, imgIcon)
             tvInfo.text = context.getString(R.string.item_count, file.listFiles()?.size ?: 0)
             return view
         }
@@ -89,6 +91,59 @@ class FileListAdapter(
         tvInfo.text = CommonFunc.formatFileSize(file.length())
 
         return view
+    }
+
+    private fun bindDirectoryIcon(directory: File, imgIcon: ImageView) {
+        setDefaultIconLayout(imgIcon)
+        imgIcon.scaleType = ImageView.ScaleType.CENTER_INSIDE
+        imgIcon.setImageResource(R.drawable.png_directory_icon)
+
+        if (!AppSettings.isDetectMangaCollectionsEnabled(context)) {
+            imgIcon.tag = null
+            return
+        }
+
+        val cacheKey = mangaCollectionCoverCacheKey(directory)
+        imgIcon.tag = cacheKey
+
+        val cachedCover = archiveCoverCache.get(cacheKey)
+        if (cachedCover != null) {
+            setArchiveCoverLayout(imgIcon)
+            imgIcon.scaleType = ImageView.ScaleType.CENTER_CROP
+            imgIcon.setImageBitmap(cachedCover)
+            return
+        }
+
+        if (cacheKey in failedArchiveCovers || !loadingArchiveCovers.add(cacheKey)) {
+            return
+        }
+
+        archiveCoverExecutor.execute {
+            val cover = runCatching {
+                val firstFile = firstVisibleFileInDirectory(directory)
+                    ?.takeIf { ComicArchive.isSupportedArchive(it) }
+                    ?: return@runCatching null
+                val firstImageEntry = ComicArchive.firstImageEntryIfFirstFileIsImage(firstFile)
+                    ?: return@runCatching null
+                ComicArchive.decodeImage(firstFile, firstImageEntry, ARCHIVE_COVER_MAX_SIZE)
+            }.getOrNull()
+
+            loadingArchiveCovers.remove(cacheKey)
+
+            if (cover == null) {
+                failedArchiveCovers.add(cacheKey)
+                return@execute
+            }
+
+            archiveCoverCache.put(cacheKey, cover)
+            imgIcon.post {
+                if (imgIcon.tag == cacheKey) {
+                    setArchiveCoverLayout(imgIcon)
+                    imgIcon.scaleType = ImageView.ScaleType.CENTER_CROP
+                    imgIcon.setImageBitmap(cover)
+                }
+            }
+        }
     }
 
     private fun bindArchiveIcon(file: File, imgIcon: ImageView) {
@@ -175,6 +230,28 @@ class FileListAdapter(
 
     private fun archiveCoverCacheKey(file: File): String {
         return "${file.absolutePath}:${file.lastModified()}:${file.length()}"
+    }
+
+    private fun mangaCollectionCoverCacheKey(directory: File): String {
+        val firstFile = firstVisibleFileInDirectory(directory)
+        return if (firstFile == null) {
+            "collection:${directory.absolutePath}:${directory.lastModified()}:empty"
+        } else {
+            "collection:${directory.absolutePath}:${directory.lastModified()}:" +
+                "${firstFile.absolutePath}:${firstFile.lastModified()}:${firstFile.length()}"
+        }
+    }
+
+    private fun firstVisibleFileInDirectory(directory: File): File? {
+        return try {
+            directory.listFiles()
+                ?.asSequence()
+                ?.filter { it.isFile && !it.name.startsWith(".") }
+                ?.sortedBy { it.name.lowercase(Locale.ROOT) }
+                ?.firstOrNull()
+        } catch (_: SecurityException) {
+            null
+        }
     }
 
     companion object {

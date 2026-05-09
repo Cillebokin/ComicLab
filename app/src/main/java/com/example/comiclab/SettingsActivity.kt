@@ -13,6 +13,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private lateinit var btnBack: ImageButton
     private lateinit var radioReadingDirection: RadioGroup
+    private lateinit var switchDetectMangaCollections: SwitchCompat
     private lateinit var switchVolumeKeyPageTurn: SwitchCompat
     private lateinit var switchAutoHideSystemBars: SwitchCompat
     private lateinit var switchCustomReaderBrightness: SwitchCompat
@@ -31,6 +32,7 @@ class SettingsActivity : AppCompatActivity() {
 
         btnBack = findViewById(R.id.btnBack)
         radioReadingDirection = findViewById(R.id.radioReadingDirection)
+        switchDetectMangaCollections = findViewById(R.id.switchDetectMangaCollections)
         switchVolumeKeyPageTurn = findViewById(R.id.switchVolumeKeyPageTurn)
         switchAutoHideSystemBars = findViewById(R.id.switchAutoHideSystemBars)
         switchCustomReaderBrightness = findViewById(R.id.switchCustomReaderBrightness)
@@ -42,6 +44,7 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         bindReadingDirection()
+        bindDetectMangaCollections()
         bindVolumeKeyPageTurn()
         bindAutoHideSystemBars()
         bindCustomReaderBrightness()
@@ -69,6 +72,13 @@ class SettingsActivity : AppCompatActivity() {
         switchVolumeKeyPageTurn.isChecked = AppSettings.isVolumeKeyPageTurnEnabled(this)
         switchVolumeKeyPageTurn.setOnCheckedChangeListener { _, isChecked ->
             AppSettings.setVolumeKeyPageTurnEnabled(this, isChecked)
+        }
+    }
+
+    private fun bindDetectMangaCollections() {
+        switchDetectMangaCollections.isChecked = AppSettings.isDetectMangaCollectionsEnabled(this)
+        switchDetectMangaCollections.setOnCheckedChangeListener { _, isChecked ->
+            AppSettings.setDetectMangaCollectionsEnabled(this, isChecked)
         }
     }
 
