@@ -2,6 +2,8 @@ package com.example.comiclab
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
+import android.graphics.Rect
 import net.sf.sevenzipjbinding.ExtractAskMode
 import net.sf.sevenzipjbinding.ExtractOperationResult
 import net.sf.sevenzipjbinding.IArchiveExtractCallback
@@ -10,6 +12,7 @@ import net.sf.sevenzipjbinding.ISequentialOutStream
 import net.sf.sevenzipjbinding.PropID
 import net.sf.sevenzipjbinding.SevenZip
 import net.sf.sevenzipjbinding.impl.RandomAccessFileInStream
+import java.io.Closeable
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.RandomAccessFile
@@ -21,6 +24,11 @@ import java.util.zip.ZipFile
 
 object ComicArchive {
     private const val ZIP_PREVIEW_DECODE_THREAD_COUNT = 2
+
+    data class ImageBounds(
+        val width: Int,
+        val height: Int
+    )
 
     private val zipArchiveExtensions = setOf("zip", "cbz")
     private val sevenZipArchiveExtensions = setOf("rar", "cbr", "7z", "cb7")
@@ -78,6 +86,133 @@ object ComicArchive {
         }
     }
 
+    fun openReaderSession(file: File, cacheRoot: File): ReaderSession {
+        return ReaderSession(file, cacheRoot)
+    }
+
+    class ReaderSession internal constructor(
+        private val file: File,
+        cacheRoot: File
+    ) : Closeable {
+
+        private val extension = file.extension.lowercase(Locale.ROOT)
+        private val zipFile = if (extension in zipArchiveExtensions) ZipFile(file) else null
+        private val zipLock = Any()
+        private val sevenZipLock = Any()
+        private val sevenZipCacheDir = File(
+            cacheRoot,
+            "reader_${Integer.toHexString(file.absolutePath.hashCode())}_${file.lastModified()}_${file.length()}"
+        )
+        private val sevenZipEntryIndexes by lazy {
+            if (extension in sevenZipArchiveExtensions) {
+                readSevenZipEntryIndexes(file)
+            } else {
+                emptyMap()
+            }
+        }
+
+        fun readBounds(entryName: String): ImageBounds? {
+            val bytes = imageBytes(entryName) ?: return null
+            return decodeBounds(bytes)
+        }
+
+        fun decodePreviewForWidth(entryName: String, targetWidth: Int): Bitmap? {
+            val bytes = imageBytes(entryName) ?: return null
+            return decodeBitmap(
+                bytes = bytes,
+                preferredConfig = Bitmap.Config.RGB_565,
+                sampleSize = { width, _ -> calculateInSampleSizeForWidth(width, targetWidth) }
+            )
+        }
+
+        fun decodeImageForWidth(entryName: String, targetWidth: Int): Bitmap? {
+            val bytes = imageBytes(entryName) ?: return null
+            return decodeBitmap(
+                bytes = bytes,
+                preferredConfig = Bitmap.Config.ARGB_8888,
+                sampleSize = { width, _ -> calculateInSampleSizeForWidth(width, targetWidth) }
+            )
+        }
+
+        fun decodeRegionForWidth(entryName: String, sourceRect: Rect, targetWidth: Int): Bitmap? {
+            val bytes = imageBytes(entryName) ?: return null
+            val decoder = runCatching {
+                BitmapRegionDecoder.newInstance(bytes, 0, bytes.size, false)
+            }.getOrNull() ?: return null
+
+            return try {
+                val boundedRect = Rect(sourceRect).apply {
+                    left = left.coerceIn(0, decoder.width)
+                    top = top.coerceIn(0, decoder.height)
+                    right = right.coerceIn(left, decoder.width)
+                    bottom = bottom.coerceIn(top, decoder.height)
+                }
+                if (boundedRect.width() <= 0 || boundedRect.height() <= 0) {
+                    return null
+                }
+
+                val options = BitmapFactory.Options().apply {
+                    inSampleSize = calculateInSampleSizeForWidth(boundedRect.width(), targetWidth)
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                }
+                decoder.decodeRegion(boundedRect, options)
+            } finally {
+                decoder.recycle()
+            }
+        }
+
+        override fun close() {
+            zipFile?.close()
+            if (extension in sevenZipArchiveExtensions) {
+                sevenZipCacheDir.deleteRecursively()
+            }
+        }
+
+        private fun imageBytes(entryName: String): ByteArray? {
+            return when (extension) {
+                in zipArchiveExtensions -> zipImageBytes(entryName)
+                in sevenZipArchiveExtensions -> sevenZipCachedImageBytes(entryName)
+                else -> null
+            }
+        }
+
+        private fun zipImageBytes(entryName: String): ByteArray? {
+            val zip = zipFile ?: return null
+            synchronized(zipLock) {
+                val entry = zip.getEntry(entryName) ?: return null
+                return zip.getInputStream(entry).use { it.readBytes() }
+            }
+        }
+
+        private fun sevenZipCachedImageBytes(entryName: String): ByteArray? {
+            synchronized(sevenZipLock) {
+                val cacheFile = File(sevenZipCacheDir, cacheFileNameForEntry(entryName))
+                if (cacheFile.isFile && cacheFile.length() > 0L) {
+                    return cacheFile.readBytes()
+                }
+
+                val entryIndex = sevenZipEntryIndexes[entryName] ?: return null
+                val bytes = withSevenZipArchive(file) { archive ->
+                    extractSevenZipEntryBytes(archive, entryIndex)
+                } ?: return null
+
+                sevenZipCacheDir.mkdirs()
+                runCatching {
+                    cacheFile.writeBytes(bytes)
+                }
+                return bytes
+            }
+        }
+
+        private fun cacheFileNameForEntry(entryName: String): String {
+            val extension = entryName.substringAfterLast('.', "")
+                .lowercase(Locale.ROOT)
+                .takeIf { it.isNotBlank() }
+                ?: "img"
+            return "${Integer.toHexString(entryName.hashCode())}_${entryName.length}.$extension"
+        }
+    }
+
     private fun zipImageEntries(file: File): List<String> {
         ZipFile(file).use { zipFile ->
             return zipFile.entries().asSequence()
@@ -97,6 +232,16 @@ object ComicArchive {
                 .filter { it.isImageEntryName() }
                 .sortedWith(naturalEntryNameComparator)
                 .toList()
+        }
+    }
+
+    private fun readSevenZipEntryIndexes(file: File): Map<String, Int> {
+        return withSevenZipArchive(file) { archive ->
+            (0 until archive.numberOfItems)
+                .asSequence()
+                .filter { !archive.isFolder(it) }
+                .mapNotNull { index -> archive.entryPath(index)?.let { path -> path to index } }
+                .toMap()
         }
     }
 
@@ -254,6 +399,17 @@ object ComicArchive {
         }
 
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+    }
+
+    private fun decodeBounds(bytes: ByteArray): ImageBounds? {
+        val bounds = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            return null
+        }
+        return ImageBounds(bounds.outWidth, bounds.outHeight)
     }
 
     private fun ZipEntry.isImageEntry(): Boolean {
