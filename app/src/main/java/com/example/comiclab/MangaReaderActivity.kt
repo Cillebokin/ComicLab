@@ -186,6 +186,7 @@ class MangaReaderActivity : AppCompatActivity() {
             ) {
                 updateCurrentReaderPosition(firstVisibleItem)
                 updateReaderProgress(firstVisibleItem, totalItemCount)
+                pageAdapter?.preloadAround(firstVisibleItem, visibleItemCount)
             }
         })
         listReaderPages.onTransformChanged = { scale, horizontalPanX ->
@@ -267,6 +268,12 @@ class MangaReaderActivity : AppCompatActivity() {
             restoreReaderPosition()
             updateReaderProgress(listReaderPages.firstVisiblePosition, entries.size)
         }
+        listReaderPages.post {
+            pageAdapter?.preloadAround(
+                firstVisiblePosition = listReaderPages.firstVisiblePosition,
+                visibleItemCount = listReaderPages.childCount.coerceAtLeast(1)
+            )
+        }
     }
 
     private fun updateReaderTransform(scale: Float, horizontalPanX: Float) {
@@ -282,10 +289,12 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         val scaleChanged = pageAdapter?.setReaderTransform(scale, horizontalPanX) ?: false
+        pageAdapter?.applyTransformToVisiblePages(
+            listView = listReaderPages,
+            resizePages = scaleChanged
+        )
         if (scaleChanged) {
             listReaderPages.setSelectionFromTop(firstVisiblePosition, firstChildTop)
-        } else {
-            pageAdapter?.applyTransformToVisiblePages(listReaderPages)
         }
     }
 
@@ -326,6 +335,7 @@ class MangaReaderActivity : AppCompatActivity() {
         currentReaderPosition = targetPosition
         currentReaderOffset = 0
         updateReaderProgress(targetPosition, imageEntries.size)
+        pageAdapter?.preloadAround(targetPosition, visibleItemCount = 1)
     }
 
     private fun saveReaderPosition() {
@@ -456,7 +466,8 @@ class MangaReaderActivity : AppCompatActivity() {
         private val onPageReady: (position: Int) -> Unit
     ) : BaseAdapter() {
 
-        private val executor = Executors.newFixedThreadPool(READER_DECODE_THREAD_COUNT)
+        private val visiblePageExecutor = Executors.newFixedThreadPool(READER_DECODE_THREAD_COUNT)
+        private val preloadExecutor = Executors.newSingleThreadExecutor()
         private val loadingPages = Collections.synchronizedSet(mutableSetOf<Int>())
         private val failedPages = Collections.synchronizedSet(mutableSetOf<Int>())
         private val bitmapCache = object : LruCache<Int, Bitmap>(bitmapCacheSizeKb()) {
@@ -508,6 +519,29 @@ class MangaReaderActivity : AppCompatActivity() {
             return view
         }
 
+        fun preloadAround(firstVisiblePosition: Int, visibleItemCount: Int) {
+            if (entries.isEmpty()) {
+                return
+            }
+
+            val firstVisible = firstVisiblePosition.coerceIn(0, entries.lastIndex)
+            val lastVisible = (firstVisible + visibleItemCount.coerceAtLeast(1) - 1)
+                .coerceIn(firstVisible, entries.lastIndex)
+            val preloadPositions = mutableListOf<Int>()
+
+            val afterEnd = (lastVisible + READER_PRELOAD_AFTER_COUNT).coerceAtMost(entries.lastIndex)
+            for (position in (lastVisible + 1)..afterEnd) {
+                preloadPositions.add(position)
+            }
+
+            val beforeStart = (firstVisible - READER_PRELOAD_BEFORE_COUNT).coerceAtLeast(0)
+            for (position in (firstVisible - 1) downTo beforeStart) {
+                preloadPositions.add(position)
+            }
+
+            preloadPositions.forEach(::preloadBitmap)
+        }
+
         fun setReaderTransform(scale: Float, panX: Float): Boolean {
             val newScale = scale.coerceIn(
                 ZoomableReaderListView.MIN_ZOOM,
@@ -521,22 +555,30 @@ class MangaReaderActivity : AppCompatActivity() {
 
             zoomScale = newScale
             horizontalPanX = panX
-            if (scaleChanged) {
-                notifyDataSetChanged()
-            }
             return scaleChanged
         }
 
-        fun applyTransformToVisiblePages(listView: AbsListView) {
+        fun applyTransformToVisiblePages(listView: AbsListView, resizePages: Boolean) {
             for (index in 0 until listView.childCount) {
                 val container = listView.getChildAt(index) as? FrameLayout ?: continue
                 val holder = container.tag as? PageViewHolder ?: continue
-                holder.imageView.translationX = horizontalPanX
+                if (!resizePages) {
+                    holder.imageView.translationX = horizontalPanX
+                    continue
+                }
+
+                val cachedBitmap = bitmapCache.get(holder.position)
+                if (cachedBitmap != null) {
+                    bindBitmap(container, holder.imageView, cachedBitmap)
+                } else {
+                    updatePlaceholderSize(container, holder.imageView)
+                }
             }
         }
 
         fun close() {
-            executor.shutdownNow()
+            visiblePageExecutor.shutdownNow()
+            preloadExecutor.shutdownNow()
             bitmapCache.evictAll()
             loadingPages.clear()
             failedPages.clear()
@@ -544,17 +586,32 @@ class MangaReaderActivity : AppCompatActivity() {
 
         private fun bindPlaceholder(container: FrameLayout, imageView: ImageView) {
             imageView.setImageDrawable(null)
+            updatePlaceholderSize(container, imageView)
+        }
+
+        private fun updatePlaceholderSize(container: FrameLayout, imageView: ImageView) {
             setContainerHeight(container, ESTIMATED_READER_PAGE_HEIGHT_RATIO)
             setImageSize(imageView, zoomedDisplayWidth(), ViewGroup.LayoutParams.MATCH_PARENT)
             imageView.translationX = horizontalPanX
         }
 
         private fun loadBitmap(position: Int, container: FrameLayout, holder: PageViewHolder) {
-            if (position in failedPages || !loadingPages.add(position)) {
+            if (position in failedPages) {
                 return
             }
 
-            executor.execute {
+            val cachedBitmap = bitmapCache.get(position)
+            if (cachedBitmap != null) {
+                bindBitmap(container, holder.imageView, cachedBitmap)
+                return
+            }
+
+            if (!loadingPages.add(position)) {
+                waitForBitmap(position, container, holder)
+                return
+            }
+
+            visiblePageExecutor.execute {
                 val bitmap = runCatching {
                     ComicArchive.decodeImageForWidth(archiveFile, entries[position], decodeWidth)
                 }.getOrNull()
@@ -573,6 +630,58 @@ class MangaReaderActivity : AppCompatActivity() {
                     }
                 }
             }
+        }
+
+        private fun preloadBitmap(position: Int) {
+            if (position !in entries.indices ||
+                position in failedPages ||
+                bitmapCache.get(position) != null ||
+                !loadingPages.add(position)
+            ) {
+                return
+            }
+
+            preloadExecutor.execute {
+                val bitmap = runCatching {
+                    ComicArchive.decodeImageForWidth(archiveFile, entries[position], decodeWidth)
+                }.getOrNull()
+                loadingPages.remove(position)
+
+                if (bitmap == null) {
+                    failedPages.add(position)
+                    return@execute
+                }
+
+                bitmapCache.put(position, bitmap)
+            }
+        }
+
+        private fun waitForBitmap(
+            position: Int,
+            container: FrameLayout,
+            holder: PageViewHolder,
+            attempt: Int = 0
+        ) {
+            container.postDelayed(
+                {
+                    if (holder.position != position) {
+                        return@postDelayed
+                    }
+
+                    val bitmap = bitmapCache.get(position)
+                    if (bitmap != null) {
+                        bindBitmap(container, holder.imageView, bitmap)
+                        return@postDelayed
+                    }
+
+                    if (position in loadingPages && attempt < VISIBLE_BITMAP_WAIT_MAX_ATTEMPTS) {
+                        waitForBitmap(position, container, holder, attempt + 1)
+                    } else if (position !in failedPages) {
+                        loadBitmap(position, container, holder)
+                    }
+                },
+                VISIBLE_BITMAP_WAIT_RETRY_MS
+            )
         }
 
         private fun bindBitmap(container: FrameLayout, imageView: ImageView, bitmap: Bitmap) {
@@ -635,6 +744,10 @@ class MangaReaderActivity : AppCompatActivity() {
 
         companion object {
             private const val READER_DECODE_THREAD_COUNT = 2
+            private const val READER_PRELOAD_BEFORE_COUNT = 1
+            private const val READER_PRELOAD_AFTER_COUNT = 3
+            private const val VISIBLE_BITMAP_WAIT_MAX_ATTEMPTS = 30
+            private const val VISIBLE_BITMAP_WAIT_RETRY_MS = 80L
             private const val ESTIMATED_READER_PAGE_HEIGHT_RATIO = 1.45f
             private const val MIN_READER_PAGE_HEIGHT = 320
 

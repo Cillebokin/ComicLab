@@ -1,10 +1,12 @@
 package com.example.comiclab
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.ViewConfiguration
+import android.view.animation.DecelerateInterpolator
 import android.widget.ListView
 import kotlin.math.abs
 
@@ -24,6 +26,7 @@ class ZoomableReaderListView @JvmOverloads constructor(
     private var lastTouchX = 0f
     private var lastTouchY = 0f
     private var isHorizontalPanning = false
+    private var panAnimator: ValueAnimator? = null
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (event.pointerCount > 1 || scaleDetector.isInProgress) {
@@ -39,6 +42,7 @@ class ZoomableReaderListView @JvmOverloads constructor(
         if (zoomScale > MIN_ZOOM) {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    panAnimator?.cancel()
                     lastTouchX = event.x
                     lastTouchY = event.y
                     isHorizontalPanning = false
@@ -47,10 +51,10 @@ class ZoomableReaderListView @JvmOverloads constructor(
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.x - lastTouchX
                     val dy = event.y - lastTouchY
-                    if (isHorizontalPanning || abs(dx) > touchSlop && abs(dx) > abs(dy)) {
+                    if (isHorizontalPanning || isMostlyHorizontalDrag(dx, dy)) {
                         isHorizontalPanning = true
                         parent?.requestDisallowInterceptTouchEvent(true)
-                        setHorizontalPanX(horizontalPanX + dx)
+                        setHorizontalPanX(horizontalPanX + dx, allowOverscroll = true)
                         lastTouchX = event.x
                         lastTouchY = event.y
                         return true
@@ -62,6 +66,7 @@ class ZoomableReaderListView @JvmOverloads constructor(
                     if (isHorizontalPanning) {
                         isHorizontalPanning = false
                         parent?.requestDisallowInterceptTouchEvent(false)
+                        settleHorizontalPan()
                         return true
                     }
                 }
@@ -81,6 +86,7 @@ class ZoomableReaderListView @JvmOverloads constructor(
             return
         }
 
+        panAnimator?.cancel()
         zoomScale = newScale
         horizontalPanX = if (zoomScale == MIN_ZOOM) {
             0f
@@ -90,14 +96,59 @@ class ZoomableReaderListView @JvmOverloads constructor(
         dispatchTransformChanged()
     }
 
-    private fun setHorizontalPanX(value: Float) {
-        val newPanX = value.coerceIn(-maxHorizontalPanX(), maxHorizontalPanX())
+    private fun setHorizontalPanX(value: Float, allowOverscroll: Boolean) {
+        val newPanX = if (allowOverscroll) {
+            applyHorizontalPanResistance(value)
+        } else {
+            value.coerceIn(-maxHorizontalPanX(), maxHorizontalPanX())
+        }
         if (newPanX == horizontalPanX) {
             return
         }
 
         horizontalPanX = newPanX
         dispatchTransformChanged()
+    }
+
+    private fun isMostlyHorizontalDrag(dx: Float, dy: Float): Boolean {
+        return abs(dx) > touchSlop * HORIZONTAL_PAN_TOUCH_SLOP_FACTOR &&
+            abs(dx) > abs(dy) * HORIZONTAL_PAN_DIRECTION_FACTOR
+    }
+
+    private fun applyHorizontalPanResistance(value: Float): Float {
+        val maxPan = maxHorizontalPanX()
+        if (maxPan <= 0f) {
+            return 0f
+        }
+
+        val absoluteValue = abs(value)
+        if (absoluteValue <= maxPan) {
+            return value
+        }
+
+        val overflow = absoluteValue - maxPan
+        val maxOverscroll = width * HORIZONTAL_PAN_OVERSCROLL_FRACTION
+        val resistedValue = maxPan + (overflow * HORIZONTAL_PAN_OVERSCROLL_RESISTANCE)
+        val cappedValue = resistedValue.coerceAtMost(maxPan + maxOverscroll)
+        return if (value < 0f) -cappedValue else cappedValue
+    }
+
+    private fun settleHorizontalPan() {
+        val targetPanX = horizontalPanX.coerceIn(-maxHorizontalPanX(), maxHorizontalPanX())
+        if (targetPanX == horizontalPanX) {
+            return
+        }
+
+        panAnimator?.cancel()
+        panAnimator = ValueAnimator.ofFloat(horizontalPanX, targetPanX).apply {
+            duration = HORIZONTAL_PAN_SETTLE_DURATION_MS
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { animator ->
+                horizontalPanX = animator.animatedValue as Float
+                dispatchTransformChanged()
+            }
+            start()
+        }
     }
 
     private fun maxHorizontalPanX(): Float {
@@ -118,5 +169,11 @@ class ZoomableReaderListView @JvmOverloads constructor(
     companion object {
         const val MIN_ZOOM = 1f
         const val MAX_ZOOM = 3f
+
+        private const val HORIZONTAL_PAN_TOUCH_SLOP_FACTOR = 0.5f
+        private const val HORIZONTAL_PAN_DIRECTION_FACTOR = 0.75f
+        private const val HORIZONTAL_PAN_OVERSCROLL_FRACTION = 0.12f
+        private const val HORIZONTAL_PAN_OVERSCROLL_RESISTANCE = 0.28f
+        private const val HORIZONTAL_PAN_SETTLE_DURATION_MS = 140L
     }
 }
