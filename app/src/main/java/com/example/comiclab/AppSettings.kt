@@ -10,6 +10,11 @@ object AppSettings {
     private const val PREFS_NAME = "app_settings"
     private const val KEY_READING_DIRECTION = "reading_direction"
     private const val KEY_VOLUME_KEY_PAGE_TURN = "volume_key_page_turn"
+    private const val KEY_CUSTOM_READER_BRIGHTNESS_ENABLED = "custom_reader_brightness_enabled"
+    private const val KEY_CUSTOM_READER_BRIGHTNESS = "custom_reader_brightness"
+    const val DEFAULT_READER_BRIGHTNESS = 128
+    const val MIN_READER_BRIGHTNESS = 1
+    const val MAX_READER_BRIGHTNESS = 255
 
     fun getReadingDirection(context: Context): String {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -39,6 +44,34 @@ object AppSettings {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_VOLUME_KEY_PAGE_TURN, enabled)
+            .apply()
+    }
+
+    fun isCustomReaderBrightnessEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_CUSTOM_READER_BRIGHTNESS_ENABLED, false)
+    }
+
+    fun setCustomReaderBrightnessEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_CUSTOM_READER_BRIGHTNESS_ENABLED, enabled)
+            .apply()
+    }
+
+    fun getCustomReaderBrightness(context: Context): Int {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getInt(KEY_CUSTOM_READER_BRIGHTNESS, DEFAULT_READER_BRIGHTNESS)
+            .coerceIn(MIN_READER_BRIGHTNESS, MAX_READER_BRIGHTNESS)
+    }
+
+    fun setCustomReaderBrightness(context: Context, brightness: Int) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(
+                KEY_CUSTOM_READER_BRIGHTNESS,
+                brightness.coerceIn(MIN_READER_BRIGHTNESS, MAX_READER_BRIGHTNESS)
+            )
             .apply()
     }
 }

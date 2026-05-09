@@ -45,28 +45,70 @@
         android:layout_gravity="bottom"
         android:background="#CC000000"
         android:gravity="center_vertical"
-        android:orientation="horizontal"
+        android:orientation="vertical"
         android:paddingStart="12dp"
         android:paddingTop="8dp"
         android:paddingEnd="12dp"
         android:paddingBottom="8dp">
 
-        <SeekBar
-            android:id="@+id/sliderReaderProgress"
-            android:layout_width="0dp"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="36dp"
-            android:layout_weight="1"
-            android:max="0"
-            android:progress="0" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-        <TextView
-            android:id="@+id/tvReaderProgress"
-            android:layout_width="88dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:gravity="end"
-            android:textColor="@color/white"
-            android:textSize="13sp" />
+            <SeekBar
+                android:id="@+id/sliderReaderProgress"
+                android:layout_width="0dp"
+                android:layout_height="36dp"
+                android:layout_weight="1"
+                android:max="0"
+                android:progress="0"
+                android:progressBackgroundTint="@color/reader_brightness_track_tint"
+                android:progressTint="@color/comiclab_blue"
+                android:thumbTint="@color/white" />
+
+            <TextView
+                android:id="@+id/tvReaderProgress"
+                android:layout_width="88dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:gravity="end"
+                android:textColor="@color/white"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="36dp"
+            android:layout_marginTop="4dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <SeekBar
+                android:id="@+id/sliderScreenBrightness"
+                android:layout_width="0dp"
+                android:layout_height="36dp"
+                android:layout_weight="1"
+                android:max="255"
+                android:progress="128"
+                android:progressBackgroundTint="@color/reader_brightness_track_tint"
+                android:progressTint="@color/reader_brightness_progress_tint"
+                android:thumbTint="@color/reader_brightness_thumb_tint" />
+
+            <CheckBox
+                android:id="@+id/checkboxCustomBrightness"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:layout_marginStart="8dp"
+                android:buttonTint="@color/comiclab_blue"
+                android:gravity="center_vertical"
+                android:minWidth="0dp"
+                android:paddingStart="4dp"
+                android:text="@string/custom_brightness"
+                android:textColor="@color/white"
+                android:textSize="13sp" />
+        </LinearLayout>
     </LinearLayout>
 
     <TextView

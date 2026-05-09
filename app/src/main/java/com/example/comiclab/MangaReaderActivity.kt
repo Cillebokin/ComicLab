@@ -9,11 +9,14 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.LruCache
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
+import android.widget.CheckBox
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -47,6 +50,8 @@ class MangaReaderActivity : AppCompatActivity() {
     private lateinit var layoutReaderToolbar: View
     private lateinit var layoutReaderProgress: View
     private lateinit var sliderReaderProgress: SeekBar
+    private lateinit var sliderScreenBrightness: SeekBar
+    private lateinit var checkboxCustomBrightness: CheckBox
     private lateinit var tvReaderTitle: TextView
     private lateinit var tvReaderProgress: TextView
     private lateinit var tvReaderStatus: TextView
@@ -80,17 +85,21 @@ class MangaReaderActivity : AppCompatActivity() {
     private var readingDirection = AppSettings.READING_DIRECTION_TOP_TO_BOTTOM
     private var volumeKeyPageTurnEnabled = true
     private var lastVolumePageTurnAt = 0L
+    private var customReaderBrightnessEnabled = false
+    private var isUpdatingBrightnessControls = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_manga_reader)
         readingDirection = AppSettings.getReadingDirection(this)
         volumeKeyPageTurnEnabled = AppSettings.isVolumeKeyPageTurnEnabled(this)
+        customReaderBrightnessEnabled = AppSettings.isCustomReaderBrightnessEnabled(this)
 
         bindViews()
         configureImmersiveSystemBars()
         configureBackHandling()
         configureReaderActions()
+        configureBrightnessControls()
 
         val path = intent.getStringExtra(EXTRA_ARCHIVE_PATH)
         val file = path?.let(::File)
@@ -113,10 +122,13 @@ class MangaReaderActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         volumeKeyPageTurnEnabled = AppSettings.isVolumeKeyPageTurnEnabled(this)
+        applyReaderBrightnessSetting()
+        updateBrightnessControls()
     }
 
     override fun onPause() {
         saveReaderPosition()
+        restoreSystemBrightness()
         super.onPause()
     }
 
@@ -174,6 +186,8 @@ class MangaReaderActivity : AppCompatActivity() {
         layoutReaderToolbar = findViewById(R.id.layoutReaderToolbar)
         layoutReaderProgress = findViewById(R.id.layoutReaderProgress)
         sliderReaderProgress = findViewById(R.id.sliderReaderProgress)
+        sliderScreenBrightness = findViewById(R.id.sliderScreenBrightness)
+        checkboxCustomBrightness = findViewById(R.id.checkboxCustomBrightness)
         tvReaderTitle = findViewById(R.id.tvReaderTitle)
         tvReaderProgress = findViewById(R.id.tvReaderProgress)
         tvReaderStatus = findViewById(R.id.tvReaderStatus)
@@ -305,6 +319,58 @@ class MangaReaderActivity : AppCompatActivity() {
                 showReaderControlsTemporarily()
             }
         })
+    }
+
+    private fun configureBrightnessControls() {
+        sliderScreenBrightness.min = MIN_READER_BRIGHTNESS
+        sliderScreenBrightness.max = MAX_READER_BRIGHTNESS
+        sliderScreenBrightness.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                if (!fromUser || isUpdatingBrightnessControls || !customReaderBrightnessEnabled) {
+                    return
+                }
+
+                val brightness = normalizedReaderBrightness(progress)
+                AppSettings.setCustomReaderBrightness(this@MangaReaderActivity, brightness)
+                applyCustomReaderBrightness(brightness)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar) {
+                if (customReaderBrightnessEnabled) {
+                    handler.removeCallbacks(autoHideControlsRunnable)
+                }
+            }
+
+            override fun onStopTrackingTouch(seekBar: SeekBar) {
+                if (customReaderBrightnessEnabled) {
+                    val brightness = normalizedReaderBrightness(seekBar.progress)
+                    AppSettings.setCustomReaderBrightness(this@MangaReaderActivity, brightness)
+                    applyCustomReaderBrightness(brightness)
+                    showReaderControlsTemporarily()
+                }
+            }
+        })
+
+        checkboxCustomBrightness.setOnCheckedChangeListener { _, isChecked ->
+            if (isUpdatingBrightnessControls) {
+                return@setOnCheckedChangeListener
+            }
+
+            customReaderBrightnessEnabled = isChecked
+            AppSettings.setCustomReaderBrightnessEnabled(this, isChecked)
+            if (isChecked) {
+                val brightness = normalizedReaderBrightness(sliderScreenBrightness.progress)
+                AppSettings.setCustomReaderBrightness(this, brightness)
+                applyCustomReaderBrightness(brightness)
+            } else {
+                restoreSystemBrightness()
+            }
+            updateBrightnessControls()
+            showReaderControlsTemporarily()
+        }
+
+        updateBrightnessControls()
+        applyReaderBrightnessSetting()
     }
 
     private fun loadArchive(file: File) {
@@ -628,6 +694,9 @@ class MangaReaderActivity : AppCompatActivity() {
         readerControlsVisible = visible
         layoutReaderToolbar.visibility = if (visible) View.VISIBLE else View.GONE
         layoutReaderProgress.visibility = if (visible) View.VISIBLE else View.GONE
+        if (visible) {
+            updateBrightnessControls()
+        }
         setSystemBarsVisible(visible)
     }
 
@@ -644,6 +713,69 @@ class MangaReaderActivity : AppCompatActivity() {
         tvReaderStatus.text = message
         tvReaderStatus.visibility = View.VISIBLE
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun updateBrightnessControls() {
+        if (!::sliderScreenBrightness.isInitialized || !::checkboxCustomBrightness.isInitialized) {
+            return
+        }
+
+        isUpdatingBrightnessControls = true
+        customReaderBrightnessEnabled = AppSettings.isCustomReaderBrightnessEnabled(this)
+        checkboxCustomBrightness.isChecked = customReaderBrightnessEnabled
+        sliderScreenBrightness.visibility = View.VISIBLE
+        sliderScreenBrightness.alpha = if (customReaderBrightnessEnabled) {
+            ENABLED_BRIGHTNESS_SLIDER_ALPHA
+        } else {
+            DISABLED_BRIGHTNESS_SLIDER_ALPHA
+        }
+        sliderScreenBrightness.isEnabled = customReaderBrightnessEnabled
+        sliderScreenBrightness.isClickable = customReaderBrightnessEnabled
+        sliderScreenBrightness.isFocusable = customReaderBrightnessEnabled
+        sliderScreenBrightness.progress = if (customReaderBrightnessEnabled) {
+            AppSettings.getCustomReaderBrightness(this)
+        } else {
+            readSystemBrightness()
+        }
+        isUpdatingBrightnessControls = false
+    }
+
+    private fun applyReaderBrightnessSetting() {
+        customReaderBrightnessEnabled = AppSettings.isCustomReaderBrightnessEnabled(this)
+        if (customReaderBrightnessEnabled) {
+            applyCustomReaderBrightness(AppSettings.getCustomReaderBrightness(this))
+        } else {
+            restoreSystemBrightness()
+        }
+    }
+
+    private fun applyCustomReaderBrightness(brightness: Int) {
+        val normalizedBrightness = normalizedReaderBrightness(brightness)
+        val params = window.attributes
+        params.screenBrightness = (normalizedBrightness.toFloat() / MAX_READER_BRIGHTNESS.toFloat())
+            .coerceIn(MIN_WINDOW_BRIGHTNESS, MAX_WINDOW_BRIGHTNESS)
+        window.attributes = params
+    }
+
+    private fun restoreSystemBrightness() {
+        val params = window.attributes
+        params.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        window.attributes = params
+    }
+
+    private fun readSystemBrightness(): Int {
+        return runCatching {
+            Settings.System.getInt(
+                contentResolver,
+                Settings.System.SCREEN_BRIGHTNESS,
+                DEFAULT_READER_BRIGHTNESS
+            )
+        }.getOrDefault(DEFAULT_READER_BRIGHTNESS)
+            .coerceIn(MIN_READER_BRIGHTNESS, MAX_READER_BRIGHTNESS)
+    }
+
+    private fun normalizedReaderBrightness(brightness: Int): Int {
+        return brightness.coerceIn(MIN_READER_BRIGHTNESS, MAX_READER_BRIGHTNESS)
     }
 
     private fun readerPositionKey(file: File): String {
@@ -1827,6 +1959,13 @@ class MangaReaderActivity : AppCompatActivity() {
         private const val READER_VIEW_CACHE_SIZE = 6
         private const val FAST_SCROLL_DY_THRESHOLD_PX = 160
         private const val VOLUME_KEY_PAGE_TURN_MIN_INTERVAL_MS = 180L
+        private const val DEFAULT_READER_BRIGHTNESS = 128
+        private const val MIN_READER_BRIGHTNESS = 1
+        private const val MAX_READER_BRIGHTNESS = 255
+        private const val MIN_WINDOW_BRIGHTNESS = 0.01f
+        private const val MAX_WINDOW_BRIGHTNESS = 1f
+        private const val ENABLED_BRIGHTNESS_SLIDER_ALPHA = 1f
+        private const val DISABLED_BRIGHTNESS_SLIDER_ALPHA = 0.72f
         private const val SCROLL_DIRECTION_FORWARD = 1
         private const val SCROLL_DIRECTION_BACKWARD = -1
 

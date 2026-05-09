@@ -121,5 +121,41 @@
             android:text="@string/volume_key_page_turn"
             android:textColor="#333333"
             android:textSize="15sp" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchCustomReaderBrightness"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:gravity="center_vertical"
+            android:text="@string/custom_brightness"
+            android:textColor="#333333"
+            android:textSize="15sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <SeekBar
+                android:id="@+id/sliderSettingsReaderBrightness"
+                android:layout_width="0dp"
+                android:layout_height="36dp"
+                android:layout_weight="1"
+                android:max="255"
+                android:progress="128"
+                android:progressBackgroundTint="@color/reader_brightness_track_tint"
+                android:progressTint="@color/comiclab_blue"
+                android:thumbTint="@color/reader_brightness_thumb_tint" />
+
+            <TextView
+                android:id="@+id/tvSettingsBrightnessValue"
+                android:layout_width="52dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:gravity="end"
+                android:textColor="#333333"
+                android:textSize="14sp" />
+        </LinearLayout>
     </LinearLayout>
 </androidx.constraintlayout.widget.ConstraintLayout>
