@@ -188,8 +188,8 @@ class MangaReaderActivity : AppCompatActivity() {
                 updateReaderProgress(firstVisibleItem, totalItemCount)
             }
         })
-        listReaderPages.onZoomChanged = { scale ->
-            updateReaderZoom(scale)
+        listReaderPages.onTransformChanged = { scale, horizontalPanX ->
+            updateReaderTransform(scale, horizontalPanX)
         }
         sliderReaderProgress.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
@@ -269,7 +269,7 @@ class MangaReaderActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateReaderZoom(scale: Float) {
+    private fun updateReaderTransform(scale: Float, horizontalPanX: Float) {
         suppressReaderTap = true
         handler.removeCallbacks(clearSuppressReaderTapRunnable)
         handler.postDelayed(clearSuppressReaderTapRunnable, SUPPRESS_TAP_AFTER_ZOOM_MS)
@@ -281,8 +281,12 @@ class MangaReaderActivity : AppCompatActivity() {
             0
         }
 
-        pageAdapter?.setZoomScale(scale)
-        listReaderPages.setSelectionFromTop(firstVisiblePosition, firstChildTop)
+        val scaleChanged = pageAdapter?.setReaderTransform(scale, horizontalPanX) ?: false
+        if (scaleChanged) {
+            listReaderPages.setSelectionFromTop(firstVisiblePosition, firstChildTop)
+        } else {
+            pageAdapter?.applyTransformToVisiblePages(listReaderPages)
+        }
     }
 
     private fun updateReaderProgress(firstVisibleItem: Int, totalItemCount: Int) {
@@ -462,6 +466,7 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         private var zoomScale = ZoomableReaderListView.MIN_ZOOM
+        private var horizontalPanX = 0f
 
         override fun getCount(): Int = entries.size
 
@@ -503,17 +508,31 @@ class MangaReaderActivity : AppCompatActivity() {
             return view
         }
 
-        fun setZoomScale(scale: Float) {
+        fun setReaderTransform(scale: Float, panX: Float): Boolean {
             val newScale = scale.coerceIn(
                 ZoomableReaderListView.MIN_ZOOM,
                 ZoomableReaderListView.MAX_ZOOM
             )
-            if (newScale == zoomScale) {
-                return
+            val scaleChanged = newScale != zoomScale
+            val panChanged = panX != horizontalPanX
+            if (!scaleChanged && !panChanged) {
+                return false
             }
 
             zoomScale = newScale
-            notifyDataSetChanged()
+            horizontalPanX = panX
+            if (scaleChanged) {
+                notifyDataSetChanged()
+            }
+            return scaleChanged
+        }
+
+        fun applyTransformToVisiblePages(listView: AbsListView) {
+            for (index in 0 until listView.childCount) {
+                val container = listView.getChildAt(index) as? FrameLayout ?: continue
+                val holder = container.tag as? PageViewHolder ?: continue
+                holder.imageView.translationX = horizontalPanX
+            }
         }
 
         fun close() {
@@ -527,6 +546,7 @@ class MangaReaderActivity : AppCompatActivity() {
             imageView.setImageDrawable(null)
             setContainerHeight(container, ESTIMATED_READER_PAGE_HEIGHT_RATIO)
             setImageSize(imageView, zoomedDisplayWidth(), ViewGroup.LayoutParams.MATCH_PARENT)
+            imageView.translationX = horizontalPanX
         }
 
         private fun loadBitmap(position: Int, container: FrameLayout, holder: PageViewHolder) {
@@ -560,6 +580,7 @@ class MangaReaderActivity : AppCompatActivity() {
             val imageHeight = calculateImageHeight(bitmap, imageWidth)
             setContainerHeight(container, imageHeight)
             setImageSize(imageView, imageWidth, imageHeight)
+            imageView.translationX = horizontalPanX
             imageView.setImageBitmap(bitmap)
         }
 
