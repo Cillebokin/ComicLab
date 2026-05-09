@@ -65,15 +65,20 @@ class MainActivity : AppCompatActivity() {
             loadCurrentDirectory()
         }
 
-        listView.setOnItemClickListener { _, _, position, _ ->
+        listView.setOnItemClickListener { _, view, position, _ ->
             val item = fileItems[position]
 
             if (item.isParent) {
                 goParent()
+                clearFileListTouchState(view)
                 return@setOnItemClickListener
             }
 
-            val file = item.file ?: return@setOnItemClickListener
+            val file = item.file
+            if (file == null) {
+                clearFileListTouchState(view)
+                return@setOnItemClickListener
+            }
             if (file.isDirectory) {
                 currentPath = file.absolutePath
                 loadCurrentDirectory()
@@ -82,6 +87,7 @@ class MainActivity : AppCompatActivity() {
             } else {
                 openFile(file)
             }
+            clearFileListTouchState(view)
         }
 
         if (!showStoragePermissionNoticeIfNeeded()) {
@@ -91,9 +97,15 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        clearFileListTouchState()
         if (prefs.getBoolean(KEY_STORAGE_PERMISSION_PROMPTED, false)) {
             initializeBrowserIfPermitted()
         }
+    }
+
+    override fun onPause() {
+        clearFileListTouchState()
+        super.onPause()
     }
 
     private fun showStoragePermissionNoticeIfNeeded(): Boolean {
@@ -266,6 +278,35 @@ class MainActivity : AppCompatActivity() {
         (listView.adapter as FileListAdapter).notifyDataSetChanged()
     }
 
+    private fun clearFileListTouchState(clickedView: View? = null) {
+        if (clickedView == null) {
+            resetFileListState()
+            return
+        }
+
+        clickedView.postDelayed({
+            resetFileListState(clickedView)
+        }, CLEAR_CLICK_STATE_DELAY_MS)
+    }
+
+    private fun resetFileListState(clickedView: View? = null) {
+        listView.clearChoices()
+        listView.isPressed = false
+        listView.isSelected = false
+        listView.isActivated = false
+
+        clickedView?.let { resetViewState(it) }
+        for (index in 0 until listView.childCount) {
+            resetViewState(listView.getChildAt(index))
+        }
+    }
+
+    private fun resetViewState(view: View) {
+        view.isPressed = false
+        view.isSelected = false
+        view.isActivated = false
+    }
+
     private fun showMessage(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
@@ -273,6 +314,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val PREFS_NAME = "saf_prefs"
         private const val KEY_STORAGE_PERMISSION_PROMPTED = "storage_permission_prompted"
+        private const val CLEAR_CLICK_STATE_DELAY_MS = 120L
         private val STORAGE_ROOT_PATH = Environment.getExternalStorageDirectory().absolutePath
     }
 }
