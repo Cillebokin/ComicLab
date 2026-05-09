@@ -11,6 +11,9 @@ object ComicArchive {
     private val supportedArchiveExtensions = setOf("zip", "cbz")
     private val archiveExtensions = supportedArchiveExtensions + setOf("rar", "cbr", "7z", "cb7", "tar", "gz")
     private val imageExtensions = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
+    private val naturalEntryNameComparator = Comparator<String> { left, right ->
+        compareNaturalEntryNames(left, right)
+    }
 
     fun isArchive(file: File): Boolean {
         return file.isFile && file.extension.lowercase(Locale.ROOT) in archiveExtensions
@@ -25,7 +28,7 @@ object ComicArchive {
             return zipFile.entries().asSequence()
                 .filter { !it.isDirectory && it.isImageEntry() }
                 .map { it.name }
-                .sortedWith(String.CASE_INSENSITIVE_ORDER)
+                .sortedWith(naturalEntryNameComparator)
                 .toList()
         }
     }
@@ -53,6 +56,85 @@ object ComicArchive {
     private fun ZipEntry.isImageEntry(): Boolean {
         val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
         return extension in imageExtensions
+    }
+
+    private fun compareNaturalEntryNames(left: String, right: String): Int {
+        var leftIndex = 0
+        var rightIndex = 0
+
+        while (leftIndex < left.length && rightIndex < right.length) {
+            val leftChar = left[leftIndex]
+            val rightChar = right[rightIndex]
+
+            if (leftChar.isDigit() && rightChar.isDigit()) {
+                val leftEnd = findNumberEnd(left, leftIndex)
+                val rightEnd = findNumberEnd(right, rightIndex)
+                val numberComparison = compareNumberRuns(left, leftIndex, leftEnd, right, rightIndex, rightEnd)
+                if (numberComparison != 0) {
+                    return numberComparison
+                }
+                leftIndex = leftEnd
+                rightIndex = rightEnd
+                continue
+            }
+
+            val charComparison = leftChar.lowercaseChar().compareTo(rightChar.lowercaseChar())
+            if (charComparison != 0) {
+                return charComparison
+            }
+
+            leftIndex++
+            rightIndex++
+        }
+
+        if (leftIndex != left.length || rightIndex != right.length) {
+            return (left.length - leftIndex).compareTo(right.length - rightIndex)
+        }
+
+        return left.compareTo(right)
+    }
+
+    private fun findNumberEnd(value: String, startIndex: Int): Int {
+        var index = startIndex
+        while (index < value.length && value[index].isDigit()) {
+            index++
+        }
+        return index
+    }
+
+    private fun compareNumberRuns(
+        left: String,
+        leftStart: Int,
+        leftEnd: Int,
+        right: String,
+        rightStart: Int,
+        rightEnd: Int
+    ): Int {
+        val leftSignificantStart = findSignificantNumberStart(left, leftStart, leftEnd)
+        val rightSignificantStart = findSignificantNumberStart(right, rightStart, rightEnd)
+        val leftSignificantLength = leftEnd - leftSignificantStart
+        val rightSignificantLength = rightEnd - rightSignificantStart
+
+        if (leftSignificantLength != rightSignificantLength) {
+            return leftSignificantLength.compareTo(rightSignificantLength)
+        }
+
+        for (offset in 0 until leftSignificantLength) {
+            val digitComparison = left[leftSignificantStart + offset].compareTo(right[rightSignificantStart + offset])
+            if (digitComparison != 0) {
+                return digitComparison
+            }
+        }
+
+        return 0
+    }
+
+    private fun findSignificantNumberStart(value: String, startIndex: Int, endIndex: Int): Int {
+        var index = startIndex
+        while (index < endIndex - 1 && value[index] == '0') {
+            index++
+        }
+        return index
     }
 
     private fun calculateInSampleSize(width: Int, height: Int, maxSize: Int): Int {

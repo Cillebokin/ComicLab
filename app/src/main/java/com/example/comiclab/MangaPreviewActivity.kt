@@ -1,6 +1,7 @@
 package com.example.comiclab
 
 import android.graphics.Bitmap
+import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -16,6 +17,7 @@ class MangaPreviewActivity : AppCompatActivity() {
     private lateinit var imgCover: ImageView
     private lateinit var tvComicName: TextView
     private lateinit var btnFullRead: Button
+    private lateinit var btnExitPreview: Button
     private lateinit var gridPreview: GridLayout
     private lateinit var btnTogglePreview: Button
     private lateinit var tvStatus: TextView
@@ -29,11 +31,16 @@ class MangaPreviewActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_manga_preview)
-        SystemBars.fitContentBelowSystemBars(this, findViewById<View>(R.id.main))
+        SystemBars.fitContentBelowSystemBars(
+            this,
+            findViewById<View>(R.id.main),
+            findViewById<View>(R.id.statusBarBackground)
+        )
 
         imgCover = findViewById(R.id.imgCover)
         tvComicName = findViewById(R.id.tvComicName)
         btnFullRead = findViewById(R.id.btnFullRead)
+        btnExitPreview = findViewById(R.id.btnExitPreview)
         gridPreview = findViewById(R.id.gridPreview)
         btnTogglePreview = findViewById(R.id.btnTogglePreview)
         tvStatus = findViewById(R.id.tvStatus)
@@ -46,7 +53,11 @@ class MangaPreviewActivity : AppCompatActivity() {
         }
 
         archiveFile = file
-        tvComicName.text = file.name
+        tvComicName.text = file.nameWithoutExtension
+
+        btnExitPreview.setOnClickListener {
+            returnToFileBrowser()
+        }
 
         btnTogglePreview.setOnClickListener {
             showingAll = !showingAll
@@ -174,6 +185,14 @@ class MangaPreviewActivity : AppCompatActivity() {
         tvStatus.visibility = View.VISIBLE
         btnTogglePreview.visibility = View.GONE
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun returnToFileBrowser() {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        startActivity(intent)
+        finish()
     }
 
     companion object {

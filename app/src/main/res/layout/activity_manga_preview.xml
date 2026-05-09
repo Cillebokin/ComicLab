@@ -9,26 +9,40 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="16dp">
+        android:orientation="vertical">
+
+        <View
+            android:id="@+id/statusBarBackground"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:background="@color/comiclab_blue" />
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="208dp"
+            android:background="@color/comiclab_blue"
             android:gravity="top"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:padding="16dp">
 
-            <ImageView
-                android:id="@+id/imgCover"
-                android:layout_width="128dp"
-                android:layout_height="176dp"
-                android:background="#EEEEEE"
-                android:contentDescription="@string/comic_cover"
-                android:scaleType="centerCrop" />
+            <FrameLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1">
+
+                <ImageView
+                    android:id="@+id/imgCover"
+                    android:layout_width="128dp"
+                    android:layout_height="match_parent"
+                    android:layout_gravity="start"
+                    android:background="#EEEEEE"
+                    android:contentDescription="@string/comic_cover"
+                    android:scaleType="centerCrop" />
+            </FrameLayout>
 
             <LinearLayout
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="match_parent"
                 android:layout_marginStart="16dp"
                 android:layout_weight="1"
                 android:gravity="end"
@@ -38,43 +52,76 @@
                     android:id="@+id/tvComicName"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textColor="#222222"
+                    android:textColor="@color/white"
                     android:textSize="20sp"
                     android:textStyle="bold" />
 
-                <Button
-                    android:id="@+id/btnFullRead"
-                    android:layout_width="wrap_content"
+                <Space
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
-                    android:layout_gravity="end"
-                    android:text="@string/full_read" />
+                    android:gravity="end"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btnFullRead"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:minHeight="0dp"
+                        android:minWidth="80dp"
+                        android:paddingStart="24dp"
+                        android:paddingEnd="24dp"
+                        android:text="@string/full_read"
+                        android:textSize="12sp" />
+
+                    <Button
+                        android:id="@+id/btnExitPreview"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:minHeight="0dp"
+                        android:minWidth="80dp"
+                        android:paddingStart="24dp"
+                        android:paddingEnd="24dp"
+                        android:text="@string/exit_preview"
+                        android:textSize="12sp" />
+                </LinearLayout>
             </LinearLayout>
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/tvStatus"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/loading_preview"
-            android:textColor="#666666"
-            android:textSize="14sp" />
+            android:orientation="vertical"
+            android:padding="16dp">
 
-        <GridLayout
-            android:id="@+id/gridPreview"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:columnCount="3"
-            android:useDefaultMargins="false" />
+            <TextView
+                android:id="@+id/tvStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/loading_preview"
+                android:textColor="#666666"
+                android:textSize="14sp" />
 
-        <Button
-            android:id="@+id/btnTogglePreview"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/preview_all"
-            android:visibility="gone" />
+            <GridLayout
+                android:id="@+id/gridPreview"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:columnCount="3"
+                android:useDefaultMargins="false" />
+
+            <Button
+                android:id="@+id/btnTogglePreview"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/preview_all"
+                android:visibility="gone" />
+        </LinearLayout>
     </LinearLayout>
 </ScrollView>

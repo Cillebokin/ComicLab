@@ -21,7 +21,8 @@
     <string name="storage_permission_required">请授予管理所有文件权限</string>
     <string name="confirm">确定</string>
     <string name="read">阅读</string>
-    <string name="full_read">完整阅读</string>
+    <string name="full_read">阅读</string>
+    <string name="exit_preview">退出</string>
     <string name="preview_all">预览全部</string>
     <string name="collapse_preview">收起预览</string>
     <string name="loading_preview">正在加载预览...</string>
