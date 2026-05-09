@@ -89,7 +89,7 @@ class MangaPreviewActivity : AppCompatActivity() {
                 }
 
                 imageEntries = entries
-                tvStatus.visibility = View.GONE
+                tvStatus.visibility = View.INVISIBLE
                 loadCover(entries.first())
                 renderPreviewGrid()
             }
@@ -153,7 +153,7 @@ class MangaPreviewActivity : AppCompatActivity() {
                     }
 
                     if (index == entriesToShow.lastIndex) {
-                        tvStatus.visibility = View.GONE
+                        tvStatus.visibility = View.INVISIBLE
                     }
                 }
             }

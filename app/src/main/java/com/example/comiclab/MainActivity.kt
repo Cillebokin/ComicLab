@@ -14,6 +14,7 @@ import android.widget.ImageButton
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import com.google.android.material.bottomsheet.BottomSheetDialog
@@ -52,6 +53,11 @@ class MainActivity : AppCompatActivity() {
         btnSearch = findViewById(R.id.btnSearch)
 
         listView.adapter = FileListAdapter(this, fileItems)
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                handleSystemBack()
+            }
+        })
 
         btnBack.setOnClickListener {
             goParent()
@@ -172,15 +178,27 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val current = File(currentPath)
-        val root = File(STORAGE_ROOT_PATH)
-        if (current.absolutePath == root.absolutePath) {
+        if (isAtStorageRoot()) {
             loadCurrentDirectory()
             return
         }
 
+        val current = File(currentPath)
         currentPath = current.parentFile?.absolutePath ?: STORAGE_ROOT_PATH
         loadCurrentDirectory()
+    }
+
+    private fun handleSystemBack() {
+        if (!Environment.isExternalStorageManager() || isAtStorageRoot()) {
+            finish()
+            return
+        }
+
+        goParent()
+    }
+
+    private fun isAtStorageRoot(): Boolean {
+        return File(currentPath).absolutePath == File(STORAGE_ROOT_PATH).absolutePath
     }
 
     private fun loadCurrentDirectory() {
