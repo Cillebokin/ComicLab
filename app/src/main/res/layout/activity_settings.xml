@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/main"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <View
+        android:id="@+id/statusBarBackground"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:background="@color/comiclab_blue"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <LinearLayout
+        android:id="@+id/layoutSettingsToolbar"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:background="@color/comiclab_blue"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        app:layout_constraintTop_toBottomOf="@+id/statusBarBackground">
+
+        <ImageButton
+            android:id="@+id/btnBack"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/back"
+            android:scaleType="centerInside"
+            android:src="@drawable/png_back_icon"
+            android:tint="@color/white" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:text="@string/settings"
+            android:textColor="@color/white"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:orientation="vertical"
+        android:padding="16dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/layoutSettingsToolbar">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/reading_direction"
+            android:textColor="#222222"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <RadioGroup
+            android:id="@+id/radioReadingDirection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/radioTopToBottom"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:buttonTint="@color/comiclab_blue"
+                android:gravity="center_vertical"
+                android:text="@string/reading_direction_top_to_bottom"
+                android:textColor="#333333"
+                android:textSize="15sp" />
+
+            <RadioButton
+                android:id="@+id/radioRightToLeft"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:buttonTint="@color/comiclab_blue"
+                android:gravity="center_vertical"
+                android:text="@string/reading_direction_right_to_left"
+                android:textColor="#333333"
+                android:textSize="15sp" />
+
+            <RadioButton
+                android:id="@+id/radioLeftToRight"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:buttonTint="@color/comiclab_blue"
+                android:gravity="center_vertical"
+                android:text="@string/reading_direction_left_to_right"
+                android:textColor="#333333"
+                android:textSize="15sp" />
+        </RadioGroup>
+    </LinearLayout>
+</androidx.constraintlayout.widget.ConstraintLayout>

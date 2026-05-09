@@ -13,6 +13,7 @@
     <string name="file_item">文件</string>
     <string name="directory_item">目录</string>
     <string name="choose_directory">存储权限</string>
+    <string name="settings">设置</string>
     <string name="sort">排序</string>
     <string name="open_file">刷新</string>
     <string name="back">返回</string>
@@ -42,4 +43,8 @@
     <string name="reader_progress_dialog_message">检测到上次阅读进度，是否继续阅读？</string>
     <string name="continue_reading">继续阅读</string>
     <string name="read_from_beginning">从头阅读</string>
+    <string name="reading_direction">阅读方向</string>
+    <string name="reading_direction_top_to_bottom">从上到下</string>
+    <string name="reading_direction_right_to_left">从右到左</string>
+    <string name="reading_direction_left_to_right">从左到右</string>
 </resources>

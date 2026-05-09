@@ -38,6 +38,10 @@
             android:exported="false" />
 
         <activity
+            android:name="com.example.comiclab.SettingsActivity"
+            android:exported="false" />
+
+        <activity
             android:name="com.example.comiclab.MainActivity"
             android:exported="true">
             <intent-filter>

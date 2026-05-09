@@ -66,7 +66,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnOptions.setOnClickListener {
-            openManageAllFilesAccessSettings()
+            openSettings()
         }
 
         btnSearch.setOnClickListener {
@@ -163,6 +163,10 @@ class MainActivity : AppCompatActivity() {
         } catch (_: ActivityNotFoundException) {
             startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
         }
+    }
+
+    private fun openSettings() {
+        startActivity(Intent(this, SettingsActivity::class.java))
     }
 
     private fun initializeBrowserIfPermitted() {

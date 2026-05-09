@@ -134,6 +134,20 @@ object ComicArchive {
             )?.scaleToWidthIfLarger(targetWidth)
         }
 
+        fun decodeImageForPage(entryName: String, targetWidth: Int, targetHeight: Int): Bitmap? {
+            val bytes = imageBytes(entryName) ?: return null
+            return decodeBitmap(
+                bytes = bytes,
+                preferredConfig = Bitmap.Config.ARGB_8888,
+                sampleSize = { width, height ->
+                    maxOf(
+                        calculateInSampleSizeForWidth(width, targetWidth),
+                        calculateInSampleSizeForHeight(height, targetHeight)
+                    )
+                }
+            )?.scaleToFitBoundsIfLarger(targetWidth, targetHeight)
+        }
+
         fun decodeRegionForWidth(entryName: String, sourceRect: Rect, targetWidth: Int): Bitmap? {
             val bytes = imageBytes(entryName) ?: return null
             val decoder = runCatching {
@@ -551,6 +565,18 @@ object ComicArchive {
         return sampleSize
     }
 
+    private fun calculateInSampleSizeForHeight(height: Int, targetHeight: Int): Int {
+        if (height <= 0 || targetHeight <= 0) {
+            return 1
+        }
+
+        var sampleSize = 1
+        while (height / (sampleSize * 2) >= targetHeight) {
+            sampleSize *= 2
+        }
+        return sampleSize
+    }
+
     private fun Bitmap.scaleToFitMaxSize(maxSize: Int): Bitmap {
         if (maxSize <= 0 || width <= 0 || height <= 0) {
             return this
@@ -576,6 +602,24 @@ object ComicArchive {
             .toInt()
             .coerceAtLeast(1)
         return createScaledBitmapSafely(targetWidth, targetHeight)
+    }
+
+    private fun Bitmap.scaleToFitBoundsIfLarger(targetWidth: Int, targetHeight: Int): Bitmap {
+        if (targetWidth <= 0 || targetHeight <= 0 || width <= 0 || height <= 0) {
+            return this
+        }
+
+        if (width <= targetWidth && height <= targetHeight) {
+            return this
+        }
+
+        val scale = minOf(
+            targetWidth.toFloat() / width.toFloat(),
+            targetHeight.toFloat() / height.toFloat()
+        )
+        val scaledWidth = (width * scale).toInt().coerceAtLeast(1)
+        val scaledHeight = (height * scale).toInt().coerceAtLeast(1)
+        return createScaledBitmapSafely(scaledWidth, scaledHeight)
     }
 
     private fun Bitmap.createScaledBitmapSafely(targetWidth: Int, targetHeight: Int): Bitmap {

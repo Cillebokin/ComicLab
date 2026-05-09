@@ -76,7 +76,7 @@
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/choose_directory"
+            android:contentDescription="@string/settings"
             android:scaleType="centerInside"
             android:src="@drawable/png_options_icon" />
 

@@ -25,6 +25,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.PagerSnapHelper
 import androidx.recyclerview.widget.RecyclerView
 import java.io.File
 import java.util.Collections
@@ -74,10 +75,12 @@ class MangaReaderActivity : AppCompatActivity() {
     private var currentReaderOffset = 0
     private var readerScrollDirection = SCROLL_DIRECTION_FORWARD
     private var readerScrollState = RecyclerView.SCROLL_STATE_IDLE
+    private var readingDirection = AppSettings.READING_DIRECTION_TOP_TO_BOTTOM
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_manga_reader)
+        readingDirection = AppSettings.getReadingDirection(this)
 
         bindViews()
         configureImmersiveSystemBars()
@@ -141,8 +144,15 @@ class MangaReaderActivity : AppCompatActivity() {
         tvReaderProgress = findViewById(R.id.tvReaderProgress)
         tvReaderStatus = findViewById(R.id.tvReaderStatus)
 
-        readerLayoutManager = LinearLayoutManager(this)
+        readerLayoutManager = LinearLayoutManager(
+            this,
+            readerLayoutOrientation(),
+            readingDirection == AppSettings.READING_DIRECTION_RIGHT_TO_LEFT
+        )
         listReaderPages.layoutManager = readerLayoutManager
+        if (isHorizontalReading()) {
+            PagerSnapHelper().attachToRecyclerView(listReaderPages)
+        }
         listReaderPages.itemAnimator = null
         listReaderPages.setHasFixedSize(false)
         listReaderPages.setItemViewCacheSize(READER_VIEW_CACHE_SIZE)
@@ -217,17 +227,19 @@ class MangaReaderActivity : AppCompatActivity() {
                 updateCurrentReaderPosition(firstVisibleItem)
                 updateReaderProgress(firstVisibleItem, totalItemCount)
 
+                val primaryDelta = if (isHorizontalReading()) dx else dy
                 val direction = when {
-                    dy > 0 -> SCROLL_DIRECTION_FORWARD
-                    dy < 0 -> SCROLL_DIRECTION_BACKWARD
+                    primaryDelta > 0 -> SCROLL_DIRECTION_FORWARD
+                    primaryDelta < 0 -> SCROLL_DIRECTION_BACKWARD
                     else -> readerScrollDirection
                 }
-                if (dy != 0) {
+                if (primaryDelta != 0) {
                     readerScrollDirection = direction
                 }
-                val fastThreshold = (recyclerView.height / 4).coerceAtLeast(FAST_SCROLL_DY_THRESHOLD_PX)
+                val fastThresholdBase = if (isHorizontalReading()) recyclerView.width else recyclerView.height
+                val fastThreshold = (fastThresholdBase / 4).coerceAtLeast(FAST_SCROLL_DY_THRESHOLD_PX)
                 val isFastScroll = readerScrollState == RecyclerView.SCROLL_STATE_SETTLING ||
-                    abs(dy) >= fastThreshold
+                    abs(primaryDelta) >= fastThreshold
                 pageAdapter?.preloadAround(
                     firstVisiblePosition = firstVisibleItem,
                     visibleItemCount = visibleItemCount,
@@ -298,7 +310,11 @@ class MangaReaderActivity : AppCompatActivity() {
         val displayWidth = listReaderPages.width
             .takeIf { it > 0 }
             ?: resources.displayMetrics.widthPixels.coerceAtLeast(MIN_READER_IMAGE_WIDTH)
+        val displayHeight = listReaderPages.height
+            .takeIf { it > 0 }
+            ?: resources.displayMetrics.heightPixels.coerceAtLeast(MIN_READER_IMAGE_WIDTH)
         val decodeWidth = displayWidth * READER_PAGE_DECODE_SCALE
+        val decodeHeight = displayHeight * READER_PAGE_DECODE_SCALE
 
         pageAdapter?.close()
         pageAdapter = MangaPageAdapter(
@@ -306,7 +322,10 @@ class MangaReaderActivity : AppCompatActivity() {
             session = session,
             entries = entries,
             baseDisplayWidth = displayWidth,
+            baseDisplayHeight = displayHeight,
             decodeWidth = decodeWidth,
+            decodeHeight = decodeHeight,
+            readingDirection = readingDirection,
             onPageReady = { position ->
                 if (position == pendingRestorePosition) {
                     applyPendingReaderPosition()
@@ -320,6 +339,7 @@ class MangaReaderActivity : AppCompatActivity() {
         sliderReaderProgress.max = (entries.size - 1).coerceAtLeast(0)
         sliderReaderProgress.progress = 0
         if (shouldStartFromBeginning) {
+            readerLayoutManager.scrollToPositionWithOffset(0, 0)
             updateReaderProgress(0, entries.size)
         } else {
             restoreReaderPosition()
@@ -353,8 +373,7 @@ class MangaReaderActivity : AppCompatActivity() {
         val firstVisiblePosition = readerLayoutManager.findFirstVisibleItemPosition()
             .takeIf { it != RecyclerView.NO_POSITION }
             ?: 0
-        val firstChildTop = readerLayoutManager.findViewByPosition(firstVisiblePosition)?.top
-            ?: 0
+        val firstChildStart = readerChildStartForPosition(firstVisiblePosition) ?: 0
 
         val scaleChanged = pageAdapter?.setReaderTransform(scale, horizontalPanX) ?: false
         pageAdapter?.applyTransformToVisiblePages(
@@ -362,7 +381,7 @@ class MangaReaderActivity : AppCompatActivity() {
             resizePages = scaleChanged
         )
         if (scaleChanged) {
-            readerLayoutManager.scrollToPositionWithOffset(firstVisiblePosition, firstChildTop)
+            readerLayoutManager.scrollToPositionWithOffset(firstVisiblePosition, firstChildStart)
         }
     }
 
@@ -425,7 +444,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
     private fun updateCurrentReaderPosition(firstVisiblePosition: Int) {
         currentReaderPosition = firstVisiblePosition.coerceAtLeast(0)
-        currentReaderOffset = readerLayoutManager.findViewByPosition(currentReaderPosition)?.top
+        currentReaderOffset = readerChildStartForPosition(currentReaderPosition)
             ?: currentReaderOffset
     }
 
@@ -433,7 +452,11 @@ class MangaReaderActivity : AppCompatActivity() {
         val file = archiveFile ?: return
         val position = readerPrefs.getInt(readerPositionKey(file), 0)
             .coerceIn(0, imageEntries.lastIndex.coerceAtLeast(0))
-        val offset = readerPrefs.getInt(readerOffsetKey(file), 0)
+        val offset = if (isHorizontalReading()) {
+            0
+        } else {
+            readerPrefs.getInt(readerOffsetKey(file), 0)
+        }
 
         currentReaderPosition = position
         currentReaderOffset = offset
@@ -498,6 +521,28 @@ class MangaReaderActivity : AppCompatActivity() {
         return (last - first + 1).coerceAtLeast(1)
     }
 
+    private fun readerChildStartForPosition(position: Int): Int? {
+        val child = readerLayoutManager.findViewByPosition(position) ?: return null
+        return if (isHorizontalReading()) {
+            child.left
+        } else {
+            child.top
+        }
+    }
+
+    private fun readerLayoutOrientation(): Int {
+        return if (isHorizontalReading()) {
+            LinearLayoutManager.HORIZONTAL
+        } else {
+            LinearLayoutManager.VERTICAL
+        }
+    }
+
+    private fun isHorizontalReading(): Boolean {
+        return readingDirection == AppSettings.READING_DIRECTION_RIGHT_TO_LEFT ||
+            readingDirection == AppSettings.READING_DIRECTION_LEFT_TO_RIGHT
+    }
+
     private fun showReaderControlsTemporarily() {
         setReaderControlsVisible(true)
         handler.removeCallbacks(autoHideControlsRunnable)
@@ -539,7 +584,10 @@ class MangaReaderActivity : AppCompatActivity() {
         private val session: ComicArchive.ReaderSession,
         private val entries: List<String>,
         private val baseDisplayWidth: Int,
+        private val baseDisplayHeight: Int,
         private val decodeWidth: Int,
+        private val decodeHeight: Int,
+        private val readingDirection: String,
         private val onPageReady: (position: Int) -> Unit,
         private val onPageTap: () -> Unit
     ) : RecyclerView.Adapter<MangaPageAdapter.PageViewHolder>() {
@@ -619,15 +667,26 @@ class MangaReaderActivity : AppCompatActivity() {
 
         override fun getItemId(position: Int): Long = position.toLong()
 
+        private fun initialContainerLayoutParams(): RecyclerView.LayoutParams {
+            return if (isHorizontalReading()) {
+                RecyclerView.LayoutParams(
+                    baseDisplayWidth,
+                    RecyclerView.LayoutParams.MATCH_PARENT
+                )
+            } else {
+                RecyclerView.LayoutParams(
+                    RecyclerView.LayoutParams.MATCH_PARENT,
+                    MIN_READER_PAGE_HEIGHT
+                )
+            }
+        }
+
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PageViewHolder {
             val container = FrameLayout(context).apply {
                 setBackgroundColor(Color.BLACK)
                 clipChildren = true
                 isClickable = true
-                layoutParams = RecyclerView.LayoutParams(
-                    RecyclerView.LayoutParams.MATCH_PARENT,
-                    MIN_READER_PAGE_HEIGHT
-                )
+                layoutParams = initialContainerLayoutParams()
             }
             val imageView = ImageView(context).apply {
                 setBackgroundColor(Color.BLACK)
@@ -821,6 +880,25 @@ class MangaReaderActivity : AppCompatActivity() {
             holder.imageView.setImageDrawable(null)
             holder.imageView.setBackgroundColor(PLACEHOLDER_COLOR)
 
+            if (isHorizontalReading()) {
+                setContainerSize(holder.container, baseDisplayWidth, ViewGroup.LayoutParams.MATCH_PARENT)
+                val imageWidth = baseDisplayWidth
+                val imageHeight = if (bounds != null) {
+                    val size = calculateFitInsideSize(bounds.width, bounds.height)
+                    size.height
+                } else {
+                    baseDisplayHeight
+                }
+                val centeredWidth = if (bounds != null) {
+                    calculateFitInsideSize(bounds.width, bounds.height).width
+                } else {
+                    imageWidth
+                }
+                setFrameChildSize(holder.imageView, centeredWidth, imageHeight, Gravity.CENTER)
+                holder.imageView.translationX = horizontalPanX
+                return
+            }
+
             val imageWidth = zoomedDisplayWidth()
             val imageHeight = if (bounds != null) {
                 calculateDisplayHeight(bounds.width, bounds.height, imageWidth)
@@ -839,6 +917,15 @@ class MangaReaderActivity : AppCompatActivity() {
             holder.tileContainer.removeAllViews()
             holder.imageView.visibility = View.VISIBLE
             holder.imageView.setBackgroundColor(Color.BLACK)
+
+            if (isHorizontalReading()) {
+                val imageSize = calculateFitInsideSize(bitmap.width, bitmap.height)
+                setContainerSize(holder.container, baseDisplayWidth, ViewGroup.LayoutParams.MATCH_PARENT)
+                setFrameChildSize(holder.imageView, imageSize.width, imageSize.height, Gravity.CENTER)
+                holder.imageView.translationX = horizontalPanX
+                holder.imageView.setImageBitmap(bitmap)
+                return
+            }
 
             val imageWidth = zoomedDisplayWidth()
             val imageHeight = calculateDisplayHeight(bitmap.width, bitmap.height, imageWidth)
@@ -1018,7 +1105,15 @@ class MangaReaderActivity : AppCompatActivity() {
                     }
 
                     val bitmap = runCatching {
-                        session.decodeImageForWidth(entries[position], decodeWidth)
+                        if (isHorizontalReading()) {
+                            session.decodeImageForPage(
+                                entryName = entries[position],
+                                targetWidth = decodeWidth,
+                                targetHeight = decodeHeight
+                            )
+                        } else {
+                            session.decodeImageForWidth(entries[position], decodeWidth)
+                        }
                     }.getOrNull()
 
                     if (bitmap == null) {
@@ -1263,6 +1358,10 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         private fun shouldUseTiledPage(bounds: ComicArchive.ImageBounds): Boolean {
+            if (isHorizontalReading()) {
+                return false
+            }
+
             val sourcePixels = bounds.width.toLong() * bounds.height.toLong()
             val decodedHeight = calculateDisplayHeight(bounds.width, bounds.height, decodeWidth)
             val sampleSize = calculateSampleSizeForWidth(bounds.width, decodeWidth)
@@ -1287,24 +1386,37 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         private fun setContainerHeight(container: FrameLayout, height: Int) {
+            setContainerSize(container, RecyclerView.LayoutParams.MATCH_PARENT, height)
+        }
+
+        private fun setContainerSize(container: FrameLayout, width: Int, height: Int) {
             val layoutParams = container.layoutParams as? RecyclerView.LayoutParams
                 ?: RecyclerView.LayoutParams(
-                    RecyclerView.LayoutParams.MATCH_PARENT,
+                    width,
                     height
                 )
-            if (layoutParams.height != height) {
+            if (layoutParams.width != width || layoutParams.height != height) {
+                layoutParams.width = width
                 layoutParams.height = height
                 container.layoutParams = layoutParams
             }
         }
 
-        private fun setFrameChildSize(view: View, width: Int, height: Int) {
+        private fun setFrameChildSize(
+            view: View,
+            width: Int,
+            height: Int,
+            gravity: Int = Gravity.CENTER_HORIZONTAL
+        ) {
             val layoutParams = view.layoutParams as? FrameLayout.LayoutParams
-                ?: FrameLayout.LayoutParams(width, height, Gravity.CENTER_HORIZONTAL)
-            if (layoutParams.width != width || layoutParams.height != height) {
+                ?: FrameLayout.LayoutParams(width, height, gravity)
+            if (layoutParams.width != width ||
+                layoutParams.height != height ||
+                layoutParams.gravity != gravity
+            ) {
                 layoutParams.width = width
                 layoutParams.height = height
-                layoutParams.gravity = Gravity.CENTER_HORIZONTAL
+                layoutParams.gravity = gravity
                 view.layoutParams = layoutParams
             }
         }
@@ -1329,12 +1441,31 @@ class MangaReaderActivity : AppCompatActivity() {
                 .coerceAtLeast(1)
         }
 
+        private fun calculateFitInsideSize(width: Int, height: Int): DisplaySize {
+            if (width <= 0 || height <= 0 || baseDisplayWidth <= 0 || baseDisplayHeight <= 0) {
+                return DisplaySize(baseDisplayWidth, baseDisplayHeight)
+            }
+
+            val widthScale = baseDisplayWidth.toFloat() / width.toFloat()
+            val heightScale = baseDisplayHeight.toFloat() / height.toFloat()
+            val scale = minOf(widthScale, heightScale) * zoomScale
+            return DisplaySize(
+                width = (width * scale).roundToInt().coerceAtLeast(1),
+                height = (height * scale).roundToInt().coerceAtLeast(1)
+            )
+        }
+
         private fun zoomedDisplayWidth(): Int {
             return (baseDisplayWidth * zoomScale).roundToInt().coerceAtLeast(baseDisplayWidth)
         }
 
         private fun previewDecodeWidth(): Int {
             return (baseDisplayWidth / 2).coerceIn(MIN_PREVIEW_DECODE_WIDTH, MAX_PREVIEW_DECODE_WIDTH)
+        }
+
+        private fun isHorizontalReading(): Boolean {
+            return readingDirection == AppSettings.READING_DIRECTION_RIGHT_TO_LEFT ||
+                readingDirection == AppSettings.READING_DIRECTION_LEFT_TO_RIGHT
         }
 
         private fun previewBitmap(position: Int): Bitmap? {
@@ -1390,6 +1521,11 @@ class MangaReaderActivity : AppCompatActivity() {
             val position: Int,
             val tileIndex: Int,
             val imageWidth: Int
+        )
+
+        private data class DisplaySize(
+            val width: Int,
+            val height: Int
         )
 
         private enum class DecodeTaskKind {
