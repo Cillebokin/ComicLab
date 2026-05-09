@@ -8,6 +8,7 @@ import android.graphics.Rect
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.LruCache
 import android.view.Gravity
 import android.view.KeyEvent
@@ -78,6 +79,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private var readerScrollState = RecyclerView.SCROLL_STATE_IDLE
     private var readingDirection = AppSettings.READING_DIRECTION_TOP_TO_BOTTOM
     private var volumeKeyPageTurnEnabled = true
+    private var lastVolumePageTurnAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -143,19 +145,27 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (!volumeKeyPageTurnEnabled || !isVolumePageTurnKey(event.keyCode)) {
-            return super.dispatchKeyEvent(event)
+        if (handleVolumePageTurnKey(event)) {
+            return true
         }
 
-        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-            val delta = if (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
-                1
-            } else {
-                -1
-            }
-            turnReaderPage(delta)
+        return super.dispatchKeyEvent(event)
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (handleVolumePageTurnKey(event)) {
+            return true
         }
-        return true
+
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (handleVolumePageTurnKey(event)) {
+            return true
+        }
+
+        return super.onKeyUp(keyCode, event)
     }
 
     private fun bindViews() {
@@ -582,6 +592,26 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun isHorizontalReading(): Boolean {
         return readingDirection == AppSettings.READING_DIRECTION_RIGHT_TO_LEFT ||
             readingDirection == AppSettings.READING_DIRECTION_LEFT_TO_RIGHT
+    }
+
+    private fun handleVolumePageTurnKey(event: KeyEvent): Boolean {
+        if (!volumeKeyPageTurnEnabled || !isVolumePageTurnKey(event.keyCode)) {
+            return false
+        }
+
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastVolumePageTurnAt >= VOLUME_KEY_PAGE_TURN_MIN_INTERVAL_MS) {
+                lastVolumePageTurnAt = now
+                val delta = if (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+                    1
+                } else {
+                    -1
+                }
+                turnReaderPage(delta)
+            }
+        }
+        return true
     }
 
     private fun isVolumePageTurnKey(keyCode: Int): Boolean {
@@ -1796,6 +1826,7 @@ class MangaReaderActivity : AppCompatActivity() {
         private const val RESTORE_READER_POSITION_RETRY_MS = 250L
         private const val READER_VIEW_CACHE_SIZE = 6
         private const val FAST_SCROLL_DY_THRESHOLD_PX = 160
+        private const val VOLUME_KEY_PAGE_TURN_MIN_INTERVAL_MS = 180L
         private const val SCROLL_DIRECTION_FORWARD = 1
         private const val SCROLL_DIRECTION_BACKWARD = -1
 
