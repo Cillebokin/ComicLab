@@ -30,6 +30,10 @@
         </provider>
 
         <activity
+            android:name="com.example.comiclab.MangaPreviewActivity"
+            android:exported="false" />
+
+        <activity
             android:name="com.example.comiclab.MainActivity"
             android:exported="true">
             <intent-filter>

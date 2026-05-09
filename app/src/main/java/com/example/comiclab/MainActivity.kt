@@ -11,9 +11,11 @@ import android.webkit.MimeTypeMap
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ListView
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
@@ -69,6 +71,8 @@ class MainActivity : AppCompatActivity() {
             if (file.isDirectory) {
                 currentPath = file.absolutePath
                 loadCurrentDirectory()
+            } else if (ComicArchive.isArchive(file)) {
+                showArchiveMenu(file)
             } else {
                 openFile(file)
             }
@@ -215,6 +219,32 @@ class MainActivity : AppCompatActivity() {
         } catch (_: ActivityNotFoundException) {
             showMessage(getString(R.string.message_no_app_for_file))
         }
+    }
+
+    private fun showArchiveMenu(file: File) {
+        val dialog = BottomSheetDialog(this)
+        val content = layoutInflater.inflate(R.layout.bottom_sheet_archive_actions, null)
+        val btnRead = content.findViewById<TextView>(R.id.btnReadComic)
+
+        btnRead.setOnClickListener {
+            dialog.dismiss()
+            openMangaPreview(file)
+        }
+
+        dialog.setContentView(content)
+        dialog.show()
+    }
+
+    private fun openMangaPreview(file: File) {
+        if (!ComicArchive.isSupportedArchive(file)) {
+            showMessage(getString(R.string.unsupported_archive_format))
+            return
+        }
+
+        val intent = Intent(this, MangaPreviewActivity::class.java).apply {
+            putExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
+        }
+        startActivity(intent)
     }
 
     private fun getMimeType(file: File): String {

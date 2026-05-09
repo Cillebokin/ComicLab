@@ -20,4 +20,12 @@
     <string name="storage_permission_message">ComicLab需要读写手机存储权限以便进行读取、修改和删除等操作</string>
     <string name="storage_permission_required">请授予管理所有文件权限</string>
     <string name="confirm">确定</string>
+    <string name="read">阅读</string>
+    <string name="full_read">完整阅读</string>
+    <string name="preview_all">预览全部</string>
+    <string name="collapse_preview">收起预览</string>
+    <string name="loading_preview">正在加载预览...</string>
+    <string name="no_preview_images">压缩包中没有可预览的图片</string>
+    <string name="unsupported_archive_format">当前仅支持 ZIP/CBZ 格式漫画包</string>
+    <string name="comic_cover">漫画封面</string>
 </resources>

@@ -19,8 +19,6 @@ class FileListAdapter(
     private val items: List<FileItem>
 ) : ArrayAdapter<FileItem>(context, 0, items) {
 
-    private val archiveExtensions = setOf("zip", "rar", "7z", "tar", "gz", "cbz", "cbr", "cb7")
-
     override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
         val view = convertView ?: LayoutInflater.from(context)
             .inflate(R.layout.file_item, parent, false)
@@ -59,15 +57,10 @@ class FileListAdapter(
         }
 
         imgIcon.setImageResource(
-            if (isArchive(file.name)) R.drawable.png_press_package_icon else R.drawable.png_file_icon
+            if (ComicArchive.isArchive(file)) R.drawable.png_press_package_icon else R.drawable.png_file_icon
         )
         tvInfo.text = CommonFunc.formatFileSize(file.length())
 
         return view
-    }
-
-    private fun isArchive(name: String): Boolean {
-        val extension = name.substringAfterLast('.', "").lowercase()
-        return extension in archiveExtensions
     }
 }
