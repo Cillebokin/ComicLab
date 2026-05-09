@@ -2,14 +2,26 @@ package com.example.comiclab
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import net.sf.sevenzipjbinding.ExtractAskMode
+import net.sf.sevenzipjbinding.ExtractOperationResult
+import net.sf.sevenzipjbinding.IArchiveExtractCallback
+import net.sf.sevenzipjbinding.IInArchive
+import net.sf.sevenzipjbinding.ISequentialOutStream
+import net.sf.sevenzipjbinding.PropID
+import net.sf.sevenzipjbinding.SevenZip
+import net.sf.sevenzipjbinding.impl.RandomAccessFileInStream
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.RandomAccessFile
 import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 
 object ComicArchive {
-    private val supportedArchiveExtensions = setOf("zip", "cbz")
-    private val archiveExtensions = supportedArchiveExtensions + setOf("rar", "cbr", "7z", "cb7", "tar", "gz")
+    private val zipArchiveExtensions = setOf("zip", "cbz")
+    private val sevenZipArchiveExtensions = setOf("rar", "cbr", "7z", "cb7")
+    private val supportedArchiveExtensions = zipArchiveExtensions + sevenZipArchiveExtensions
+    private val archiveExtensions = supportedArchiveExtensions + setOf("tar", "gz")
     private val imageExtensions = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
     private val naturalEntryNameComparator = Comparator<String> { left, right ->
         compareNaturalEntryNames(left, right)
@@ -24,6 +36,32 @@ object ComicArchive {
     }
 
     fun imageEntries(file: File): List<String> {
+        return when (file.extension.lowercase(Locale.ROOT)) {
+            in zipArchiveExtensions -> zipImageEntries(file)
+            in sevenZipArchiveExtensions -> sevenZipImageEntries(file)
+            else -> emptyList()
+        }
+    }
+
+    fun decodeImage(file: File, entryName: String, maxSize: Int): Bitmap? {
+        val bytes = imageBytes(file, entryName) ?: return null
+        return decodeBitmap(
+            bytes = bytes,
+            preferredConfig = Bitmap.Config.RGB_565,
+            sampleSize = { width, height -> calculateInSampleSize(width, height, maxSize) }
+        )
+    }
+
+    fun decodeImageForWidth(file: File, entryName: String, targetWidth: Int): Bitmap? {
+        val bytes = imageBytes(file, entryName) ?: return null
+        return decodeBitmap(
+            bytes = bytes,
+            preferredConfig = Bitmap.Config.ARGB_8888,
+            sampleSize = { width, _ -> calculateInSampleSizeForWidth(width, targetWidth) }
+        )
+    }
+
+    private fun zipImageEntries(file: File): List<String> {
         ZipFile(file).use { zipFile ->
             return zipFile.entries().asSequence()
                 .filter { !it.isDirectory && it.isImageEntry() }
@@ -33,48 +71,120 @@ object ComicArchive {
         }
     }
 
-    fun decodeImage(file: File, entryName: String, maxSize: Int): Bitmap? {
-        ZipFile(file).use { zipFile ->
-            val entry = zipFile.getEntry(entryName) ?: return null
-            val bytes = zipFile.getInputStream(entry).use { it.readBytes() }
-
-            val bounds = BitmapFactory.Options().apply {
-                inJustDecodeBounds = true
-            }
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-
-            val sampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, maxSize)
-            val decodeOptions = BitmapFactory.Options().apply {
-                inSampleSize = sampleSize
-                inPreferredConfig = Bitmap.Config.RGB_565
-            }
-
-            return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+    private fun sevenZipImageEntries(file: File): List<String> {
+        return withSevenZipArchive(file) { archive ->
+            (0 until archive.numberOfItems)
+                .asSequence()
+                .filter { !archive.isFolder(it) }
+                .mapNotNull { archive.entryPath(it) }
+                .filter { it.isImageEntryName() }
+                .sortedWith(naturalEntryNameComparator)
+                .toList()
         }
     }
 
-    fun decodeImageForWidth(file: File, entryName: String, targetWidth: Int): Bitmap? {
+    private fun imageBytes(file: File, entryName: String): ByteArray? {
+        return when (file.extension.lowercase(Locale.ROOT)) {
+            in zipArchiveExtensions -> zipImageBytes(file, entryName)
+            in sevenZipArchiveExtensions -> sevenZipImageBytes(file, entryName)
+            else -> null
+        }
+    }
+
+    private fun zipImageBytes(file: File, entryName: String): ByteArray? {
         ZipFile(file).use { zipFile ->
             val entry = zipFile.getEntry(entryName) ?: return null
-            val bytes = zipFile.getInputStream(entry).use { it.readBytes() }
-
-            val bounds = BitmapFactory.Options().apply {
-                inJustDecodeBounds = true
-            }
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-
-            val decodeOptions = BitmapFactory.Options().apply {
-                inSampleSize = calculateInSampleSizeForWidth(bounds.outWidth, targetWidth)
-                inPreferredConfig = Bitmap.Config.RGB_565
-            }
-
-            return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+            return zipFile.getInputStream(entry).use { it.readBytes() }
         }
+    }
+
+    private fun sevenZipImageBytes(file: File, entryName: String): ByteArray? {
+        return withSevenZipArchive(file) { archive ->
+            val entryIndex = (0 until archive.numberOfItems).firstOrNull { index ->
+                !archive.isFolder(index) && archive.entryPath(index) == entryName
+            } ?: return@withSevenZipArchive null
+
+            val output = ByteArrayOutputStream()
+            var extractResult = ExtractOperationResult.OK
+            archive.extract(intArrayOf(entryIndex), false, object : IArchiveExtractCallback {
+                override fun setTotal(total: Long) = Unit
+
+                override fun setCompleted(completeValue: Long) = Unit
+
+                override fun getStream(index: Int, extractAskMode: ExtractAskMode): ISequentialOutStream? {
+                    if (index != entryIndex || extractAskMode != ExtractAskMode.EXTRACT) {
+                        return null
+                    }
+
+                    return object : ISequentialOutStream {
+                        override fun write(data: ByteArray): Int {
+                            output.write(data)
+                            return data.size
+                        }
+                    }
+                }
+
+                override fun prepareOperation(extractAskMode: ExtractAskMode) = Unit
+
+                override fun setOperationResult(extractOperationResult: ExtractOperationResult) {
+                    extractResult = extractOperationResult
+                }
+            })
+
+            if (extractResult == ExtractOperationResult.OK) {
+                output.toByteArray()
+            } else {
+                null
+            }
+        }
+    }
+
+    private fun decodeBitmap(
+        bytes: ByteArray,
+        preferredConfig: Bitmap.Config,
+        sampleSize: (width: Int, height: Int) -> Int
+    ): Bitmap? {
+        val bounds = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+
+        val decodeOptions = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight)
+            inPreferredConfig = preferredConfig
+        }
+
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
     }
 
     private fun ZipEntry.isImageEntry(): Boolean {
-        val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        return name.isImageEntryName()
+    }
+
+    private fun String.isImageEntryName(): Boolean {
+        val extension = substringAfterLast('.', "").lowercase(Locale.ROOT)
         return extension in imageExtensions
+    }
+
+    private fun IInArchive.isFolder(index: Int): Boolean {
+        return getProperty(index, PropID.IS_FOLDER) as? Boolean ?: false
+    }
+
+    private fun IInArchive.entryPath(index: Int): String? {
+        return getProperty(index, PropID.PATH) as? String
+    }
+
+    private fun <T> withSevenZipArchive(file: File, block: (IInArchive) -> T): T {
+        val randomAccessFile = RandomAccessFile(file, "r")
+        var archive: IInArchive? = null
+
+        try {
+            archive = SevenZip.openInArchive(null, RandomAccessFileInStream(randomAccessFile))
+            return block(archive)
+        } finally {
+            archive?.close()
+            randomAccessFile.close()
+        }
     }
 
     private fun compareNaturalEntryNames(left: String, right: String): Int {
