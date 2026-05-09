@@ -33,5 +33,4 @@
     <string name="comic_cover">漫画封面</string>
     <string name="reader_image">漫画页</string>
     <string name="reader_page_progress">%1$d / %2$d</string>
-    <string name="reader_gap_format">间距 %1$d</string>
 </resources>

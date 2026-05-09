@@ -55,41 +55,6 @@
                     android:textColor="@color/white"
                     android:textSize="20sp"
                     android:textStyle="bold" />
-
-                <Space
-                    android:layout_width="match_parent"
-                    android:layout_height="0dp"
-                    android:layout_weight="1" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="end"
-                    android:orientation="horizontal">
-
-                    <Button
-                        android:id="@+id/btnFullRead"
-                        android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:minHeight="0dp"
-                        android:minWidth="80dp"
-                        android:paddingStart="24dp"
-                        android:paddingEnd="24dp"
-                        android:text="@string/full_read"
-                        android:textSize="12sp" />
-
-                    <Button
-                        android:id="@+id/btnExitPreview"
-                        android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:layout_marginStart="8dp"
-                        android:minHeight="0dp"
-                        android:minWidth="80dp"
-                        android:paddingStart="24dp"
-                        android:paddingEnd="24dp"
-                        android:text="@string/exit_preview"
-                        android:textSize="12sp" />
-                </LinearLayout>
             </LinearLayout>
         </LinearLayout>
 
@@ -99,14 +64,45 @@
             android:orientation="vertical"
             android:padding="16dp">
 
-            <TextView
-                android:id="@+id/tvStatus"
+            <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="20dp"
+                android:layout_height="wrap_content"
                 android:gravity="center_vertical"
-                android:text="@string/loading_preview"
-                android:textColor="#666666"
-                android:textSize="14sp" />
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tvStatus"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:gravity="center_vertical"
+                    android:text="@string/loading_preview"
+                    android:textColor="#666666"
+                    android:textSize="14sp" />
+
+                <Button
+                    android:id="@+id/btnFullRead"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:minHeight="0dp"
+                    android:minWidth="80dp"
+                    android:paddingStart="24dp"
+                    android:paddingEnd="24dp"
+                    android:text="@string/full_read"
+                    android:textSize="12sp" />
+
+                <Button
+                    android:id="@+id/btnExitPreview"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="8dp"
+                    android:minHeight="0dp"
+                    android:minWidth="80dp"
+                    android:paddingStart="24dp"
+                    android:paddingEnd="24dp"
+                    android:text="@string/exit_preview"
+                    android:textSize="12sp" />
+            </LinearLayout>
 
             <GridLayout
                 android:id="@+id/gridPreview"

@@ -13,9 +13,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.AbsListView
 import android.widget.BaseAdapter
-import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -34,8 +34,8 @@ class MangaReaderActivity : AppCompatActivity() {
     private lateinit var rootView: View
     private lateinit var listReaderPages: ZoomableReaderListView
     private lateinit var layoutReaderToolbar: View
-    private lateinit var btnReaderBack: Button
-    private lateinit var btnReaderGap: Button
+    private lateinit var layoutReaderProgress: View
+    private lateinit var sliderReaderProgress: SeekBar
     private lateinit var tvReaderTitle: TextView
     private lateinit var tvReaderProgress: TextView
     private lateinit var tvReaderStatus: TextView
@@ -56,7 +56,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private var pageAdapter: MangaPageAdapter? = null
     private var readerControlsVisible = true
     private var suppressReaderTap = false
-    private var readerGapDp = 0
+    private var isDraggingReaderSlider = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,9 +76,6 @@ class MangaReaderActivity : AppCompatActivity() {
 
         archiveFile = file
         tvReaderTitle.text = file.nameWithoutExtension
-        readerGapDp = readerPrefs.getInt(KEY_READER_GAP_DP, DEFAULT_READER_GAP_DP)
-            .coerceIn(MIN_READER_GAP_DP, MAX_READER_GAP_DP)
-        updateGapButton()
 
         loadArchive(file)
         showReaderControlsTemporarily()
@@ -106,8 +103,8 @@ class MangaReaderActivity : AppCompatActivity() {
         rootView = findViewById(R.id.main)
         listReaderPages = findViewById(R.id.listReaderPages)
         layoutReaderToolbar = findViewById(R.id.layoutReaderToolbar)
-        btnReaderBack = findViewById(R.id.btnReaderBack)
-        btnReaderGap = findViewById(R.id.btnReaderGap)
+        layoutReaderProgress = findViewById(R.id.layoutReaderProgress)
+        sliderReaderProgress = findViewById(R.id.sliderReaderProgress)
         tvReaderTitle = findViewById(R.id.tvReaderTitle)
         tvReaderProgress = findViewById(R.id.tvReaderProgress)
         tvReaderStatus = findViewById(R.id.tvReaderStatus)
@@ -122,7 +119,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
         val toolbarInitialPaddingTop = layoutReaderToolbar.paddingTop
         val progressInitialMarginBottom =
-            (tvReaderProgress.layoutParams as FrameLayout.LayoutParams).bottomMargin
+            (layoutReaderProgress.layoutParams as FrameLayout.LayoutParams).bottomMargin
         ViewCompat.setOnApplyWindowInsetsListener(rootView) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             layoutReaderToolbar.setPadding(
@@ -131,9 +128,9 @@ class MangaReaderActivity : AppCompatActivity() {
                 layoutReaderToolbar.paddingRight,
                 layoutReaderToolbar.paddingBottom
             )
-            (tvReaderProgress.layoutParams as FrameLayout.LayoutParams).apply {
+            (layoutReaderProgress.layoutParams as FrameLayout.LayoutParams).apply {
                 bottomMargin = progressInitialMarginBottom + systemBars.bottom
-                tvReaderProgress.layoutParams = this
+                layoutReaderProgress.layoutParams = this
             }
             insets
         }
@@ -149,12 +146,6 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun configureReaderActions() {
-        btnReaderBack.setOnClickListener {
-            finish()
-        }
-        btnReaderGap.setOnClickListener {
-            cycleReaderGap()
-        }
         listReaderPages.setOnItemClickListener { _, _, _, _ ->
             if (suppressReaderTap) {
                 return@setOnItemClickListener
@@ -181,6 +172,24 @@ class MangaReaderActivity : AppCompatActivity() {
         listReaderPages.onZoomChanged = { scale ->
             updateReaderZoom(scale)
         }
+        sliderReaderProgress.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    updateReaderProgressText(progress, imageEntries.size)
+                }
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar) {
+                isDraggingReaderSlider = true
+                handler.removeCallbacks(autoHideControlsRunnable)
+            }
+
+            override fun onStopTrackingTouch(seekBar: SeekBar) {
+                isDraggingReaderSlider = false
+                jumpReaderToPage(seekBar.progress)
+                showReaderControlsTemporarily()
+            }
+        })
         listReaderPages.divider = ColorDrawable(Color.BLACK)
     }
 
@@ -225,7 +234,8 @@ class MangaReaderActivity : AppCompatActivity() {
             decodeWidth = decodeWidth
         )
         listReaderPages.adapter = pageAdapter
-        applyReaderGap()
+        sliderReaderProgress.max = (entries.size - 1).coerceAtLeast(0)
+        sliderReaderProgress.progress = 0
         restoreReaderPosition()
         updateReaderProgress(listReaderPages.firstVisiblePosition, entries.size)
     }
@@ -249,11 +259,37 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun updateReaderProgress(firstVisibleItem: Int, totalItemCount: Int) {
         if (totalItemCount <= 0) {
             tvReaderProgress.text = ""
+            sliderReaderProgress.max = 0
+            sliderReaderProgress.progress = 0
             return
         }
 
-        val currentPage = firstVisibleItem.coerceIn(0, totalItemCount - 1) + 1
+        val currentPosition = firstVisibleItem.coerceIn(0, totalItemCount - 1)
+        updateReaderProgressText(currentPosition, totalItemCount)
+        if (!isDraggingReaderSlider) {
+            sliderReaderProgress.max = (totalItemCount - 1).coerceAtLeast(0)
+            sliderReaderProgress.progress = currentPosition
+        }
+    }
+
+    private fun updateReaderProgressText(position: Int, totalItemCount: Int) {
+        if (totalItemCount <= 0) {
+            tvReaderProgress.text = ""
+            return
+        }
+
+        val currentPage = position.coerceIn(0, totalItemCount - 1) + 1
         tvReaderProgress.text = getString(R.string.reader_page_progress, currentPage, totalItemCount)
+    }
+
+    private fun jumpReaderToPage(position: Int) {
+        if (imageEntries.isEmpty()) {
+            return
+        }
+
+        val targetPosition = position.coerceIn(0, imageEntries.lastIndex)
+        listReaderPages.setSelectionFromTop(targetPosition, 0)
+        updateReaderProgress(targetPosition, imageEntries.size)
     }
 
     private fun saveReaderPosition() {
@@ -287,29 +323,6 @@ class MangaReaderActivity : AppCompatActivity() {
         }
     }
 
-    private fun cycleReaderGap() {
-        readerGapDp = when (readerGapDp) {
-            0 -> 4
-            4 -> 8
-            8 -> 12
-            else -> 0
-        }
-        readerPrefs.edit()
-            .putInt(KEY_READER_GAP_DP, readerGapDp)
-            .apply()
-        applyReaderGap()
-        updateGapButton()
-        showReaderControlsTemporarily()
-    }
-
-    private fun applyReaderGap() {
-        listReaderPages.dividerHeight = dpToPx(readerGapDp)
-    }
-
-    private fun updateGapButton() {
-        btnReaderGap.text = getString(R.string.reader_gap_format, readerGapDp)
-    }
-
     private fun showReaderControlsTemporarily() {
         setReaderControlsVisible(true)
         handler.removeCallbacks(autoHideControlsRunnable)
@@ -319,7 +332,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun setReaderControlsVisible(visible: Boolean) {
         readerControlsVisible = visible
         layoutReaderToolbar.visibility = if (visible) View.VISIBLE else View.GONE
-        tvReaderProgress.visibility = if (visible) View.VISIBLE else View.GONE
+        layoutReaderProgress.visibility = if (visible) View.VISIBLE else View.GONE
         setSystemBarsVisible(visible)
     }
 
@@ -348,10 +361,6 @@ class MangaReaderActivity : AppCompatActivity() {
 
     private fun readerArchiveKey(file: File): String {
         return "reader:${file.absolutePath}:${file.lastModified()}:${file.length()}"
-    }
-
-    private fun dpToPx(value: Int): Int {
-        return (value * resources.displayMetrics.density).roundToInt()
     }
 
     private class MangaPageAdapter(
@@ -537,10 +546,6 @@ class MangaReaderActivity : AppCompatActivity() {
         const val EXTRA_ARCHIVE_PATH = "archive_path"
 
         private const val READER_PREFS_NAME = "reader_prefs"
-        private const val KEY_READER_GAP_DP = "reader_gap_dp"
-        private const val DEFAULT_READER_GAP_DP = 0
-        private const val MIN_READER_GAP_DP = 0
-        private const val MAX_READER_GAP_DP = 12
         private const val MIN_READER_IMAGE_WIDTH = 320
         private const val READER_PAGE_DECODE_SCALE = 3
         private const val READER_CONTROLS_AUTO_HIDE_MS = 2600L

@@ -14,10 +14,14 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.Locale
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.Executors
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 
 object ComicArchive {
+    private const val ZIP_PREVIEW_DECODE_THREAD_COUNT = 2
+
     private val zipArchiveExtensions = setOf("zip", "cbz")
     private val sevenZipArchiveExtensions = setOf("rar", "cbr", "7z", "cb7")
     private val supportedArchiveExtensions = zipArchiveExtensions + sevenZipArchiveExtensions
@@ -59,6 +63,19 @@ object ComicArchive {
             preferredConfig = Bitmap.Config.ARGB_8888,
             sampleSize = { width, _ -> calculateInSampleSizeForWidth(width, targetWidth) }
         )
+    }
+
+    fun decodeImages(
+        file: File,
+        entryNames: List<String>,
+        maxSize: Int,
+        onDecoded: (entryName: String, bitmap: Bitmap?) -> Boolean
+    ) {
+        when (file.extension.lowercase(Locale.ROOT)) {
+            in zipArchiveExtensions -> decodeZipImages(file, entryNames, maxSize, onDecoded)
+            in sevenZipArchiveExtensions -> decodeSevenZipImages(file, entryNames, maxSize, onDecoded)
+            else -> Unit
+        }
     }
 
     private fun zipImageEntries(file: File): List<String> {
@@ -104,39 +121,121 @@ object ComicArchive {
                 !archive.isFolder(index) && archive.entryPath(index) == entryName
             } ?: return@withSevenZipArchive null
 
-            val output = ByteArrayOutputStream()
-            var extractResult = ExtractOperationResult.OK
-            archive.extract(intArrayOf(entryIndex), false, object : IArchiveExtractCallback {
-                override fun setTotal(total: Long) = Unit
+            extractSevenZipEntryBytes(archive, entryIndex)
+        }
+    }
 
-                override fun setCompleted(completeValue: Long) = Unit
+    private fun decodeZipImages(
+        file: File,
+        entryNames: List<String>,
+        maxSize: Int,
+        onDecoded: (entryName: String, bitmap: Bitmap?) -> Boolean
+    ) {
+        if (entryNames.isEmpty()) {
+            return
+        }
 
-                override fun getStream(index: Int, extractAskMode: ExtractAskMode): ISequentialOutStream? {
-                    if (index != entryIndex || extractAskMode != ExtractAskMode.EXTRACT) {
-                        return null
-                    }
+        val workerCount = minOf(ZIP_PREVIEW_DECODE_THREAD_COUNT, entryNames.size)
+        val pendingEntries = ConcurrentLinkedQueue(entryNames)
+        val keepDecoding = java.util.concurrent.atomic.AtomicBoolean(true)
+        val executor = Executors.newFixedThreadPool(workerCount)
 
-                    return object : ISequentialOutStream {
-                        override fun write(data: ByteArray): Int {
-                            output.write(data)
-                            return data.size
+        try {
+            val futures = (0 until workerCount).map {
+                executor.submit {
+                    ZipFile(file).use { zipFile ->
+                        while (keepDecoding.get()) {
+                            val entryName = pendingEntries.poll() ?: break
+                            val bitmap = runCatching {
+                                val entry = zipFile.getEntry(entryName) ?: return@runCatching null
+                                val bytes = zipFile.getInputStream(entry).use { it.readBytes() }
+                                decodePreviewBitmap(bytes, maxSize)
+                            }.getOrNull()
+
+                            if (keepDecoding.get() && !onDecoded(entryName, bitmap)) {
+                                keepDecoding.set(false)
+                            }
                         }
                     }
                 }
+            }
 
-                override fun prepareOperation(extractAskMode: ExtractAskMode) = Unit
+            futures.forEach { future ->
+                runCatching { future.get() }
+            }
+        } finally {
+            executor.shutdownNow()
+        }
+    }
 
-                override fun setOperationResult(extractOperationResult: ExtractOperationResult) {
-                    extractResult = extractOperationResult
+    private fun decodeSevenZipImages(
+        file: File,
+        entryNames: List<String>,
+        maxSize: Int,
+        onDecoded: (entryName: String, bitmap: Bitmap?) -> Boolean
+    ) {
+        withSevenZipArchive(file) { archive ->
+            val entryIndexesByPath = (0 until archive.numberOfItems)
+                .asSequence()
+                .filter { !archive.isFolder(it) }
+                .mapNotNull { index -> archive.entryPath(index)?.let { path -> path to index } }
+                .toMap()
+
+            for (entryName in entryNames) {
+                val bitmap = runCatching {
+                    val entryIndex = entryIndexesByPath[entryName] ?: return@runCatching null
+                    val bytes = extractSevenZipEntryBytes(archive, entryIndex) ?: return@runCatching null
+                    decodePreviewBitmap(bytes, maxSize)
+                }.getOrNull()
+
+                if (!onDecoded(entryName, bitmap)) {
+                    return@withSevenZipArchive
                 }
-            })
-
-            if (extractResult == ExtractOperationResult.OK) {
-                output.toByteArray()
-            } else {
-                null
             }
         }
+    }
+
+    private fun extractSevenZipEntryBytes(archive: IInArchive, entryIndex: Int): ByteArray? {
+        val output = ByteArrayOutputStream()
+        var extractResult = ExtractOperationResult.OK
+        archive.extract(intArrayOf(entryIndex), false, object : IArchiveExtractCallback {
+            override fun setTotal(total: Long) = Unit
+
+            override fun setCompleted(completeValue: Long) = Unit
+
+            override fun getStream(index: Int, extractAskMode: ExtractAskMode): ISequentialOutStream? {
+                if (index != entryIndex || extractAskMode != ExtractAskMode.EXTRACT) {
+                    return null
+                }
+
+                return object : ISequentialOutStream {
+                    override fun write(data: ByteArray): Int {
+                        output.write(data)
+                        return data.size
+                    }
+                }
+            }
+
+            override fun prepareOperation(extractAskMode: ExtractAskMode) = Unit
+
+            override fun setOperationResult(extractOperationResult: ExtractOperationResult) {
+                extractResult = extractOperationResult
+            }
+        })
+
+        return if (extractResult == ExtractOperationResult.OK) {
+            output.toByteArray()
+        } else {
+            null
+        }
+    }
+
+    private fun decodePreviewBitmap(bytes: ByteArray, maxSize: Int): Bitmap? {
+        return decodeBitmap(
+            bytes = bytes,
+            preferredConfig = Bitmap.Config.RGB_565,
+            sampleSize = { width, height -> calculateInSampleSize(width, height, maxSize) }
+        )
     }
 
     private fun decodeBitmap(

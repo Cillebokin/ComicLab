@@ -26,6 +26,7 @@ class MangaPreviewActivity : AppCompatActivity() {
     private var imageEntries: List<String> = emptyList()
     private var showingAll = false
     private var coverGeneration = 0
+    @Volatile
     private var gridGeneration = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -130,6 +131,11 @@ class MangaPreviewActivity : AppCompatActivity() {
         tvStatus.text = getString(R.string.loading_preview)
         tvStatus.visibility = View.VISIBLE
 
+        if (entriesToShow.isEmpty()) {
+            tvStatus.visibility = View.INVISIBLE
+            return
+        }
+
         btnTogglePreview.text = if (showingAll) {
             getString(R.string.collapse_preview)
         } else {
@@ -141,27 +147,42 @@ class MangaPreviewActivity : AppCompatActivity() {
             View.GONE
         }
 
+        val indexesByEntry = entriesToShow.withIndex().associate { it.value to it.index }
+
         Thread {
-            entriesToShow.forEachIndexed { index, entryName ->
-                val bitmap = runCatching {
-                    ComicArchive.decodeImage(file, entryName, PREVIEW_IMAGE_MAX_SIZE)
-                }.getOrNull()
-
-                runOnUiThread {
+            runCatching {
+                ComicArchive.decodeImages(file, entriesToShow, PREVIEW_IMAGE_MAX_SIZE) { entryName, bitmap ->
                     if (generation != gridGeneration) {
-                        return@runOnUiThread
+                        return@decodeImages false
                     }
 
-                    if (bitmap != null) {
-                        addPreviewImage(bitmap, index)
+                    val index = indexesByEntry[entryName] ?: return@decodeImages true
+                    runOnUiThread {
+                        if (generation != gridGeneration) {
+                            return@runOnUiThread
+                        }
+
+                        if (bitmap != null) {
+                            addPreviewImage(bitmap, index)
+                        }
                     }
 
-                    if (index == entriesToShow.lastIndex) {
-                        tvStatus.visibility = View.INVISIBLE
-                    }
+                    true
                 }
+            }.onSuccess {
+                hidePreviewLoading(generation)
+            }.onFailure {
+                hidePreviewLoading(generation)
             }
         }.start()
+    }
+
+    private fun hidePreviewLoading(generation: Int) {
+        runOnUiThread {
+            if (generation == gridGeneration) {
+                tvStatus.visibility = View.INVISIBLE
+            }
+        }
     }
 
     private fun addPreviewImage(bitmap: Bitmap, index: Int) {
