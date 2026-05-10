@@ -2,6 +2,7 @@ package com.example.comiclab
 
 import android.content.ComponentCallbacks2
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
@@ -10,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
 import android.util.LruCache
 import android.view.Gravity
 import android.view.KeyEvent
@@ -69,6 +71,11 @@ class MangaReaderActivity : AppCompatActivity() {
     private val clearSuppressReaderTapRunnable = Runnable {
         suppressReaderTap = false
     }
+    private val debugReaderStressRunnable = object : Runnable {
+        override fun run() {
+            runDebugReaderStressStep()
+        }
+    }
 
     private var archiveFile: File? = null
     private var imageEntries: List<String> = emptyList()
@@ -91,6 +98,12 @@ class MangaReaderActivity : AppCompatActivity() {
     private var lastVolumePageTurnAt = 0L
     private var customReaderBrightnessEnabled = false
     private var isUpdatingBrightnessControls = false
+    private var debugReaderStressEnabled = false
+    private var debugReaderStressStarted = false
+    private var debugReaderStressRemainingIterations = 0
+    private var debugReaderStressStep = 0
+    private var debugReaderStressDelayMs = DEFAULT_DEBUG_READER_STRESS_DELAY_MS
+    private var debugReaderStressTrimEvery = DEFAULT_DEBUG_READER_STRESS_TRIM_EVERY
     @Volatile
     private var destroyed = false
 
@@ -118,6 +131,7 @@ class MangaReaderActivity : AppCompatActivity() {
         archiveFile = file
         tvReaderTitle.text = file.nameWithoutExtension
         shouldStartFromBeginning = intent.getBooleanExtra(EXTRA_START_FROM_BEGINNING, false)
+        configureDebugReaderStress()
         if (shouldStartFromBeginning) {
             clearSavedReadingProgress(this, file)
         }
@@ -470,7 +484,204 @@ class MangaReaderActivity : AppCompatActivity() {
                 firstVisiblePosition = readerLayoutManager.findFirstVisibleItemPosition().coerceAtLeast(0),
                 visibleItemCount = visibleReaderItemCount().coerceAtLeast(1)
             )
+            startDebugReaderStressIfNeeded()
         }
+    }
+
+    private fun configureDebugReaderStress() {
+        if (!isDebuggableBuild()) {
+            return
+        }
+
+        debugReaderStressEnabled = intent.getBooleanExtra(EXTRA_DEBUG_READER_STRESS, false)
+        if (!debugReaderStressEnabled) {
+            return
+        }
+
+        debugReaderStressRemainingIterations = intent.getIntExtra(
+            EXTRA_DEBUG_READER_STRESS_ITERATIONS,
+            DEFAULT_DEBUG_READER_STRESS_ITERATIONS
+        ).coerceIn(1, MAX_DEBUG_READER_STRESS_ITERATIONS)
+        debugReaderStressDelayMs = intent.getLongExtra(
+            EXTRA_DEBUG_READER_STRESS_DELAY_MS,
+            DEFAULT_DEBUG_READER_STRESS_DELAY_MS
+        ).coerceIn(MIN_DEBUG_READER_STRESS_DELAY_MS, MAX_DEBUG_READER_STRESS_DELAY_MS)
+        debugReaderStressTrimEvery = intent.getIntExtra(
+            EXTRA_DEBUG_READER_STRESS_TRIM_EVERY,
+            DEFAULT_DEBUG_READER_STRESS_TRIM_EVERY
+        ).coerceIn(0, MAX_DEBUG_READER_STRESS_TRIM_EVERY)
+    }
+
+    private fun startDebugReaderStressIfNeeded() {
+        if (!isDebuggableBuild() ||
+            !debugReaderStressEnabled ||
+            debugReaderStressStarted ||
+            imageEntries.isEmpty() ||
+            pageAdapter == null
+        ) {
+            return
+        }
+
+        debugReaderStressStarted = true
+        setReaderControlsVisible(false)
+        Log.i(
+            DEBUG_READER_STRESS_TAG,
+            "started pages=${imageEntries.size} iterations=$debugReaderStressRemainingIterations " +
+                "delayMs=$debugReaderStressDelayMs trimEvery=$debugReaderStressTrimEvery"
+        )
+        handler.postDelayed(debugReaderStressRunnable, DEBUG_READER_STRESS_START_DELAY_MS)
+    }
+
+    private fun runDebugReaderStressStep() {
+        if (!isDebuggableBuild() || destroyed || !debugReaderStressEnabled || imageEntries.isEmpty()) {
+            return
+        }
+
+        val adapter = pageAdapter ?: return
+        if (debugReaderStressRemainingIterations <= 0) {
+            updateReaderTransform(ZoomableReaderRecyclerView.MIN_ZOOM, 0f)
+            adapter.flushPendingRefreshesIfIdle()
+            saveReaderPosition()
+            Log.i(
+                DEBUG_READER_STRESS_TAG,
+                "finished steps=$debugReaderStressStep current=$currentReaderPosition " +
+                    "heapKb=${usedHeapKb()}"
+            )
+            return
+        }
+
+        val totalItemCount = imageEntries.size
+        val lastIndex = imageEntries.lastIndex
+        val step = debugReaderStressStep++
+        debugReaderStressRemainingIterations--
+        val targetPosition = debugReaderStressTargetPosition(step, totalItemCount)
+        val visibleItemCount = visibleReaderItemCount().coerceAtLeast(1)
+        val direction = if (step % 2 == 0) SCROLL_DIRECTION_FORWARD else SCROLL_DIRECTION_BACKWARD
+
+        when (step % DEBUG_READER_STRESS_PATTERN_SIZE) {
+            0 -> {
+                jumpReaderToPage(targetPosition)
+            }
+
+            1 -> {
+                readerLayoutManager.scrollToPositionWithOffset(targetPosition, 0)
+                updateCurrentReaderPosition(targetPosition)
+                updateReaderProgress(targetPosition, totalItemCount)
+                adapter.preloadAround(
+                    firstVisiblePosition = targetPosition,
+                    visibleItemCount = visibleItemCount,
+                    scrollDirection = direction,
+                    isFastScroll = true,
+                    isIdle = false
+                )
+            }
+
+            2 -> {
+                adapter.preloadAround(
+                    firstVisiblePosition = targetPosition,
+                    visibleItemCount = visibleItemCount,
+                    scrollDirection = direction,
+                    isFastScroll = true,
+                    isIdle = false
+                )
+                adapter.preloadAround(
+                    firstVisiblePosition = (lastIndex - targetPosition).coerceIn(0, lastIndex),
+                    visibleItemCount = visibleItemCount,
+                    scrollDirection = -direction,
+                    isFastScroll = true,
+                    isIdle = false
+                )
+            }
+
+            3 -> {
+                updateReaderTransform(ZoomableReaderRecyclerView.MAX_ZOOM, listReaderPages.width * 0.35f)
+                adapter.preloadAround(
+                    firstVisiblePosition = targetPosition,
+                    visibleItemCount = visibleItemCount,
+                    scrollDirection = direction,
+                    isFastScroll = false,
+                    isIdle = true
+                )
+            }
+
+            4 -> {
+                updateReaderTransform(ZoomableReaderRecyclerView.MAX_ZOOM, -listReaderPages.width * 0.35f)
+                jumpReaderToPage(targetPosition)
+            }
+
+            5 -> {
+                updateReaderTransform(ZoomableReaderRecyclerView.MIN_ZOOM, 0f)
+                turnReaderPage(1)
+                turnReaderPage(1)
+            }
+
+            6 -> {
+                turnReaderPage(-1)
+                adapter.preloadAround(
+                    firstVisiblePosition = targetPosition,
+                    visibleItemCount = visibleItemCount,
+                    scrollDirection = SCROLL_DIRECTION_BACKWARD,
+                    isFastScroll = false,
+                    isIdle = true
+                )
+            }
+
+            else -> {
+                adapter.trimMemory(ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)
+                adapter.preloadAround(
+                    firstVisiblePosition = targetPosition,
+                    visibleItemCount = visibleItemCount,
+                    scrollDirection = direction,
+                    isFastScroll = false,
+                    isIdle = true
+                )
+            }
+        }
+
+        if (debugReaderStressTrimEvery > 0 &&
+            debugReaderStressStep % debugReaderStressTrimEvery == 0
+        ) {
+            adapter.trimMemory(ComponentCallbacks2.TRIM_MEMORY_COMPLETE)
+        }
+
+        if (debugReaderStressStep % DEBUG_READER_STRESS_LOG_EVERY == 0) {
+            Log.i(
+                DEBUG_READER_STRESS_TAG,
+                "step=$debugReaderStressStep remaining=$debugReaderStressRemainingIterations " +
+                    "current=$currentReaderPosition target=$targetPosition heapKb=${usedHeapKb()}"
+            )
+        }
+
+        handler.postDelayed(debugReaderStressRunnable, debugReaderStressDelayMs)
+    }
+
+    private fun debugReaderStressTargetPosition(step: Int, totalItemCount: Int): Int {
+        if (totalItemCount <= 1) {
+            return 0
+        }
+
+        val lastIndex = totalItemCount - 1
+        return when (step % DEBUG_READER_STRESS_TARGET_PATTERN_SIZE) {
+            0 -> 0
+            1 -> (totalItemCount / 4).coerceIn(0, lastIndex)
+            2 -> (totalItemCount / 2).coerceIn(0, lastIndex)
+            3 -> (totalItemCount * 3 / 4).coerceIn(0, lastIndex)
+            4 -> lastIndex
+            5 -> (lastIndex - 1).coerceAtLeast(0)
+            6 -> (currentReaderPosition + 5).coerceIn(0, lastIndex)
+            7 -> (currentReaderPosition - 4).coerceIn(0, lastIndex)
+            8 -> (step * 7 % totalItemCount).coerceIn(0, lastIndex)
+            else -> (lastIndex - (step * 11 % totalItemCount)).coerceIn(0, lastIndex)
+        }
+    }
+
+    private fun usedHeapKb(): Long {
+        val runtime = Runtime.getRuntime()
+        return (runtime.totalMemory() - runtime.freeMemory()) / 1024L
+    }
+
+    private fun isDebuggableBuild(): Boolean {
+        return applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
     }
 
     private fun handleReaderTap() {
@@ -2136,6 +2347,10 @@ class MangaReaderActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_ARCHIVE_PATH = "archive_path"
         const val EXTRA_START_FROM_BEGINNING = "start_from_beginning"
+        const val EXTRA_DEBUG_READER_STRESS = "debug_reader_stress"
+        const val EXTRA_DEBUG_READER_STRESS_ITERATIONS = "debug_reader_stress_iterations"
+        const val EXTRA_DEBUG_READER_STRESS_DELAY_MS = "debug_reader_stress_delay_ms"
+        const val EXTRA_DEBUG_READER_STRESS_TRIM_EVERY = "debug_reader_stress_trim_every"
 
         private const val READER_PREFS_NAME = "reader_prefs"
         private const val MIN_READER_IMAGE_WIDTH = 320
@@ -2160,6 +2375,18 @@ class MangaReaderActivity : AppCompatActivity() {
         private const val DISABLED_BRIGHTNESS_SLIDER_ALPHA = 0.72f
         private const val SCROLL_DIRECTION_FORWARD = 1
         private const val SCROLL_DIRECTION_BACKWARD = -1
+        private const val DEFAULT_DEBUG_READER_STRESS_ITERATIONS = 360
+        private const val MAX_DEBUG_READER_STRESS_ITERATIONS = 5_000
+        private const val DEFAULT_DEBUG_READER_STRESS_DELAY_MS = 45L
+        private const val MIN_DEBUG_READER_STRESS_DELAY_MS = 16L
+        private const val MAX_DEBUG_READER_STRESS_DELAY_MS = 1_000L
+        private const val DEFAULT_DEBUG_READER_STRESS_TRIM_EVERY = 24
+        private const val MAX_DEBUG_READER_STRESS_TRIM_EVERY = 500
+        private const val DEBUG_READER_STRESS_PATTERN_SIZE = 8
+        private const val DEBUG_READER_STRESS_TARGET_PATTERN_SIZE = 10
+        private const val DEBUG_READER_STRESS_START_DELAY_MS = 700L
+        private const val DEBUG_READER_STRESS_LOG_EVERY = 30
+        private const val DEBUG_READER_STRESS_TAG = "ComicLabReaderStress"
 
         fun hasSavedReadingProgress(context: Context, file: File): Boolean {
             val prefs = context.getSharedPreferences(READER_PREFS_NAME, Context.MODE_PRIVATE)
