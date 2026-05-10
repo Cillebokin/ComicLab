@@ -9,4 +9,9 @@
     </style>
 
     <style name="Theme.ComicLab" parent="Base.Theme.ComicLab" />
+
+    <style name="Animation_ComicLab_ReadingHistoryPanel">
+        <item name="android:windowEnterAnimation">@anim/reading_history_panel_enter</item>
+        <item name="android:windowExitAnimation">@anim/reading_history_panel_exit</item>
+    </style>
 </resources>

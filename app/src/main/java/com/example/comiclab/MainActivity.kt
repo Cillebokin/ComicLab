@@ -5,15 +5,19 @@ import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.view.Gravity
 import android.webkit.MimeTypeMap
 import android.view.View
+import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ListView
+import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -32,12 +36,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnOptions: ImageButton
     private lateinit var btnSort: ImageButton
     private lateinit var btnSearch: ImageButton
+    private lateinit var btnReadingHistory: ImageButton
+    private lateinit var btnFavoriteComics: ImageButton
+    private lateinit var btnFavoritePaths: ImageButton
     private lateinit var fileListAdapter: FileListAdapter
 
     private val fileItems = mutableListOf<FileItem>()
     private val directoryLoadExecutor = Executors.newSingleThreadExecutor()
     private val directoryLoadGeneration = AtomicInteger(0)
 
+    private var readingHistoryPopupWindow: PopupWindow? = null
+    private var readingHistoryAdapter: ReadingHistoryAdapter? = null
     private var browserInitialized = false
     private var currentPath = STORAGE_ROOT_PATH
 
@@ -60,6 +69,9 @@ class MainActivity : AppCompatActivity() {
         btnOptions = findViewById(R.id.btnOptions)
         btnSort = findViewById(R.id.btnSort)
         btnSearch = findViewById(R.id.btnSearch)
+        btnReadingHistory = findViewById(R.id.btnReadingHistory)
+        btnFavoriteComics = findViewById(R.id.btnFavoriteComics)
+        btnFavoritePaths = findViewById(R.id.btnFavoritePaths)
 
         fileListAdapter = FileListAdapter(this, fileItems)
         listView.adapter = fileListAdapter
@@ -70,11 +82,23 @@ class MainActivity : AppCompatActivity() {
         })
 
         btnBack.setOnClickListener {
-            goParent()
+            goStorageRoot()
         }
 
         btnOptions.setOnClickListener {
             openSettings()
+        }
+
+        btnReadingHistory.setOnClickListener {
+            showReadingHistoryPanel()
+        }
+
+        btnFavoriteComics.setOnClickListener {
+            showPendingFeature(R.string.favorite_comics)
+        }
+
+        btnFavoritePaths.setOnClickListener {
+            showPendingFeature(R.string.favorite_paths)
         }
 
         btnSort.setOnClickListener {
@@ -133,6 +157,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        dismissReadingHistoryPanel()
         clearFileListTouchState()
         saveCurrentPath()
         super.onPause()
@@ -189,6 +214,63 @@ class MainActivity : AppCompatActivity() {
         startActivity(Intent(this, SettingsActivity::class.java))
     }
 
+    private fun showReadingHistoryPanel() {
+        val rootView = findViewById<View>(R.id.main)
+        val panelWidth = ((rootView.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels) / 2).coerceAtLeast(dpToPx(MIN_READING_HISTORY_PANEL_WIDTH_DP))
+        val content = layoutInflater.inflate(R.layout.panel_reading_history, null)
+        val listReadingHistory = content.findViewById<ListView>(R.id.listReadingHistory)
+        val tvReadingHistoryEmpty = content.findViewById<TextView>(R.id.tvReadingHistoryEmpty)
+        val historyItems = ReadingHistoryStore.items(this)
+        val historyAdapter = ReadingHistoryAdapter(this, historyItems)
+
+        listReadingHistory.adapter = historyAdapter
+        listReadingHistory.visibility = if (historyItems.isEmpty()) View.GONE else View.VISIBLE
+        tvReadingHistoryEmpty.visibility = if (historyItems.isEmpty()) View.VISIBLE else View.GONE
+        listReadingHistory.setOnItemClickListener { _, _, position, _ ->
+            val item = historyItems.getOrNull(position) ?: return@setOnItemClickListener
+            dismissReadingHistoryPanel()
+            openMangaPreview(item.file)
+        }
+
+        dismissReadingHistoryPanel()
+        readingHistoryAdapter = historyAdapter
+        readingHistoryPopupWindow = PopupWindow(
+            content,
+            panelWidth,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            true
+        ).apply {
+            isOutsideTouchable = true
+            setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+            animationStyle = R.style.Animation_ComicLab_ReadingHistoryPanel
+            elevation = dpToPx(READING_HISTORY_PANEL_ELEVATION_DP).toFloat()
+            setOnDismissListener {
+                historyAdapter.close()
+                if (readingHistoryAdapter === historyAdapter) {
+                    readingHistoryAdapter = null
+                }
+                readingHistoryPopupWindow = null
+            }
+            showAtLocation(rootView, Gravity.END or Gravity.TOP, 0, 0)
+        }
+    }
+
+    private fun dismissReadingHistoryPanel() {
+        readingHistoryPopupWindow?.dismiss()
+        readingHistoryPopupWindow = null
+        readingHistoryAdapter?.close()
+        readingHistoryAdapter = null
+    }
+
+    private fun showPendingFeature(labelResId: Int) {
+        Toast.makeText(
+            this,
+            getString(R.string.feature_not_implemented, getString(labelResId)),
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
     private fun initializeBrowserIfPermitted() {
         if (!Environment.isExternalStorageManager()) {
             etPath.setText(R.string.storage_permission_required)
@@ -222,6 +304,16 @@ class MainActivity : AppCompatActivity() {
         val pathToCenter = current.absolutePath
         setCurrentPath(current.parentFile?.absolutePath ?: STORAGE_ROOT_PATH)
         loadCurrentDirectory(pathToCenter)
+    }
+
+    private fun goStorageRoot() {
+        if (!Environment.isExternalStorageManager()) {
+            openManageAllFilesAccessSettings()
+            return
+        }
+
+        setCurrentPath(STORAGE_ROOT_PATH)
+        loadCurrentDirectory()
     }
 
     private fun handleSystemBack() {
@@ -539,6 +631,8 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_CURRENT_PATH = "current_path"
         private const val CLEAR_CLICK_STATE_DELAY_MS = 120L
         private const val FILE_ITEM_HEIGHT_DP = 75
+        private const val MIN_READING_HISTORY_PANEL_WIDTH_DP = 180
+        private const val READING_HISTORY_PANEL_ELEVATION_DP = 8
         private val STORAGE_ROOT_PATH = Environment.getExternalStorageDirectory().absolutePath
     }
 

@@ -14,6 +14,11 @@
     <string name="directory_item">目录</string>
     <string name="choose_directory">存储权限</string>
     <string name="settings">设置</string>
+    <string name="reading_history">阅读历史</string>
+    <string name="reading_history_empty">暂无阅读历史</string>
+    <string name="favorite_comics">收藏漫画</string>
+    <string name="favorite_paths">收藏路径</string>
+    <string name="feature_not_implemented">%1$s暂未实现</string>
     <string name="sort">排序</string>
     <string name="sort_by_name_asc">名称升序</string>
     <string name="sort_by_name_desc">名称降序</string>
@@ -23,6 +28,7 @@
     <string name="sort_by_size_asc">大小从小到大</string>
     <string name="open_file">刷新</string>
     <string name="back">返回</string>
+    <string name="go_storage_root">返回初始路径</string>
     <string name="storage_permission_title">存储权限</string>
     <string name="storage_permission_message">ComicLab需要读写手机存储权限以便进行读取、修改和删除等操作</string>
     <string name="storage_permission_required">请授予管理所有文件权限</string>

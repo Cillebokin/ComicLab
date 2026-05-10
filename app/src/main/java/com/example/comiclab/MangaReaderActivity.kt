@@ -426,6 +426,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 }
 
                 imageEntries = entries
+                ReadingHistoryStore.record(this, file)
                 tvReaderStatus.visibility = View.GONE
                 bindReaderAdapter(file, entries)
             }
@@ -964,12 +965,7 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun readerPageDecodeScale(): Int {
-        val maxMemoryMb = (Runtime.getRuntime().maxMemory() / 1024L / 1024L).toInt()
-        return if (maxMemoryMb >= HIGH_QUALITY_READER_MEMORY_MB) {
-            HIGH_QUALITY_READER_DECODE_SCALE
-        } else {
-            BALANCED_READER_DECODE_SCALE
-        }
+        return HIGH_QUALITY_READER_DECODE_SCALE
     }
 
     private fun handleVolumePageTurnKey(event: KeyEvent): Boolean {
@@ -1510,14 +1506,15 @@ class MangaReaderActivity : AppCompatActivity() {
                 }
                 val tileHeight = calculateDisplayHeight(bounds.width, tile.sourceRect.height(), imageWidth)
                 setLinearChildSize(tileView, imageWidth, tileHeight)
-                val key = TileKey(position, tile.index, imageWidth)
+                val tileDecodeWidth = tileDecodeWidth(imageWidth)
+                val key = TileKey(position, tile.index, imageWidth, tileDecodeWidth)
                 tileView.tag = key
 
                 val cachedTile = tileBitmap(key)
                 if (cachedTile != null) {
                     tileView.setImageBitmap(cachedTile)
                 } else {
-                    ensureTile(position, tile, imageWidth, tileView, holder)
+                    ensureTile(position, tile, tileDecodeWidth, tileView, holder)
                 }
 
                 holder.tileContainer.addView(tileView)
@@ -1703,7 +1700,7 @@ class MangaReaderActivity : AppCompatActivity() {
         private fun ensureTile(
             position: Int,
             tile: PageTile,
-            imageWidth: Int,
+            tileDecodeWidth: Int,
             tileView: ImageView,
             holder: PageViewHolder
         ) {
@@ -1711,7 +1708,9 @@ class MangaReaderActivity : AppCompatActivity() {
                 return
             }
 
-            val key = TileKey(position, tile.index, imageWidth)
+            val displayImageWidth = (tileView.layoutParams?.width ?: zoomedDisplayWidth())
+                .coerceAtLeast(baseDisplayWidth)
+            val key = TileKey(position, tile.index, displayImageWidth, tileDecodeWidth)
             if (tileBitmap(key) != null || !loadingTiles.add(key)) {
                 return
             }
@@ -1726,7 +1725,7 @@ class MangaReaderActivity : AppCompatActivity() {
             ) {
                 try {
                     val bitmap = runCatching {
-                        session.decodeRegionForWidth(entries[position], tile.sourceRect, imageWidth)
+                        session.decodeRegionForWidth(entries[position], tile.sourceRect, tileDecodeWidth)
                     }.getOrNull() ?: return@submitTask
 
                     putTileBitmap(key, bitmap)
@@ -1747,7 +1746,7 @@ class MangaReaderActivity : AppCompatActivity() {
                     return@post
                 }
 
-                requestItemRefresh(position, immediate)
+                requestItemRefresh(position, immediate || position in boundPositions)
                 onPageReady(position)
             }
         }
@@ -1760,6 +1759,9 @@ class MangaReaderActivity : AppCompatActivity() {
             if (immediate) {
                 mainHandler.post {
                     if (!closed && position in entries.indices && shouldRefreshPosition(position)) {
+                        if (refreshBoundPositionDirectly(position)) {
+                            return@post
+                        }
                         refreshPositionOrDefer(position)
                     }
                 }
@@ -1803,6 +1805,10 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         private fun refreshPositionOrDefer(position: Int) {
+            if (refreshBoundPositionDirectly(position)) {
+                return
+            }
+
             if (canNotifyRecyclerView()) {
                 notifyItemChanged(position)
                 return
@@ -1819,6 +1825,21 @@ class MangaReaderActivity : AppCompatActivity() {
 
             refreshScheduled = true
             mainHandler.postDelayed(flushRefreshRunnable, UI_REFRESH_RETRY_MS)
+        }
+
+        private fun refreshBoundPositionDirectly(position: Int): Boolean {
+            if (recyclerView.isComputingLayout) {
+                return false
+            }
+
+            val holder = recyclerView.findViewHolderForAdapterPosition(position) as? PageViewHolder
+                ?: return false
+            if (holder.boundPosition != position) {
+                return false
+            }
+
+            bindBestAvailable(holder, position)
+            return true
         }
 
         private fun canNotifyRecyclerView(): Boolean {
@@ -2068,6 +2089,11 @@ class MangaReaderActivity : AppCompatActivity() {
             return (baseDisplayWidth / 2).coerceIn(MIN_PREVIEW_DECODE_WIDTH, MAX_PREVIEW_DECODE_WIDTH)
         }
 
+        private fun tileDecodeWidth(displayImageWidth: Int): Int {
+            return maxOf(displayImageWidth, decodeWidth)
+                .coerceAtMost(MAX_READER_TILE_DECODE_WIDTH)
+        }
+
         private fun isHorizontalReading(): Boolean {
             return readingDirection == AppSettings.READING_DIRECTION_RIGHT_TO_LEFT ||
                 readingDirection == AppSettings.READING_DIRECTION_LEFT_TO_RIGHT
@@ -2125,7 +2151,8 @@ class MangaReaderActivity : AppCompatActivity() {
         private data class TileKey(
             val position: Int,
             val tileIndex: Int,
-            val imageWidth: Int
+            val imageWidth: Int,
+            val decodeWidth: Int
         )
 
         private data class DisplaySize(
@@ -2354,11 +2381,10 @@ class MangaReaderActivity : AppCompatActivity() {
 
         private const val READER_PREFS_NAME = "reader_prefs"
         private const val MIN_READER_IMAGE_WIDTH = 320
-        private const val HIGH_QUALITY_READER_DECODE_SCALE = 3
-        private const val BALANCED_READER_DECODE_SCALE = 2
-        private const val HIGH_QUALITY_READER_MEMORY_MB = 384
-        private const val MAX_READER_DECODE_WIDTH = 4096
-        private const val MAX_READER_DECODE_HEIGHT = 4096
+        private const val HIGH_QUALITY_READER_DECODE_SCALE = 4
+        private const val MAX_READER_DECODE_WIDTH = 8192
+        private const val MAX_READER_DECODE_HEIGHT = 8192
+        private const val MAX_READER_TILE_DECODE_WIDTH = 4096
         private const val READER_CONTROLS_AUTO_HIDE_MS = 2600L
         private const val SUPPRESS_TAP_AFTER_ZOOM_MS = 250L
         private const val RESTORE_READER_POSITION_MAX_ATTEMPTS = 16

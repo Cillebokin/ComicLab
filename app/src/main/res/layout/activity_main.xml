@@ -81,6 +81,41 @@
             android:src="@drawable/png_options_icon" />
 
         <ImageButton
+            android:id="@+id/btnReadingHistory"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_marginStart="16dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/reading_history"
+            android:scaleType="centerInside"
+            android:src="@drawable/png_read_history_icon" />
+
+        <ImageButton
+            android:id="@+id/btnFavoriteComics"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_marginStart="16dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/favorite_comics"
+            android:scaleType="centerInside"
+            android:src="@drawable/png_mark_file_icon" />
+
+        <ImageButton
+            android:id="@+id/btnFavoritePaths"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_marginStart="16dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/favorite_paths"
+            android:scaleType="centerInside"
+            android:src="@drawable/png_mark_direct_icon" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1" />
+
+        <ImageButton
             android:id="@+id/btnSort"
             android:layout_width="20dp"
             android:layout_height="20dp"
@@ -100,18 +135,13 @@
             android:scaleType="centerInside"
             android:src="@drawable/png_search_icon" />
 
-        <View
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1" />
-
         <ImageButton
             android:id="@+id/btnBack"
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:layout_marginStart="16dp"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/back"
+            android:contentDescription="@string/go_storage_root"
             android:scaleType="centerInside"
             android:src="@drawable/png_back_icon" />
     </LinearLayout>
