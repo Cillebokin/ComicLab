@@ -15,6 +15,7 @@ import net.sf.sevenzipjbinding.impl.RandomAccessFileInStream
 import java.io.Closeable
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.io.RandomAccessFile
 import java.util.Locale
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -121,11 +122,23 @@ object ComicArchive {
         }
 
         fun readBounds(entryName: String): ImageBounds? {
+            if (extension in zipArchiveExtensions) {
+                return decodeZipBounds(entryName)
+            }
+
             val bytes = imageBytes(entryName) ?: return null
             return decodeBounds(bytes)
         }
 
         fun decodePreviewForWidth(entryName: String, targetWidth: Int): Bitmap? {
+            if (extension in zipArchiveExtensions) {
+                return decodeZipBitmap(
+                    entryName = entryName,
+                    preferredConfig = Bitmap.Config.RGB_565,
+                    sampleSize = { width, _ -> calculateInSampleSizeForWidth(width, targetWidth) }
+                )?.scaleToWidthIfLarger(targetWidth)
+            }
+
             val bytes = imageBytes(entryName) ?: return null
             return decodeBitmap(
                 bytes = bytes,
@@ -135,6 +148,14 @@ object ComicArchive {
         }
 
         fun decodeImageForWidth(entryName: String, targetWidth: Int): Bitmap? {
+            if (extension in zipArchiveExtensions) {
+                return decodeZipBitmap(
+                    entryName = entryName,
+                    preferredConfig = Bitmap.Config.ARGB_8888,
+                    sampleSize = { width, _ -> calculateInSampleSizeForWidth(width, targetWidth) }
+                )?.scaleToWidthIfLarger(targetWidth)
+            }
+
             val bytes = imageBytes(entryName) ?: return null
             return decodeBitmap(
                 bytes = bytes,
@@ -144,6 +165,19 @@ object ComicArchive {
         }
 
         fun decodeImageForPage(entryName: String, targetWidth: Int, targetHeight: Int): Bitmap? {
+            if (extension in zipArchiveExtensions) {
+                return decodeZipBitmap(
+                    entryName = entryName,
+                    preferredConfig = Bitmap.Config.ARGB_8888,
+                    sampleSize = { width, height ->
+                        maxOf(
+                            calculateInSampleSizeForWidth(width, targetWidth),
+                            calculateInSampleSizeForHeight(height, targetHeight)
+                        )
+                    }
+                )?.scaleToFitBoundsIfLarger(targetWidth, targetHeight)
+            }
+
             val bytes = imageBytes(entryName) ?: return null
             return decodeBitmap(
                 bytes = bytes,
@@ -158,6 +192,10 @@ object ComicArchive {
         }
 
         fun decodeRegionForWidth(entryName: String, sourceRect: Rect, targetWidth: Int): Bitmap? {
+            if (extension in zipArchiveExtensions) {
+                return decodeZipRegionForWidth(entryName, sourceRect, targetWidth)
+            }
+
             val bytes = imageBytes(entryName) ?: return null
             val decoder = runCatching {
                 BitmapRegionDecoder.newInstance(bytes, 0, bytes.size, false)
@@ -204,6 +242,55 @@ object ComicArchive {
             synchronized(zipLock) {
                 val entry = zip.getEntry(entryName) ?: return null
                 return zip.getInputStream(entry).use { it.readBytes() }
+            }
+        }
+
+        private fun decodeZipBounds(entryName: String): ImageBounds? {
+            val zip = zipFile ?: return null
+            synchronized(zipLock) {
+                val entry = zip.getEntry(entryName) ?: return null
+                return zip.getInputStream(entry).use { stream ->
+                    decodeBounds(stream)
+                }
+            }
+        }
+
+        private fun decodeZipBitmap(
+            entryName: String,
+            preferredConfig: Bitmap.Config,
+            sampleSize: (width: Int, height: Int) -> Int
+        ): Bitmap? {
+            val zip = zipFile ?: return null
+            synchronized(zipLock) {
+                val entry = zip.getEntry(entryName) ?: return null
+                val bounds = BitmapFactory.Options().apply {
+                    inJustDecodeBounds = true
+                }
+                zip.getInputStream(entry).use { stream ->
+                    BitmapFactory.decodeStream(stream, null, bounds)
+                }
+
+                val decodeOptions = BitmapFactory.Options().apply {
+                    inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight)
+                    inPreferredConfig = preferredConfig
+                }
+                return zip.getInputStream(entry).use { stream ->
+                    BitmapFactory.decodeStream(stream, null, decodeOptions)
+                }
+            }
+        }
+
+        private fun decodeZipRegionForWidth(
+            entryName: String,
+            sourceRect: Rect,
+            targetWidth: Int
+        ): Bitmap? {
+            val zip = zipFile ?: return null
+            synchronized(zipLock) {
+                val entry = zip.getEntry(entryName) ?: return null
+                return zip.getInputStream(entry).use { stream ->
+                    decodeRegionForWidth(stream, sourceRect, targetWidth)
+                }
             }
         }
 
@@ -454,6 +541,47 @@ object ComicArchive {
             return null
         }
         return ImageBounds(bounds.outWidth, bounds.outHeight)
+    }
+
+    private fun decodeBounds(stream: InputStream): ImageBounds? {
+        val bounds = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        BitmapFactory.decodeStream(stream, null, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            return null
+        }
+        return ImageBounds(bounds.outWidth, bounds.outHeight)
+    }
+
+    private fun decodeRegionForWidth(
+        stream: InputStream,
+        sourceRect: Rect,
+        targetWidth: Int
+    ): Bitmap? {
+        val decoder = runCatching {
+            BitmapRegionDecoder.newInstance(stream, false)
+        }.getOrNull() ?: return null
+
+        return try {
+            val boundedRect = Rect(sourceRect).apply {
+                left = left.coerceIn(0, decoder.width)
+                top = top.coerceIn(0, decoder.height)
+                right = right.coerceIn(left, decoder.width)
+                bottom = bottom.coerceIn(top, decoder.height)
+            }
+            if (boundedRect.width() <= 0 || boundedRect.height() <= 0) {
+                return null
+            }
+
+            val options = BitmapFactory.Options().apply {
+                inSampleSize = calculateInSampleSizeForWidth(boundedRect.width(), targetWidth)
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            decoder.decodeRegion(boundedRect, options)?.scaleToWidthIfLarger(targetWidth)
+        } finally {
+            decoder.recycle()
+        }
     }
 
     private fun ZipEntry.isImageEntry(): Boolean {

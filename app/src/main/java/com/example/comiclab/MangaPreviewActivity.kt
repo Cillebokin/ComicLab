@@ -13,6 +13,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
+import java.util.concurrent.Executors
 
 class MangaPreviewActivity : AppCompatActivity() {
 
@@ -30,9 +31,15 @@ class MangaPreviewActivity : AppCompatActivity() {
     private var archiveFile: File? = null
     private var imageEntries: List<String> = emptyList()
     private var showingAll = false
+    @Volatile
+    private var archiveGeneration = 0
+    @Volatile
     private var coverGeneration = 0
     @Volatile
     private var gridGeneration = 0
+    @Volatile
+    private var destroyed = false
+    private val previewExecutor = Executors.newFixedThreadPool(PREVIEW_THREAD_COUNT)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,17 +93,31 @@ class MangaPreviewActivity : AppCompatActivity() {
         updateReadingProgress()
     }
 
+    override fun onDestroy() {
+        destroyed = true
+        archiveGeneration++
+        coverGeneration++
+        gridGeneration++
+        previewExecutor.shutdownNow()
+        super.onDestroy()
+    }
+
     private fun loadArchive(file: File) {
+        val generation = ++archiveGeneration
         tvStatus.text = getString(R.string.loading_preview)
         tvStatus.visibility = View.VISIBLE
         btnTogglePreview.visibility = View.GONE
 
-        Thread {
+        executePreviewTask {
             val result = runCatching {
                 ComicArchive.imageEntries(file)
             }
 
             runOnUiThread {
+                if (!isPreviewActive() || generation != archiveGeneration) {
+                    return@runOnUiThread
+                }
+
                 val entries = result.getOrElse {
                     showError(getString(R.string.unsupported_archive_format))
                     return@runOnUiThread
@@ -113,7 +134,7 @@ class MangaPreviewActivity : AppCompatActivity() {
                 loadCover(entries.first())
                 renderPreviewGrid()
             }
-        }.start()
+        }
     }
 
     private fun updateReadingProgress() {
@@ -136,17 +157,17 @@ class MangaPreviewActivity : AppCompatActivity() {
         val file = archiveFile ?: return
         val generation = ++coverGeneration
 
-        Thread {
+        executePreviewTask {
             val bitmap = runCatching {
                 ComicArchive.decodeImage(file, entryName, COVER_IMAGE_MAX_SIZE)
             }.getOrNull()
 
             runOnUiThread {
-                if (generation == coverGeneration && bitmap != null) {
+                if (isPreviewActive() && generation == coverGeneration && bitmap != null) {
                     imgCover.setImageBitmap(bitmap)
                 }
             }
-        }.start()
+        }
     }
 
     private fun renderPreviewGrid() {
@@ -180,16 +201,16 @@ class MangaPreviewActivity : AppCompatActivity() {
 
         val indexesByEntry = entriesToShow.withIndex().associate { it.value to it.index }
 
-        Thread {
+        executePreviewTask {
             runCatching {
                 ComicArchive.decodeImages(file, entriesToShow, PREVIEW_IMAGE_MAX_SIZE) { entryName, bitmap ->
-                    if (generation != gridGeneration) {
+                    if (!isPreviewActive() || generation != gridGeneration) {
                         return@decodeImages false
                     }
 
                     val index = indexesByEntry[entryName] ?: return@decodeImages true
                     runOnUiThread {
-                        if (generation != gridGeneration) {
+                        if (!isPreviewActive() || generation != gridGeneration) {
                             return@runOnUiThread
                         }
 
@@ -205,12 +226,12 @@ class MangaPreviewActivity : AppCompatActivity() {
             }.onFailure {
                 hidePreviewLoading(generation)
             }
-        }.start()
+        }
     }
 
     private fun hidePreviewLoading(generation: Int) {
         runOnUiThread {
-            if (generation == gridGeneration) {
+            if (isPreviewActive() && generation == gridGeneration) {
                 tvStatus.visibility = View.INVISIBLE
             }
         }
@@ -245,9 +266,12 @@ class MangaPreviewActivity : AppCompatActivity() {
     }
 
     private fun returnToFileBrowser() {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        if (!isTaskRoot) {
+            finish()
+            return
         }
+
+        val intent = Intent(this, MainActivity::class.java)
         startActivity(intent)
         finish()
     }
@@ -281,6 +305,24 @@ class MangaPreviewActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
+    private fun executePreviewTask(block: () -> Unit) {
+        if (destroyed) {
+            return
+        }
+
+        runCatching {
+            previewExecutor.execute {
+                if (!destroyed) {
+                    block()
+                }
+            }
+        }
+    }
+
+    private fun isPreviewActive(): Boolean {
+        return !destroyed && !isFinishing && !isDestroyed
+    }
+
     companion object {
         const val EXTRA_ARCHIVE_PATH = "archive_path"
 
@@ -288,5 +330,6 @@ class MangaPreviewActivity : AppCompatActivity() {
         private const val PREVIEW_COLUMNS = 3
         private const val COVER_IMAGE_MAX_SIZE = 720
         private const val PREVIEW_IMAGE_MAX_SIZE = 360
+        private const val PREVIEW_THREAD_COUNT = 2
     }
 }

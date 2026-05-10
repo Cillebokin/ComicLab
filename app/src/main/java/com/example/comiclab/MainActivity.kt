@@ -21,6 +21,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import java.io.File
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 class MainActivity : AppCompatActivity() {
 
@@ -30,8 +32,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnOptions: ImageButton
     private lateinit var btnSort: ImageButton
     private lateinit var btnSearch: ImageButton
+    private lateinit var fileListAdapter: FileListAdapter
 
     private val fileItems = mutableListOf<FileItem>()
+    private val directoryLoadExecutor = Executors.newSingleThreadExecutor()
+    private val directoryLoadGeneration = AtomicInteger(0)
 
     private var browserInitialized = false
     private var currentPath = STORAGE_ROOT_PATH
@@ -56,7 +61,8 @@ class MainActivity : AppCompatActivity() {
         btnSort = findViewById(R.id.btnSort)
         btnSearch = findViewById(R.id.btnSearch)
 
-        listView.adapter = FileListAdapter(this, fileItems)
+        fileListAdapter = FileListAdapter(this, fileItems)
+        listView.adapter = fileListAdapter
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 handleSystemBack()
@@ -103,7 +109,7 @@ class MainActivity : AppCompatActivity() {
                 return@setOnItemClickListener
             }
             if (file.isDirectory) {
-                currentPath = file.absolutePath
+                setCurrentPath(file.absolutePath)
                 loadCurrentDirectory()
             } else if (ComicArchive.isArchive(file)) {
                 showArchiveMenu(file)
@@ -128,7 +134,15 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         clearFileListTouchState()
+        saveCurrentPath()
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        directoryLoadGeneration.incrementAndGet()
+        directoryLoadExecutor.shutdownNow()
+        fileListAdapter.close()
+        super.onDestroy()
     }
 
     private fun showStoragePermissionNoticeIfNeeded(): Boolean {
@@ -189,7 +203,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         browserInitialized = true
-        currentPath = STORAGE_ROOT_PATH
+        currentPath = savedCurrentPath()
         loadCurrentDirectory()
     }
 
@@ -206,7 +220,7 @@ class MainActivity : AppCompatActivity() {
 
         val current = File(currentPath)
         val pathToCenter = current.absolutePath
-        currentPath = current.parentFile?.absolutePath ?: STORAGE_ROOT_PATH
+        setCurrentPath(current.parentFile?.absolutePath ?: STORAGE_ROOT_PATH)
         loadCurrentDirectory(pathToCenter)
     }
 
@@ -231,9 +245,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        Thread {
-            val directory = File(currentPath).takeIf { it.isDirectory } ?: File(STORAGE_ROOT_PATH)
-            currentPath = directory.absolutePath
+        val requestedPath = currentPath
+        val generation = directoryLoadGeneration.incrementAndGet()
+        directoryLoadExecutor.execute {
+            val directory = File(requestedPath).takeIf { it.isDirectory } ?: File(STORAGE_ROOT_PATH)
+            val resolvedPath = directory.absolutePath
 
             val files = try {
                 directory.listFiles()
@@ -248,16 +264,37 @@ class MainActivity : AppCompatActivity() {
             if (directory.absolutePath != File(STORAGE_ROOT_PATH).absolutePath) {
                 items.add(FileItem(isParent = true))
             }
-            files.forEach { items.add(FileItem(file = it)) }
+            files.forEach { file ->
+                items.add(
+                    FileItem(
+                        file = file,
+                        childCount = if (file.isDirectory) directoryChildCount(file) else null
+                    )
+                )
+            }
 
             runOnUiThread {
+                if (generation != directoryLoadGeneration.get()) {
+                    return@runOnUiThread
+                }
+
+                currentPath = resolvedPath
+                saveCurrentPath()
                 fileItems.clear()
                 fileItems.addAll(items)
-                etPath.setText(directory.absolutePath)
+                etPath.setText(resolvedPath)
                 notifyListChanged()
                 pathToCenter?.let { centerFileItemIfPresent(it) }
             }
-        }.start()
+        }
+    }
+
+    private fun directoryChildCount(directory: File): Int {
+        return try {
+            directory.listFiles()?.size ?: 0
+        } catch (_: SecurityException) {
+            0
+        }
     }
 
     private fun centerFileItemIfPresent(path: String) {
@@ -429,7 +466,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun notifyListChanged() {
-        (listView.adapter as FileListAdapter).notifyDataSetChanged()
+        fileListAdapter.notifyDataSetChanged()
     }
 
     private fun clearFileListTouchState(clickedView: View? = null) {
@@ -475,10 +512,31 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
+    private fun setCurrentPath(path: String) {
+        currentPath = File(path).absolutePath
+        saveCurrentPath()
+    }
+
+    private fun saveCurrentPath() {
+        prefs.edit()
+            .putString(KEY_CURRENT_PATH, currentPath)
+            .apply()
+    }
+
+    private fun savedCurrentPath(): String {
+        val savedPath = prefs.getString(KEY_CURRENT_PATH, null)
+            ?.takeIf { it.isNotBlank() }
+            ?.let(::File)
+            ?.takeIf { it.isDirectory }
+            ?.absolutePath
+        return savedPath ?: STORAGE_ROOT_PATH
+    }
+
     companion object {
         private const val PREFS_NAME = "saf_prefs"
         private const val KEY_STORAGE_PERMISSION_PROMPTED = "storage_permission_prompted"
         private const val KEY_SORT_MODE = "sort_mode"
+        private const val KEY_CURRENT_PATH = "current_path"
         private const val CLEAR_CLICK_STATE_DELAY_MS = 120L
         private const val FILE_ITEM_HEIGHT_DP = 75
         private val STORAGE_ROOT_PATH = Environment.getExternalStorageDirectory().absolutePath

@@ -16,7 +16,8 @@ import java.util.concurrent.Executors
 
 data class FileItem(
     val file: File? = null,
-    val isParent: Boolean = false
+    val isParent: Boolean = false,
+    val childCount: Int? = null
 )
 
 class FileListAdapter(
@@ -28,6 +29,8 @@ class FileListAdapter(
     private val loadingArchiveCovers = Collections.synchronizedSet(mutableSetOf<String>())
     private val failedArchiveCovers = Collections.synchronizedSet(mutableSetOf<String>())
     private val archiveCoverExecutor = Executors.newFixedThreadPool(ARCHIVE_COVER_THREAD_COUNT)
+    @Volatile
+    private var closed = false
 
     override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
         val view = convertView ?: LayoutInflater.from(context)
@@ -76,7 +79,7 @@ class FileListAdapter(
 
         if (file.isDirectory) {
             bindDirectoryIcon(file, imgIcon)
-            tvInfo.text = context.getString(R.string.item_count, file.listFiles()?.size ?: 0)
+            tvInfo.text = context.getString(R.string.item_count, item.childCount ?: 0)
             return view
         }
 
@@ -118,7 +121,7 @@ class FileListAdapter(
             return
         }
 
-        archiveCoverExecutor.execute {
+        executeCoverTask {
             val cover = runCatching {
                 val firstFile = firstVisibleFileInDirectory(directory)
                     ?.takeIf { ComicArchive.isSupportedArchive(it) }
@@ -129,15 +132,18 @@ class FileListAdapter(
             }.getOrNull()
 
             loadingArchiveCovers.remove(cacheKey)
+            if (closed) {
+                return@executeCoverTask
+            }
 
             if (cover == null) {
                 failedArchiveCovers.add(cacheKey)
-                return@execute
+                return@executeCoverTask
             }
 
             archiveCoverCache.put(cacheKey, cover)
             imgIcon.post {
-                if (imgIcon.tag == cacheKey) {
+                if (!closed && imgIcon.tag == cacheKey) {
                     setArchiveCoverLayout(imgIcon)
                     imgIcon.scaleType = ImageView.ScaleType.CENTER_CROP
                     imgIcon.setImageBitmap(cover)
@@ -171,7 +177,7 @@ class FileListAdapter(
             return
         }
 
-        archiveCoverExecutor.execute {
+        executeCoverTask {
             val cover = runCatching {
                 val firstImageEntry = ComicArchive.imageEntries(file).firstOrNull()
                 firstImageEntry?.let {
@@ -180,18 +186,42 @@ class FileListAdapter(
             }.getOrNull()
 
             loadingArchiveCovers.remove(cacheKey)
+            if (closed) {
+                return@executeCoverTask
+            }
 
             if (cover == null) {
                 failedArchiveCovers.add(cacheKey)
-                return@execute
+                return@executeCoverTask
             }
 
             archiveCoverCache.put(cacheKey, cover)
             imgIcon.post {
-                if (imgIcon.tag == cacheKey) {
+                if (!closed && imgIcon.tag == cacheKey) {
                     setArchiveCoverLayout(imgIcon)
                     imgIcon.scaleType = ImageView.ScaleType.CENTER_CROP
                     imgIcon.setImageBitmap(cover)
+                }
+            }
+        }
+    }
+
+    fun close() {
+        closed = true
+        archiveCoverExecutor.shutdownNow()
+        loadingArchiveCovers.clear()
+        failedArchiveCovers.clear()
+    }
+
+    private fun executeCoverTask(block: () -> Unit) {
+        if (closed) {
+            return
+        }
+
+        runCatching {
+            archiveCoverExecutor.execute {
+                if (!closed) {
+                    block()
                 }
             }
         }
