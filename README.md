@@ -8,9 +8,7 @@ ComicLab 是一个面向 Android 的本地漫画阅读器，主要用于浏览�
 
 安装包下载地址：
 
-```
-https://github.com/Cillebokin/ComicLab/releases
-```
+[download](https://github.com/Cillebokin/ComicLab/releases)
 
 ## 支持格式
 
