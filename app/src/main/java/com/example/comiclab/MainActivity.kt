@@ -9,6 +9,8 @@ import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.webkit.MimeTypeMap
@@ -39,11 +41,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnReadingHistory: ImageButton
     private lateinit var btnFavoriteComics: ImageButton
     private lateinit var btnFavoritePaths: ImageButton
+    private lateinit var readingHistoryScrim: View
     private lateinit var fileListAdapter: FileListAdapter
 
     private val fileItems = mutableListOf<FileItem>()
     private val directoryLoadExecutor = Executors.newSingleThreadExecutor()
     private val directoryLoadGeneration = AtomicInteger(0)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val showReadingHistoryScrimRunnable = Runnable {
+        showReadingHistoryScrimNow()
+    }
+    private val hideReadingHistoryScrimRunnable = Runnable {
+        hideReadingHistoryScrimNow()
+    }
 
     private var readingHistoryPopupWindow: PopupWindow? = null
     private var readingHistoryAdapter: ReadingHistoryAdapter? = null
@@ -72,6 +82,7 @@ class MainActivity : AppCompatActivity() {
         btnReadingHistory = findViewById(R.id.btnReadingHistory)
         btnFavoriteComics = findViewById(R.id.btnFavoriteComics)
         btnFavoritePaths = findViewById(R.id.btnFavoritePaths)
+        readingHistoryScrim = findViewById(R.id.readingHistoryScrim)
 
         fileListAdapter = FileListAdapter(this, fileItems)
         listView.adapter = fileListAdapter
@@ -91,6 +102,10 @@ class MainActivity : AppCompatActivity() {
 
         btnReadingHistory.setOnClickListener {
             showReadingHistoryPanel()
+        }
+
+        readingHistoryScrim.setOnClickListener {
+            dismissReadingHistoryPanel()
         }
 
         btnFavoriteComics.setOnClickListener {
@@ -165,6 +180,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         directoryLoadGeneration.incrementAndGet()
+        mainHandler.removeCallbacks(showReadingHistoryScrimRunnable)
+        mainHandler.removeCallbacks(hideReadingHistoryScrimRunnable)
         directoryLoadExecutor.shutdownNow()
         fileListAdapter.close()
         super.onDestroy()
@@ -234,6 +251,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         dismissReadingHistoryPanel()
+        scheduleShowReadingHistoryScrim()
         readingHistoryAdapter = historyAdapter
         readingHistoryPopupWindow = PopupWindow(
             content,
@@ -249,8 +267,9 @@ class MainActivity : AppCompatActivity() {
                 historyAdapter.close()
                 if (readingHistoryAdapter === historyAdapter) {
                     readingHistoryAdapter = null
+                    readingHistoryPopupWindow = null
+                    scheduleHideReadingHistoryScrim()
                 }
-                readingHistoryPopupWindow = null
             }
             showAtLocation(rootView, Gravity.END or Gravity.TOP, 0, 0)
         }
@@ -261,6 +280,33 @@ class MainActivity : AppCompatActivity() {
         readingHistoryPopupWindow = null
         readingHistoryAdapter?.close()
         readingHistoryAdapter = null
+        scheduleHideReadingHistoryScrim()
+    }
+
+    private fun scheduleShowReadingHistoryScrim() {
+        mainHandler.removeCallbacks(hideReadingHistoryScrimRunnable)
+        mainHandler.removeCallbacks(showReadingHistoryScrimRunnable)
+        mainHandler.postDelayed(
+            showReadingHistoryScrimRunnable,
+            READING_HISTORY_PANEL_ENTER_ANIMATION_MS
+        )
+    }
+
+    private fun scheduleHideReadingHistoryScrim() {
+        mainHandler.removeCallbacks(showReadingHistoryScrimRunnable)
+        mainHandler.removeCallbacks(hideReadingHistoryScrimRunnable)
+        mainHandler.postDelayed(
+            hideReadingHistoryScrimRunnable,
+            READING_HISTORY_PANEL_EXIT_ANIMATION_MS
+        )
+    }
+
+    private fun showReadingHistoryScrimNow() {
+        readingHistoryScrim.visibility = View.VISIBLE
+    }
+
+    private fun hideReadingHistoryScrimNow() {
+        readingHistoryScrim.visibility = View.GONE
     }
 
     private fun showPendingFeature(labelResId: Int) {
@@ -633,6 +679,8 @@ class MainActivity : AppCompatActivity() {
         private const val FILE_ITEM_HEIGHT_DP = 75
         private const val MIN_READING_HISTORY_PANEL_WIDTH_DP = 180
         private const val READING_HISTORY_PANEL_ELEVATION_DP = 8
+        private const val READING_HISTORY_PANEL_ENTER_ANIMATION_MS = 180L
+        private const val READING_HISTORY_PANEL_EXIT_ANIMATION_MS = 150L
         private val STORAGE_ROOT_PATH = Environment.getExternalStorageDirectory().absolutePath
     }
 

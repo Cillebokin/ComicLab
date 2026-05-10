@@ -298,7 +298,7 @@ class MangaPreviewActivity : AppCompatActivity() {
     }
 
     private fun openMangaReader(file: File, startFromBeginning: Boolean) {
-        val intent = Intent(this, MangaReaderActivity::class.java).apply {
+        val intent = Intent(this, MangaReaderPrepareActivity::class.java).apply {
             putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
             putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
         }

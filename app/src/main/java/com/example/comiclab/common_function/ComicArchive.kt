@@ -31,6 +31,14 @@ object ComicArchive {
         val height: Int
     )
 
+    interface ImageReaderSession : Closeable {
+        fun readBounds(entryName: String): ImageBounds?
+        fun decodePreviewForWidth(entryName: String, targetWidth: Int): Bitmap?
+        fun decodeImageForWidth(entryName: String, targetWidth: Int): Bitmap?
+        fun decodeImageForPage(entryName: String, targetWidth: Int, targetHeight: Int): Bitmap?
+        fun decodeRegionForWidth(entryName: String, sourceRect: Rect, targetWidth: Int): Bitmap?
+    }
+
     private val zipArchiveExtensions = setOf("zip", "cbz")
     private val sevenZipArchiveExtensions = setOf("rar", "cbr", "7z", "cb7")
     private val supportedArchiveExtensions = zipArchiveExtensions + sevenZipArchiveExtensions
@@ -100,10 +108,64 @@ object ComicArchive {
         return ReaderSession(file, cacheRoot)
     }
 
+    fun openPreparedReaderSession(directory: File, deleteOnClose: Boolean): ImageReaderSession {
+        return PreparedReaderSession(directory, deleteOnClose)
+    }
+
+    fun preparedImageEntries(directory: File): List<String> {
+        return preparedImageFiles(directory).map { it.name }
+    }
+
+    fun imageFileBounds(file: File): ImageBounds? {
+        return decodeFileBounds(file)
+    }
+
+    fun extractImagesToDirectory(
+        file: File,
+        outputDir: File,
+        shouldContinue: () -> Boolean = { true },
+        onProgress: (completed: Int, total: Int) -> Unit
+    ): List<File> {
+        val entries = imageEntries(file)
+        if (entries.isEmpty()) {
+            onProgress(0, 0)
+            return emptyList()
+        }
+
+        outputDir.deleteRecursively()
+        outputDir.mkdirs()
+        onProgress(0, entries.size)
+
+        val extractedFiles = when (file.extension.lowercase(Locale.ROOT)) {
+            in zipArchiveExtensions -> extractZipImagesToDirectory(
+                file,
+                entries,
+                outputDir,
+                shouldContinue,
+                onProgress
+            )
+            in sevenZipArchiveExtensions -> extractSevenZipImagesToDirectory(
+                file,
+                entries,
+                outputDir,
+                shouldContinue,
+                onProgress
+            )
+            else -> emptyList()
+        }
+
+        if (shouldContinue() && extractedFiles.size != entries.size) {
+            outputDir.deleteRecursively()
+            return emptyList()
+        }
+
+        return extractedFiles.sortedBy { it.name }
+    }
+
     class ReaderSession internal constructor(
         private val file: File,
         cacheRoot: File
-    ) : Closeable {
+    ) : ImageReaderSession {
 
         private val extension = file.extension.lowercase(Locale.ROOT)
         private val zipFile = if (extension in zipArchiveExtensions) ZipFile(file) else null
@@ -121,7 +183,7 @@ object ComicArchive {
             }
         }
 
-        fun readBounds(entryName: String): ImageBounds? {
+        override fun readBounds(entryName: String): ImageBounds? {
             if (extension in zipArchiveExtensions) {
                 return decodeZipBounds(entryName)
             }
@@ -130,7 +192,7 @@ object ComicArchive {
             return decodeBounds(bytes)
         }
 
-        fun decodePreviewForWidth(entryName: String, targetWidth: Int): Bitmap? {
+        override fun decodePreviewForWidth(entryName: String, targetWidth: Int): Bitmap? {
             if (extension in zipArchiveExtensions) {
                 return decodeZipBitmap(
                     entryName = entryName,
@@ -147,7 +209,7 @@ object ComicArchive {
             )?.scaleToWidthIfLarger(targetWidth)
         }
 
-        fun decodeImageForWidth(entryName: String, targetWidth: Int): Bitmap? {
+        override fun decodeImageForWidth(entryName: String, targetWidth: Int): Bitmap? {
             if (extension in zipArchiveExtensions) {
                 return decodeZipBitmap(
                     entryName = entryName,
@@ -164,7 +226,7 @@ object ComicArchive {
             )?.scaleToWidthIfLarger(targetWidth)
         }
 
-        fun decodeImageForPage(entryName: String, targetWidth: Int, targetHeight: Int): Bitmap? {
+        override fun decodeImageForPage(entryName: String, targetWidth: Int, targetHeight: Int): Bitmap? {
             if (extension in zipArchiveExtensions) {
                 return decodeZipBitmap(
                     entryName = entryName,
@@ -191,7 +253,7 @@ object ComicArchive {
             )?.scaleToFitBoundsIfLarger(targetWidth, targetHeight)
         }
 
-        fun decodeRegionForWidth(entryName: String, sourceRect: Rect, targetWidth: Int): Bitmap? {
+        override fun decodeRegionForWidth(entryName: String, sourceRect: Rect, targetWidth: Int): Bitmap? {
             if (extension in zipArchiveExtensions) {
                 return decodeZipRegionForWidth(entryName, sourceRect, targetWidth)
             }
@@ -320,6 +382,64 @@ object ComicArchive {
                 .takeIf { it.isNotBlank() }
                 ?: "img"
             return "${Integer.toHexString(entryName.hashCode())}_${entryName.length}.$extension"
+        }
+    }
+
+    private class PreparedReaderSession(
+        private val directory: File,
+        private val deleteOnClose: Boolean
+    ) : ImageReaderSession {
+
+        private val filesByEntryName = preparedImageFiles(directory).associateBy { it.name }
+
+        override fun readBounds(entryName: String): ImageBounds? {
+            val imageFile = filesByEntryName[entryName] ?: return null
+            return decodeFileBounds(imageFile)
+        }
+
+        override fun decodePreviewForWidth(entryName: String, targetWidth: Int): Bitmap? {
+            val imageFile = filesByEntryName[entryName] ?: return null
+            return decodeFileBitmap(
+                file = imageFile,
+                preferredConfig = Bitmap.Config.RGB_565,
+                sampleSize = { width, _ -> calculateInSampleSizeForWidth(width, targetWidth) }
+            )?.scaleToWidthIfLarger(targetWidth)
+        }
+
+        override fun decodeImageForWidth(entryName: String, targetWidth: Int): Bitmap? {
+            val imageFile = filesByEntryName[entryName] ?: return null
+            return decodeFileBitmap(
+                file = imageFile,
+                preferredConfig = Bitmap.Config.ARGB_8888,
+                sampleSize = { width, _ -> calculateInSampleSizeForWidth(width, targetWidth) }
+            )?.scaleToWidthIfLarger(targetWidth)
+        }
+
+        override fun decodeImageForPage(entryName: String, targetWidth: Int, targetHeight: Int): Bitmap? {
+            val imageFile = filesByEntryName[entryName] ?: return null
+            return decodeFileBitmap(
+                file = imageFile,
+                preferredConfig = Bitmap.Config.ARGB_8888,
+                sampleSize = { width, height ->
+                    maxOf(
+                        calculateInSampleSizeForWidth(width, targetWidth),
+                        calculateInSampleSizeForHeight(height, targetHeight)
+                    )
+                }
+            )?.scaleToFitBoundsIfLarger(targetWidth, targetHeight)
+        }
+
+        override fun decodeRegionForWidth(entryName: String, sourceRect: Rect, targetWidth: Int): Bitmap? {
+            val imageFile = filesByEntryName[entryName] ?: return null
+            return imageFile.inputStream().use { stream ->
+                decodeRegionForWidth(stream, sourceRect, targetWidth)
+            }
+        }
+
+        override fun close() {
+            if (deleteOnClose) {
+                directory.deleteRecursively()
+            }
         }
     }
 
@@ -471,6 +591,116 @@ object ComicArchive {
         }
     }
 
+    private fun extractZipImagesToDirectory(
+        file: File,
+        entryNames: List<String>,
+        outputDir: File,
+        shouldContinue: () -> Boolean,
+        onProgress: (completed: Int, total: Int) -> Unit
+    ): List<File> {
+        val extractedFiles = mutableListOf<File>()
+        ZipFile(file).use { zipFile ->
+            entryNames.forEachIndexed { index, entryName ->
+                if (!shouldContinue()) {
+                    return extractedFiles
+                }
+
+                val targetFile = File(outputDir, preparedImageFileName(index, entryName))
+                val entry = zipFile.getEntry(entryName)
+                if (entry != null) {
+                    val copied = runCatching {
+                        targetFile.parentFile?.mkdirs()
+                        zipFile.getInputStream(entry).use { input ->
+                            targetFile.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                    }.isSuccess
+                    if (copied && targetFile.isFile && targetFile.length() > 0L) {
+                        extractedFiles.add(targetFile)
+                    } else {
+                        targetFile.delete()
+                    }
+                }
+                onProgress(index + 1, entryNames.size)
+            }
+        }
+        return extractedFiles
+    }
+
+    private fun extractSevenZipImagesToDirectory(
+        file: File,
+        entryNames: List<String>,
+        outputDir: File,
+        shouldContinue: () -> Boolean,
+        onProgress: (completed: Int, total: Int) -> Unit
+    ): List<File> {
+        return withSevenZipArchive(file) { archive ->
+            val entryIndexesByPath = (0 until archive.numberOfItems)
+                .asSequence()
+                .filter { !archive.isFolder(it) }
+                .mapNotNull { index -> archive.entryPath(index)?.let { path -> path to index } }
+                .toMap()
+            val extractedFiles = mutableListOf<File>()
+
+            entryNames.forEachIndexed { index, entryName ->
+                if (!shouldContinue()) {
+                    return@withSevenZipArchive extractedFiles
+                }
+
+                val targetFile = File(outputDir, preparedImageFileName(index, entryName))
+                val entryIndex = entryIndexesByPath[entryName]
+                if (entryIndex != null && extractSevenZipEntryToFile(archive, entryIndex, targetFile)) {
+                    extractedFiles.add(targetFile)
+                } else {
+                    targetFile.delete()
+                }
+                onProgress(index + 1, entryNames.size)
+            }
+
+            extractedFiles
+        }
+    }
+
+    private fun extractSevenZipEntryToFile(
+        archive: IInArchive,
+        entryIndex: Int,
+        targetFile: File
+    ): Boolean {
+        var extractResult = ExtractOperationResult.OK
+        targetFile.parentFile?.mkdirs()
+        targetFile.outputStream().use { output ->
+            archive.extract(intArrayOf(entryIndex), false, object : IArchiveExtractCallback {
+                override fun setTotal(total: Long) = Unit
+
+                override fun setCompleted(completeValue: Long) = Unit
+
+                override fun getStream(index: Int, extractAskMode: ExtractAskMode): ISequentialOutStream? {
+                    if (index != entryIndex || extractAskMode != ExtractAskMode.EXTRACT) {
+                        return null
+                    }
+
+                    return object : ISequentialOutStream {
+                        override fun write(data: ByteArray): Int {
+                            output.write(data)
+                            return data.size
+                        }
+                    }
+                }
+
+                override fun prepareOperation(extractAskMode: ExtractAskMode) = Unit
+
+                override fun setOperationResult(extractOperationResult: ExtractOperationResult) {
+                    extractResult = extractOperationResult
+                }
+            })
+        }
+
+        return extractResult == ExtractOperationResult.OK &&
+            targetFile.isFile &&
+            targetFile.length() > 0L
+    }
+
     private fun extractSevenZipEntryBytes(archive: IInArchive, entryIndex: Int): ByteArray? {
         val output = ByteArrayOutputStream()
         var extractResult = ExtractOperationResult.OK
@@ -532,6 +762,24 @@ object ComicArchive {
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
     }
 
+    private fun decodeFileBitmap(
+        file: File,
+        preferredConfig: Bitmap.Config,
+        sampleSize: (width: Int, height: Int) -> Int
+    ): Bitmap? {
+        val bounds = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+
+        val decodeOptions = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight)
+            inPreferredConfig = preferredConfig
+        }
+
+        return BitmapFactory.decodeFile(file.absolutePath, decodeOptions)
+    }
+
     private fun decodeBounds(bytes: ByteArray): ImageBounds? {
         val bounds = BitmapFactory.Options().apply {
             inJustDecodeBounds = true
@@ -548,6 +796,17 @@ object ComicArchive {
             inJustDecodeBounds = true
         }
         BitmapFactory.decodeStream(stream, null, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            return null
+        }
+        return ImageBounds(bounds.outWidth, bounds.outHeight)
+    }
+
+    private fun decodeFileBounds(file: File): ImageBounds? {
+        val bounds = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             return null
         }
@@ -599,6 +858,24 @@ object ComicArchive {
 
     private fun IInArchive.entryPath(index: Int): String? {
         return getProperty(index, PropID.PATH) as? String
+    }
+
+    private fun preparedImageFiles(directory: File): List<File> {
+        return directory.listFiles()
+            ?.asSequence()
+            ?.filter { it.isFile && it.name.isImageEntryName() }
+            ?.sortedBy { it.name }
+            ?.toList()
+            ?: emptyList()
+    }
+
+    private fun preparedImageFileName(index: Int, entryName: String): String {
+        val extension = entryName.substringAfterLast('.', "")
+            .lowercase(Locale.ROOT)
+            .takeIf { it in imageExtensions }
+            ?: "img"
+        val hash = Integer.toHexString(entryName.hashCode())
+        return String.format(Locale.ROOT, "%06d_%s.%s", index, hash, extension)
     }
 
     private fun <T> withSevenZipArchive(file: File, block: (IInArchive) -> T): T {

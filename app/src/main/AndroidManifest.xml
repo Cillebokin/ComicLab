@@ -35,6 +35,10 @@
             android:exported="false" />
 
         <activity
+            android:name="com.example.comiclab.MangaReaderPrepareActivity"
+            android:exported="false" />
+
+        <activity
             android:name="com.example.comiclab.MangaPreviewActivity"
             android:exported="false" />
 
