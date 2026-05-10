@@ -98,7 +98,8 @@
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/favorite_comics"
             android:scaleType="centerInside"
-            android:src="@drawable/png_mark_file_icon" />
+            android:src="@drawable/png_mark_file_icon"
+            android:visibility="gone" />
 
         <ImageButton
             android:id="@+id/btnFavoritePaths"
@@ -108,7 +109,8 @@
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/favorite_paths"
             android:scaleType="centerInside"
-            android:src="@drawable/png_mark_direct_icon" />
+            android:src="@drawable/png_mark_direct_icon"
+            android:visibility="gone" />
 
         <View
             android:layout_width="0dp"
