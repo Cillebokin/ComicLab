@@ -6,6 +6,12 @@ ComicLab 是一个面向 Android 的本地漫画阅读器，主要用于浏览�
 
 **如果您也在使用，并且存在需求和问题，请反馈给作者（比心）**
 
+安装包下载地址：
+
+```
+https://github.com/Cillebokin/ComicLab/releases
+```
+
 ## 支持格式
 
 | 类型 | 格式 |
