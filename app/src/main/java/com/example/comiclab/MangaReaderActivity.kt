@@ -513,7 +513,7 @@ class MangaReaderActivity : AppCompatActivity() {
             return
         }
 
-        val currentPosition = firstVisibleItem.coerceIn(0, totalItemCount - 1)
+        val currentPosition = displayedReaderPosition(firstVisibleItem, totalItemCount)
         updateReaderProgressText(currentPosition, totalItemCount)
         if (!isDraggingReaderSlider) {
             sliderReaderProgress.max = (totalItemCount - 1).coerceAtLeast(0)
@@ -551,9 +551,10 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         clearPendingReaderPosition()
-        val currentPosition = readerLayoutManager.findFirstVisibleItemPosition()
+        val firstVisiblePosition = readerLayoutManager.findFirstVisibleItemPosition()
             .takeIf { it != RecyclerView.NO_POSITION }
             ?: currentReaderPosition
+        val currentPosition = displayedReaderPosition(firstVisiblePosition, imageEntries.size)
         val targetPosition = (currentPosition + delta).coerceIn(0, imageEntries.lastIndex)
         if (targetPosition == currentPosition) {
             return
@@ -590,7 +591,7 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun updateCurrentReaderPosition(firstVisiblePosition: Int) {
-        currentReaderPosition = firstVisiblePosition.coerceAtLeast(0)
+        currentReaderPosition = displayedReaderPosition(firstVisiblePosition, imageEntries.size)
         currentReaderOffset = if (isHorizontalReading()) {
             0
         } else {
@@ -678,6 +679,64 @@ class MangaReaderActivity : AppCompatActivity() {
         } else {
             child.top
         }
+    }
+
+    private fun displayedReaderPosition(firstVisiblePosition: Int, totalItemCount: Int): Int {
+        if (totalItemCount <= 0) {
+            return 0
+        }
+
+        if (isHorizontalReading()) {
+            return firstVisiblePosition.coerceIn(0, totalItemCount - 1)
+        }
+
+        if (isAtVerticalReaderEnd(totalItemCount)) {
+            return totalItemCount - 1
+        }
+
+        val centeredPosition = centerVisibleReaderPosition()
+        return (if (centeredPosition != RecyclerView.NO_POSITION) {
+            centeredPosition
+        } else {
+            firstVisiblePosition
+        }).coerceIn(0, totalItemCount - 1)
+    }
+
+    private fun isAtVerticalReaderEnd(totalItemCount: Int): Boolean {
+        if (isHorizontalReading() || totalItemCount <= 0 || listReaderPages.childCount <= 0) {
+            return false
+        }
+
+        val lastVisiblePosition = readerLayoutManager.findLastVisibleItemPosition()
+        return lastVisiblePosition == totalItemCount - 1 && !listReaderPages.canScrollVertically(1)
+    }
+
+    private fun centerVisibleReaderPosition(): Int {
+        if (listReaderPages.childCount <= 0) {
+            return RecyclerView.NO_POSITION
+        }
+
+        val viewportCenterY = listReaderPages.height / 2
+        var bestPosition = RecyclerView.NO_POSITION
+        var bestDistance = Int.MAX_VALUE
+        for (index in 0 until listReaderPages.childCount) {
+            val child = listReaderPages.getChildAt(index)
+            val position = listReaderPages.getChildAdapterPosition(child)
+            if (position == RecyclerView.NO_POSITION ||
+                child.bottom <= 0 ||
+                child.top >= listReaderPages.height
+            ) {
+                continue
+            }
+
+            val childCenterY = (child.top + child.bottom) / 2
+            val distance = abs(childCenterY - viewportCenterY)
+            if (distance < bestDistance) {
+                bestDistance = distance
+                bestPosition = position
+            }
+        }
+        return bestPosition
     }
 
     private fun readerLayoutOrientation(): Int {
