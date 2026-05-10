@@ -12,10 +12,12 @@ import net.sf.sevenzipjbinding.ISequentialOutStream
 import net.sf.sevenzipjbinding.PropID
 import net.sf.sevenzipjbinding.SevenZip
 import net.sf.sevenzipjbinding.impl.RandomAccessFileInStream
+import org.json.JSONArray
 import java.io.Closeable
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
+import java.io.OutputStream
 import java.io.RandomAccessFile
 import java.util.Locale
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -25,6 +27,7 @@ import java.util.zip.ZipFile
 
 object ComicArchive {
     private const val ZIP_PREVIEW_DECODE_THREAD_COUNT = 2
+    private const val PREPARED_READER_MANIFEST_FILE = "reader_manifest.json"
 
     data class ImageBounds(
         val width: Int,
@@ -38,6 +41,11 @@ object ComicArchive {
         fun decodeImageForPage(entryName: String, targetWidth: Int, targetHeight: Int): Bitmap?
         fun decodeRegionForWidth(entryName: String, sourceRect: Rect, targetWidth: Int): Bitmap?
     }
+
+    data class PreparedImageEntry(
+        val index: Int,
+        val entryName: String
+    )
 
     private val zipArchiveExtensions = setOf("zip", "cbz")
     private val sevenZipArchiveExtensions = setOf("rar", "cbr", "7z", "cb7")
@@ -112,12 +120,56 @@ object ComicArchive {
         return PreparedReaderSession(directory, deleteOnClose)
     }
 
+    fun openPreparedImageExtractor(file: File, outputDir: File): PreparedImageExtractor {
+        return PreparedImageExtractor(file, outputDir)
+    }
+
     fun preparedImageEntries(directory: File): List<String> {
+        readPreparedReaderManifest(directory)?.let { return it }
         return preparedImageFiles(directory).map { it.name }
+    }
+
+    fun writePreparedReaderManifest(directory: File, entryNames: List<String>) {
+        directory.mkdirs()
+        val array = JSONArray()
+        entryNames.forEach { array.put(it) }
+        File(directory, PREPARED_READER_MANIFEST_FILE).writeText(array.toString())
+    }
+
+    fun preparedImageFile(directory: File, index: Int, entryName: String): File {
+        return File(directory, preparedImageFileName(index, entryName))
     }
 
     fun imageFileBounds(file: File): ImageBounds? {
         return decodeFileBounds(file)
+    }
+
+    fun extractPreparedImagesToDirectory(
+        file: File,
+        entries: List<PreparedImageEntry>,
+        outputDir: File,
+        shouldContinue: () -> Boolean = { true },
+        onProgress: (completed: Int, total: Int) -> Unit
+    ): List<File> {
+        if (entries.isEmpty()) {
+            onProgress(0, 0)
+            return emptyList()
+        }
+
+        outputDir.mkdirs()
+        onProgress(0, entries.size)
+        val extractedFiles = mutableListOf<File>()
+        openPreparedImageExtractor(file, outputDir).use { extractor ->
+            entries.forEachIndexed { progressIndex, entry ->
+                if (!shouldContinue()) {
+                    return extractedFiles
+                }
+
+                extractor.extract(entry.index, entry.entryName)?.let { extractedFiles.add(it) }
+                onProgress(progressIndex + 1, entries.size)
+            }
+        }
+        return extractedFiles
     }
 
     fun extractImagesToDirectory(
@@ -134,6 +186,7 @@ object ComicArchive {
 
         outputDir.deleteRecursively()
         outputDir.mkdirs()
+        writePreparedReaderManifest(outputDir, entries)
         onProgress(0, entries.size)
 
         val extractedFiles = when (file.extension.lowercase(Locale.ROOT)) {
@@ -385,12 +438,77 @@ object ComicArchive {
         }
     }
 
+    class PreparedImageExtractor internal constructor(
+        private val file: File,
+        private val outputDir: File
+    ) : Closeable {
+
+        private val extension = file.extension.lowercase(Locale.ROOT)
+        private val zipFile = if (extension in zipArchiveExtensions) ZipFile(file) else null
+        private val randomAccessFile =
+            if (extension in sevenZipArchiveExtensions) RandomAccessFile(file, "r") else null
+        private val sevenZipArchive =
+            randomAccessFile?.let { SevenZip.openInArchive(null, RandomAccessFileInStream(it)) }
+        private val sevenZipEntryIndexes by lazy {
+            sevenZipArchive?.let { archive ->
+                (0 until archive.numberOfItems)
+                    .asSequence()
+                    .filter { !archive.isFolder(it) }
+                    .mapNotNull { index -> archive.entryPath(index)?.let { path -> path to index } }
+                    .toMap()
+            } ?: emptyMap()
+        }
+
+        @Synchronized
+        fun extract(index: Int, entryName: String): File? {
+            val targetFile = preparedImageFile(outputDir, index, entryName)
+            if (targetFile.isFile && targetFile.length() > 0L) {
+                return targetFile
+            }
+
+            return when (extension) {
+                in zipArchiveExtensions -> extractZipEntry(entryName, targetFile)
+                in sevenZipArchiveExtensions -> extractSevenZipEntry(entryName, targetFile)
+                else -> null
+            }
+        }
+
+        override fun close() {
+            zipFile?.close()
+            sevenZipArchive?.close()
+            randomAccessFile?.close()
+        }
+
+        private fun extractZipEntry(entryName: String, targetFile: File): File? {
+            val zip = zipFile ?: return null
+            val entry = zip.getEntry(entryName) ?: return null
+            val copied = runCatching {
+                writeAtomic(targetFile) { output ->
+                    zip.getInputStream(entry).use { input ->
+                        input.copyTo(output)
+                    }
+                }
+            }.getOrDefault(false)
+            return targetFile.takeIf { copied && it.isFile && it.length() > 0L }
+        }
+
+        private fun extractSevenZipEntry(entryName: String, targetFile: File): File? {
+            val archive = sevenZipArchive ?: return null
+            val entryIndex = sevenZipEntryIndexes[entryName] ?: return null
+            val copied = extractSevenZipEntryToFile(archive, entryIndex, targetFile)
+            return targetFile.takeIf { copied && it.isFile && it.length() > 0L }
+        }
+    }
+
     private class PreparedReaderSession(
         private val directory: File,
         private val deleteOnClose: Boolean
     ) : ImageReaderSession {
 
-        private val filesByEntryName = preparedImageFiles(directory).associateBy { it.name }
+        private val filesByEntryName = readPreparedReaderManifest(directory)
+            ?.mapIndexed { index, entryName -> entryName to preparedImageFile(directory, index, entryName) }
+            ?.toMap()
+            ?: preparedImageFiles(directory).associateBy { it.name }
 
         override fun readBounds(entryName: String): ImageBounds? {
             val imageFile = filesByEntryName[entryName] ?: return null
@@ -605,17 +723,16 @@ object ComicArchive {
                     return extractedFiles
                 }
 
-                val targetFile = File(outputDir, preparedImageFileName(index, entryName))
+                val targetFile = preparedImageFile(outputDir, index, entryName)
                 val entry = zipFile.getEntry(entryName)
                 if (entry != null) {
                     val copied = runCatching {
-                        targetFile.parentFile?.mkdirs()
-                        zipFile.getInputStream(entry).use { input ->
-                            targetFile.outputStream().use { output ->
+                        writeAtomic(targetFile) { output ->
+                            zipFile.getInputStream(entry).use { input ->
                                 input.copyTo(output)
                             }
                         }
-                    }.isSuccess
+                    }.getOrDefault(false)
                     if (copied && targetFile.isFile && targetFile.length() > 0L) {
                         extractedFiles.add(targetFile)
                     } else {
@@ -648,7 +765,7 @@ object ComicArchive {
                     return@withSevenZipArchive extractedFiles
                 }
 
-                val targetFile = File(outputDir, preparedImageFileName(index, entryName))
+                val targetFile = preparedImageFile(outputDir, index, entryName)
                 val entryIndex = entryIndexesByPath[entryName]
                 if (entryIndex != null && extractSevenZipEntryToFile(archive, entryIndex, targetFile)) {
                     extractedFiles.add(targetFile)
@@ -668,8 +785,7 @@ object ComicArchive {
         targetFile: File
     ): Boolean {
         var extractResult = ExtractOperationResult.OK
-        targetFile.parentFile?.mkdirs()
-        targetFile.outputStream().use { output ->
+        val wroteFile = writeAtomic(targetFile) { output ->
             archive.extract(intArrayOf(entryIndex), false, object : IArchiveExtractCallback {
                 override fun setTotal(total: Long) = Unit
 
@@ -696,9 +812,14 @@ object ComicArchive {
             })
         }
 
-        return extractResult == ExtractOperationResult.OK &&
+        val success = wroteFile &&
+            extractResult == ExtractOperationResult.OK &&
             targetFile.isFile &&
             targetFile.length() > 0L
+        if (!success) {
+            targetFile.delete()
+        }
+        return success
     }
 
     private fun extractSevenZipEntryBytes(archive: IInArchive, entryIndex: Int): ByteArray? {
@@ -860,6 +981,18 @@ object ComicArchive {
         return getProperty(index, PropID.PATH) as? String
     }
 
+    private fun readPreparedReaderManifest(directory: File): List<String>? {
+        val manifestFile = File(directory, PREPARED_READER_MANIFEST_FILE)
+        if (!manifestFile.isFile) {
+            return null
+        }
+
+        return runCatching {
+            val array = JSONArray(manifestFile.readText())
+            (0 until array.length()).map { index -> array.getString(index) }
+        }.getOrNull()
+    }
+
     private fun preparedImageFiles(directory: File): List<File> {
         return directory.listFiles()
             ?.asSequence()
@@ -876,6 +1009,33 @@ object ComicArchive {
             ?: "img"
         val hash = Integer.toHexString(entryName.hashCode())
         return String.format(Locale.ROOT, "%06d_%s.%s", index, hash, extension)
+    }
+
+    private fun writeAtomic(targetFile: File, writeBlock: (OutputStream) -> Unit): Boolean {
+        targetFile.parentFile?.mkdirs()
+        val tempFile = File(targetFile.parentFile, "${targetFile.name}.part")
+        tempFile.delete()
+        val wrote = runCatching {
+            tempFile.outputStream().use { output ->
+                writeBlock(output)
+            }
+            tempFile.isFile && tempFile.length() > 0L
+        }.getOrDefault(false)
+
+        if (!wrote) {
+            tempFile.delete()
+            return false
+        }
+
+        if (targetFile.exists()) {
+            targetFile.delete()
+        }
+
+        val renamed = tempFile.renameTo(targetFile)
+        if (!renamed) {
+            tempFile.delete()
+        }
+        return renamed
     }
 
     private fun <T> withSevenZipArchive(file: File, block: (IInArchive) -> T): T {

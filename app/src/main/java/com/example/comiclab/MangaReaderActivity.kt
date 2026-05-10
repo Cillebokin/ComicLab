@@ -449,9 +449,15 @@ class MangaReaderActivity : AppCompatActivity() {
         tvReaderStatus.text = getString(R.string.loading_reading)
         tvReaderStatus.visibility = View.VISIBLE
         executeReaderLoadTask {
-            val pageFiles = entries.map { File(preparedCacheDir, it) }
+            val pageFiles = entries.mapIndexed { index, entryName ->
+                ComicArchive.preparedImageFile(preparedCacheDir, index, entryName)
+            }
             val boundsByPosition = pageFiles.mapIndexedNotNull { index, imageFile ->
-                ComicArchive.imageFileBounds(imageFile)?.let { index to it }
+                if (imageFile.isFile) {
+                    ComicArchive.imageFileBounds(imageFile)?.let { index to it }
+                } else {
+                    null
+                }
             }.toMap()
 
             runOnUiThread {
@@ -463,7 +469,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 imageEntries = entries
                 ReadingHistoryStore.record(this, file)
                 tvReaderStatus.visibility = View.GONE
-                bindPreparedReaderAdapter(entries, pageFiles, boundsByPosition, preparedCacheDir)
+                bindPreparedReaderAdapter(entries, pageFiles, boundsByPosition, preparedCacheDir, file)
             }
         }
     }
@@ -482,7 +488,8 @@ class MangaReaderActivity : AppCompatActivity() {
         entries: List<String>,
         pageFiles: List<File>,
         boundsByPosition: Map<Int, ComicArchive.ImageBounds>,
-        preparedCacheDir: File
+        preparedCacheDir: File,
+        archiveFile: File
     ) {
         val displayWidth = listReaderPages.width
             .takeIf { it > 0 }
@@ -495,6 +502,8 @@ class MangaReaderActivity : AppCompatActivity() {
         val adapter = SubsamplingMangaPageAdapter(
             context = this,
             recyclerView = listReaderPages,
+            archiveFile = archiveFile,
+            entryNames = entries,
             pageFiles = pageFiles,
             boundsByPosition = boundsByPosition,
             preparedCacheDir = preparedCacheDir,
@@ -1213,8 +1222,10 @@ class MangaReaderActivity : AppCompatActivity() {
     private class SubsamplingMangaPageAdapter(
         private val context: Context,
         private val recyclerView: RecyclerView,
+        private val archiveFile: File,
+        private val entryNames: List<String>,
         private val pageFiles: List<File>,
-        private val boundsByPosition: Map<Int, ComicArchive.ImageBounds>,
+        boundsByPosition: Map<Int, ComicArchive.ImageBounds>,
         private val preparedCacheDir: File,
         private val baseDisplayWidth: Int,
         private val baseDisplayHeight: Int,
@@ -1224,39 +1235,95 @@ class MangaReaderActivity : AppCompatActivity() {
     ) : RecyclerView.Adapter<SubsamplingMangaPageAdapter.PageViewHolder>(),
         ReaderPageAdapterController {
 
+        private val mainHandler = Handler(Looper.getMainLooper())
+        private val extractExecutor = ThreadPoolExecutor(
+            1,
+            1,
+            0L,
+            TimeUnit.MILLISECONDS,
+            PriorityBlockingQueue<Runnable>()
+        )
+        private val taskSequence = AtomicLong(0L)
+        private val readyPositions = Collections.synchronizedSet(mutableSetOf<Int>())
+        private val loadingPositions = Collections.synchronizedSet(mutableSetOf<Int>())
+        private val failedPositions = Collections.synchronizedSet(mutableSetOf<Int>())
+        private val pageBounds = Collections.synchronizedMap(boundsByPosition.toMutableMap())
+
         @Volatile
         private var closed = false
 
+        @Volatile
+        private var extractor: ComicArchive.PreparedImageExtractor? = null
+
         init {
             setHasStableIds(true)
+            pageFiles.forEachIndexed { index, file ->
+                if (file.isFile && file.length() > 0L) {
+                    readyPositions.add(index)
+                }
+            }
         }
 
-        override fun getItemCount(): Int = pageFiles.size
+        override fun getItemCount(): Int = entryNames.size
 
         override fun readerItemCount(): Int = itemCount
 
         override fun getItemId(position: Int): Long {
-            return pageFiles[position].absolutePath.hashCode().toLong()
+            return position.toLong()
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PageViewHolder {
-            val imageView = ReaderSubsamplingImageView(context).apply {
+            val container = FrameLayout(context).apply {
+                setBackgroundColor(Color.BLACK)
+                isClickable = true
                 layoutParams = initialPageLayoutParams()
+                setOnClickListener {
+                    onPageTap()
+                }
+            }
+            val imageView = ReaderSubsamplingImageView(context).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
                 onReaderTap = onPageTap
             }
-            return PageViewHolder(imageView)
+            val statusText = TextView(context).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER
+                )
+                setTextColor(Color.WHITE)
+                textSize = 14f
+                visibility = View.GONE
+            }
+            container.addView(imageView)
+            container.addView(statusText)
+            return PageViewHolder(container, imageView, statusText)
         }
 
         override fun onBindViewHolder(holder: PageViewHolder, position: Int) {
-            if (closed || position !in pageFiles.indices) {
+            if (closed || position !in entryNames.indices || position !in pageFiles.indices) {
+                bindEmptyPage(holder)
                 return
             }
 
             val file = pageFiles[position]
-            val bounds = boundsByPosition[position]
+            val bounds = pageBounds[position]
             holder.imageView.onReaderTap = onPageTap
-            applyPageLayout(holder.imageView, bounds)
+            applyPageLayout(holder.container, bounds)
 
+            if (!file.isFile || file.length() <= 0L) {
+                bindEmptyPage(holder)
+                submitExtraction(position, PRIORITY_VISIBLE)
+                onPageReady(position)
+                return
+            }
+
+            readyPositions.add(position)
+            holder.statusText.visibility = View.GONE
+            holder.imageView.visibility = View.VISIBLE
             if (holder.boundFilePath != file.absolutePath) {
                 holder.imageView.recycle()
                 holder.boundFilePath = file.absolutePath
@@ -1268,6 +1335,13 @@ class MangaReaderActivity : AppCompatActivity() {
             }
 
             onPageReady(position)
+        }
+
+        private fun bindEmptyPage(holder: PageViewHolder) {
+            holder.statusText.visibility = View.GONE
+            holder.imageView.recycle()
+            holder.imageView.visibility = View.INVISIBLE
+            holder.boundFilePath = null
         }
 
         override fun onViewRecycled(holder: PageViewHolder) {
@@ -1283,7 +1357,36 @@ class MangaReaderActivity : AppCompatActivity() {
             isFastScroll: Boolean,
             isIdle: Boolean
         ) {
-            // SubsamplingScaleImageView does its own tiled decoding for attached pages.
+            if (closed || entryNames.isEmpty()) {
+                return
+            }
+
+            val firstVisible = firstVisiblePosition.coerceIn(0, entryNames.lastIndex)
+            val lastVisible = (firstVisible + visibleItemCount.coerceAtLeast(1) - 1)
+                .coerceIn(firstVisible, entryNames.lastIndex)
+            val movingForward = scrollDirection >= 0
+
+            (firstVisible..lastVisible).forEach { position ->
+                submitExtraction(position, PRIORITY_VISIBLE)
+            }
+
+            orderedNearPositions(
+                firstVisible = firstVisible,
+                lastVisible = lastVisible,
+                movingForward = movingForward,
+                isFastScroll = isFastScroll,
+                isIdle = isIdle
+            ).forEach { position ->
+                submitExtraction(position, PRIORITY_NEAR)
+            }
+
+            orderedBackgroundPositions(
+                firstVisible = firstVisible,
+                lastVisible = lastVisible,
+                movingForward = movingForward
+            ).forEach { position ->
+                submitExtraction(position, PRIORITY_BACKGROUND)
+            }
         }
 
         override fun applyDebugZoomToVisiblePages(
@@ -1314,6 +1417,8 @@ class MangaReaderActivity : AppCompatActivity() {
 
         override fun close() {
             closed = true
+            extractExecutor.shutdownNow()
+            runCatching { extractor?.close() }
             for (index in 0 until recyclerView.childCount) {
                 val holder = recyclerView.getChildViewHolder(recyclerView.getChildAt(index))
                     as? PageViewHolder
@@ -1321,6 +1426,8 @@ class MangaReaderActivity : AppCompatActivity() {
                 holder.imageView.recycle()
                 holder.boundFilePath = null
             }
+            loadingPositions.clear()
+            failedPositions.clear()
             preparedCacheDir.deleteRecursively()
         }
 
@@ -1339,10 +1446,10 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         private fun applyPageLayout(
-            imageView: ReaderSubsamplingImageView,
+            container: FrameLayout,
             bounds: ComicArchive.ImageBounds?
         ) {
-            val layoutParams = imageView.layoutParams as? RecyclerView.LayoutParams
+            val layoutParams = container.layoutParams as? RecyclerView.LayoutParams
                 ?: initialPageLayoutParams()
 
             val targetWidth: Int
@@ -1364,7 +1471,165 @@ class MangaReaderActivity : AppCompatActivity() {
             if (layoutParams.width != targetWidth || layoutParams.height != targetHeight) {
                 layoutParams.width = targetWidth
                 layoutParams.height = targetHeight
-                imageView.layoutParams = layoutParams
+                container.layoutParams = layoutParams
+            }
+        }
+
+        private fun submitExtraction(position: Int, priority: Int) {
+            if (closed ||
+                position !in entryNames.indices ||
+                position !in pageFiles.indices ||
+                position in readyPositions
+            ) {
+                return
+            }
+            if (position in failedPositions && priority < PRIORITY_VISIBLE) {
+                return
+            }
+            if (priority >= PRIORITY_VISIBLE) {
+                failedPositions.remove(position)
+            }
+
+            val wasAlreadyLoading = !loadingPositions.add(position)
+            if (wasAlreadyLoading && !promoteQueuedExtraction(position, priority)) {
+                return
+            }
+
+            val task = ExtractTask(
+                priority = priority,
+                position = position,
+                sequence = taskSequence.getAndIncrement()
+            ) {
+                extractPage(position)
+            }
+            runCatching {
+                extractExecutor.execute(task)
+            }.onFailure {
+                loadingPositions.remove(position)
+            }
+        }
+
+        private fun promoteQueuedExtraction(position: Int, priority: Int): Boolean {
+            val queue = extractExecutor.queue
+            val queuedTask = queue.toList()
+                .filterIsInstance<ExtractTask>()
+                .firstOrNull { it.position == position }
+                ?: return false
+
+            if (queuedTask.priority >= priority) {
+                return false
+            }
+
+            return if (queue.remove(queuedTask)) {
+                queuedTask.cancelled = true
+                true
+            } else {
+                false
+            }
+        }
+
+        private fun extractPage(position: Int) {
+            try {
+                if (closed || position !in entryNames.indices || position !in pageFiles.indices) {
+                    return
+                }
+
+                val targetFile = pageFiles[position]
+                val extractedFile = if (targetFile.isFile && targetFile.length() > 0L) {
+                    targetFile
+                } else {
+                    preparedExtractor()?.extract(position, entryNames[position])
+                }
+
+                if (closed) {
+                    return
+                }
+
+                if (extractedFile != null && extractedFile.isFile && extractedFile.length() > 0L) {
+                    readyPositions.add(position)
+                    failedPositions.remove(position)
+                    ComicArchive.imageFileBounds(extractedFile)?.let { bounds ->
+                        pageBounds[position] = bounds
+                    }
+                    notifyPageFileReady(position)
+                } else {
+                    failedPositions.add(position)
+                }
+            } finally {
+                loadingPositions.remove(position)
+            }
+        }
+
+        private fun notifyPageFileReady(position: Int) {
+            mainHandler.post {
+                if (closed || position !in entryNames.indices) {
+                    return@post
+                }
+
+                if (recyclerView.isComputingLayout) {
+                    mainHandler.postDelayed({ notifyPageFileReady(position) }, UI_REFRESH_RETRY_MS)
+                    return@post
+                }
+
+                notifyItemChanged(position)
+                onPageReady(position)
+            }
+        }
+
+        private fun preparedExtractor(): ComicArchive.PreparedImageExtractor? {
+            extractor?.let { return it }
+            return synchronized(this) {
+                extractor ?: runCatching {
+                    ComicArchive.openPreparedImageExtractor(archiveFile, preparedCacheDir)
+                }.getOrNull().also { createdExtractor ->
+                    extractor = createdExtractor
+                }
+            }
+        }
+
+        private fun orderedNearPositions(
+            firstVisible: Int,
+            lastVisible: Int,
+            movingForward: Boolean,
+            isFastScroll: Boolean,
+            isIdle: Boolean
+        ): List<Int> {
+            val beforeCount = if (isIdle) IDLE_PREPARE_BEFORE_COUNT else NORMAL_PREPARE_BEFORE_COUNT
+            val afterCount = when {
+                isFastScroll -> FAST_PREPARE_FORWARD_COUNT
+                isIdle -> IDLE_PREPARE_FORWARD_COUNT
+                else -> NORMAL_PREPARE_FORWARD_COUNT
+            }
+            val before = (firstVisible - 1 downTo (firstVisible - beforeCount).coerceAtLeast(0))
+                .filter { it !in firstVisible..lastVisible }
+            val after = ((lastVisible + 1)..(lastVisible + afterCount).coerceAtMost(entryNames.lastIndex))
+                .filter { it !in firstVisible..lastVisible }
+            return if (movingForward) {
+                after + before
+            } else {
+                before + after
+            }
+        }
+
+        private fun orderedBackgroundPositions(
+            firstVisible: Int,
+            lastVisible: Int,
+            movingForward: Boolean
+        ): List<Int> {
+            val after = if (lastVisible + 1 <= entryNames.lastIndex) {
+                (lastVisible + 1..entryNames.lastIndex).toList()
+            } else {
+                emptyList()
+            }
+            val before = if (firstVisible - 1 >= 0) {
+                (firstVisible - 1 downTo 0).toList()
+            } else {
+                emptyList()
+            }
+            return if (movingForward) {
+                after + before
+            } else {
+                before + after
             }
         }
 
@@ -1383,15 +1648,51 @@ class MangaReaderActivity : AppCompatActivity() {
                 readingDirection == AppSettings.READING_DIRECTION_LEFT_TO_RIGHT
         }
 
+        private class ExtractTask(
+            val priority: Int,
+            val position: Int,
+            private val sequence: Long,
+            private val block: () -> Unit
+        ) : Runnable, Comparable<ExtractTask> {
+
+            @Volatile
+            var cancelled = false
+
+            override fun run() {
+                if (!cancelled) {
+                    block()
+                }
+            }
+
+            override fun compareTo(other: ExtractTask): Int {
+                val priorityComparison = other.priority.compareTo(priority)
+                if (priorityComparison != 0) {
+                    return priorityComparison
+                }
+                return sequence.compareTo(other.sequence)
+            }
+        }
+
         class PageViewHolder(
-            val imageView: ReaderSubsamplingImageView
-        ) : RecyclerView.ViewHolder(imageView) {
+            val container: FrameLayout,
+            val imageView: ReaderSubsamplingImageView,
+            val statusText: TextView
+        ) : RecyclerView.ViewHolder(container) {
             var boundFilePath: String? = null
         }
 
         companion object {
             private const val ESTIMATED_READER_PAGE_HEIGHT_RATIO = 1.45f
             private const val MIN_READER_PAGE_HEIGHT = 320
+            private const val PRIORITY_VISIBLE = 100
+            private const val PRIORITY_NEAR = 60
+            private const val PRIORITY_BACKGROUND = 5
+            private const val NORMAL_PREPARE_BEFORE_COUNT = 1
+            private const val NORMAL_PREPARE_FORWARD_COUNT = 8
+            private const val FAST_PREPARE_FORWARD_COUNT = 14
+            private const val IDLE_PREPARE_BEFORE_COUNT = 3
+            private const val IDLE_PREPARE_FORWARD_COUNT = 18
+            private const val UI_REFRESH_RETRY_MS = 48L
         }
     }
 
