@@ -68,6 +68,6 @@
     <string name="brightness_percent">%1$d%%</string>
     <string name="about">关于</string>
     <string name="app_author">作者：Cillebokin / swcillebokin@gmail.com</string>
-    <string name="app_version">版本：1.0.0.0509_Base</string>
+    <string name="app_version">版本：1.0.0.0510_Base</string>
     <string name="app_link">链接：https://github.com/Cillebokin/ComicLab</string>
 </resources>
