@@ -26,7 +26,6 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
-import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialog
@@ -263,7 +262,6 @@ class MainActivity : AppCompatActivity() {
         listReadingHistory.adapter = historyAdapter
         listReadingHistory.visibility = if (historyItems.isEmpty()) View.GONE else View.VISIBLE
         tvReadingHistoryEmpty.visibility = if (historyItems.isEmpty()) View.VISIBLE else View.GONE
-        ItemTouchHelper(historyAdapter.createSwipeCallback()).attachToRecyclerView(listReadingHistory)
         btnClearReadingHistory.setOnClickListener {
             AlertDialog.Builder(this)
                 .setTitle(R.string.clear_reading_history_title)

@@ -38,12 +38,15 @@ object ReadingHistoryStore {
     }
 
     fun items(context: Context): List<Item> {
-        return readStoredItems(context).mapNotNull { storedItem ->
+        val storedItems = readStoredItems(context)
+        val validStoredItems = mutableListOf<StoredItem>()
+        val visibleItems = storedItems.mapNotNull { storedItem ->
             val file = File(storedItem.path)
             if (!file.isFile || !ComicArchive.isSupportedArchive(file)) {
                 return@mapNotNull null
             }
 
+            validStoredItems.add(storedItem)
             Item(
                 file = file,
                 lastReadAt = storedItem.lastReadAt,
@@ -51,6 +54,16 @@ object ReadingHistoryStore {
                 modifiedAt = storedItem.modifiedAt.takeIf { it > 0L } ?: file.lastModified()
             )
         }
+
+        if (validStoredItems.size != storedItems.size) {
+            if (validStoredItems.isEmpty()) {
+                clear(context)
+            } else {
+                saveStoredItems(context, validStoredItems)
+            }
+        }
+
+        return visibleItems
     }
 
     fun clear(context: Context) {

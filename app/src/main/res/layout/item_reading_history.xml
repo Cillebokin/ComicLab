@@ -1,28 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="76dp"
-    android:background="@android:color/white">
-
-    <TextView
-        android:id="@+id/btnDeleteReadingHistory"
-        android:layout_width="72dp"
-        android:layout_height="match_parent"
-        android:layout_gravity="end"
-        android:background="#D93025"
-        android:clickable="true"
-        android:focusable="true"
-        android:gravity="center"
-        android:text="@string/delete"
-        android:textColor="@android:color/white"
-        android:textSize="14sp"
-        android:textStyle="bold" />
+    android:background="@android:color/white"
+    android:orientation="horizontal">
 
     <LinearLayout
         android:id="@+id/layoutReadingHistoryForeground"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="match_parent"
-        android:background="?attr/selectableItemBackground"
+        android:layout_weight="1"
+        android:background="@android:color/white"
+        android:foreground="?attr/selectableItemBackground"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="8dp"
@@ -65,7 +54,20 @@
                 android:ellipsize="end"
                 android:maxLines="1"
                 android:textColor="#888888"
-                android:textSize="11sp" />
+            android:textSize="11sp" />
         </LinearLayout>
     </LinearLayout>
-</FrameLayout>
+
+    <TextView
+        android:id="@+id/btnDeleteReadingHistory"
+        android:layout_width="72dp"
+        android:layout_height="match_parent"
+        android:background="#D93025"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:text="@string/delete"
+        android:textColor="@android:color/white"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+</LinearLayout>
