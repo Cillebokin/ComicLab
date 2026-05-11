@@ -813,6 +813,7 @@ class MainActivity : AppCompatActivity() {
         val dialog = BottomSheetDialog(this)
         val content = layoutInflater.inflate(R.layout.bottom_sheet_archive_actions, null)
         val btnCopyFileName = content.findViewById<TextView>(R.id.btnCopyFileName)
+        val btnCopyStartMarker = content.findViewById<TextView>(R.id.btnCopyStartMarker)
         val btnFavoriteComic = content.findViewById<TextView>(R.id.btnFavoriteComicAction)
         val btnRead = content.findViewById<TextView>(R.id.btnReadComic)
         val isFavorite = FavoriteComicStore.isFavorite(this, file)
@@ -827,6 +828,23 @@ class MainActivity : AppCompatActivity() {
                 text = file.name,
                 copiedMessage = getString(R.string.copied_file_name)
             )
+            dialog.dismiss()
+        }
+
+        btnCopyStartMarker.setOnClickListener {
+            val marker = CommonFunc.extractStartMarker(
+                file.name,
+                AppSettings.getStartMarkerErrorTags(this)
+            )
+            if (marker.isEmpty()) {
+                showMessage(getString(R.string.start_marker_not_found))
+            } else {
+                copyToClipboard(
+                    label = getString(R.string.copy_start_marker),
+                    text = marker,
+                    copiedMessage = getString(R.string.copied_start_marker)
+                )
+            }
             dialog.dismiss()
         }
 

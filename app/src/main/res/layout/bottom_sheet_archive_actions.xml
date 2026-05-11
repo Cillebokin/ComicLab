@@ -39,4 +39,15 @@
         android:text="@string/copy_file_name"
         android:textSize="18sp" />
 
+    <TextView
+        android:id="@+id/btnCopyStartMarker"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="?attr/selectableItemBackground"
+        android:gravity="center_vertical"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:text="@string/copy_start_marker"
+        android:textSize="18sp" />
+
 </LinearLayout>

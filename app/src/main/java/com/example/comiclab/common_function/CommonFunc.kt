@@ -27,4 +27,37 @@ object CommonFunc {
         val formatter = SimpleDateFormat("yyyy/MM/dd", Locale.getDefault())
         return formatter.format(Date(timeMillis))
     }
+
+    fun extractStartMarker(source: String, errorMarkerText: String): String {
+        if (source.isBlank()) {
+            return ""
+        }
+
+        val errorMarkers = errorMarkerText
+            .split(';')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+        var searchStart = 0
+        while (searchStart < source.length) {
+            val openIndex = source.indexOf('[', searchStart)
+            if (openIndex < 0) {
+                return ""
+            }
+
+            val closeIndex = source.indexOf(']', openIndex + 1)
+            if (closeIndex < 0) {
+                return ""
+            }
+
+            val marker = source.substring(openIndex + 1, closeIndex).trim()
+            if (marker.isNotEmpty() && errorMarkers.none { marker.contains(it) }) {
+                return marker
+            }
+
+            searchStart = closeIndex + 1
+        }
+
+        return ""
+    }
 }

@@ -1,7 +1,10 @@
 package com.example.comiclab
 
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.View
+import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.RadioGroup
 import android.widget.SeekBar
@@ -14,6 +17,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var btnBack: ImageButton
     private lateinit var radioReadingDirection: RadioGroup
     private lateinit var switchDetectMangaCollections: SwitchCompat
+    private lateinit var inputStartMarkerErrorTags: EditText
     private lateinit var switchVolumeKeyPageTurn: SwitchCompat
     private lateinit var switchAutoHideSystemBars: SwitchCompat
     private lateinit var switchCustomReaderBrightness: SwitchCompat
@@ -33,6 +37,7 @@ class SettingsActivity : AppCompatActivity() {
         btnBack = findViewById(R.id.btnBack)
         radioReadingDirection = findViewById(R.id.radioReadingDirection)
         switchDetectMangaCollections = findViewById(R.id.switchDetectMangaCollections)
+        inputStartMarkerErrorTags = findViewById(R.id.inputStartMarkerErrorTags)
         switchVolumeKeyPageTurn = findViewById(R.id.switchVolumeKeyPageTurn)
         switchAutoHideSystemBars = findViewById(R.id.switchAutoHideSystemBars)
         switchCustomReaderBrightness = findViewById(R.id.switchCustomReaderBrightness)
@@ -45,6 +50,7 @@ class SettingsActivity : AppCompatActivity() {
 
         bindReadingDirection()
         bindDetectMangaCollections()
+        bindStartMarkerErrorTags()
         bindVolumeKeyPageTurn()
         bindAutoHideSystemBars()
         bindCustomReaderBrightness()
@@ -80,6 +86,19 @@ class SettingsActivity : AppCompatActivity() {
         switchDetectMangaCollections.setOnCheckedChangeListener { _, isChecked ->
             AppSettings.setDetectMangaCollectionsEnabled(this, isChecked)
         }
+    }
+
+    private fun bindStartMarkerErrorTags() {
+        inputStartMarkerErrorTags.setText(AppSettings.getStartMarkerErrorTags(this))
+        inputStartMarkerErrorTags.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+
+            override fun afterTextChanged(s: Editable?) {
+                AppSettings.setStartMarkerErrorTags(this@SettingsActivity, s?.toString().orEmpty())
+            }
+        })
     }
 
     private fun bindAutoHideSystemBars() {

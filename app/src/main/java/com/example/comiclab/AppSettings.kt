@@ -12,8 +12,10 @@ object AppSettings {
     private const val KEY_VOLUME_KEY_PAGE_TURN = "volume_key_page_turn"
     private const val KEY_AUTO_HIDE_SYSTEM_BARS = "auto_hide_system_bars"
     private const val KEY_DETECT_MANGA_COLLECTIONS = "detect_manga_collections"
+    private const val KEY_START_MARKER_ERROR_TAGS = "start_marker_error_tags"
     private const val KEY_CUSTOM_READER_BRIGHTNESS_ENABLED = "custom_reader_brightness_enabled"
     private const val KEY_CUSTOM_READER_BRIGHTNESS = "custom_reader_brightness"
+    const val DEFAULT_START_MARKER_ERROR_TAGS = "中;汉;漢;翻;译;譯"
     const val DEFAULT_READER_BRIGHTNESS = 128
     const val MIN_READER_BRIGHTNESS = 1
     const val MAX_READER_BRIGHTNESS = 255
@@ -70,6 +72,19 @@ object AppSettings {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_DETECT_MANGA_COLLECTIONS, enabled)
+            .apply()
+    }
+
+    fun getStartMarkerErrorTags(context: Context): String {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_START_MARKER_ERROR_TAGS, DEFAULT_START_MARKER_ERROR_TAGS)
+            ?: DEFAULT_START_MARKER_ERROR_TAGS
+    }
+
+    fun setStartMarkerErrorTags(context: Context, tags: String) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_START_MARKER_ERROR_TAGS, tags)
             .apply()
     }
 
