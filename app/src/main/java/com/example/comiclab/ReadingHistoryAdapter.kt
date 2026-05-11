@@ -6,7 +6,9 @@ import android.util.LruCache
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.PopupMenu
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import java.text.SimpleDateFormat
@@ -99,14 +101,31 @@ class ReadingHistoryAdapter(
         holder.content.setOnClickListener {
             historyItemAt(holder.bindingAdapterPosition)?.let(onItemClick)
         }
-        holder.btnDelete.setOnClickListener {
-            removeAt(holder.bindingAdapterPosition)
+        holder.btnOptions.setOnClickListener { anchor ->
+            showItemOptionsMenu(anchor, holder.bindingAdapterPosition)
         }
         bindCover(item, holder.imgCover)
     }
 
+    private fun showItemOptionsMenu(anchor: View, position: Int) {
+        val item = historyItemAt(position) ?: return
+
+        PopupMenu(context, anchor).apply {
+            menu.add(R.string.delete_record)
+            setOnMenuItemClickListener {
+                removeItem(item)
+                true
+            }
+            show()
+        }
+    }
+
     private fun removeAt(position: Int) {
         val item = historyItemAt(position) ?: return
+        removeItem(item)
+    }
+
+    private fun removeItem(item: ReadingHistoryStore.Item) {
         val itemIndex = items.indexOfFirst { it.file.absolutePath == item.file.absolutePath }
         if (itemIndex < 0) {
             return
@@ -250,7 +269,7 @@ class ReadingHistoryAdapter(
 
     private class HistoryViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         val content: View = itemView.findViewById(R.id.layoutReadingHistoryForeground)
-        val btnDelete: TextView = itemView.findViewById(R.id.btnDeleteReadingHistory)
+        val btnOptions: ImageButton = itemView.findViewById(R.id.btnReadingHistoryItemOptions)
         val imgCover: ImageView = itemView.findViewById(R.id.imgReadingHistoryCover)
         val tvName: TextView = itemView.findViewById(R.id.tvReadingHistoryName)
         val tvPath: TextView = itemView.findViewById(R.id.tvReadingHistoryPath)
