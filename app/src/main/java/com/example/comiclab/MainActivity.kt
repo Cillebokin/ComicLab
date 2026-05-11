@@ -60,6 +60,8 @@ class MainActivity : AppCompatActivity() {
 
     private var readingHistoryPopupWindow: PopupWindow? = null
     private var readingHistoryAdapter: ReadingHistoryAdapter? = null
+    private var favoriteComicsPopupWindow: PopupWindow? = null
+    private var favoriteComicAdapter: FavoriteComicAdapter? = null
     private var favoritePathsPopupWindow: PopupWindow? = null
     private var favoritePathAdapter: FavoritePathAdapter? = null
     private var browserInitialized = false
@@ -114,7 +116,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnFavoriteComics.setOnClickListener {
-            showPendingFeature(R.string.favorite_comics)
+            showFavoriteComicsPanel()
         }
 
         btnFavoritePaths.setOnClickListener {
@@ -382,8 +384,74 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun showFavoriteComicsPanel() {
+        val rootView = findViewById<View>(R.id.main)
+        val screenWidth = rootView.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels
+        val panelWidth = (screenWidth * 3 / 4)
+            .coerceAtLeast(dpToPx(MIN_READING_HISTORY_PANEL_WIDTH_DP))
+        val content = layoutInflater.inflate(R.layout.panel_favorite_comics, null)
+        val listFavoriteComics = content.findViewById<RecyclerView>(R.id.listFavoriteComics)
+        val tvFavoriteComicsEmpty = content.findViewById<TextView>(R.id.tvFavoriteComicsEmpty)
+        val btnClearFavoriteComics = content.findViewById<Button>(R.id.btnClearFavoriteComics)
+        val favoriteItems = FavoriteComicStore.items(this).toMutableList()
+        val adapter = FavoriteComicAdapter(
+            context = this,
+            items = favoriteItems,
+            onItemClick = { item ->
+                dismissFavoriteComicsPanel()
+                openMangaPreview(item.file)
+            },
+            onItemsEmptyChanged = { isEmpty ->
+                listFavoriteComics.visibility = if (isEmpty) View.GONE else View.VISIBLE
+                tvFavoriteComicsEmpty.visibility = if (isEmpty) View.VISIBLE else View.GONE
+            }
+        )
+
+        listFavoriteComics.layoutManager = LinearLayoutManager(this)
+        listFavoriteComics.adapter = adapter
+        listFavoriteComics.visibility = if (favoriteItems.isEmpty()) View.GONE else View.VISIBLE
+        tvFavoriteComicsEmpty.visibility = if (favoriteItems.isEmpty()) View.VISIBLE else View.GONE
+        btnClearFavoriteComics.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.clear_favorite_comics_title)
+                .setMessage(R.string.clear_favorite_comics_message)
+                .setPositiveButton(R.string.yes) { _, _ ->
+                    FavoriteComicStore.clear(this)
+                    adapter.clearItems()
+                }
+                .setNegativeButton(R.string.no, null)
+                .show()
+        }
+
+        dismissSidePanels()
+        scheduleShowReadingHistoryScrim()
+        favoriteComicAdapter = adapter
+        favoriteComicsPopupWindow = PopupWindow(
+            content,
+            panelWidth,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            true
+        ).apply {
+            isOutsideTouchable = true
+            setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+            animationStyle = R.style.Animation_ComicLab_ReadingHistoryPanel
+            elevation = dpToPx(READING_HISTORY_PANEL_ELEVATION_DP).toFloat()
+            setOnDismissListener {
+                adapter.close()
+                if (favoriteComicAdapter === adapter) {
+                    favoriteComicAdapter = null
+                    favoriteComicsPopupWindow = null
+                    scheduleHideReadingHistoryScrim()
+                }
+            }
+            showAtLocation(rootView, Gravity.END or Gravity.TOP, 0, 0)
+        }
+    }
+
     private fun dismissSidePanels() {
         dismissReadingHistoryPanel()
+        dismissFavoriteComicsPanel()
         dismissFavoritePathsPanel()
     }
 
@@ -399,6 +467,14 @@ class MainActivity : AppCompatActivity() {
         favoritePathsPopupWindow?.dismiss()
         favoritePathsPopupWindow = null
         favoritePathAdapter = null
+        scheduleHideReadingHistoryScrim()
+    }
+
+    private fun dismissFavoriteComicsPanel() {
+        favoriteComicsPopupWindow?.dismiss()
+        favoriteComicsPopupWindow = null
+        favoriteComicAdapter?.close()
+        favoriteComicAdapter = null
         scheduleHideReadingHistoryScrim()
     }
 
@@ -683,8 +759,20 @@ class MainActivity : AppCompatActivity() {
         val btnFavoritePath = content.findViewById<TextView>(R.id.btnFavoritePathAction)
 
         btnFavoritePath.setOnClickListener {
-            FavoritePathStore.record(this, directory)
-            showMessage(getString(R.string.favorite_path_added))
+            when (FavoritePathStore.record(this, directory)) {
+                FavoritePathStore.RecordResult.ADDED,
+                FavoritePathStore.RecordResult.ALREADY_EXISTS -> {
+                    showMessage(getString(R.string.favorite_path_added))
+                }
+
+                FavoritePathStore.RecordResult.LIMIT_REACHED -> {
+                    showMessage(getString(R.string.favorite_path_limit_reached))
+                }
+
+                FavoritePathStore.RecordResult.INVALID -> {
+                    showMessage(getString(R.string.message_invalid_directory))
+                }
+            }
             dialog.dismiss()
         }
 
@@ -696,6 +784,7 @@ class MainActivity : AppCompatActivity() {
         val dialog = BottomSheetDialog(this)
         val content = layoutInflater.inflate(R.layout.bottom_sheet_archive_actions, null)
         val btnCopyFileName = content.findViewById<TextView>(R.id.btnCopyFileName)
+        val btnFavoriteComic = content.findViewById<TextView>(R.id.btnFavoriteComicAction)
         val btnRead = content.findViewById<TextView>(R.id.btnReadComic)
 
         btnCopyFileName.setOnClickListener {
@@ -704,6 +793,30 @@ class MainActivity : AppCompatActivity() {
                 text = file.name,
                 copiedMessage = getString(R.string.copied_file_name)
             )
+            dialog.dismiss()
+        }
+
+        btnFavoriteComic.setOnClickListener {
+            if (!ComicArchive.isSupportedArchive(file)) {
+                showMessage(getString(R.string.unsupported_archive_format))
+                dialog.dismiss()
+                return@setOnClickListener
+            }
+
+            when (FavoriteComicStore.record(this, file)) {
+                FavoriteComicStore.RecordResult.ADDED,
+                FavoriteComicStore.RecordResult.ALREADY_EXISTS -> {
+                    showMessage(getString(R.string.favorite_comic_added))
+                }
+
+                FavoriteComicStore.RecordResult.LIMIT_REACHED -> {
+                    showMessage(getString(R.string.favorite_comic_limit_reached))
+                }
+
+                FavoriteComicStore.RecordResult.INVALID -> {
+                    showMessage(getString(R.string.unsupported_archive_format))
+                }
+            }
             dialog.dismiss()
         }
 
