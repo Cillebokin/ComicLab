@@ -63,6 +63,7 @@
     <string name="confirm">确定</string>
     <string name="cancel_favorite">取消收藏</string>
     <string name="favorite_marker">收藏标识</string>
+    <string name="copy_path_name">复制路径名</string>
     <string name="copy_file_name">复制文件名</string>
     <string name="copied_path">已复制路径</string>
     <string name="copied_file_name">已复制文件名</string>

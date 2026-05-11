@@ -761,6 +761,7 @@ class MainActivity : AppCompatActivity() {
         val dialog = BottomSheetDialog(this)
         val content = layoutInflater.inflate(R.layout.bottom_sheet_directory_actions, null)
         val btnFavoritePath = content.findViewById<TextView>(R.id.btnFavoritePathAction)
+        val btnCopyPathName = content.findViewById<TextView>(R.id.btnCopyPathName)
         val isFavorite = FavoritePathStore.isFavorite(this, directory)
 
         btnFavoritePath.text = getString(
@@ -792,6 +793,15 @@ class MainActivity : AppCompatActivity() {
                     showMessage(getString(R.string.message_invalid_directory))
                 }
             }
+            dialog.dismiss()
+        }
+
+        btnCopyPathName.setOnClickListener {
+            copyToClipboard(
+                label = getString(R.string.copy_path_name),
+                text = directory.absolutePath,
+                copiedMessage = getString(R.string.copied_path)
+            )
             dialog.dismiss()
         }
 
