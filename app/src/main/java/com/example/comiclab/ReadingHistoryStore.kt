@@ -53,6 +53,12 @@ object ReadingHistoryStore {
         }
     }
 
+    fun clear(context: Context) {
+        prefs(context).edit()
+            .remove(KEY_READING_HISTORY)
+            .apply()
+    }
+
     private fun readStoredItems(context: Context): List<StoredItem> {
         val rawValue = prefs(context).getString(KEY_READING_HISTORY, null)
             ?: return emptyList()

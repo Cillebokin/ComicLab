@@ -16,6 +16,9 @@
     <string name="settings">设置</string>
     <string name="reading_history">阅读历史</string>
     <string name="reading_history_empty">暂无阅读历史</string>
+    <string name="clear">清空</string>
+    <string name="clear_reading_history_title">清空阅读历史</string>
+    <string name="clear_reading_history_message">是否清空历史阅读记录？</string>
     <string name="favorite_comics">收藏漫画</string>
     <string name="favorite_paths">收藏路径</string>
     <string name="feature_not_implemented">%1$s暂未实现</string>

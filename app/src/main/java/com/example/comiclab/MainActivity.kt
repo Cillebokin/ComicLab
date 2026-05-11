@@ -16,6 +16,7 @@ import android.view.Gravity
 import android.webkit.MimeTypeMap
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ListView
@@ -238,7 +239,8 @@ class MainActivity : AppCompatActivity() {
         val content = layoutInflater.inflate(R.layout.panel_reading_history, null)
         val listReadingHistory = content.findViewById<ListView>(R.id.listReadingHistory)
         val tvReadingHistoryEmpty = content.findViewById<TextView>(R.id.tvReadingHistoryEmpty)
-        val historyItems = ReadingHistoryStore.items(this)
+        val btnClearReadingHistory = content.findViewById<Button>(R.id.btnClearReadingHistory)
+        val historyItems = ReadingHistoryStore.items(this).toMutableList()
         val historyAdapter = ReadingHistoryAdapter(this, historyItems)
 
         listReadingHistory.adapter = historyAdapter
@@ -248,6 +250,20 @@ class MainActivity : AppCompatActivity() {
             val item = historyItems.getOrNull(position) ?: return@setOnItemClickListener
             dismissReadingHistoryPanel()
             openMangaPreview(item.file)
+        }
+        btnClearReadingHistory.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.clear_reading_history_title)
+                .setMessage(R.string.clear_reading_history_message)
+                .setPositiveButton(android.R.string.yes) { _, _ ->
+                    ReadingHistoryStore.clear(this)
+                    historyItems.clear()
+                    historyAdapter.notifyDataSetChanged()
+                    listReadingHistory.visibility = View.GONE
+                    tvReadingHistoryEmpty.visibility = View.VISIBLE
+                }
+                .setNegativeButton(android.R.string.no, null)
+                .show()
         }
 
         dismissReadingHistoryPanel()
