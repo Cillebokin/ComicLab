@@ -355,6 +355,7 @@ class MainActivity : AppCompatActivity() {
                 .setPositiveButton(R.string.yes) { _, _ ->
                     FavoritePathStore.clear(this)
                     adapter.clearItems()
+                    notifyListChanged()
                 }
                 .setNegativeButton(R.string.no, null)
                 .show()
@@ -378,6 +379,7 @@ class MainActivity : AppCompatActivity() {
                     favoritePathAdapter = null
                     favoritePathsPopupWindow = null
                     scheduleHideReadingHistoryScrim()
+                    notifyListChanged()
                 }
             }
             showAtLocation(rootView, Gravity.END or Gravity.TOP, 0, 0)
@@ -419,6 +421,7 @@ class MainActivity : AppCompatActivity() {
                 .setPositiveButton(R.string.yes) { _, _ ->
                     FavoriteComicStore.clear(this)
                     adapter.clearItems()
+                    notifyListChanged()
                 }
                 .setNegativeButton(R.string.no, null)
                 .show()
@@ -443,6 +446,7 @@ class MainActivity : AppCompatActivity() {
                     favoriteComicAdapter = null
                     favoriteComicsPopupWindow = null
                     scheduleHideReadingHistoryScrim()
+                    notifyListChanged()
                 }
             }
             showAtLocation(rootView, Gravity.END or Gravity.TOP, 0, 0)
@@ -757,12 +761,27 @@ class MainActivity : AppCompatActivity() {
         val dialog = BottomSheetDialog(this)
         val content = layoutInflater.inflate(R.layout.bottom_sheet_directory_actions, null)
         val btnFavoritePath = content.findViewById<TextView>(R.id.btnFavoritePathAction)
+        val isFavorite = FavoritePathStore.isFavorite(this, directory)
+
+        btnFavoritePath.text = getString(
+            if (isFavorite) R.string.cancel_favorite else R.string.favorite_path_action
+        )
 
         btnFavoritePath.setOnClickListener {
-            when (FavoritePathStore.record(this, directory)) {
+            if (FavoritePathStore.isFavorite(this, directory)) {
+                FavoritePathStore.remove(this, directory)
+                showMessage(getString(R.string.favorite_path_removed))
+                notifyListChanged()
+                dialog.dismiss()
+                return@setOnClickListener
+            }
+
+            val result = FavoritePathStore.record(this, directory)
+            when (result) {
                 FavoritePathStore.RecordResult.ADDED,
                 FavoritePathStore.RecordResult.ALREADY_EXISTS -> {
                     showMessage(getString(R.string.favorite_path_added))
+                    notifyListChanged()
                 }
 
                 FavoritePathStore.RecordResult.LIMIT_REACHED -> {
@@ -786,6 +805,11 @@ class MainActivity : AppCompatActivity() {
         val btnCopyFileName = content.findViewById<TextView>(R.id.btnCopyFileName)
         val btnFavoriteComic = content.findViewById<TextView>(R.id.btnFavoriteComicAction)
         val btnRead = content.findViewById<TextView>(R.id.btnReadComic)
+        val isFavorite = FavoriteComicStore.isFavorite(this, file)
+
+        btnFavoriteComic.text = getString(
+            if (isFavorite) R.string.cancel_favorite else R.string.favorite_comic_action
+        )
 
         btnCopyFileName.setOnClickListener {
             copyToClipboard(
@@ -803,10 +827,20 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            when (FavoriteComicStore.record(this, file)) {
+            if (FavoriteComicStore.isFavorite(this, file)) {
+                FavoriteComicStore.remove(this, file)
+                showMessage(getString(R.string.favorite_comic_removed))
+                notifyListChanged()
+                dialog.dismiss()
+                return@setOnClickListener
+            }
+
+            val result = FavoriteComicStore.record(this, file)
+            when (result) {
                 FavoriteComicStore.RecordResult.ADDED,
                 FavoriteComicStore.RecordResult.ALREADY_EXISTS -> {
                     showMessage(getString(R.string.favorite_comic_added))
+                    notifyListChanged()
                 }
 
                 FavoriteComicStore.RecordResult.LIMIT_REACHED -> {

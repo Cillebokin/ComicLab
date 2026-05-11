@@ -30,6 +30,7 @@
     <string name="favorite_comics_empty">暂无收藏漫画</string>
     <string name="favorite_comic_action">收藏漫画</string>
     <string name="favorite_comic_added">已收藏漫画</string>
+    <string name="favorite_comic_removed">已取消收藏漫画</string>
     <string name="favorite_comic_limit_reached">收藏数已达上限</string>
     <string name="delete_comic">删除漫画</string>
     <string name="favorite_comic_item_options">收藏漫画操作</string>
@@ -39,6 +40,7 @@
     <string name="favorite_paths_empty">暂无收藏路径</string>
     <string name="favorite_path_action">收藏路径</string>
     <string name="favorite_path_added">已收藏路径</string>
+    <string name="favorite_path_removed">已取消收藏路径</string>
     <string name="favorite_path_limit_reached">收藏数已达上限</string>
     <string name="delete_path">删除路径</string>
     <string name="favorite_path_item_options">收藏路径操作</string>
@@ -59,6 +61,8 @@
     <string name="storage_permission_message">ComicLab需要读写手机存储权限以便进行读取、修改和删除等操作</string>
     <string name="storage_permission_required">请授予管理所有文件权限</string>
     <string name="confirm">确定</string>
+    <string name="cancel_favorite">取消收藏</string>
+    <string name="favorite_marker">收藏标识</string>
     <string name="copy_file_name">复制文件名</string>
     <string name="copied_path">已复制路径</string>
     <string name="copied_file_name">已复制文件名</string>

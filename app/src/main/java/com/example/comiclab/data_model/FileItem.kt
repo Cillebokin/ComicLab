@@ -29,8 +29,15 @@ class FileListAdapter(
     private val loadingArchiveCovers = Collections.synchronizedSet(mutableSetOf<String>())
     private val failedArchiveCovers = Collections.synchronizedSet(mutableSetOf<String>())
     private val archiveCoverExecutor = Executors.newFixedThreadPool(ARCHIVE_COVER_THREAD_COUNT)
+    private var favoriteComicPaths = FavoriteComicStore.favoriteFilePaths(context)
+    private var favoriteDirectoryPaths = FavoritePathStore.favoriteDirectoryPaths(context)
     @Volatile
     private var closed = false
+
+    override fun notifyDataSetChanged() {
+        refreshFavoriteMarkerCache()
+        super.notifyDataSetChanged()
+    }
 
     override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
         val view = convertView ?: LayoutInflater.from(context)
@@ -41,12 +48,14 @@ class FileListAdapter(
         view.isActivated = false
 
         val imgIcon = view.findViewById<ImageView>(R.id.imgIcon)
+        val imgFavoriteMarker = view.findViewById<ImageView>(R.id.imgFavoriteMarker)
         val tvName = view.findViewById<TextView>(R.id.tvName)
         val tvInfo = view.findViewById<TextView>(R.id.tvInfo)
         val tvTypeMarker = view.findViewById<TextView>(R.id.tvTypeMarker)
         val tvDate = view.findViewById<TextView>(R.id.tvDate)
 
         val item = items[position]
+        hideFavoriteMarker(imgFavoriteMarker)
 
         if (item.isParent) {
             imgIcon.tag = null
@@ -76,6 +85,7 @@ class FileListAdapter(
         tvName.text = file.name
         tvTypeMarker.text = if (file.isDirectory) "(D)" else "(F)"
         tvDate.text = CommonFunc.formatDate(file.lastModified())
+        bindFavoriteMarker(file, imgFavoriteMarker)
 
         if (file.isDirectory) {
             bindDirectoryIcon(file, imgIcon)
@@ -94,6 +104,38 @@ class FileListAdapter(
         tvInfo.text = CommonFunc.formatFileSize(file.length())
 
         return view
+    }
+
+    private fun refreshFavoriteMarkerCache() {
+        favoriteComicPaths = FavoriteComicStore.favoriteFilePaths(context)
+        favoriteDirectoryPaths = FavoritePathStore.favoriteDirectoryPaths(context)
+    }
+
+    private fun bindFavoriteMarker(file: File, marker: ImageView) {
+        val markerIconResId = when {
+            file.isDirectory && favoriteDirectoryPaths.contains(file.absolutePath) ->
+                R.drawable.png_mark_direct_icon
+
+            file.isFile &&
+                ComicArchive.isSupportedArchive(file) &&
+                favoriteComicPaths.contains(file.absolutePath) ->
+                R.drawable.png_mark_file_icon
+
+            else -> null
+        }
+
+        if (markerIconResId == null) {
+            hideFavoriteMarker(marker)
+            return
+        }
+
+        marker.setImageResource(markerIconResId)
+        marker.visibility = View.VISIBLE
+    }
+
+    private fun hideFavoriteMarker(marker: ImageView) {
+        marker.setImageDrawable(null)
+        marker.visibility = View.GONE
     }
 
     private fun bindDirectoryIcon(directory: File, imgIcon: ImageView) {
