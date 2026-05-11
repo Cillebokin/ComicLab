@@ -140,5 +140,5 @@ object ReadingHistoryStore {
     private const val FIELD_LAST_READ_AT = "lastReadAt"
     private const val FIELD_FILE_SIZE = "fileSize"
     private const val FIELD_MODIFIED_AT = "modifiedAt"
-    private const val MAX_HISTORY_COUNT = 20
+    private const val MAX_HISTORY_COUNT = 30
 }
