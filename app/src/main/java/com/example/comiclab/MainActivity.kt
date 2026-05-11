@@ -26,6 +26,9 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
+import androidx.recyclerview.widget.ItemTouchHelper
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import java.io.File
 import java.util.concurrent.Executors
@@ -234,35 +237,42 @@ class MainActivity : AppCompatActivity() {
 
     private fun showReadingHistoryPanel() {
         val rootView = findViewById<View>(R.id.main)
-        val panelWidth = ((rootView.width.takeIf { it > 0 }
-            ?: resources.displayMetrics.widthPixels) / 2).coerceAtLeast(dpToPx(MIN_READING_HISTORY_PANEL_WIDTH_DP))
+        val screenWidth = rootView.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels
+        val panelWidth = (screenWidth * 3 / 4)
+            .coerceAtLeast(dpToPx(MIN_READING_HISTORY_PANEL_WIDTH_DP))
         val content = layoutInflater.inflate(R.layout.panel_reading_history, null)
-        val listReadingHistory = content.findViewById<ListView>(R.id.listReadingHistory)
+        val listReadingHistory = content.findViewById<RecyclerView>(R.id.listReadingHistory)
         val tvReadingHistoryEmpty = content.findViewById<TextView>(R.id.tvReadingHistoryEmpty)
         val btnClearReadingHistory = content.findViewById<Button>(R.id.btnClearReadingHistory)
         val historyItems = ReadingHistoryStore.items(this).toMutableList()
-        val historyAdapter = ReadingHistoryAdapter(this, historyItems)
+        val historyAdapter = ReadingHistoryAdapter(
+            context = this,
+            items = historyItems,
+            onItemClick = { item ->
+                dismissReadingHistoryPanel()
+                openMangaPreview(item.file)
+            },
+            onItemsEmptyChanged = { isEmpty ->
+                listReadingHistory.visibility = if (isEmpty) View.GONE else View.VISIBLE
+                tvReadingHistoryEmpty.visibility = if (isEmpty) View.VISIBLE else View.GONE
+            }
+        )
 
+        listReadingHistory.layoutManager = LinearLayoutManager(this)
         listReadingHistory.adapter = historyAdapter
         listReadingHistory.visibility = if (historyItems.isEmpty()) View.GONE else View.VISIBLE
         tvReadingHistoryEmpty.visibility = if (historyItems.isEmpty()) View.VISIBLE else View.GONE
-        listReadingHistory.setOnItemClickListener { _, _, position, _ ->
-            val item = historyItems.getOrNull(position) ?: return@setOnItemClickListener
-            dismissReadingHistoryPanel()
-            openMangaPreview(item.file)
-        }
+        ItemTouchHelper(historyAdapter.createSwipeCallback()).attachToRecyclerView(listReadingHistory)
         btnClearReadingHistory.setOnClickListener {
             AlertDialog.Builder(this)
                 .setTitle(R.string.clear_reading_history_title)
                 .setMessage(R.string.clear_reading_history_message)
-                .setPositiveButton(android.R.string.yes) { _, _ ->
+                .setPositiveButton(R.string.yes) { _, _ ->
                     ReadingHistoryStore.clear(this)
-                    historyItems.clear()
-                    historyAdapter.notifyDataSetChanged()
-                    listReadingHistory.visibility = View.GONE
-                    tvReadingHistoryEmpty.visibility = View.VISIBLE
+                    historyAdapter.clearItems()
                 }
-                .setNegativeButton(android.R.string.no, null)
+                .setNegativeButton(R.string.no, null)
                 .show()
         }
 

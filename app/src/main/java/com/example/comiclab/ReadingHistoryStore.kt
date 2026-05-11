@@ -59,6 +59,18 @@ object ReadingHistoryStore {
             .apply()
     }
 
+    fun remove(context: Context, file: File) {
+        val path = file.absolutePath
+        val updatedItems = readStoredItems(context)
+            .filterNot { it.path == path }
+
+        if (updatedItems.isEmpty()) {
+            clear(context)
+        } else {
+            saveStoredItems(context, updatedItems)
+        }
+    }
+
     private fun readStoredItems(context: Context): List<StoredItem> {
         val rawValue = prefs(context).getString(KEY_READING_HISTORY, null)
             ?: return emptyList()
