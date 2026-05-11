@@ -81,14 +81,14 @@
             android:src="@drawable/png_options_icon" />
 
         <ImageButton
-            android:id="@+id/btnReadingHistory"
+            android:id="@+id/btnFavoritePaths"
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:layout_marginStart="16dp"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/reading_history"
+            android:contentDescription="@string/favorite_paths"
             android:scaleType="centerInside"
-            android:src="@drawable/png_read_history_icon" />
+            android:src="@drawable/png_mark_direct_icon" />
 
         <ImageButton
             android:id="@+id/btnFavoriteComics"
@@ -98,19 +98,17 @@
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/favorite_comics"
             android:scaleType="centerInside"
-            android:src="@drawable/png_mark_file_icon"
-            android:visibility="gone" />
+            android:src="@drawable/png_mark_file_icon" />
 
         <ImageButton
-            android:id="@+id/btnFavoritePaths"
+            android:id="@+id/btnReadingHistory"
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:layout_marginStart="16dp"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/favorite_paths"
+            android:contentDescription="@string/reading_history"
             android:scaleType="centerInside"
-            android:src="@drawable/png_mark_direct_icon"
-            android:visibility="gone" />
+            android:src="@drawable/png_read_history_icon" />
 
         <View
             android:layout_width="0dp"

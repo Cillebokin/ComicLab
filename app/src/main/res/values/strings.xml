@@ -28,6 +28,13 @@
     <string name="clear_reading_history_message">是否清空历史阅读记录？</string>
     <string name="favorite_comics">收藏漫画</string>
     <string name="favorite_paths">收藏路径</string>
+    <string name="favorite_paths_empty">暂无收藏路径</string>
+    <string name="favorite_path_action">收藏路径</string>
+    <string name="favorite_path_added">已收藏路径</string>
+    <string name="delete_path">删除路径</string>
+    <string name="favorite_path_item_options">收藏路径操作</string>
+    <string name="clear_favorite_paths_title">清空收藏路径</string>
+    <string name="clear_favorite_paths_message">是否清空收藏的路径？</string>
     <string name="feature_not_implemented">%1$s暂未实现</string>
     <string name="sort">排序</string>
     <string name="sort_by_name_asc">名称升序</string>

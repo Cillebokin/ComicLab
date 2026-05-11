@@ -60,6 +60,8 @@ class MainActivity : AppCompatActivity() {
 
     private var readingHistoryPopupWindow: PopupWindow? = null
     private var readingHistoryAdapter: ReadingHistoryAdapter? = null
+    private var favoritePathsPopupWindow: PopupWindow? = null
+    private var favoritePathAdapter: FavoritePathAdapter? = null
     private var browserInitialized = false
     private var currentPath = STORAGE_ROOT_PATH
 
@@ -108,7 +110,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         readingHistoryScrim.setOnClickListener {
-            dismissReadingHistoryPanel()
+            dismissSidePanels()
         }
 
         btnFavoriteComics.setOnClickListener {
@@ -116,7 +118,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnFavoritePaths.setOnClickListener {
-            showPendingFeature(R.string.favorite_paths)
+            showFavoritePathsPanel()
         }
 
         btnSort.setOnClickListener {
@@ -161,6 +163,22 @@ class MainActivity : AppCompatActivity() {
             clearFileListTouchState(view)
         }
 
+        listView.setOnItemLongClickListener { _, view, position, _ ->
+            val item = fileItems.getOrNull(position) ?: return@setOnItemLongClickListener false
+            if (item.isParent) {
+                return@setOnItemLongClickListener false
+            }
+
+            val file = item.file
+            if (file?.isDirectory != true) {
+                return@setOnItemLongClickListener false
+            }
+
+            showDirectoryMenu(file)
+            clearFileListTouchState(view)
+            true
+        }
+
         if (!showStoragePermissionNoticeIfNeeded()) {
             initializeBrowserIfPermitted()
         }
@@ -175,7 +193,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
-        dismissReadingHistoryPanel()
+        dismissSidePanels()
         clearFileListTouchState()
         saveCurrentPath()
         super.onPause()
@@ -274,7 +292,7 @@ class MainActivity : AppCompatActivity() {
                 .show()
         }
 
-        dismissReadingHistoryPanel()
+        dismissSidePanels()
         scheduleShowReadingHistoryScrim()
         readingHistoryAdapter = historyAdapter
         readingHistoryPopupWindow = PopupWindow(
@@ -299,11 +317,88 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun showFavoritePathsPanel() {
+        val rootView = findViewById<View>(R.id.main)
+        val screenWidth = rootView.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels
+        val panelWidth = (screenWidth * 3 / 4)
+            .coerceAtLeast(dpToPx(MIN_READING_HISTORY_PANEL_WIDTH_DP))
+        val content = layoutInflater.inflate(R.layout.panel_favorite_paths, null)
+        val listFavoritePaths = content.findViewById<RecyclerView>(R.id.listFavoritePaths)
+        val tvFavoritePathsEmpty = content.findViewById<TextView>(R.id.tvFavoritePathsEmpty)
+        val btnClearFavoritePaths = content.findViewById<Button>(R.id.btnClearFavoritePaths)
+        val favoriteItems = FavoritePathStore.items(this).toMutableList()
+        val adapter = FavoritePathAdapter(
+            context = this,
+            items = favoriteItems,
+            onItemClick = { item ->
+                dismissFavoritePathsPanel()
+                setCurrentPath(item.directory.absolutePath)
+                loadCurrentDirectory()
+            },
+            onItemsEmptyChanged = { isEmpty ->
+                listFavoritePaths.visibility = if (isEmpty) View.GONE else View.VISIBLE
+                tvFavoritePathsEmpty.visibility = if (isEmpty) View.VISIBLE else View.GONE
+            }
+        )
+
+        listFavoritePaths.layoutManager = LinearLayoutManager(this)
+        listFavoritePaths.adapter = adapter
+        listFavoritePaths.visibility = if (favoriteItems.isEmpty()) View.GONE else View.VISIBLE
+        tvFavoritePathsEmpty.visibility = if (favoriteItems.isEmpty()) View.VISIBLE else View.GONE
+        btnClearFavoritePaths.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.clear_favorite_paths_title)
+                .setMessage(R.string.clear_favorite_paths_message)
+                .setPositiveButton(R.string.yes) { _, _ ->
+                    FavoritePathStore.clear(this)
+                    adapter.clearItems()
+                }
+                .setNegativeButton(R.string.no, null)
+                .show()
+        }
+
+        dismissSidePanels()
+        scheduleShowReadingHistoryScrim()
+        favoritePathAdapter = adapter
+        favoritePathsPopupWindow = PopupWindow(
+            content,
+            panelWidth,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            true
+        ).apply {
+            isOutsideTouchable = true
+            setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+            animationStyle = R.style.Animation_ComicLab_ReadingHistoryPanel
+            elevation = dpToPx(READING_HISTORY_PANEL_ELEVATION_DP).toFloat()
+            setOnDismissListener {
+                if (favoritePathAdapter === adapter) {
+                    favoritePathAdapter = null
+                    favoritePathsPopupWindow = null
+                    scheduleHideReadingHistoryScrim()
+                }
+            }
+            showAtLocation(rootView, Gravity.END or Gravity.TOP, 0, 0)
+        }
+    }
+
+    private fun dismissSidePanels() {
+        dismissReadingHistoryPanel()
+        dismissFavoritePathsPanel()
+    }
+
     private fun dismissReadingHistoryPanel() {
         readingHistoryPopupWindow?.dismiss()
         readingHistoryPopupWindow = null
         readingHistoryAdapter?.close()
         readingHistoryAdapter = null
+        scheduleHideReadingHistoryScrim()
+    }
+
+    private fun dismissFavoritePathsPanel() {
+        favoritePathsPopupWindow?.dismiss()
+        favoritePathsPopupWindow = null
+        favoritePathAdapter = null
         scheduleHideReadingHistoryScrim()
     }
 
@@ -580,6 +675,21 @@ class MainActivity : AppCompatActivity() {
         } catch (_: ActivityNotFoundException) {
             showMessage(getString(R.string.message_no_app_for_file))
         }
+    }
+
+    private fun showDirectoryMenu(directory: File) {
+        val dialog = BottomSheetDialog(this)
+        val content = layoutInflater.inflate(R.layout.bottom_sheet_directory_actions, null)
+        val btnFavoritePath = content.findViewById<TextView>(R.id.btnFavoritePathAction)
+
+        btnFavoritePath.setOnClickListener {
+            FavoritePathStore.record(this, directory)
+            showMessage(getString(R.string.favorite_path_added))
+            dialog.dismiss()
+        }
+
+        dialog.setContentView(content)
+        dialog.show()
     }
 
     private fun showArchiveMenu(file: File) {
