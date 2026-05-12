@@ -21,6 +21,7 @@ import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ListView
 import android.widget.PopupWindow
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -49,7 +50,9 @@ class MainActivity : AppCompatActivity() {
 
     private val fileItems = mutableListOf<FileItem>()
     private val directoryLoadExecutor = Executors.newSingleThreadExecutor()
+    private val classifyExecutor = Executors.newSingleThreadExecutor()
     private val directoryLoadGeneration = AtomicInteger(0)
+    private val classifyGeneration = AtomicInteger(0)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val showReadingHistoryScrimRunnable = Runnable {
         showReadingHistoryScrimNow()
@@ -64,6 +67,8 @@ class MainActivity : AppCompatActivity() {
     private var favoriteComicAdapter: FavoriteComicAdapter? = null
     private var favoritePathsPopupWindow: PopupWindow? = null
     private var favoritePathAdapter: FavoritePathAdapter? = null
+    @Volatile
+    private var isClassifyingComics = false
     private var browserInitialized = false
     private var currentPath = STORAGE_ROOT_PATH
 
@@ -128,7 +133,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnSearch.setOnClickListener {
-            loadCurrentDirectory()
+            confirmClassifyCurrentDirectory()
         }
 
         etPath.setOnLongClickListener {
@@ -203,9 +208,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         directoryLoadGeneration.incrementAndGet()
+        classifyGeneration.incrementAndGet()
         mainHandler.removeCallbacks(showReadingHistoryScrimRunnable)
         mainHandler.removeCallbacks(hideReadingHistoryScrimRunnable)
         directoryLoadExecutor.shutdownNow()
+        classifyExecutor.shutdownNow()
         fileListAdapter.close()
         super.onDestroy()
     }
@@ -664,6 +671,134 @@ class MainActivity : AppCompatActivity() {
                 loadCurrentDirectory()
             }
             .show()
+    }
+
+    private fun confirmClassifyCurrentDirectory() {
+        if (!Environment.isExternalStorageManager()) {
+            openManageAllFilesAccessSettings()
+            return
+        }
+
+        if (isClassifyingComics) {
+            showMessage(getString(R.string.classify_comics_running))
+            return
+        }
+
+        val rootDirectory = File(currentPath)
+        if (!rootDirectory.isDirectory) {
+            showMessage(getString(R.string.message_invalid_directory))
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.classify_comics_confirm_title)
+            .setMessage(getString(R.string.classify_comics_confirm_message, rootDirectory.absolutePath))
+            .setPositiveButton(R.string.yes) { _, _ ->
+                startClassifyComics(rootDirectory)
+            }
+            .setNegativeButton(R.string.no, null)
+            .show()
+    }
+
+    private fun startClassifyComics(rootDirectory: File) {
+        val generation = classifyGeneration.incrementAndGet()
+        val content = layoutInflater.inflate(R.layout.dialog_classify_progress, null)
+        val tvStatus = content.findViewById<TextView>(R.id.tvClassifyProgressStatus)
+        val progressBar = content.findViewById<ProgressBar>(R.id.progressClassifyComics)
+        val tvCount = content.findViewById<TextView>(R.id.tvClassifyProgressCount)
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle(R.string.classify_comics)
+            .setView(content)
+            .setCancelable(false)
+            .create()
+
+        isClassifyingComics = true
+        progressDialog.show()
+
+        val errorTags = AppSettings.getStartMarkerErrorTags(this)
+        runCatching {
+            classifyExecutor.execute {
+                val result = runCatching {
+                    ComicClassifier.classify(rootDirectory, errorTags) { progress ->
+                        runOnUiThread {
+                            if (generation == classifyGeneration.get() && !isDestroyed) {
+                                updateClassifyProgress(progress, progressBar, tvStatus, tvCount)
+                            }
+                        }
+                    }
+                }
+
+                runOnUiThread {
+                    if (generation != classifyGeneration.get() || isDestroyed) {
+                        return@runOnUiThread
+                    }
+
+                    isClassifyingComics = false
+                    progressDialog.dismiss()
+                    result
+                        .onSuccess { classifyResult ->
+                            handleClassifyResult(classifyResult)
+                        }
+                        .onFailure {
+                            showMessage(getString(R.string.classify_comics_failed))
+                        }
+                    loadCurrentDirectory()
+                }
+            }
+        }.onFailure {
+            isClassifyingComics = false
+            progressDialog.dismiss()
+            showMessage(getString(R.string.classify_comics_failed))
+        }
+    }
+
+    private fun updateClassifyProgress(
+        progress: ComicClassifier.Progress,
+        progressBar: ProgressBar,
+        tvStatus: TextView,
+        tvCount: TextView
+    ) {
+        when (progress.stage) {
+            ComicClassifier.Stage.SCANNING -> {
+                progressBar.isIndeterminate = true
+                tvStatus.text = getString(R.string.classify_comics_scanning)
+                tvCount.text = ""
+            }
+
+            ComicClassifier.Stage.COPYING -> {
+                progressBar.isIndeterminate = false
+                progressBar.max = progress.total.coerceAtLeast(1)
+                progressBar.progress = progress.completed.coerceIn(0, progress.total.coerceAtLeast(1))
+                tvStatus.text = if (progress.currentFileName.isBlank()) {
+                    getString(R.string.classify_comics)
+                } else {
+                    getString(R.string.classify_comics_copying, progress.currentFileName)
+                }
+                tvCount.text = getString(
+                    R.string.classify_comics_progress_count,
+                    progress.completed,
+                    progress.total
+                )
+            }
+        }
+    }
+
+    private fun handleClassifyResult(result: ComicClassifier.Result) {
+        val outputDirectory = result.outputDirectory
+        if (outputDirectory == null || result.totalCount <= 0) {
+            showMessage(getString(R.string.classify_comics_no_files))
+            return
+        }
+
+        showMessage(
+            getString(
+                R.string.classify_comics_complete,
+                result.copiedCount,
+                result.totalCount,
+                result.failedCount,
+                outputDirectory.name
+            )
+        )
     }
 
     private fun sortFiles(files: List<File>): List<File> {

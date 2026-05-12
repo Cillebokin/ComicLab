@@ -48,6 +48,16 @@
     <string name="clear_favorite_paths_message">是否清空收藏的路径？</string>
     <string name="feature_not_implemented">%1$s暂未实现</string>
     <string name="sort">排序</string>
+    <string name="classify_comics">漫画分类</string>
+    <string name="classify_comics_confirm_title">漫画分类</string>
+    <string name="classify_comics_confirm_message">是否对当前路径下的漫画文件进行递归分类？\n%1$s</string>
+    <string name="classify_comics_scanning">正在扫描漫画文件...</string>
+    <string name="classify_comics_copying">正在复制：%1$s</string>
+    <string name="classify_comics_progress_count">%1$d / %2$d</string>
+    <string name="classify_comics_no_files">当前路径下没有找到漫画文件</string>
+    <string name="classify_comics_running">正在进行漫画分类</string>
+    <string name="classify_comics_complete">分类完成：已复制 %1$d / %2$d，失败 %3$d，输出目录：%4$s</string>
+    <string name="classify_comics_failed">漫画分类失败</string>
     <string name="sort_by_name_asc">名称升序</string>
     <string name="sort_by_name_desc">名称降序</string>
     <string name="sort_by_modified_desc">修改时间从新到旧</string>

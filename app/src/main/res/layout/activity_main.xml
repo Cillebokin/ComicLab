@@ -131,7 +131,7 @@
             android:layout_height="20dp"
             android:layout_marginStart="16dp"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/open_file"
+            android:contentDescription="@string/classify_comics"
             android:scaleType="centerInside"
             android:src="@drawable/png_search_icon" />
 
