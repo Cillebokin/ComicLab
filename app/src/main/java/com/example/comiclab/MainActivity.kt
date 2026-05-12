@@ -903,6 +903,7 @@ class MainActivity : AppCompatActivity() {
         val content = layoutInflater.inflate(R.layout.bottom_sheet_directory_actions, null)
         val btnFavoritePath = content.findViewById<TextView>(R.id.btnFavoritePathAction)
         val btnCopyPathName = content.findViewById<TextView>(R.id.btnCopyPathName)
+        val btnRenameDirectoryName = content.findViewById<TextView>(R.id.btnRenameDirectoryName)
         val isFavorite = FavoritePathStore.isFavorite(this, directory)
 
         btnFavoritePath.text = getString(
@@ -946,14 +947,86 @@ class MainActivity : AppCompatActivity() {
             dialog.dismiss()
         }
 
+        btnRenameDirectoryName.setOnClickListener {
+            dialog.dismiss()
+            showRenameDirectoryDialog(directory)
+        }
+
         dialog.setContentView(content)
         dialog.show()
+    }
+
+    private fun showRenameDirectoryDialog(directory: File) {
+        if (!directory.isDirectory) {
+            showMessage(getString(R.string.message_invalid_directory))
+            return
+        }
+
+        val input = EditText(this).apply {
+            setSingleLine(true)
+            setText(directory.name)
+            setSelection(text.length)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.rename_directory_name_title)
+            .setView(input)
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                renameDirectory(directory, input.text?.toString().orEmpty())
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun renameDirectory(directory: File, rawName: String) {
+        val parent = directory.parentFile ?: run {
+            showMessage(getString(R.string.rename_directory_name_failed))
+            return
+        }
+        val trimmedName = rawName.trim()
+        if (trimmedName.isEmpty()) {
+            showMessage(getString(R.string.rename_directory_name_empty))
+            return
+        }
+        if (trimmedName.any { it.code < 32 || it in INVALID_FILE_NAME_CHARS }) {
+            showMessage(getString(R.string.rename_directory_name_invalid))
+            return
+        }
+        if (trimmedName == "." || trimmedName == "..") {
+            showMessage(getString(R.string.rename_directory_name_invalid))
+            return
+        }
+        if (trimmedName == directory.name) {
+            return
+        }
+
+        val targetDirectory = File(parent, trimmedName)
+        if (targetDirectory.exists()) {
+            showMessage(getString(R.string.rename_directory_name_exists))
+            return
+        }
+
+        val wasFavorite = FavoritePathStore.isFavorite(this, directory)
+        val renamed = directory.renameTo(targetDirectory)
+        if (!renamed) {
+            showMessage(getString(R.string.rename_directory_name_failed))
+            return
+        }
+
+        if (wasFavorite) {
+            FavoritePathStore.remove(this, directory)
+            FavoritePathStore.record(this, targetDirectory)
+        }
+
+        showMessage(getString(R.string.rename_directory_name_success))
+        loadCurrentDirectory(targetDirectory.absolutePath)
     }
 
     private fun showArchiveMenu(file: File) {
         val dialog = BottomSheetDialog(this)
         val content = layoutInflater.inflate(R.layout.bottom_sheet_archive_actions, null)
         val btnCopyFileName = content.findViewById<TextView>(R.id.btnCopyFileName)
+        val btnRenameFileName = content.findViewById<TextView>(R.id.btnRenameFileName)
         val btnCopyStartMarker = content.findViewById<TextView>(R.id.btnCopyStartMarker)
         val btnFavoriteComic = content.findViewById<TextView>(R.id.btnFavoriteComicAction)
         val btnRead = content.findViewById<TextView>(R.id.btnReadComic)
@@ -970,6 +1043,11 @@ class MainActivity : AppCompatActivity() {
                 copiedMessage = getString(R.string.copied_file_name)
             )
             dialog.dismiss()
+        }
+
+        btnRenameFileName.setOnClickListener {
+            dialog.dismiss()
+            showRenameFileDialog(file)
         }
 
         btnCopyStartMarker.setOnClickListener {
@@ -1030,6 +1108,75 @@ class MainActivity : AppCompatActivity() {
 
         dialog.setContentView(content)
         dialog.show()
+    }
+
+    private fun showRenameFileDialog(file: File) {
+        if (!file.isFile) {
+            showMessage(getString(R.string.message_invalid_file))
+            return
+        }
+
+        val input = EditText(this).apply {
+            setSingleLine(true)
+            setText(file.nameWithoutExtension)
+            setSelection(text.length)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.rename_file_name_title)
+            .setView(input)
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                renameArchiveFile(file, input.text?.toString().orEmpty())
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun renameArchiveFile(file: File, rawName: String) {
+        val parent = file.parentFile ?: run {
+            showMessage(getString(R.string.rename_file_name_failed))
+            return
+        }
+        val trimmedName = rawName.trim()
+        if (trimmedName.isEmpty()) {
+            showMessage(getString(R.string.rename_file_name_empty))
+            return
+        }
+        if (trimmedName.any { it.code < 32 || it in INVALID_FILE_NAME_CHARS }) {
+            showMessage(getString(R.string.rename_file_name_invalid))
+            return
+        }
+
+        val extension = file.extension
+        val newFileName = when {
+            extension.isBlank() -> trimmedName
+            trimmedName.endsWith(".$extension", ignoreCase = true) -> trimmedName
+            else -> "$trimmedName.$extension"
+        }
+        if (newFileName == file.name) {
+            return
+        }
+
+        val targetFile = File(parent, newFileName)
+        if (targetFile.exists()) {
+            showMessage(getString(R.string.rename_file_name_exists))
+            return
+        }
+
+        val wasFavorite = FavoriteComicStore.isFavorite(this, file)
+        val renamed = file.renameTo(targetFile)
+        if (!renamed) {
+            showMessage(getString(R.string.rename_file_name_failed))
+            return
+        }
+
+        if (wasFavorite) {
+            FavoriteComicStore.remove(this, file)
+            FavoriteComicStore.record(this, targetFile)
+        }
+
+        showMessage(getString(R.string.rename_file_name_success))
+        loadCurrentDirectory(targetFile.absolutePath)
     }
 
     private fun openMangaPreview(file: File) {
@@ -1127,6 +1274,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_CURRENT_PATH = "current_path"
         private const val CLEAR_CLICK_STATE_DELAY_MS = 120L
         private const val FILE_ITEM_HEIGHT_DP = 75
+        private val INVALID_FILE_NAME_CHARS = setOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')
         private const val MIN_READING_HISTORY_PANEL_WIDTH_DP = 180
         private const val READING_HISTORY_PANEL_ELEVATION_DP = 8
         private const val READING_HISTORY_PANEL_ENTER_ANIMATION_MS = 180L

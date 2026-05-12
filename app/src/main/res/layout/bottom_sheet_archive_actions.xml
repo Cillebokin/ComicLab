@@ -40,6 +40,17 @@
         android:textSize="18sp" />
 
     <TextView
+        android:id="@+id/btnRenameFileName"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="?attr/selectableItemBackground"
+        android:gravity="center_vertical"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:text="@string/rename_file_name"
+        android:textSize="18sp" />
+
+    <TextView
         android:id="@+id/btnCopyStartMarker"
         android:layout_width="match_parent"
         android:layout_height="56dp"
