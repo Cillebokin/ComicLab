@@ -17,13 +17,16 @@ import java.io.Closeable
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
+import java.io.IOException
 import java.io.OutputStream
 import java.io.RandomAccessFile
 import java.util.Locale
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
+import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 
 object ComicArchive {
     private const val ZIP_PREVIEW_DECODE_THREAD_COUNT = 2
@@ -79,6 +82,22 @@ object ComicArchive {
             else -> emptyList()
         }.firstOrNull()
             ?.takeIf { it.isImageEntryName() }
+    }
+
+    fun canDeleteEntry(file: File): Boolean {
+        return isSupportedArchive(file)
+    }
+
+    fun deleteEntry(file: File, entryName: String): Boolean {
+        if (!canDeleteEntry(file) || entryName.isBlank()) {
+            return false
+        }
+
+        return when (file.extension.lowercase(Locale.ROOT)) {
+            in zipArchiveExtensions -> deleteZipEntry(file, entryName)
+            in sevenZipArchiveExtensions -> rebuildSevenZipReadableArchiveWithoutEntry(file, entryName)
+            else -> false
+        }
     }
 
     fun decodeImage(file: File, entryName: String, maxSize: Int): Bitmap? {
@@ -581,6 +600,208 @@ object ComicArchive {
         }
     }
 
+    private fun deleteZipEntry(file: File, entryName: String): Boolean {
+        val parent = file.parentFile ?: return false
+        val tempFile = File(parent, "${file.name}.delete_${System.currentTimeMillis()}.tmp")
+        val backupFile = File(parent, "${file.name}.delete_${System.currentTimeMillis()}.bak")
+        tempFile.delete()
+        backupFile.delete()
+
+        val wroteReplacement = runCatching {
+            var foundEntry = false
+            ZipFile(file).use { zipFile ->
+                ZipOutputStream(tempFile.outputStream().buffered()).use { zipOutput ->
+                    val entries = zipFile.entries()
+                    while (entries.hasMoreElements()) {
+                        val sourceEntry = entries.nextElement()
+                        if (sourceEntry.name == entryName) {
+                            foundEntry = true
+                            continue
+                        }
+
+                        if (!sourceEntry.isDirectory && sourceEntry.isImageEntry()) {
+                            val stored = writeStoredZipEntry(zipFile, sourceEntry, zipOutput)
+                            if (stored) {
+                                continue
+                            }
+                        }
+
+                        val targetEntry = sourceEntry.copyForZipOutput()
+                        zipOutput.putNextEntry(targetEntry)
+                        if (!sourceEntry.isDirectory) {
+                            zipFile.getInputStream(sourceEntry).use { input ->
+                                input.copyTo(zipOutput)
+                            }
+                        }
+                        zipOutput.closeEntry()
+                    }
+                }
+            }
+
+            foundEntry && tempFile.isFile && tempFile.length() > 0L
+        }.getOrDefault(false)
+
+        if (!wroteReplacement) {
+            tempFile.delete()
+            return false
+        }
+
+        return replaceOriginalFileWithTemp(file, tempFile, backupFile)
+    }
+
+    private fun rebuildSevenZipReadableArchiveWithoutEntry(file: File, entryName: String): Boolean {
+        val parent = file.parentFile ?: return false
+        val timestamp = System.currentTimeMillis()
+        val tempFile = File(parent, "${file.name}.delete_${timestamp}.tmp")
+        val backupFile = File(parent, "${file.name}.delete_${timestamp}.bak")
+        val workDir = File(parent, "${file.name}.delete_${timestamp}_work")
+        tempFile.delete()
+        backupFile.delete()
+        workDir.deleteRecursively()
+
+        val wroteReplacement = try {
+            runCatching {
+                var foundEntry = false
+                withSevenZipArchive(file) { archive ->
+                    ZipOutputStream(tempFile.outputStream().buffered()).use { zipOutput ->
+                        for (index in 0 until archive.numberOfItems) {
+                            val path = archive.entryPath(index) ?: continue
+                            if (path == entryName) {
+                                foundEntry = true
+                                continue
+                            }
+
+                            val isFolder = archive.isFolder(index)
+                            val lastModified =
+                                archive.getProperty(index, PropID.LAST_MODIFICATION_TIME) as? java.util.Date
+                            val zipEntry = ZipEntry(path.toZipEntryPath(isFolder)).apply {
+                                lastModified?.let { time = it.time }
+                            }
+
+                            if (!isFolder && path.isImageEntryName()) {
+                                val stored = writeStoredSevenZipEntry(
+                                    archive = archive,
+                                    entryIndex = index,
+                                    entryPath = path,
+                                    lastModified = lastModified,
+                                    zipOutput = zipOutput,
+                                    workDir = workDir
+                                )
+                                if (stored) {
+                                    continue
+                                }
+                            }
+
+                            zipOutput.putNextEntry(zipEntry)
+                            if (!isFolder) {
+                                val extracted = extractSevenZipEntryToStream(archive, index, zipOutput)
+                                if (!extracted) {
+                                    throw IOException("Failed to extract archive entry: $path")
+                                }
+                            }
+                            zipOutput.closeEntry()
+                        }
+                    }
+                }
+
+                foundEntry && tempFile.isFile && tempFile.length() > 0L
+            }.getOrDefault(false)
+        } finally {
+            workDir.deleteRecursively()
+        }
+
+        if (!wroteReplacement) {
+            tempFile.delete()
+            return false
+        }
+
+        return replaceOriginalFileWithTemp(file, tempFile, backupFile)
+    }
+
+    private fun replaceOriginalFileWithTemp(
+        originalFile: File,
+        tempFile: File,
+        backupFile: File
+    ): Boolean {
+        if (!originalFile.renameTo(backupFile)) {
+            tempFile.delete()
+            return false
+        }
+
+        if (tempFile.renameTo(originalFile)) {
+            backupFile.delete()
+            return true
+        }
+
+        tempFile.delete()
+        backupFile.renameTo(originalFile)
+        return false
+    }
+
+    private fun writeStoredZipEntry(
+        zipFile: ZipFile,
+        sourceEntry: ZipEntry,
+        zipOutput: ZipOutputStream
+    ): Boolean {
+        if (sourceEntry.size < 0L || sourceEntry.crc < 0L) {
+            return false
+        }
+
+        val targetEntry = sourceEntry.copyForZipOutput().apply {
+            method = ZipEntry.STORED
+            size = sourceEntry.size
+            compressedSize = sourceEntry.size
+            crc = sourceEntry.crc
+        }
+
+        zipOutput.putNextEntry(targetEntry)
+        zipFile.getInputStream(sourceEntry).use { input ->
+            input.copyTo(zipOutput)
+        }
+        zipOutput.closeEntry()
+        return true
+    }
+
+    private fun writeStoredSevenZipEntry(
+        archive: IInArchive,
+        entryIndex: Int,
+        entryPath: String,
+        lastModified: java.util.Date?,
+        zipOutput: ZipOutputStream,
+        workDir: File
+    ): Boolean {
+        workDir.mkdirs()
+        val extractedFile = File(workDir, String.format(Locale.ROOT, "%06d.entry", entryIndex))
+        extractedFile.delete()
+
+        val extracted = runCatching {
+            extractedFile.outputStream().buffered().use { output ->
+                extractSevenZipEntryToStream(archive, entryIndex, output)
+            }
+        }.getOrDefault(false)
+        if (!extracted || !extractedFile.isFile) {
+            extractedFile.delete()
+            return false
+        }
+
+        val entrySize = extractedFile.length()
+        val entry = ZipEntry(entryPath).apply {
+            method = ZipEntry.STORED
+            size = entrySize
+            compressedSize = entrySize
+            crc = crc32(extractedFile)
+            lastModified?.let { time = it.time }
+        }
+
+        zipOutput.putNextEntry(entry)
+        extractedFile.inputStream().buffered().use { input ->
+            input.copyTo(zipOutput)
+        }
+        zipOutput.closeEntry()
+        extractedFile.delete()
+        return true
+    }
+
     private fun sevenZipImageEntries(file: File): List<String> {
         return withSevenZipArchive(file) { archive ->
             (0 until archive.numberOfItems)
@@ -822,6 +1043,40 @@ object ComicArchive {
         return success
     }
 
+    private fun extractSevenZipEntryToStream(
+        archive: IInArchive,
+        entryIndex: Int,
+        output: OutputStream
+    ): Boolean {
+        var extractResult = ExtractOperationResult.OK
+        archive.extract(intArrayOf(entryIndex), false, object : IArchiveExtractCallback {
+            override fun setTotal(total: Long) = Unit
+
+            override fun setCompleted(completeValue: Long) = Unit
+
+            override fun getStream(index: Int, extractAskMode: ExtractAskMode): ISequentialOutStream? {
+                if (index != entryIndex || extractAskMode != ExtractAskMode.EXTRACT) {
+                    return null
+                }
+
+                return object : ISequentialOutStream {
+                    override fun write(data: ByteArray): Int {
+                        output.write(data)
+                        return data.size
+                    }
+                }
+            }
+
+            override fun prepareOperation(extractAskMode: ExtractAskMode) = Unit
+
+            override fun setOperationResult(extractOperationResult: ExtractOperationResult) {
+                extractResult = extractOperationResult
+            }
+        })
+
+        return extractResult == ExtractOperationResult.OK
+    }
+
     private fun extractSevenZipEntryBytes(archive: IInArchive, entryIndex: Int): ByteArray? {
         val output = ByteArrayOutputStream()
         var extractResult = ExtractOperationResult.OK
@@ -968,9 +1223,51 @@ object ComicArchive {
         return name.isImageEntryName()
     }
 
+    private fun ZipEntry.copyForZipOutput(): ZipEntry {
+        return ZipEntry(name).also { target ->
+            target.comment = comment
+            target.extra = extra
+            if (time >= 0L) {
+                target.time = time
+            }
+
+            if (method == ZipEntry.STORED && size >= 0L && crc >= 0L) {
+                target.method = ZipEntry.STORED
+                target.size = size
+                target.compressedSize = compressedSize.takeIf { it >= 0L } ?: size
+                target.crc = crc
+            } else {
+                target.method = ZipEntry.DEFLATED
+            }
+        }
+    }
+
     private fun String.isImageEntryName(): Boolean {
         val extension = substringAfterLast('.', "").lowercase(Locale.ROOT)
         return extension in imageExtensions
+    }
+
+    private fun String.toZipEntryPath(isFolder: Boolean): String {
+        return if (isFolder && !endsWith("/")) {
+            "$this/"
+        } else {
+            this
+        }
+    }
+
+    private fun crc32(file: File): Long {
+        val crc = CRC32()
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) {
+                    break
+                }
+                crc.update(buffer, 0, read)
+            }
+        }
+        return crc.value
     }
 
     private fun IInArchive.isFolder(index: Int): Boolean {

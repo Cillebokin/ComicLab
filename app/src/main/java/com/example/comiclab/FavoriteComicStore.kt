@@ -5,36 +5,51 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
-object ReadingHistoryStore {
+object FavoriteComicStore {
 
     data class Item(
         val file: File,
-        val lastReadAt: Long,
+        val addedAt: Long,
         val fileSize: Long,
         val modifiedAt: Long
     )
 
-    fun record(context: Context, file: File) {
-        if (!ComicArchive.isSupportedArchive(file)) {
-            return
+    enum class RecordResult {
+        ADDED,
+        ALREADY_EXISTS,
+        LIMIT_REACHED,
+        INVALID
+    }
+
+    fun record(context: Context, file: File): RecordResult {
+        if (!file.isFile || !ComicArchive.isSupportedArchive(file)) {
+            return RecordResult.INVALID
         }
 
         val path = file.absolutePath
-        val updatedItems = mutableListOf(
-            StoredItem(
+        val storedItems = validStoredItems(readStoredItems(context))
+        if (storedItems.any { it.path == path }) {
+            saveStoredItems(context, storedItems.sortedBy { it.addedAt })
+            return RecordResult.ALREADY_EXISTS
+        }
+
+        if (storedItems.size >= MAX_FAVORITE_COMIC_COUNT) {
+            saveStoredItems(context, storedItems.sortedBy { it.addedAt })
+            return RecordResult.LIMIT_REACHED
+        }
+
+        val updatedItems = (
+            storedItems + StoredItem(
                 path = path,
-                lastReadAt = System.currentTimeMillis(),
+                addedAt = System.currentTimeMillis(),
                 fileSize = file.length(),
                 modifiedAt = file.lastModified()
             )
-        )
-        readStoredItems(context)
-            .asSequence()
-            .filterNot { it.path == path }
-            .take(MAX_HISTORY_COUNT - 1)
-            .forEach { updatedItems.add(it) }
+            )
+            .sortedBy { it.addedAt }
 
         saveStoredItems(context, updatedItems)
+        return RecordResult.ADDED
     }
 
     fun items(context: Context): List<Item> {
@@ -49,26 +64,43 @@ object ReadingHistoryStore {
             validStoredItems.add(storedItem)
             Item(
                 file = file,
-                lastReadAt = storedItem.lastReadAt,
+                addedAt = storedItem.addedAt,
                 fileSize = storedItem.fileSize.takeIf { it > 0L } ?: file.length(),
                 modifiedAt = storedItem.modifiedAt.takeIf { it > 0L } ?: file.lastModified()
             )
         }
 
-        if (validStoredItems.size != storedItems.size) {
+        val sortedStoredItems = validStoredItems
+            .sortedBy { it.addedAt }
+            .take(MAX_FAVORITE_COMIC_COUNT)
+        if (validStoredItems.size != storedItems.size || validStoredItems != sortedStoredItems) {
             if (validStoredItems.isEmpty()) {
                 clear(context)
             } else {
-                saveStoredItems(context, validStoredItems)
+                saveStoredItems(context, sortedStoredItems)
             }
         }
 
         return visibleItems
+            .sortedBy { it.addedAt }
+            .take(MAX_FAVORITE_COMIC_COUNT)
+    }
+
+    fun isFavorite(context: Context, file: File): Boolean {
+        return file.isFile &&
+            ComicArchive.isSupportedArchive(file) &&
+            favoriteFilePaths(context).contains(file.absolutePath)
+    }
+
+    fun favoriteFilePaths(context: Context): Set<String> {
+        return items(context)
+            .map { it.file.absolutePath }
+            .toSet()
     }
 
     fun clear(context: Context) {
         prefs(context).edit()
-            .remove(KEY_READING_HISTORY)
+            .remove(KEY_FAVORITE_COMICS)
             .apply()
     }
 
@@ -85,7 +117,7 @@ object ReadingHistoryStore {
     }
 
     private fun readStoredItems(context: Context): List<StoredItem> {
-        val rawValue = prefs(context).getString(KEY_READING_HISTORY, null)
+        val rawValue = prefs(context).getString(KEY_FAVORITE_COMICS, null)
             ?: return emptyList()
 
         return runCatching {
@@ -97,7 +129,7 @@ object ReadingHistoryStore {
                     add(
                         StoredItem(
                             path = path,
-                            lastReadAt = obj.optLong(FIELD_LAST_READ_AT, 0L),
+                            addedAt = obj.optLong(FIELD_ADDED_AT, 0L),
                             fileSize = obj.optLong(FIELD_FILE_SIZE, 0L),
                             modifiedAt = obj.optLong(FIELD_MODIFIED_AT, 0L)
                         )
@@ -109,36 +141,43 @@ object ReadingHistoryStore {
 
     private fun saveStoredItems(context: Context, items: List<StoredItem>) {
         val array = JSONArray()
-        items.take(MAX_HISTORY_COUNT).forEach { item ->
+        items.take(MAX_FAVORITE_COMIC_COUNT).forEach { item ->
             array.put(
                 JSONObject()
                     .put(FIELD_PATH, item.path)
-                    .put(FIELD_LAST_READ_AT, item.lastReadAt)
+                    .put(FIELD_ADDED_AT, item.addedAt)
                     .put(FIELD_FILE_SIZE, item.fileSize)
                     .put(FIELD_MODIFIED_AT, item.modifiedAt)
             )
         }
 
         prefs(context).edit()
-            .putString(KEY_READING_HISTORY, array.toString())
+            .putString(KEY_FAVORITE_COMICS, array.toString())
             .apply()
     }
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    private fun validStoredItems(items: List<StoredItem>): List<StoredItem> {
+        return items.filter { item ->
+            val file = File(item.path)
+            file.isFile && ComicArchive.isSupportedArchive(file)
+        }
+    }
+
     private data class StoredItem(
         val path: String,
-        val lastReadAt: Long,
+        val addedAt: Long,
         val fileSize: Long,
         val modifiedAt: Long
     )
 
-    private const val PREFS_NAME = "reading_history_prefs"
-    private const val KEY_READING_HISTORY = "reading_history"
+    private const val PREFS_NAME = "favorite_comic_prefs"
+    private const val KEY_FAVORITE_COMICS = "favorite_comics"
     private const val FIELD_PATH = "path"
-    private const val FIELD_LAST_READ_AT = "lastReadAt"
+    private const val FIELD_ADDED_AT = "addedAt"
     private const val FIELD_FILE_SIZE = "fileSize"
     private const val FIELD_MODIFIED_AT = "modifiedAt"
-    private const val MAX_HISTORY_COUNT = 30
+    private const val MAX_FAVORITE_COMIC_COUNT = 100
 }

@@ -16,15 +16,19 @@ import android.view.Gravity
 import android.webkit.MimeTypeMap
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ListView
 import android.widget.PopupWindow
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import java.io.File
 import java.util.concurrent.Executors
@@ -37,6 +41,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnBack: ImageButton
     private lateinit var btnOptions: ImageButton
     private lateinit var btnSort: ImageButton
+    private lateinit var btnClassify: ImageButton
     private lateinit var btnSearch: ImageButton
     private lateinit var btnReadingHistory: ImageButton
     private lateinit var btnFavoriteComics: ImageButton
@@ -46,7 +51,9 @@ class MainActivity : AppCompatActivity() {
 
     private val fileItems = mutableListOf<FileItem>()
     private val directoryLoadExecutor = Executors.newSingleThreadExecutor()
+    private val classifyExecutor = Executors.newSingleThreadExecutor()
     private val directoryLoadGeneration = AtomicInteger(0)
+    private val classifyGeneration = AtomicInteger(0)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val showReadingHistoryScrimRunnable = Runnable {
         showReadingHistoryScrimNow()
@@ -57,6 +64,12 @@ class MainActivity : AppCompatActivity() {
 
     private var readingHistoryPopupWindow: PopupWindow? = null
     private var readingHistoryAdapter: ReadingHistoryAdapter? = null
+    private var favoriteComicsPopupWindow: PopupWindow? = null
+    private var favoriteComicAdapter: FavoriteComicAdapter? = null
+    private var favoritePathsPopupWindow: PopupWindow? = null
+    private var favoritePathAdapter: FavoritePathAdapter? = null
+    @Volatile
+    private var isClassifyingComics = false
     private var browserInitialized = false
     private var currentPath = STORAGE_ROOT_PATH
 
@@ -78,6 +91,7 @@ class MainActivity : AppCompatActivity() {
         btnBack = findViewById(R.id.btnBack)
         btnOptions = findViewById(R.id.btnOptions)
         btnSort = findViewById(R.id.btnSort)
+        btnClassify = findViewById(R.id.btnClassify)
         btnSearch = findViewById(R.id.btnSearch)
         btnReadingHistory = findViewById(R.id.btnReadingHistory)
         btnFavoriteComics = findViewById(R.id.btnFavoriteComics)
@@ -105,19 +119,23 @@ class MainActivity : AppCompatActivity() {
         }
 
         readingHistoryScrim.setOnClickListener {
-            dismissReadingHistoryPanel()
+            dismissSidePanels()
         }
 
         btnFavoriteComics.setOnClickListener {
-            showPendingFeature(R.string.favorite_comics)
+            showFavoriteComicsPanel()
         }
 
         btnFavoritePaths.setOnClickListener {
-            showPendingFeature(R.string.favorite_paths)
+            showFavoritePathsPanel()
         }
 
         btnSort.setOnClickListener {
             showSortDialog()
+        }
+
+        btnClassify.setOnClickListener {
+            confirmClassifyCurrentDirectory()
         }
 
         btnSearch.setOnClickListener {
@@ -158,6 +176,22 @@ class MainActivity : AppCompatActivity() {
             clearFileListTouchState(view)
         }
 
+        listView.setOnItemLongClickListener { _, view, position, _ ->
+            val item = fileItems.getOrNull(position) ?: return@setOnItemLongClickListener false
+            if (item.isParent) {
+                return@setOnItemLongClickListener false
+            }
+
+            val file = item.file
+            if (file?.isDirectory != true) {
+                return@setOnItemLongClickListener false
+            }
+
+            showDirectoryMenu(file)
+            clearFileListTouchState(view)
+            true
+        }
+
         if (!showStoragePermissionNoticeIfNeeded()) {
             initializeBrowserIfPermitted()
         }
@@ -172,7 +206,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
-        dismissReadingHistoryPanel()
+        dismissSidePanels()
         clearFileListTouchState()
         saveCurrentPath()
         super.onPause()
@@ -180,9 +214,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         directoryLoadGeneration.incrementAndGet()
+        classifyGeneration.incrementAndGet()
         mainHandler.removeCallbacks(showReadingHistoryScrimRunnable)
         mainHandler.removeCallbacks(hideReadingHistoryScrimRunnable)
         directoryLoadExecutor.shutdownNow()
+        classifyExecutor.shutdownNow()
         fileListAdapter.close()
         super.onDestroy()
     }
@@ -233,24 +269,45 @@ class MainActivity : AppCompatActivity() {
 
     private fun showReadingHistoryPanel() {
         val rootView = findViewById<View>(R.id.main)
-        val panelWidth = ((rootView.width.takeIf { it > 0 }
-            ?: resources.displayMetrics.widthPixels) / 2).coerceAtLeast(dpToPx(MIN_READING_HISTORY_PANEL_WIDTH_DP))
+        val screenWidth = rootView.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels
+        val panelWidth = (screenWidth * 3 / 4)
+            .coerceAtLeast(dpToPx(MIN_READING_HISTORY_PANEL_WIDTH_DP))
         val content = layoutInflater.inflate(R.layout.panel_reading_history, null)
-        val listReadingHistory = content.findViewById<ListView>(R.id.listReadingHistory)
+        val listReadingHistory = content.findViewById<RecyclerView>(R.id.listReadingHistory)
         val tvReadingHistoryEmpty = content.findViewById<TextView>(R.id.tvReadingHistoryEmpty)
-        val historyItems = ReadingHistoryStore.items(this)
-        val historyAdapter = ReadingHistoryAdapter(this, historyItems)
+        val btnClearReadingHistory = content.findViewById<Button>(R.id.btnClearReadingHistory)
+        val historyItems = ReadingHistoryStore.items(this).toMutableList()
+        val historyAdapter = ReadingHistoryAdapter(
+            context = this,
+            items = historyItems,
+            onItemClick = { item ->
+                dismissReadingHistoryPanel()
+                openMangaPreview(item.file)
+            },
+            onItemsEmptyChanged = { isEmpty ->
+                listReadingHistory.visibility = if (isEmpty) View.GONE else View.VISIBLE
+                tvReadingHistoryEmpty.visibility = if (isEmpty) View.VISIBLE else View.GONE
+            }
+        )
 
+        listReadingHistory.layoutManager = LinearLayoutManager(this)
         listReadingHistory.adapter = historyAdapter
         listReadingHistory.visibility = if (historyItems.isEmpty()) View.GONE else View.VISIBLE
         tvReadingHistoryEmpty.visibility = if (historyItems.isEmpty()) View.VISIBLE else View.GONE
-        listReadingHistory.setOnItemClickListener { _, _, position, _ ->
-            val item = historyItems.getOrNull(position) ?: return@setOnItemClickListener
-            dismissReadingHistoryPanel()
-            openMangaPreview(item.file)
+        btnClearReadingHistory.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.clear_reading_history_title)
+                .setMessage(R.string.clear_reading_history_message)
+                .setPositiveButton(R.string.yes) { _, _ ->
+                    ReadingHistoryStore.clear(this)
+                    historyAdapter.clearItems()
+                }
+                .setNegativeButton(R.string.no, null)
+                .show()
         }
 
-        dismissReadingHistoryPanel()
+        dismissSidePanels()
         scheduleShowReadingHistoryScrim()
         readingHistoryAdapter = historyAdapter
         readingHistoryPopupWindow = PopupWindow(
@@ -275,11 +332,166 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun showFavoritePathsPanel() {
+        val rootView = findViewById<View>(R.id.main)
+        val screenWidth = rootView.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels
+        val panelWidth = (screenWidth * 3 / 4)
+            .coerceAtLeast(dpToPx(MIN_READING_HISTORY_PANEL_WIDTH_DP))
+        val content = layoutInflater.inflate(R.layout.panel_favorite_paths, null)
+        val listFavoritePaths = content.findViewById<RecyclerView>(R.id.listFavoritePaths)
+        val tvFavoritePathsEmpty = content.findViewById<TextView>(R.id.tvFavoritePathsEmpty)
+        val btnClearFavoritePaths = content.findViewById<Button>(R.id.btnClearFavoritePaths)
+        val favoriteItems = FavoritePathStore.items(this).toMutableList()
+        val adapter = FavoritePathAdapter(
+            context = this,
+            items = favoriteItems,
+            onItemClick = { item ->
+                dismissFavoritePathsPanel()
+                setCurrentPath(item.directory.absolutePath)
+                loadCurrentDirectory()
+            },
+            onItemsEmptyChanged = { isEmpty ->
+                listFavoritePaths.visibility = if (isEmpty) View.GONE else View.VISIBLE
+                tvFavoritePathsEmpty.visibility = if (isEmpty) View.VISIBLE else View.GONE
+            }
+        )
+
+        listFavoritePaths.layoutManager = LinearLayoutManager(this)
+        listFavoritePaths.adapter = adapter
+        listFavoritePaths.visibility = if (favoriteItems.isEmpty()) View.GONE else View.VISIBLE
+        tvFavoritePathsEmpty.visibility = if (favoriteItems.isEmpty()) View.VISIBLE else View.GONE
+        btnClearFavoritePaths.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.clear_favorite_paths_title)
+                .setMessage(R.string.clear_favorite_paths_message)
+                .setPositiveButton(R.string.yes) { _, _ ->
+                    FavoritePathStore.clear(this)
+                    adapter.clearItems()
+                    notifyListChanged()
+                }
+                .setNegativeButton(R.string.no, null)
+                .show()
+        }
+
+        dismissSidePanels()
+        scheduleShowReadingHistoryScrim()
+        favoritePathAdapter = adapter
+        favoritePathsPopupWindow = PopupWindow(
+            content,
+            panelWidth,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            true
+        ).apply {
+            isOutsideTouchable = true
+            setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+            animationStyle = R.style.Animation_ComicLab_ReadingHistoryPanel
+            elevation = dpToPx(READING_HISTORY_PANEL_ELEVATION_DP).toFloat()
+            setOnDismissListener {
+                if (favoritePathAdapter === adapter) {
+                    favoritePathAdapter = null
+                    favoritePathsPopupWindow = null
+                    scheduleHideReadingHistoryScrim()
+                    notifyListChanged()
+                }
+            }
+            showAtLocation(rootView, Gravity.END or Gravity.TOP, 0, 0)
+        }
+    }
+
+    private fun showFavoriteComicsPanel() {
+        val rootView = findViewById<View>(R.id.main)
+        val screenWidth = rootView.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels
+        val panelWidth = (screenWidth * 3 / 4)
+            .coerceAtLeast(dpToPx(MIN_READING_HISTORY_PANEL_WIDTH_DP))
+        val content = layoutInflater.inflate(R.layout.panel_favorite_comics, null)
+        val listFavoriteComics = content.findViewById<RecyclerView>(R.id.listFavoriteComics)
+        val tvFavoriteComicsEmpty = content.findViewById<TextView>(R.id.tvFavoriteComicsEmpty)
+        val btnClearFavoriteComics = content.findViewById<Button>(R.id.btnClearFavoriteComics)
+        val favoriteItems = FavoriteComicStore.items(this).toMutableList()
+        val adapter = FavoriteComicAdapter(
+            context = this,
+            items = favoriteItems,
+            onItemClick = { item ->
+                dismissFavoriteComicsPanel()
+                openMangaPreview(item.file)
+            },
+            onItemsEmptyChanged = { isEmpty ->
+                listFavoriteComics.visibility = if (isEmpty) View.GONE else View.VISIBLE
+                tvFavoriteComicsEmpty.visibility = if (isEmpty) View.VISIBLE else View.GONE
+            }
+        )
+
+        listFavoriteComics.layoutManager = LinearLayoutManager(this)
+        listFavoriteComics.adapter = adapter
+        listFavoriteComics.visibility = if (favoriteItems.isEmpty()) View.GONE else View.VISIBLE
+        tvFavoriteComicsEmpty.visibility = if (favoriteItems.isEmpty()) View.VISIBLE else View.GONE
+        btnClearFavoriteComics.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.clear_favorite_comics_title)
+                .setMessage(R.string.clear_favorite_comics_message)
+                .setPositiveButton(R.string.yes) { _, _ ->
+                    FavoriteComicStore.clear(this)
+                    adapter.clearItems()
+                    notifyListChanged()
+                }
+                .setNegativeButton(R.string.no, null)
+                .show()
+        }
+
+        dismissSidePanels()
+        scheduleShowReadingHistoryScrim()
+        favoriteComicAdapter = adapter
+        favoriteComicsPopupWindow = PopupWindow(
+            content,
+            panelWidth,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            true
+        ).apply {
+            isOutsideTouchable = true
+            setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+            animationStyle = R.style.Animation_ComicLab_ReadingHistoryPanel
+            elevation = dpToPx(READING_HISTORY_PANEL_ELEVATION_DP).toFloat()
+            setOnDismissListener {
+                adapter.close()
+                if (favoriteComicAdapter === adapter) {
+                    favoriteComicAdapter = null
+                    favoriteComicsPopupWindow = null
+                    scheduleHideReadingHistoryScrim()
+                    notifyListChanged()
+                }
+            }
+            showAtLocation(rootView, Gravity.END or Gravity.TOP, 0, 0)
+        }
+    }
+
+    private fun dismissSidePanels() {
+        dismissReadingHistoryPanel()
+        dismissFavoriteComicsPanel()
+        dismissFavoritePathsPanel()
+    }
+
     private fun dismissReadingHistoryPanel() {
         readingHistoryPopupWindow?.dismiss()
         readingHistoryPopupWindow = null
         readingHistoryAdapter?.close()
         readingHistoryAdapter = null
+        scheduleHideReadingHistoryScrim()
+    }
+
+    private fun dismissFavoritePathsPanel() {
+        favoritePathsPopupWindow?.dismiss()
+        favoritePathsPopupWindow = null
+        favoritePathAdapter = null
+        scheduleHideReadingHistoryScrim()
+    }
+
+    private fun dismissFavoriteComicsPanel() {
+        favoriteComicsPopupWindow?.dismiss()
+        favoriteComicsPopupWindow = null
+        favoriteComicAdapter?.close()
+        favoriteComicAdapter = null
         scheduleHideReadingHistoryScrim()
     }
 
@@ -467,6 +679,134 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun confirmClassifyCurrentDirectory() {
+        if (!Environment.isExternalStorageManager()) {
+            openManageAllFilesAccessSettings()
+            return
+        }
+
+        if (isClassifyingComics) {
+            showMessage(getString(R.string.classify_comics_running))
+            return
+        }
+
+        val rootDirectory = File(currentPath)
+        if (!rootDirectory.isDirectory) {
+            showMessage(getString(R.string.message_invalid_directory))
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.classify_comics_confirm_title)
+            .setMessage(getString(R.string.classify_comics_confirm_message, rootDirectory.absolutePath))
+            .setPositiveButton(R.string.yes) { _, _ ->
+                startClassifyComics(rootDirectory)
+            }
+            .setNegativeButton(R.string.no, null)
+            .show()
+    }
+
+    private fun startClassifyComics(rootDirectory: File) {
+        val generation = classifyGeneration.incrementAndGet()
+        val content = layoutInflater.inflate(R.layout.dialog_classify_progress, null)
+        val tvStatus = content.findViewById<TextView>(R.id.tvClassifyProgressStatus)
+        val progressBar = content.findViewById<ProgressBar>(R.id.progressClassifyComics)
+        val tvCount = content.findViewById<TextView>(R.id.tvClassifyProgressCount)
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle(R.string.classify_comics)
+            .setView(content)
+            .setCancelable(false)
+            .create()
+
+        isClassifyingComics = true
+        progressDialog.show()
+
+        val errorTags = AppSettings.getStartMarkerErrorTags(this)
+        runCatching {
+            classifyExecutor.execute {
+                val result = runCatching {
+                    ComicClassifier.classify(rootDirectory, errorTags) { progress ->
+                        runOnUiThread {
+                            if (generation == classifyGeneration.get() && !isDestroyed) {
+                                updateClassifyProgress(progress, progressBar, tvStatus, tvCount)
+                            }
+                        }
+                    }
+                }
+
+                runOnUiThread {
+                    if (generation != classifyGeneration.get() || isDestroyed) {
+                        return@runOnUiThread
+                    }
+
+                    isClassifyingComics = false
+                    progressDialog.dismiss()
+                    result
+                        .onSuccess { classifyResult ->
+                            handleClassifyResult(classifyResult)
+                        }
+                        .onFailure {
+                            showMessage(getString(R.string.classify_comics_failed))
+                        }
+                    loadCurrentDirectory()
+                }
+            }
+        }.onFailure {
+            isClassifyingComics = false
+            progressDialog.dismiss()
+            showMessage(getString(R.string.classify_comics_failed))
+        }
+    }
+
+    private fun updateClassifyProgress(
+        progress: ComicClassifier.Progress,
+        progressBar: ProgressBar,
+        tvStatus: TextView,
+        tvCount: TextView
+    ) {
+        when (progress.stage) {
+            ComicClassifier.Stage.SCANNING -> {
+                progressBar.isIndeterminate = true
+                tvStatus.text = getString(R.string.classify_comics_scanning)
+                tvCount.text = ""
+            }
+
+            ComicClassifier.Stage.COPYING -> {
+                progressBar.isIndeterminate = false
+                progressBar.max = progress.total.coerceAtLeast(1)
+                progressBar.progress = progress.completed.coerceIn(0, progress.total.coerceAtLeast(1))
+                tvStatus.text = if (progress.currentFileName.isBlank()) {
+                    getString(R.string.classify_comics)
+                } else {
+                    getString(R.string.classify_comics_copying, progress.currentFileName)
+                }
+                tvCount.text = getString(
+                    R.string.classify_comics_progress_count,
+                    progress.completed,
+                    progress.total
+                )
+            }
+        }
+    }
+
+    private fun handleClassifyResult(result: ComicClassifier.Result) {
+        val outputDirectory = result.outputDirectory
+        if (outputDirectory == null || result.totalCount <= 0) {
+            showMessage(getString(R.string.classify_comics_no_files))
+            return
+        }
+
+        showMessage(
+            getString(
+                R.string.classify_comics_complete,
+                result.copiedCount,
+                result.totalCount,
+                result.failedCount,
+                outputDirectory.name
+            )
+        )
+    }
+
     private fun sortFiles(files: List<File>): List<File> {
         val mode = currentSortMode()
         return files.sortedWith(Comparator { left, right ->
@@ -558,11 +898,143 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun showDirectoryMenu(directory: File) {
+        val dialog = BottomSheetDialog(this)
+        val content = layoutInflater.inflate(R.layout.bottom_sheet_directory_actions, null)
+        val btnFavoritePath = content.findViewById<TextView>(R.id.btnFavoritePathAction)
+        val btnCopyPathName = content.findViewById<TextView>(R.id.btnCopyPathName)
+        val btnRenameDirectoryName = content.findViewById<TextView>(R.id.btnRenameDirectoryName)
+        val isFavorite = FavoritePathStore.isFavorite(this, directory)
+
+        btnFavoritePath.text = getString(
+            if (isFavorite) R.string.cancel_favorite else R.string.favorite_path_action
+        )
+
+        btnFavoritePath.setOnClickListener {
+            if (FavoritePathStore.isFavorite(this, directory)) {
+                FavoritePathStore.remove(this, directory)
+                showMessage(getString(R.string.favorite_path_removed))
+                notifyListChanged()
+                dialog.dismiss()
+                return@setOnClickListener
+            }
+
+            val result = FavoritePathStore.record(this, directory)
+            when (result) {
+                FavoritePathStore.RecordResult.ADDED,
+                FavoritePathStore.RecordResult.ALREADY_EXISTS -> {
+                    showMessage(getString(R.string.favorite_path_added))
+                    notifyListChanged()
+                }
+
+                FavoritePathStore.RecordResult.LIMIT_REACHED -> {
+                    showMessage(getString(R.string.favorite_path_limit_reached))
+                }
+
+                FavoritePathStore.RecordResult.INVALID -> {
+                    showMessage(getString(R.string.message_invalid_directory))
+                }
+            }
+            dialog.dismiss()
+        }
+
+        btnCopyPathName.setOnClickListener {
+            copyToClipboard(
+                label = getString(R.string.copy_path_name),
+                text = directory.absolutePath,
+                copiedMessage = getString(R.string.copied_path)
+            )
+            dialog.dismiss()
+        }
+
+        btnRenameDirectoryName.setOnClickListener {
+            dialog.dismiss()
+            showRenameDirectoryDialog(directory)
+        }
+
+        dialog.setContentView(content)
+        dialog.show()
+    }
+
+    private fun showRenameDirectoryDialog(directory: File) {
+        if (!directory.isDirectory) {
+            showMessage(getString(R.string.message_invalid_directory))
+            return
+        }
+
+        val input = EditText(this).apply {
+            setSingleLine(true)
+            setText(directory.name)
+            setSelection(text.length)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.rename_directory_name_title)
+            .setView(input)
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                renameDirectory(directory, input.text?.toString().orEmpty())
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun renameDirectory(directory: File, rawName: String) {
+        val parent = directory.parentFile ?: run {
+            showMessage(getString(R.string.rename_directory_name_failed))
+            return
+        }
+        val trimmedName = rawName.trim()
+        if (trimmedName.isEmpty()) {
+            showMessage(getString(R.string.rename_directory_name_empty))
+            return
+        }
+        if (trimmedName.any { it.code < 32 || it in INVALID_FILE_NAME_CHARS }) {
+            showMessage(getString(R.string.rename_directory_name_invalid))
+            return
+        }
+        if (trimmedName == "." || trimmedName == "..") {
+            showMessage(getString(R.string.rename_directory_name_invalid))
+            return
+        }
+        if (trimmedName == directory.name) {
+            return
+        }
+
+        val targetDirectory = File(parent, trimmedName)
+        if (targetDirectory.exists()) {
+            showMessage(getString(R.string.rename_directory_name_exists))
+            return
+        }
+
+        val wasFavorite = FavoritePathStore.isFavorite(this, directory)
+        val renamed = directory.renameTo(targetDirectory)
+        if (!renamed) {
+            showMessage(getString(R.string.rename_directory_name_failed))
+            return
+        }
+
+        if (wasFavorite) {
+            FavoritePathStore.remove(this, directory)
+            FavoritePathStore.record(this, targetDirectory)
+        }
+
+        showMessage(getString(R.string.rename_directory_name_success))
+        loadCurrentDirectory(targetDirectory.absolutePath)
+    }
+
     private fun showArchiveMenu(file: File) {
         val dialog = BottomSheetDialog(this)
         val content = layoutInflater.inflate(R.layout.bottom_sheet_archive_actions, null)
         val btnCopyFileName = content.findViewById<TextView>(R.id.btnCopyFileName)
+        val btnRenameFileName = content.findViewById<TextView>(R.id.btnRenameFileName)
+        val btnCopyStartMarker = content.findViewById<TextView>(R.id.btnCopyStartMarker)
+        val btnFavoriteComic = content.findViewById<TextView>(R.id.btnFavoriteComicAction)
         val btnRead = content.findViewById<TextView>(R.id.btnReadComic)
+        val isFavorite = FavoriteComicStore.isFavorite(this, file)
+
+        btnFavoriteComic.text = getString(
+            if (isFavorite) R.string.cancel_favorite else R.string.favorite_comic_action
+        )
 
         btnCopyFileName.setOnClickListener {
             copyToClipboard(
@@ -573,6 +1045,62 @@ class MainActivity : AppCompatActivity() {
             dialog.dismiss()
         }
 
+        btnRenameFileName.setOnClickListener {
+            dialog.dismiss()
+            showRenameFileDialog(file)
+        }
+
+        btnCopyStartMarker.setOnClickListener {
+            val marker = CommonFunc.extractStartMarker(
+                file.name,
+                AppSettings.getStartMarkerErrorTags(this)
+            )
+            if (marker.isEmpty()) {
+                showMessage(getString(R.string.start_marker_not_found))
+            } else {
+                copyToClipboard(
+                    label = getString(R.string.copy_start_marker),
+                    text = marker,
+                    copiedMessage = getString(R.string.copied_start_marker)
+                )
+            }
+            dialog.dismiss()
+        }
+
+        btnFavoriteComic.setOnClickListener {
+            if (!ComicArchive.isSupportedArchive(file)) {
+                showMessage(getString(R.string.unsupported_archive_format))
+                dialog.dismiss()
+                return@setOnClickListener
+            }
+
+            if (FavoriteComicStore.isFavorite(this, file)) {
+                FavoriteComicStore.remove(this, file)
+                showMessage(getString(R.string.favorite_comic_removed))
+                notifyListChanged()
+                dialog.dismiss()
+                return@setOnClickListener
+            }
+
+            val result = FavoriteComicStore.record(this, file)
+            when (result) {
+                FavoriteComicStore.RecordResult.ADDED,
+                FavoriteComicStore.RecordResult.ALREADY_EXISTS -> {
+                    showMessage(getString(R.string.favorite_comic_added))
+                    notifyListChanged()
+                }
+
+                FavoriteComicStore.RecordResult.LIMIT_REACHED -> {
+                    showMessage(getString(R.string.favorite_comic_limit_reached))
+                }
+
+                FavoriteComicStore.RecordResult.INVALID -> {
+                    showMessage(getString(R.string.unsupported_archive_format))
+                }
+            }
+            dialog.dismiss()
+        }
+
         btnRead.setOnClickListener {
             dialog.dismiss()
             openMangaPreview(file)
@@ -580,6 +1108,75 @@ class MainActivity : AppCompatActivity() {
 
         dialog.setContentView(content)
         dialog.show()
+    }
+
+    private fun showRenameFileDialog(file: File) {
+        if (!file.isFile) {
+            showMessage(getString(R.string.message_invalid_file))
+            return
+        }
+
+        val input = EditText(this).apply {
+            setSingleLine(true)
+            setText(file.nameWithoutExtension)
+            setSelection(text.length)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.rename_file_name_title)
+            .setView(input)
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                renameArchiveFile(file, input.text?.toString().orEmpty())
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun renameArchiveFile(file: File, rawName: String) {
+        val parent = file.parentFile ?: run {
+            showMessage(getString(R.string.rename_file_name_failed))
+            return
+        }
+        val trimmedName = rawName.trim()
+        if (trimmedName.isEmpty()) {
+            showMessage(getString(R.string.rename_file_name_empty))
+            return
+        }
+        if (trimmedName.any { it.code < 32 || it in INVALID_FILE_NAME_CHARS }) {
+            showMessage(getString(R.string.rename_file_name_invalid))
+            return
+        }
+
+        val extension = file.extension
+        val newFileName = when {
+            extension.isBlank() -> trimmedName
+            trimmedName.endsWith(".$extension", ignoreCase = true) -> trimmedName
+            else -> "$trimmedName.$extension"
+        }
+        if (newFileName == file.name) {
+            return
+        }
+
+        val targetFile = File(parent, newFileName)
+        if (targetFile.exists()) {
+            showMessage(getString(R.string.rename_file_name_exists))
+            return
+        }
+
+        val wasFavorite = FavoriteComicStore.isFavorite(this, file)
+        val renamed = file.renameTo(targetFile)
+        if (!renamed) {
+            showMessage(getString(R.string.rename_file_name_failed))
+            return
+        }
+
+        if (wasFavorite) {
+            FavoriteComicStore.remove(this, file)
+            FavoriteComicStore.record(this, targetFile)
+        }
+
+        showMessage(getString(R.string.rename_file_name_success))
+        loadCurrentDirectory(targetFile.absolutePath)
     }
 
     private fun openMangaPreview(file: File) {
@@ -677,6 +1274,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_CURRENT_PATH = "current_path"
         private const val CLEAR_CLICK_STATE_DELAY_MS = 120L
         private const val FILE_ITEM_HEIGHT_DP = 75
+        private val INVALID_FILE_NAME_CHARS = setOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')
         private const val MIN_READING_HISTORY_PANEL_WIDTH_DP = 180
         private const val READING_HISTORY_PANEL_ELEVATION_DP = 8
         private const val READING_HISTORY_PANEL_ENTER_ANIMATION_MS = 180L

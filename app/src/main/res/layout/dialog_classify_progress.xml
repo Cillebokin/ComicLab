@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="4dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="4dp"
+    android:paddingBottom="4dp">
+
+    <TextView
+        android:id="@+id/tvClassifyProgressStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:text="@string/classify_comics_scanning"
+        android:textColor="#333333"
+        android:textSize="14sp" />
+
+    <ProgressBar
+        android:id="@+id/progressClassifyComics"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="18dp"
+        android:layout_marginTop="12dp"
+        android:indeterminate="true"
+        android:max="100"
+        android:progress="0"
+        android:progressBackgroundTint="#DDDDDD"
+        android:progressTint="@color/comiclab_blue" />
+
+    <TextView
+        android:id="@+id/tvClassifyProgressCount"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="end"
+        android:textColor="#666666"
+        android:textSize="12sp" />
+</LinearLayout>

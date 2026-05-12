@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="36dp"
+    android:background="@android:color/white"
+    android:paddingTop="8dp"
+    android:paddingBottom="4dp">
+
+    <TextView
+        android:id="@+id/tvReadingHistoryDate"
+        android:layout_width="wrap_content"
+        android:layout_height="20dp"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:minWidth="64dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:textColor="#9F9FA6"
+        android:textSize="11sp" />
+</FrameLayout>

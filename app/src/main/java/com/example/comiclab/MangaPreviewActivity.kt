@@ -7,6 +7,7 @@ import android.view.View
 import android.widget.Button
 import android.widget.GridLayout
 import android.widget.ImageView
+import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
@@ -31,6 +32,7 @@ class MangaPreviewActivity : AppCompatActivity() {
     private var archiveFile: File? = null
     private var imageEntries: List<String> = emptyList()
     private var showingAll = false
+    private val archiveOperationLock = Any()
     @Volatile
     private var archiveGeneration = 0
     @Volatile
@@ -110,7 +112,9 @@ class MangaPreviewActivity : AppCompatActivity() {
 
         executePreviewTask {
             val result = runCatching {
-                ComicArchive.imageEntries(file)
+                synchronized(archiveOperationLock) {
+                    ComicArchive.imageEntries(file)
+                }
             }
 
             runOnUiThread {
@@ -159,7 +163,9 @@ class MangaPreviewActivity : AppCompatActivity() {
 
         executePreviewTask {
             val bitmap = runCatching {
-                ComicArchive.decodeImage(file, entryName, COVER_IMAGE_MAX_SIZE)
+                synchronized(archiveOperationLock) {
+                    ComicArchive.decodeImage(file, entryName, COVER_IMAGE_MAX_SIZE)
+                }
             }.getOrNull()
 
             runOnUiThread {
@@ -203,23 +209,25 @@ class MangaPreviewActivity : AppCompatActivity() {
 
         executePreviewTask {
             runCatching {
-                ComicArchive.decodeImages(file, entriesToShow, PREVIEW_IMAGE_MAX_SIZE) { entryName, bitmap ->
-                    if (!isPreviewActive() || generation != gridGeneration) {
-                        return@decodeImages false
-                    }
-
-                    val index = indexesByEntry[entryName] ?: return@decodeImages true
-                    runOnUiThread {
+                synchronized(archiveOperationLock) {
+                    ComicArchive.decodeImages(file, entriesToShow, PREVIEW_IMAGE_MAX_SIZE) { entryName, bitmap ->
                         if (!isPreviewActive() || generation != gridGeneration) {
-                            return@runOnUiThread
+                            return@decodeImages false
                         }
 
-                        if (bitmap != null) {
-                            addPreviewImage(bitmap, index)
+                        val index = indexesByEntry[entryName] ?: return@decodeImages true
+                        runOnUiThread {
+                            if (!isPreviewActive() || generation != gridGeneration) {
+                                return@runOnUiThread
+                            }
+
+                            if (bitmap != null) {
+                                addPreviewImage(bitmap, index)
+                            }
                         }
+
+                        true
                     }
-
-                    true
                 }
             }.onSuccess {
                 hidePreviewLoading(generation)
@@ -244,6 +252,11 @@ class MangaPreviewActivity : AppCompatActivity() {
             setBackgroundColor(android.graphics.Color.BLACK)
             scaleType = ImageView.ScaleType.FIT_CENTER
             adjustViewBounds = false
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                showPreviewImageMenu(this, index)
+            }
         }
 
         val layoutParams = GridLayout.LayoutParams(
@@ -256,6 +269,77 @@ class MangaPreviewActivity : AppCompatActivity() {
         }
 
         gridPreview.addView(imageView, layoutParams)
+    }
+
+    private fun showPreviewImageMenu(anchor: View, imageIndex: Int) {
+        val file = archiveFile ?: return
+        val entryName = imageEntries.getOrNull(imageIndex) ?: return
+
+        PopupMenu(this, anchor).apply {
+            menu.add(0, MENU_PREVIEW_JUMP, 0, getString(R.string.jump))
+            menu.add(0, MENU_PREVIEW_DELETE, 1, getString(R.string.delete))
+            setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    MENU_PREVIEW_JUMP -> {
+                        openMangaReader(file, startFromBeginning = false, startPageIndex = imageIndex)
+                        true
+                    }
+                    MENU_PREVIEW_DELETE -> {
+                        confirmDeletePreviewImage(file, entryName)
+                        true
+                    }
+                    else -> false
+                }
+            }
+            show()
+        }
+    }
+
+    private fun confirmDeletePreviewImage(file: File, entryName: String) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.delete_archive_image_title)
+            .setMessage(R.string.delete_archive_image_message)
+            .setPositiveButton(R.string.yes) { _, _ ->
+                deletePreviewImage(file, entryName)
+            }
+            .setNegativeButton(R.string.no, null)
+            .show()
+    }
+
+    private fun deletePreviewImage(file: File, entryName: String) {
+        if (!ComicArchive.canDeleteEntry(file)) {
+            Toast.makeText(this, R.string.delete_archive_image_unsupported, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        archiveGeneration++
+        coverGeneration++
+        gridGeneration++
+        tvStatus.text = getString(R.string.deleting_archive_image)
+        tvStatus.visibility = View.VISIBLE
+
+        executePreviewTask {
+            val deleted = runCatching {
+                synchronized(archiveOperationLock) {
+                    ComicArchive.deleteEntry(file, entryName)
+                }
+            }.getOrDefault(false)
+
+            runOnUiThread {
+                if (!isPreviewActive()) {
+                    return@runOnUiThread
+                }
+
+                if (deleted) {
+                    Toast.makeText(this, R.string.delete_archive_image_success, Toast.LENGTH_SHORT).show()
+                    tvComicFileSize.text = CommonFunc.formatFileSize(file.length())
+                    loadArchive(file)
+                } else {
+                    tvStatus.visibility = View.INVISIBLE
+                    Toast.makeText(this, R.string.delete_archive_image_failed, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 
     private fun showError(message: String) {
@@ -297,10 +381,15 @@ class MangaPreviewActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun openMangaReader(file: File, startFromBeginning: Boolean) {
+    private fun openMangaReader(
+        file: File,
+        startFromBeginning: Boolean,
+        startPageIndex: Int = NO_EXPLICIT_START_PAGE
+    ) {
         val intent = Intent(this, MangaReaderPrepareActivity::class.java).apply {
             putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
             putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
+            putExtra(MangaReaderActivity.EXTRA_START_PAGE_INDEX, startPageIndex)
         }
         startActivity(intent)
     }
@@ -331,5 +420,8 @@ class MangaPreviewActivity : AppCompatActivity() {
         private const val COVER_IMAGE_MAX_SIZE = 720
         private const val PREVIEW_IMAGE_MAX_SIZE = 360
         private const val PREVIEW_THREAD_COUNT = 2
+        private const val NO_EXPLICIT_START_PAGE = -1
+        private const val MENU_PREVIEW_JUMP = 1
+        private const val MENU_PREVIEW_DELETE = 2
     }
 }
