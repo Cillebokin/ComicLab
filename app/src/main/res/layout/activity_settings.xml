@@ -170,6 +170,8 @@
                 android:layout_height="48dp"
                 android:layout_marginTop="8dp"
                 android:gravity="center_vertical"
+                android:thumbTint="@color/comiclab_switch_thumb_tint"
+                android:trackTint="@color/comiclab_switch_track_tint"
                 android:text="@string/volume_key_page_turn"
                 android:textColor="#333333"
                 android:textSize="15sp" />
@@ -179,6 +181,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="48dp"
                 android:gravity="center_vertical"
+                android:thumbTint="@color/comiclab_switch_thumb_tint"
+                android:trackTint="@color/comiclab_switch_track_tint"
                 android:text="@string/auto_hide_system_bars"
                 android:textColor="#333333"
                 android:textSize="15sp" />
@@ -188,6 +192,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="48dp"
                 android:gravity="center_vertical"
+                android:thumbTint="@color/comiclab_switch_thumb_tint"
+                android:trackTint="@color/comiclab_switch_track_tint"
                 android:text="@string/custom_brightness"
                 android:textColor="#333333"
                 android:textSize="15sp" />

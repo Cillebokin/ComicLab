@@ -270,6 +270,8 @@ class FileListAdapter(
     }
 
     private fun setDefaultIconLayout(imgIcon: ImageView) {
+        imgIcon.setBackgroundResource(R.drawable.bg_file_icon_frame)
+        imgIcon.setPadding(dpToPx(DEFAULT_ICON_PADDING_DP), dpToPx(DEFAULT_ICON_PADDING_DP), dpToPx(DEFAULT_ICON_PADDING_DP), dpToPx(DEFAULT_ICON_PADDING_DP))
         updateIconSize(
             imgIcon,
             dpToPx(DEFAULT_ICON_SIZE_DP),
@@ -278,6 +280,8 @@ class FileListAdapter(
     }
 
     private fun setArchiveCoverLayout(imgIcon: ImageView) {
+        imgIcon.setBackgroundColor(android.graphics.Color.BLACK)
+        imgIcon.setPadding(0, 0, 0, 0)
         updateIconSize(
             imgIcon,
             dpToPx(ARCHIVE_COVER_WIDTH_DP),
@@ -331,6 +335,7 @@ class FileListAdapter(
         private const val ARCHIVE_COVER_MAX_SIZE = 128
         private const val ARCHIVE_COVER_THREAD_COUNT = 2
         private const val ARCHIVE_COVER_WIDTH_DP = 56
-        private const val DEFAULT_ICON_SIZE_DP = 32
+        private const val DEFAULT_ICON_SIZE_DP = 34
+        private const val DEFAULT_ICON_PADDING_DP = 4
     }
 }

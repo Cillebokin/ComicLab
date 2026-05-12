@@ -901,11 +901,14 @@ class MainActivity : AppCompatActivity() {
     private fun showDirectoryMenu(directory: File) {
         val dialog = BottomSheetDialog(this)
         val content = layoutInflater.inflate(R.layout.bottom_sheet_directory_actions, null)
+        val tvDirectoryActionTitle = content.findViewById<TextView>(R.id.tvDirectoryActionTitle)
         val btnFavoritePath = content.findViewById<TextView>(R.id.btnFavoritePathAction)
         val btnCopyPathName = content.findViewById<TextView>(R.id.btnCopyPathName)
         val btnRenameDirectoryName = content.findViewById<TextView>(R.id.btnRenameDirectoryName)
         val isFavorite = FavoritePathStore.isFavorite(this, directory)
 
+        tvDirectoryActionTitle.text = directory.name
+        sizeBottomSheetActionIcons(btnFavoritePath, btnCopyPathName, btnRenameDirectoryName)
         btnFavoritePath.text = getString(
             if (isFavorite) R.string.cancel_favorite else R.string.favorite_path_action
         )
@@ -1025,6 +1028,7 @@ class MainActivity : AppCompatActivity() {
     private fun showArchiveMenu(file: File) {
         val dialog = BottomSheetDialog(this)
         val content = layoutInflater.inflate(R.layout.bottom_sheet_archive_actions, null)
+        val tvArchiveActionTitle = content.findViewById<TextView>(R.id.tvArchiveActionTitle)
         val btnCopyFileName = content.findViewById<TextView>(R.id.btnCopyFileName)
         val btnRenameFileName = content.findViewById<TextView>(R.id.btnRenameFileName)
         val btnCopyStartMarker = content.findViewById<TextView>(R.id.btnCopyStartMarker)
@@ -1032,6 +1036,14 @@ class MainActivity : AppCompatActivity() {
         val btnRead = content.findViewById<TextView>(R.id.btnReadComic)
         val isFavorite = FavoriteComicStore.isFavorite(this, file)
 
+        tvArchiveActionTitle.text = file.name
+        sizeBottomSheetActionIcons(
+            btnRead,
+            btnFavoriteComic,
+            btnCopyFileName,
+            btnRenameFileName,
+            btnCopyStartMarker
+        )
         btnFavoriteComic.text = getString(
             if (isFavorite) R.string.cancel_favorite else R.string.favorite_comic_action
         )
@@ -1177,6 +1189,21 @@ class MainActivity : AppCompatActivity() {
 
         showMessage(getString(R.string.rename_file_name_success))
         loadCurrentDirectory(targetFile.absolutePath)
+    }
+
+    private fun sizeBottomSheetActionIcons(vararg actions: TextView) {
+        val iconSize = resources.getDimensionPixelSize(R.dimen.bottom_sheet_action_icon_size)
+        actions.forEach { action ->
+            val drawables = action.compoundDrawablesRelative
+            val startDrawable = drawables[0] ?: return@forEach
+            startDrawable.setBounds(0, 0, iconSize, iconSize)
+            action.setCompoundDrawablesRelative(
+                startDrawable,
+                drawables[1],
+                drawables[2],
+                drawables[3]
+            )
+        }
     }
 
     private fun openMangaPreview(file: File) {

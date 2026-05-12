@@ -1,5 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <dimen name="space_xs">4dp</dimen>
+    <dimen name="space_sm">8dp</dimen>
+    <dimen name="space_md">12dp</dimen>
+    <dimen name="space_lg">16dp</dimen>
+    <dimen name="space_xl">24dp</dimen>
+
+    <dimen name="text_title">18sp</dimen>
+    <dimen name="text_body">15sp</dimen>
+    <dimen name="text_caption">12sp</dimen>
+
+    <dimen name="file_item_height">75dp</dimen>
+    <dimen name="file_item_icon_size">34dp</dimen>
+    <dimen name="file_item_cover_width">56dp</dimen>
+
+    <dimen name="bottom_sheet_header_height">48dp</dimen>
+    <dimen name="bottom_sheet_action_height">46dp</dimen>
+    <dimen name="bottom_sheet_action_icon_size">18dp</dimen>
+
     <dimen name="preview_image_height">168dp</dimen>
     <dimen name="preview_image_margin">4dp</dimen>
+    <dimen name="preview_header_height">176dp</dimen>
+    <dimen name="preview_header_cover_width">128dp</dimen>
 </resources>
