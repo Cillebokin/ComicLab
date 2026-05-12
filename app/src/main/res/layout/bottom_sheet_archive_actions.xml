@@ -2,63 +2,104 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:background="@color/comiclab_surface_card"
     android:orientation="vertical"
-    android:paddingTop="8dp"
-    android:paddingBottom="16dp">
+    android:paddingTop="@dimen/space_sm"
+    android:paddingBottom="@dimen/space_lg">
+
+    <TextView
+        android:id="@+id/tvArchiveActionTitle"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/bottom_sheet_header_height"
+        android:ellipsize="end"
+        android:gravity="center_vertical"
+        android:includeFontPadding="false"
+        android:maxLines="2"
+        android:paddingStart="@dimen/space_xl"
+        android:paddingEnd="@dimen/space_xl"
+        android:textColor="@color/comiclab_text_primary"
+        android:textSize="@dimen/text_body"
+        android:textStyle="bold" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginBottom="@dimen/space_xs"
+        android:background="@color/comiclab_divider" />
 
     <TextView
         android:id="@+id/btnReadComic"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:background="?attr/selectableItemBackground"
+        android:layout_height="@dimen/bottom_sheet_action_height"
+        android:background="@drawable/bg_bottom_sheet_action_item"
+        android:drawableStart="@drawable/png_read_icon"
+        android:drawablePadding="@dimen/space_lg"
         android:gravity="center_vertical"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp"
+        android:includeFontPadding="false"
+        android:paddingStart="@dimen/space_xl"
+        android:paddingEnd="@dimen/space_xl"
         android:text="@string/read"
-        android:textSize="18sp" />
+        android:textColor="@color/comiclab_text_primary"
+        android:textSize="@dimen/text_body" />
 
     <TextView
         android:id="@+id/btnFavoriteComicAction"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:background="?attr/selectableItemBackground"
+        android:layout_height="@dimen/bottom_sheet_action_height"
+        android:background="@drawable/bg_bottom_sheet_action_item"
+        android:drawableStart="@drawable/png_star_icon"
+        android:drawablePadding="@dimen/space_lg"
         android:gravity="center_vertical"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp"
+        android:includeFontPadding="false"
+        android:paddingStart="@dimen/space_xl"
+        android:paddingEnd="@dimen/space_xl"
         android:text="@string/favorite_comic_action"
-        android:textSize="18sp" />
+        android:textColor="@color/comiclab_text_primary"
+        android:textSize="@dimen/text_body" />
 
     <TextView
         android:id="@+id/btnCopyFileName"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:background="?attr/selectableItemBackground"
+        android:layout_height="@dimen/bottom_sheet_action_height"
+        android:background="@drawable/bg_bottom_sheet_action_item"
+        android:drawableStart="@drawable/png_title_icon"
+        android:drawablePadding="@dimen/space_lg"
         android:gravity="center_vertical"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp"
+        android:includeFontPadding="false"
+        android:paddingStart="@dimen/space_xl"
+        android:paddingEnd="@dimen/space_xl"
         android:text="@string/copy_file_name"
-        android:textSize="18sp" />
+        android:textColor="@color/comiclab_text_primary"
+        android:textSize="@dimen/text_body" />
 
     <TextView
         android:id="@+id/btnRenameFileName"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:background="?attr/selectableItemBackground"
+        android:layout_height="@dimen/bottom_sheet_action_height"
+        android:background="@drawable/bg_bottom_sheet_action_item"
+        android:drawableStart="@drawable/png_title_change_icon"
+        android:drawablePadding="@dimen/space_lg"
         android:gravity="center_vertical"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp"
+        android:includeFontPadding="false"
+        android:paddingStart="@dimen/space_xl"
+        android:paddingEnd="@dimen/space_xl"
         android:text="@string/rename_file_name"
-        android:textSize="18sp" />
+        android:textColor="@color/comiclab_text_primary"
+        android:textSize="@dimen/text_body" />
 
     <TextView
         android:id="@+id/btnCopyStartMarker"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:background="?attr/selectableItemBackground"
+        android:layout_height="@dimen/bottom_sheet_action_height"
+        android:background="@drawable/bg_bottom_sheet_action_item"
+        android:drawableStart="@drawable/png_tag_icon"
+        android:drawablePadding="@dimen/space_lg"
         android:gravity="center_vertical"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp"
+        android:includeFontPadding="false"
+        android:paddingStart="@dimen/space_xl"
+        android:paddingEnd="@dimen/space_xl"
         android:text="@string/copy_start_marker"
-        android:textSize="18sp" />
+        android:textColor="@color/comiclab_text_primary"
+        android:textSize="@dimen/text_body" />
 
 </LinearLayout>

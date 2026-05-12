@@ -3,6 +3,7 @@
     android:id="@+id/main"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/comiclab_surface"
     android:clipToPadding="false"
     android:fillViewport="true">
 
@@ -19,23 +20,27 @@
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="188dp"
+            android:layout_height="@dimen/preview_header_height"
             android:background="@color/comiclab_blue"
-            android:gravity="top"
+            android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:padding="12dp">
+            android:paddingStart="@dimen/space_md"
+            android:paddingTop="@dimen/space_md"
+            android:paddingEnd="@dimen/space_md"
+            android:paddingBottom="@dimen/space_md">
 
             <FrameLayout
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
-                android:layout_weight="1">
+                android:layout_weight="1"
+                android:paddingEnd="@dimen/space_sm">
 
                 <ImageView
                     android:id="@+id/imgCover"
-                    android:layout_width="128dp"
+                    android:layout_width="match_parent"
                     android:layout_height="match_parent"
                     android:layout_gravity="start"
-                    android:background="@color/black"
+                    android:background="@drawable/bg_preview_cover"
                     android:contentDescription="@string/comic_cover"
                     android:scaleType="fitCenter" />
             </FrameLayout>
@@ -43,9 +48,9 @@
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
-                android:layout_marginStart="16dp"
+                android:layout_marginStart="@dimen/space_sm"
                 android:layout_weight="1"
-                android:gravity="end"
+                android:gravity="start"
                 android:orientation="vertical">
 
                 <TextView
@@ -55,9 +60,10 @@
                     android:layout_weight="1"
                     android:ellipsize="end"
                     android:gravity="top|start"
+                    android:includeFontPadding="false"
                     android:maxLines="5"
                     android:textColor="@color/white"
-                    android:textSize="20sp"
+                    android:textSize="19sp"
                     android:textStyle="bold" />
 
                 <TextView
@@ -66,25 +72,27 @@
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
                     android:gravity="end"
+                    android:includeFontPadding="false"
                     android:maxLines="1"
-                    android:textColor="#DDE7FF"
-                    android:textSize="13sp" />
+                    android:textColor="#DDF1FF"
+                    android:textSize="@dimen/text_caption" />
             </LinearLayout>
         </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:background="@color/comiclab_surface"
             android:orientation="vertical"
-            android:paddingStart="12dp"
-            android:paddingTop="10dp"
-            android:paddingEnd="12dp"
-            android:paddingBottom="12dp">
+            android:paddingStart="@dimen/space_md"
+            android:paddingTop="@dimen/space_sm"
+            android:paddingEnd="@dimen/space_md"
+            android:paddingBottom="@dimen/space_md">
 
             <LinearLayout
                 android:id="@+id/layoutReadingProgress"
                 android:layout_width="match_parent"
-                android:layout_height="22dp"
+                android:layout_height="20dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -92,43 +100,45 @@
                     android:id="@+id/progressReading"
                     style="?android:attr/progressBarStyleHorizontal"
                     android:layout_width="0dp"
-                    android:layout_height="6dp"
+                    android:layout_height="5dp"
                     android:layout_weight="1"
                     android:indeterminate="false"
                     android:max="0"
                     android:progress="0"
-                    android:progressBackgroundTint="#DDDDDD"
+                    android:progressBackgroundTint="@color/comiclab_divider"
                     android:progressTint="@color/comiclab_blue" />
 
                 <TextView
                     android:id="@+id/tvReadingProgress"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="4dp"
+                    android:layout_marginStart="@dimen/space_xs"
                     android:ellipsize="end"
                     android:gravity="end"
+                    android:includeFontPadding="false"
                     android:maxLines="1"
                     android:text="@string/preview_reading_progress_empty"
-                    android:textColor="#666666"
-                    android:textSize="12sp" />
+                    android:textColor="@color/comiclab_text_secondary"
+                    android:textSize="@dimen/text_caption" />
             </LinearLayout>
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
+                android:layout_marginTop="@dimen/space_xs"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
                 <TextView
                     android:id="@+id/tvStatus"
                     android:layout_width="0dp"
-                    android:layout_height="36dp"
+                    android:layout_height="28dp"
                     android:layout_weight="1"
                     android:gravity="center_vertical"
+                    android:includeFontPadding="false"
                     android:text="@string/loading_preview"
-                    android:textColor="#666666"
-                    android:textSize="14sp" />
+                    android:textColor="@color/comiclab_text_secondary"
+                    android:textSize="@dimen/text_caption" />
 
                 <Button
                     android:id="@+id/btnFullRead"
@@ -138,42 +148,47 @@
                     android:backgroundTint="@null"
                     android:minHeight="0dp"
                     android:minWidth="80dp"
-                    android:paddingStart="24dp"
-                    android:paddingEnd="24dp"
+                    android:paddingStart="@dimen/space_xl"
+                    android:paddingEnd="@dimen/space_xl"
                     android:text="@string/full_read"
                     android:textColor="@color/white"
-                    android:textSize="12sp" />
+                    android:textSize="@dimen/text_caption" />
 
                 <Button
                     android:id="@+id/btnExitPreview"
                     android:layout_width="wrap_content"
                     android:layout_height="40dp"
-                    android:layout_marginStart="8dp"
+                    android:layout_marginStart="@dimen/space_sm"
                     android:background="@drawable/bg_preview_action_button"
                     android:backgroundTint="@null"
                     android:minHeight="0dp"
                     android:minWidth="80dp"
-                    android:paddingStart="24dp"
-                    android:paddingEnd="24dp"
+                    android:paddingStart="@dimen/space_xl"
+                    android:paddingEnd="@dimen/space_xl"
                     android:text="@string/exit_preview"
                     android:textColor="@color/white"
-                    android:textSize="12sp" />
+                    android:textSize="@dimen/text_caption" />
             </LinearLayout>
 
             <GridLayout
                 android:id="@+id/gridPreview"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="@dimen/space_sm"
                 android:columnCount="3"
                 android:useDefaultMargins="false" />
 
             <Button
                 android:id="@+id/btnTogglePreview"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
+                android:layout_height="40dp"
+                android:layout_marginTop="@dimen/space_sm"
+                android:background="@drawable/bg_preview_action_button"
+                android:backgroundTint="@null"
+                android:minHeight="0dp"
                 android:text="@string/preview_all"
+                android:textColor="@color/white"
+                android:textSize="@dimen/text_caption"
                 android:visibility="gone" />
         </LinearLayout>
     </LinearLayout>

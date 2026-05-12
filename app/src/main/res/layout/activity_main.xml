@@ -5,6 +5,7 @@
     android:id="@+id/main"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/comiclab_surface"
     tools:context=".MainActivity">
 
     <View
@@ -17,7 +18,7 @@
     <LinearLayout
         android:id="@+id/linearLayoutTitle"
         android:layout_width="match_parent"
-        android:layout_height="40dp"
+        android:layout_height="44dp"
         android:background="@color/comiclab_blue"
         android:gravity="center_vertical"
         android:orientation="horizontal"
@@ -28,15 +29,17 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:includeFontPadding="false"
             android:text="@string/app_name"
             android:textColor="@android:color/white"
-            android:textSize="18sp" />
+            android:textSize="@dimen/text_title"
+            android:textStyle="bold" />
     </LinearLayout>
 
     <LinearLayout
         android:id="@+id/linearLayoutPath"
         android:layout_width="match_parent"
-        android:layout_height="40dp"
+        android:layout_height="36dp"
         android:background="@color/comiclab_blue"
         android:gravity="center_vertical"
         android:orientation="horizontal"
@@ -57,14 +60,14 @@
             android:singleLine="true"
             android:text="@string/path_placeholder"
             android:textColor="@android:color/white"
-            android:textSize="16sp" />
+            android:textSize="14sp" />
     </LinearLayout>
 
     <LinearLayout
         android:id="@+id/linearLayoutTool"
         android:layout_width="match_parent"
-        android:layout_height="40dp"
-        android:background="?android:attr/colorBackground"
+        android:layout_height="44dp"
+        android:background="@color/comiclab_surface_card"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="16dp"
@@ -73,8 +76,8 @@
 
         <ImageButton
             android:id="@+id/btnOptions"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/settings"
             android:scaleType="centerInside"
@@ -82,8 +85,8 @@
 
         <ImageButton
             android:id="@+id/btnFavoritePaths"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
             android:layout_marginStart="16dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/favorite_paths"
@@ -92,8 +95,8 @@
 
         <ImageButton
             android:id="@+id/btnFavoriteComics"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
             android:layout_marginStart="16dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/favorite_comics"
@@ -102,8 +105,8 @@
 
         <ImageButton
             android:id="@+id/btnReadingHistory"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
             android:layout_marginStart="16dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/reading_history"
@@ -117,8 +120,8 @@
 
         <ImageButton
             android:id="@+id/btnSort"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
             android:layout_marginStart="16dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/sort"
@@ -127,8 +130,8 @@
 
         <ImageButton
             android:id="@+id/btnClassify"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
             android:layout_marginStart="16dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/classify_comics"
@@ -137,8 +140,8 @@
 
         <ImageButton
             android:id="@+id/btnSearch"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
             android:layout_marginStart="16dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/open_file"
@@ -147,8 +150,8 @@
 
         <ImageButton
             android:id="@+id/btnBack"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
             android:layout_marginStart="16dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/go_storage_root"
@@ -160,8 +163,11 @@
         android:id="@+id/listFiles"
         android:layout_width="match_parent"
         android:layout_height="0dp"
+        android:background="@color/comiclab_surface"
         android:choiceMode="none"
         android:clipToPadding="false"
+        android:divider="@color/comiclab_divider"
+        android:dividerHeight="1dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintRight_toRightOf="parent"

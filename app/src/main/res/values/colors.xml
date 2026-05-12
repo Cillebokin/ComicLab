@@ -2,5 +2,15 @@
 <resources>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
-    <color name="comiclab_blue">#2859C5</color>
+    <color name="comiclab_blue">#0196FA</color>
+    <color name="comiclab_blue_pressed">#0178D0</color>
+    <color name="comiclab_blue_soft">#E7F4FF</color>
+    <color name="comiclab_surface">#F6F7F9</color>
+    <color name="comiclab_surface_card">#FFFFFFFF</color>
+    <color name="comiclab_surface_subtle">#F1F4F8</color>
+    <color name="comiclab_text_primary">#202124</color>
+    <color name="comiclab_text_secondary">#6B7280</color>
+    <color name="comiclab_text_tertiary">#9F9FA6</color>
+    <color name="comiclab_divider">#E5E7EB</color>
+    <color name="comiclab_danger">#E5484D</color>
 </resources>
