@@ -41,6 +41,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnBack: ImageButton
     private lateinit var btnOptions: ImageButton
     private lateinit var btnSort: ImageButton
+    private lateinit var btnClassify: ImageButton
     private lateinit var btnSearch: ImageButton
     private lateinit var btnReadingHistory: ImageButton
     private lateinit var btnFavoriteComics: ImageButton
@@ -90,6 +91,7 @@ class MainActivity : AppCompatActivity() {
         btnBack = findViewById(R.id.btnBack)
         btnOptions = findViewById(R.id.btnOptions)
         btnSort = findViewById(R.id.btnSort)
+        btnClassify = findViewById(R.id.btnClassify)
         btnSearch = findViewById(R.id.btnSearch)
         btnReadingHistory = findViewById(R.id.btnReadingHistory)
         btnFavoriteComics = findViewById(R.id.btnFavoriteComics)
@@ -132,8 +134,12 @@ class MainActivity : AppCompatActivity() {
             showSortDialog()
         }
 
-        btnSearch.setOnClickListener {
+        btnClassify.setOnClickListener {
             confirmClassifyCurrentDirectory()
+        }
+
+        btnSearch.setOnClickListener {
+            loadCurrentDirectory()
         }
 
         etPath.setOnLongClickListener {

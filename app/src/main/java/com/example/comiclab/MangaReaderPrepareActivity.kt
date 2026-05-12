@@ -27,6 +27,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
     private var preparedDirectory: File? = null
     private var launchedReader = false
     private var startFromBeginning = false
+    private var explicitStartPageIndex = NO_EXPLICIT_START_PAGE
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,6 +44,10 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
         startFromBeginning = intent.getBooleanExtra(
             MangaReaderActivity.EXTRA_START_FROM_BEGINNING,
             false
+        )
+        explicitStartPageIndex = intent.getIntExtra(
+            MangaReaderActivity.EXTRA_START_PAGE_INDEX,
+            NO_EXPLICIT_START_PAGE
         )
         if (file == null || !file.isFile) {
             showError("无效文件")
@@ -145,6 +150,10 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
     }
 
     private fun initialReaderPosition(file: File, totalCount: Int): Int {
+        if (explicitStartPageIndex >= 0 && totalCount > 0) {
+            return explicitStartPageIndex.coerceIn(0, totalCount - 1)
+        }
+
         if (startFromBeginning || totalCount <= 0) {
             return 0
         }
@@ -195,6 +204,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
         val intent = Intent(this, MangaReaderActivity::class.java).apply {
             putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
             putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
+            putExtra(MangaReaderActivity.EXTRA_START_PAGE_INDEX, explicitStartPageIndex)
             putExtra(MangaReaderActivity.EXTRA_PREPARED_READER_CACHE_DIR, outputDir.absolutePath)
         }
         startActivity(intent)
@@ -229,5 +239,6 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
         private const val PREPARED_READER_CACHE_MAX_AGE_MS = 24L * 60L * 60L * 1000L
         private const val INITIAL_FORWARD_PREPARE_COUNT = 5
         private const val INITIAL_BACKWARD_PREPARE_COUNT = 1
+        private const val NO_EXPLICIT_START_PAGE = -1
     }
 }

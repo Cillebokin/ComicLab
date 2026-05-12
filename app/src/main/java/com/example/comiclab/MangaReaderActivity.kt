@@ -85,6 +85,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private var suppressReaderTap = false
     private var isDraggingReaderSlider = false
     private var shouldStartFromBeginning = false
+    private var explicitStartPageIndex = NO_EXPLICIT_START_PAGE
     private var pendingRestorePosition: Int? = null
     private var pendingRestoreOffset = 0
     private var restoreAttemptCount = 0
@@ -132,6 +133,7 @@ class MangaReaderActivity : AppCompatActivity() {
         archiveFile = file
         tvReaderTitle.text = file.nameWithoutExtension
         shouldStartFromBeginning = intent.getBooleanExtra(EXTRA_START_FROM_BEGINNING, false)
+        explicitStartPageIndex = intent.getIntExtra(EXTRA_START_PAGE_INDEX, NO_EXPLICIT_START_PAGE)
         configureDebugReaderStress()
         if (shouldStartFromBeginning) {
             clearSavedReadingProgress(this, file)
@@ -563,12 +565,22 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun initializeReaderPosition(entries: List<String>) {
         sliderReaderProgress.max = (entries.size - 1).coerceAtLeast(0)
         sliderReaderProgress.progress = 0
-        if (shouldStartFromBeginning) {
-            readerLayoutManager.scrollToPositionWithOffset(0, 0)
-            updateReaderProgress(0, entries.size)
-        } else {
-            restoreReaderPosition()
-            updateReaderProgress(readerLayoutManager.findFirstVisibleItemPosition().coerceAtLeast(0), entries.size)
+        val startPageIndex = explicitStartPageIndex.takeIf { it in entries.indices }
+        when {
+            startPageIndex != null -> {
+                readerLayoutManager.scrollToPositionWithOffset(startPageIndex, 0)
+                currentReaderPosition = startPageIndex
+                currentReaderOffset = 0
+                updateReaderProgress(startPageIndex, entries.size)
+            }
+            shouldStartFromBeginning -> {
+                readerLayoutManager.scrollToPositionWithOffset(0, 0)
+                updateReaderProgress(0, entries.size)
+            }
+            else -> {
+                restoreReaderPosition()
+                updateReaderProgress(readerLayoutManager.findFirstVisibleItemPosition().coerceAtLeast(0), entries.size)
+            }
         }
         listReaderPages.post {
             pageAdapter?.preloadAround(
@@ -2972,6 +2984,7 @@ class MangaReaderActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_ARCHIVE_PATH = "archive_path"
         const val EXTRA_START_FROM_BEGINNING = "start_from_beginning"
+        const val EXTRA_START_PAGE_INDEX = "start_page_index"
         const val EXTRA_PREPARED_READER_CACHE_DIR = "prepared_reader_cache_dir"
         const val EXTRA_DEBUG_READER_STRESS = "debug_reader_stress"
         const val EXTRA_DEBUG_READER_STRESS_ITERATIONS = "debug_reader_stress_iterations"
@@ -3012,6 +3025,7 @@ class MangaReaderActivity : AppCompatActivity() {
         private const val DEBUG_READER_STRESS_START_DELAY_MS = 700L
         private const val DEBUG_READER_STRESS_LOG_EVERY = 30
         private const val DEBUG_READER_STRESS_TAG = "ComicLabReaderStress"
+        private const val NO_EXPLICIT_START_PAGE = -1
 
         fun hasSavedReadingProgress(context: Context, file: File): Boolean {
             val prefs = context.getSharedPreferences(READER_PREFS_NAME, Context.MODE_PRIVATE)

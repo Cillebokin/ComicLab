@@ -19,6 +19,7 @@
     <string name="clear">清空</string>
     <string name="delete">删除</string>
     <string name="delete_record">删除记录</string>
+    <string name="jump">跳转</string>
     <string name="history_item_options">历史记录操作</string>
     <string name="yes">是</string>
     <string name="no">否</string>
@@ -50,7 +51,7 @@
     <string name="sort">排序</string>
     <string name="classify_comics">漫画分类</string>
     <string name="classify_comics_confirm_title">漫画分类</string>
-    <string name="classify_comics_confirm_message">是否对当前路径下的漫画文件进行递归分类？\n%1$s</string>
+    <string name="classify_comics_confirm_message">是否根据初始标记对当前路径下的所有文件进行分类？\n（谨慎使用！）</string>
     <string name="classify_comics_scanning">正在扫描漫画文件...</string>
     <string name="classify_comics_copying">正在复制：%1$s</string>
     <string name="classify_comics_progress_count">%1$d / %2$d</string>
@@ -87,6 +88,12 @@
     <string name="collapse_preview">收起预览</string>
     <string name="loading_preview">正在加载预览...</string>
     <string name="loading_reading">正在加载阅读...</string>
+    <string name="deleting_archive_image">正在删除图片...</string>
+    <string name="delete_archive_image_title">删除图片</string>
+    <string name="delete_archive_image_message">是否从压缩包中删除该图片？\n（删除后无法恢复！）</string>
+    <string name="delete_archive_image_success">已删除图片</string>
+    <string name="delete_archive_image_failed">删除图片失败</string>
+    <string name="delete_archive_image_unsupported">当前文件不支持修改源文件</string>
     <string name="no_preview_images">压缩包中没有可预览的图片</string>
     <string name="no_reading_images">压缩包中没有可阅读的图片</string>
     <string name="unsupported_archive_format">当前支持 ZIP/CBZ/7Z/CB7/RAR/CBR 格式漫画包</string>

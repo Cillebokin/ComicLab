@@ -5,6 +5,9 @@ import org.junit.Test
 import org.junit.Assert.*
 import java.io.File
 import java.nio.file.Files
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 
 /**
  * Example local unit test, which will execute on the development machine (host).
@@ -67,6 +70,45 @@ class ExampleUnitTest {
             assertTrue(File(output, "ClassifyNListNoTag/[翻译]无标签.zip").isFile)
         } finally {
             root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun deleteEntry_removesSelectedZipEntryAndKeepsOtherEntries() {
+        val root = Files.createTempDirectory("comiclab-delete-entry").toFile()
+        try {
+            val archive = File(root, "comic.cbz")
+            ZipOutputStream(archive.outputStream()).use { output ->
+                output.writeEntry("001.jpg", "one")
+                output.writeEntry("002.jpg", "two")
+                output.writeEntry("notes.txt", "note")
+            }
+
+            assertTrue(ComicArchive.deleteEntry(archive, "002.jpg"))
+
+            ZipFile(archive).use { zipFile ->
+                val keptImage = zipFile.getEntry("001.jpg")
+                assertNotNull(keptImage)
+                assertEquals(ZipEntry.STORED, keptImage.method)
+                assertEquals("one", zipFile.readEntryText("001.jpg"))
+                assertNull(zipFile.getEntry("002.jpg"))
+                assertEquals("note", zipFile.readEntryText("notes.txt"))
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    private fun ZipOutputStream.writeEntry(name: String, content: String) {
+        putNextEntry(ZipEntry(name))
+        write(content.toByteArray())
+        closeEntry()
+    }
+
+    private fun ZipFile.readEntryText(name: String): String {
+        val entry = getEntry(name) ?: return ""
+        return getInputStream(entry).use { input ->
+            String(input.readBytes())
         }
     }
 }
