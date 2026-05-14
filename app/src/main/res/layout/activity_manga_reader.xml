@@ -36,7 +36,55 @@
             android:maxLines="1"
             android:textColor="@color/white"
             android:textSize="15sp" />
+
+        <Button
+            android:id="@+id/btnReaderPreview"
+            android:layout_width="@dimen/reader_toolbar_preview_button_width"
+            android:layout_height="@dimen/reader_toolbar_preview_button_height"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_preview_action_button"
+            android:gravity="center"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:paddingStart="0dp"
+            android:paddingEnd="0dp"
+            android:text="@string/reader_preview"
+            android:textAllCaps="false"
+            android:textColor="@color/white"
+            android:textSize="13sp" />
     </LinearLayout>
+
+    <View
+        android:id="@+id/readerPreviewScrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#33000000"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone" />
+
+    <FrameLayout
+        android:id="@+id/layoutReaderPreviewPanel"
+        android:layout_width="@dimen/reader_preview_panel_width"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:layout_marginTop="@dimen/reader_preview_panel_top_margin"
+        android:layout_marginBottom="@dimen/reader_preview_panel_bottom_margin"
+        android:background="@drawable/bg_reader_preview_panel"
+        android:visibility="gone">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/listReaderPreview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:overScrollMode="never"
+            android:paddingStart="8dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="8dp"
+            android:scrollbarStyle="outsideOverlay" />
+    </FrameLayout>
 
     <LinearLayout
         android:id="@+id/layoutReaderProgress"

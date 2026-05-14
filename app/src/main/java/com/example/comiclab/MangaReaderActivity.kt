@@ -19,6 +19,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.Button
 import android.widget.CheckBox
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -53,9 +54,13 @@ class MangaReaderActivity : AppCompatActivity() {
     private lateinit var readerLayoutManager: LinearLayoutManager
     private lateinit var layoutReaderToolbar: View
     private lateinit var layoutReaderProgress: View
+    private lateinit var readerPreviewScrim: View
+    private lateinit var layoutReaderPreviewPanel: View
+    private lateinit var listReaderPreview: RecyclerView
     private lateinit var sliderReaderProgress: SeekBar
     private lateinit var sliderScreenBrightness: SeekBar
     private lateinit var checkboxCustomBrightness: CheckBox
+    private lateinit var btnReaderPreview: Button
     private lateinit var tvReaderTitle: TextView
     private lateinit var tvReaderProgress: TextView
     private lateinit var tvReaderStatus: TextView
@@ -81,7 +86,9 @@ class MangaReaderActivity : AppCompatActivity() {
     private var archiveFile: File? = null
     private var imageEntries: List<String> = emptyList()
     private var pageAdapter: ReaderPageAdapterController? = null
+    private var readerPreviewAdapter: ReaderPreviewAdapter? = null
     private var readerControlsVisible = true
+    private var readerPreviewPanelVisible = false
     private var suppressReaderTap = false
     private var isDraggingReaderSlider = false
     private var shouldStartFromBeginning = false
@@ -171,6 +178,8 @@ class MangaReaderActivity : AppCompatActivity() {
         handler.removeCallbacksAndMessages(null)
         pageAdapter?.close()
         pageAdapter = null
+        readerPreviewAdapter?.close()
+        readerPreviewAdapter = null
         super.onDestroy()
     }
 
@@ -220,9 +229,13 @@ class MangaReaderActivity : AppCompatActivity() {
         listReaderPages = findViewById(R.id.listReaderPages)
         layoutReaderToolbar = findViewById(R.id.layoutReaderToolbar)
         layoutReaderProgress = findViewById(R.id.layoutReaderProgress)
+        readerPreviewScrim = findViewById(R.id.readerPreviewScrim)
+        layoutReaderPreviewPanel = findViewById(R.id.layoutReaderPreviewPanel)
+        listReaderPreview = findViewById(R.id.listReaderPreview)
         sliderReaderProgress = findViewById(R.id.sliderReaderProgress)
         sliderScreenBrightness = findViewById(R.id.sliderScreenBrightness)
         checkboxCustomBrightness = findViewById(R.id.checkboxCustomBrightness)
+        btnReaderPreview = findViewById(R.id.btnReaderPreview)
         tvReaderTitle = findViewById(R.id.tvReaderTitle)
         tvReaderProgress = findViewById(R.id.tvReaderProgress)
         tvReaderStatus = findViewById(R.id.tvReaderStatus)
@@ -239,6 +252,10 @@ class MangaReaderActivity : AppCompatActivity() {
         listReaderPages.itemAnimator = null
         listReaderPages.setHasFixedSize(false)
         listReaderPages.setItemViewCacheSize(READER_VIEW_CACHE_SIZE)
+
+        listReaderPreview.layoutManager = LinearLayoutManager(this)
+        listReaderPreview.itemAnimator = null
+        listReaderPreview.setHasFixedSize(true)
     }
 
     private fun configureImmersiveSystemBars() {
@@ -251,6 +268,10 @@ class MangaReaderActivity : AppCompatActivity() {
         val toolbarInitialPaddingTop = layoutReaderToolbar.paddingTop
         val progressInitialMarginBottom =
             (layoutReaderProgress.layoutParams as FrameLayout.LayoutParams).bottomMargin
+        val previewPanelInitialTopMargin =
+            (layoutReaderPreviewPanel.layoutParams as FrameLayout.LayoutParams).topMargin
+        val previewPanelInitialBottomMargin =
+            (layoutReaderPreviewPanel.layoutParams as FrameLayout.LayoutParams).bottomMargin
         ViewCompat.setOnApplyWindowInsetsListener(rootView) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             layoutReaderToolbar.setPadding(
@@ -263,6 +284,11 @@ class MangaReaderActivity : AppCompatActivity() {
                 bottomMargin = progressInitialMarginBottom + systemBars.bottom
                 layoutReaderProgress.layoutParams = this
             }
+            (layoutReaderPreviewPanel.layoutParams as FrameLayout.LayoutParams).apply {
+                topMargin = previewPanelInitialTopMargin + systemBars.top
+                bottomMargin = previewPanelInitialBottomMargin + systemBars.bottom
+                layoutReaderPreviewPanel.layoutParams = this
+            }
             insets
         }
         ViewCompat.requestApplyInsets(rootView)
@@ -271,6 +297,11 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun configureBackHandling() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                if (readerPreviewPanelVisible) {
+                    hideReaderPreviewPanel()
+                    return
+                }
+
                 saveReaderPosition()
                 finish()
             }
@@ -350,6 +381,18 @@ class MangaReaderActivity : AppCompatActivity() {
                 showReaderControlsTemporarily()
             }
         })
+
+        btnReaderPreview.setOnClickListener {
+            if (readerPreviewPanelVisible) {
+                hideReaderPreviewPanel()
+            } else {
+                showReaderPreviewPanel()
+            }
+        }
+
+        readerPreviewScrim.setOnClickListener {
+            hideReaderPreviewPanel()
+        }
     }
 
     private fun configureBrightnessControls() {
@@ -523,6 +566,7 @@ class MangaReaderActivity : AppCompatActivity() {
         )
         pageAdapter = adapter
         listReaderPages.adapter = adapter
+        bindReaderPreviewAdapter(entries, archiveFile)
         initializeReaderPosition(entries)
     }
 
@@ -559,7 +603,25 @@ class MangaReaderActivity : AppCompatActivity() {
         )
         pageAdapter = adapter
         listReaderPages.adapter = adapter
+        bindReaderPreviewAdapter(entries, archiveFile ?: return)
         initializeReaderPosition(entries)
+    }
+
+    private fun bindReaderPreviewAdapter(entries: List<String>, file: File) {
+        readerPreviewAdapter?.close()
+        val adapter = ReaderPreviewAdapter(
+            context = this,
+            archiveFile = file,
+            entries = entries,
+            onPageClick = { position ->
+                hideReaderPreviewPanel()
+                jumpReaderToPage(position)
+                showReaderControlsTemporarily()
+            }
+        )
+        readerPreviewAdapter = adapter
+        listReaderPreview.adapter = adapter
+        adapter.setSelectedPosition(currentReaderPosition)
     }
 
     private fun initializeReaderPosition(entries: List<String>) {
@@ -788,6 +850,11 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun handleReaderTap() {
+        if (readerPreviewPanelVisible) {
+            hideReaderPreviewPanel()
+            return
+        }
+
         if (suppressReaderTap) {
             return
         }
@@ -797,6 +864,89 @@ class MangaReaderActivity : AppCompatActivity() {
         } else {
             showReaderControlsTemporarily()
         }
+    }
+
+    private fun showReaderPreviewPanel() {
+        if (readerPreviewPanelVisible || imageEntries.isEmpty()) {
+            return
+        }
+
+        readerPreviewPanelVisible = true
+        handler.removeCallbacks(autoHideControlsRunnable)
+        setReaderControlsVisible(true)
+        scrollReaderPreviewToCurrentPage()
+
+        readerPreviewScrim.animate().cancel()
+        readerPreviewScrim.alpha = 0f
+        readerPreviewScrim.visibility = View.VISIBLE
+        readerPreviewScrim.animate()
+            .alpha(1f)
+            .setDuration(READER_PREVIEW_PANEL_ANIMATION_MS)
+            .start()
+
+        val panelWidth = readerPreviewPanelWidth()
+        layoutReaderPreviewPanel.animate().cancel()
+        layoutReaderPreviewPanel.translationX = panelWidth.toFloat()
+        layoutReaderPreviewPanel.visibility = View.VISIBLE
+        layoutReaderPreviewPanel.animate()
+            .translationX(0f)
+            .setDuration(READER_PREVIEW_PANEL_ANIMATION_MS)
+            .start()
+    }
+
+    private fun hideReaderPreviewPanel() {
+        if (!readerPreviewPanelVisible) {
+            return
+        }
+
+        readerPreviewPanelVisible = false
+        readerPreviewScrim.animate().cancel()
+        readerPreviewScrim.animate()
+            .alpha(0f)
+            .setDuration(READER_PREVIEW_PANEL_ANIMATION_MS)
+            .withEndAction {
+                if (!readerPreviewPanelVisible) {
+                    readerPreviewScrim.visibility = View.GONE
+                    readerPreviewScrim.alpha = 1f
+                }
+            }
+            .start()
+
+        val panelWidth = readerPreviewPanelWidth()
+        layoutReaderPreviewPanel.animate().cancel()
+        layoutReaderPreviewPanel.animate()
+            .translationX(panelWidth.toFloat())
+            .setDuration(READER_PREVIEW_PANEL_ANIMATION_MS)
+            .withEndAction {
+                if (!readerPreviewPanelVisible) {
+                    layoutReaderPreviewPanel.visibility = View.GONE
+                    layoutReaderPreviewPanel.translationX = 0f
+                    showReaderControlsTemporarily()
+                }
+            }
+            .start()
+    }
+
+    private fun scrollReaderPreviewToCurrentPage() {
+        val position = currentReaderPosition.coerceIn(0, imageEntries.lastIndex.coerceAtLeast(0))
+        readerPreviewAdapter?.setSelectedPosition(position)
+        listReaderPreview.post {
+            if (imageEntries.isEmpty()) {
+                return@post
+            }
+
+            val itemHeight = resources.getDimensionPixelSize(R.dimen.reader_preview_item_height)
+            val offset = ((listReaderPreview.height - itemHeight) / 2).coerceAtLeast(0)
+            (listReaderPreview.layoutManager as? LinearLayoutManager)
+                ?.scrollToPositionWithOffset(position, offset)
+                ?: listReaderPreview.scrollToPosition(position)
+        }
+    }
+
+    private fun readerPreviewPanelWidth(): Int {
+        return layoutReaderPreviewPanel.width
+            .takeIf { it > 0 }
+            ?: resources.getDimensionPixelSize(R.dimen.reader_preview_panel_width)
     }
 
     private fun applyDebugPageZoom(scale: Float, panX: Float, panY: Float) {
@@ -816,6 +966,7 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         val currentPosition = displayedReaderPosition(firstVisibleItem, totalItemCount)
+        readerPreviewAdapter?.setSelectedPosition(currentPosition)
         updateReaderProgressText(currentPosition, totalItemCount)
         if (!isDraggingReaderSlider) {
             sliderReaderProgress.max = (totalItemCount - 1).coerceAtLeast(0)
@@ -1089,6 +1240,10 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun setReaderControlsVisible(visible: Boolean) {
+        if (!visible && readerPreviewPanelVisible) {
+            return
+        }
+
         readerControlsVisible = visible
         layoutReaderToolbar.visibility = if (visible) View.VISIBLE else View.GONE
         layoutReaderProgress.visibility = if (visible) View.VISIBLE else View.GONE
@@ -2998,6 +3153,7 @@ class MangaReaderActivity : AppCompatActivity() {
         private const val MAX_READER_DECODE_HEIGHT = 8192
         private const val MAX_READER_TILE_DECODE_WIDTH = 8192
         private const val READER_CONTROLS_AUTO_HIDE_MS = 2600L
+        private const val READER_PREVIEW_PANEL_ANIMATION_MS = 180L
         private const val SUPPRESS_TAP_AFTER_ZOOM_MS = 250L
         private const val RESTORE_READER_POSITION_MAX_ATTEMPTS = 16
         private const val RESTORE_READER_POSITION_RETRY_MS = 250L
