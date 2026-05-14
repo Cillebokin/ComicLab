@@ -105,7 +105,7 @@
     <string name="deleting_archive_image">正在删除图片...</string>
     <string name="delete_archive_image_title">删除图片</string>
     <string name="delete_archive_image_message">是否从压缩包中删除该图片？\n（删除后无法恢复！）</string>
-    <string name="delete_archive_image_success">已删除图片</string>
+    <string name="delete_archive_image_success">已删除图片，原文件已自动备份</string>
     <string name="delete_archive_image_failed">删除图片失败</string>
     <string name="delete_archive_image_unsupported">当前文件不支持修改源文件</string>
     <string name="delete_pdf_page_unsupported">当前文件为PDF，暂不支持删除页面</string>
