@@ -76,6 +76,10 @@ class ZoomableReaderListView @JvmOverloads constructor(
         return super.onTouchEvent(event)
     }
 
+    override fun performClick(): Boolean {
+        return super.performClick()
+    }
+
     fun resetZoom() {
         setZoomScale(MIN_ZOOM)
     }

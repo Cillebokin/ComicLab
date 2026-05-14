@@ -15,7 +15,9 @@ import android.provider.Settings
 import android.util.Log
 import android.util.LruCache
 import android.view.Gravity
+import android.view.GestureDetector
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -1440,20 +1442,17 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PageViewHolder {
-            val container = FrameLayout(context).apply {
+            val container = ReaderTapFrameLayout(context).apply {
                 setBackgroundColor(Color.BLACK)
                 isClickable = true
                 layoutParams = initialPageLayoutParams()
-                setOnClickListener {
-                    onPageTap()
-                }
+                onReaderTap = onPageTap
             }
             val imageView = ReaderSubsamplingImageView(context).apply {
                 layoutParams = FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.MATCH_PARENT
                 )
-                onReaderTap = onPageTap
             }
             val statusText = TextView(context).apply {
                 layoutParams = FrameLayout.LayoutParams(
@@ -1478,7 +1477,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
             val file = pageFiles[position]
             val bounds = pageBounds[position]
-            holder.imageView.onReaderTap = onPageTap
+            holder.container.onReaderTap = onPageTap
             applyPageLayout(holder.container, bounds)
 
             if (!file.isFile || file.length() <= 0L) {
@@ -1840,8 +1839,37 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         }
 
+        private class ReaderTapFrameLayout(context: Context) : FrameLayout(context) {
+            var onReaderTap: (() -> Unit)? = null
+
+            private val tapDetector = GestureDetector(
+                context,
+                object : GestureDetector.SimpleOnGestureListener() {
+                    override fun onDown(e: MotionEvent): Boolean {
+                        return true
+                    }
+
+                    override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                        performClick()
+                        return true
+                    }
+                }
+            )
+
+            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+                tapDetector.onTouchEvent(event)
+                return super.dispatchTouchEvent(event)
+            }
+
+            override fun performClick(): Boolean {
+                super.performClick()
+                onReaderTap?.invoke()
+                return true
+            }
+        }
+
         class PageViewHolder(
-            val container: FrameLayout,
+            val container: ReaderTapFrameLayout,
             val imageView: ReaderSubsamplingImageView,
             val statusText: TextView
         ) : RecyclerView.ViewHolder(container) {
@@ -1896,13 +1924,14 @@ class MangaReaderActivity : AppCompatActivity() {
         private val boundPositions = Collections.synchronizedSet(mutableSetOf<Int>())
         private val pendingRefreshPositions = Collections.synchronizedSet(mutableSetOf<Int>())
         private val pageBounds = Collections.synchronizedMap(mutableMapOf<Int, ComicArchive.ImageBounds>())
+        private val isPdfSource = session.isPdfSource()
         private val cacheLock = Any()
-        private val previewBitmapCache = object : LruCache<Int, Bitmap>(previewBitmapCacheSizeKb()) {
+        private val previewBitmapCache = object : LruCache<Int, Bitmap>(previewBitmapCacheSizeKb(isPdfSource)) {
             override fun sizeOf(key: Int, value: Bitmap): Int {
                 return (value.byteCount / 1024).coerceAtLeast(1)
             }
         }
-        private val fullBitmapCache = object : LruCache<Int, Bitmap>(fullBitmapCacheSizeKb()) {
+        private val fullBitmapCache = object : LruCache<Int, Bitmap>(fullBitmapCacheSizeKb(isPdfSource)) {
             override fun sizeOf(key: Int, value: Bitmap): Int {
                 return (value.byteCount / 1024).coerceAtLeast(1)
             }
@@ -2035,7 +2064,8 @@ class MangaReaderActivity : AppCompatActivity() {
                 lastIndex = entries.lastIndex,
                 scrollDirection = scrollDirection,
                 isFastScroll = isFastScroll,
-                isIdle = isIdle
+                isIdle = isIdle,
+                isPdfSource = isPdfSource
             )
 
             visibleWindowStart = firstVisible
@@ -2052,7 +2082,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 ensurePreview(position, PRIORITY_PRELOAD_PREVIEW, generation, isPreload = true)
             }
 
-            if (!isFastScroll || isIdle) {
+            if (shouldPreloadFullPages(isFastScroll, isIdle)) {
                 window.fullPositions.forEach { position ->
                     ensureFullOrTiledPage(position, PRIORITY_PRELOAD, generation, isPreload = true)
                 }
@@ -2219,7 +2249,8 @@ class MangaReaderActivity : AppCompatActivity() {
             holder.imageView.setBackgroundColor(Color.BLACK)
             holder.imageView.setImageBitmap(previewBitmap(position))
 
-            val tiles = buildTiles(bounds, imageWidth)
+            val tileDecodeWidth = tileDecodeWidth(imageWidth, bounds.width)
+            val tiles = buildTiles(bounds, imageWidth, tileDecodeWidth)
             holder.tileContainer.removeAllViews()
             tiles.forEach { tile ->
                 val tileView = ImageView(context).apply {
@@ -2228,7 +2259,6 @@ class MangaReaderActivity : AppCompatActivity() {
                     adjustViewBounds = false
                 }
                 setTileChildSize(tileView, bounds, tile.sourceRect, imageWidth, imageHeight)
-                val tileDecodeWidth = tileDecodeWidth(imageWidth, bounds.width)
                 val key = TileKey(position, tile.index, imageWidth, tileDecodeWidth)
                 tileView.tag = key
 
@@ -2245,6 +2275,11 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         private fun ensureVisiblePage(position: Int) {
+            if (isPdfSource) {
+                ensureFullOrTiledPage(position, PRIORITY_VISIBLE, generation = 0, isPreload = false)
+                return
+            }
+
             ensurePreview(position, PRIORITY_VISIBLE_PREVIEW, generation = 0, isPreload = false)
             ensureFullOrTiledPage(position, PRIORITY_VISIBLE, generation = 0, isPreload = false)
         }
@@ -2679,7 +2714,9 @@ class MangaReaderActivity : AppCompatActivity() {
                     .filter { it.position !in protectedWindowStart..protectedWindowEnd }
                     .forEach { tileBitmapCache.remove(it) }
 
-                if (fullBitmapCache.size() >= fullBitmapCache.maxSize() * FULL_CACHE_TRIM_THRESHOLD_PERCENT / 100) {
+                if (isPdfSource ||
+                    fullBitmapCache.size() >= fullBitmapCache.maxSize() * FULL_CACHE_TRIM_THRESHOLD_PERCENT / 100
+                ) {
                     fullBitmapCache.snapshot().keys
                         .filter { it !in protectedWindowStart..protectedWindowEnd }
                         .forEach { fullBitmapCache.remove(it) }
@@ -2689,14 +2726,31 @@ class MangaReaderActivity : AppCompatActivity() {
 
         private fun buildTiles(
             bounds: ComicArchive.ImageBounds,
-            imageWidth: Int
+            imageWidth: Int,
+            tileDecodeWidth: Int
         ): List<PageTile> {
             val sourceTileHeightByDisplay = (TILE_MAX_DISPLAY_HEIGHT.toFloat() * bounds.width / imageWidth)
                 .roundToInt()
             val sourceTileHeightByPixels = (TILE_MAX_SOURCE_PIXELS / bounds.width.coerceAtLeast(1))
                 .coerceAtLeast(TILE_MIN_SOURCE_HEIGHT)
-            val sourceTileHeight = minOf(sourceTileHeightByDisplay, sourceTileHeightByPixels)
-                .coerceAtLeast(TILE_MIN_SOURCE_HEIGHT)
+            val sourceTileHeightByDecodedPixels = if (tileDecodeWidth > 0 && bounds.width > 0) {
+                (TILE_MAX_DECODED_PIXELS.toFloat() * bounds.width.toFloat() /
+                    (tileDecodeWidth.toFloat() * tileDecodeWidth.toFloat()))
+                    .roundToInt()
+            } else {
+                sourceTileHeightByPixels
+            }
+            val minSourceTileHeight = if (isPdfSource) {
+                PDF_TILE_MIN_SOURCE_HEIGHT
+            } else {
+                TILE_MIN_SOURCE_HEIGHT
+            }
+            val sourceTileHeight = minOf(
+                sourceTileHeightByDisplay,
+                sourceTileHeightByPixels,
+                sourceTileHeightByDecodedPixels
+            )
+                .coerceAtLeast(minSourceTileHeight)
             val tiles = mutableListOf<PageTile>()
             var top = 0
             var index = 0
@@ -2711,6 +2765,10 @@ class MangaReaderActivity : AppCompatActivity() {
 
         private fun shouldUseTiledPage(bounds: ComicArchive.ImageBounds): Boolean {
             if (isHorizontalReading()) {
+                return false
+            }
+
+            if (isPdfSource) {
                 return false
             }
 
@@ -2841,22 +2899,63 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         private fun fullPageDecodeWidth(bounds: ComicArchive.ImageBounds): Int {
+            if (isPdfSource) {
+                val maxWidthByPixels = maxPdfRenderWidthByPixels(bounds)
+                return (baseDisplayWidth * PDF_FULL_RENDER_SCALE)
+                    .coerceAtLeast(baseDisplayWidth)
+                    .coerceAtMost(maxWidthByPixels)
+                    .coerceAtMost(PDF_MAX_FULL_RENDER_WIDTH)
+            }
+
             return maxOf(decodeWidth, bounds.width.coerceAtMost(MAX_READER_DECODE_WIDTH))
                 .coerceAtMost(MAX_READER_DECODE_WIDTH)
         }
 
         private fun fullPageDecodeHeight(bounds: ComicArchive.ImageBounds): Int {
+            if (isPdfSource) {
+                return (baseDisplayHeight * PDF_FULL_RENDER_SCALE)
+                    .coerceAtLeast(baseDisplayHeight)
+                    .coerceAtMost(PDF_MAX_FULL_RENDER_HEIGHT)
+            }
+
             return maxOf(decodeHeight, bounds.height.coerceAtMost(MAX_READER_DECODE_HEIGHT))
                 .coerceAtMost(MAX_READER_DECODE_HEIGHT)
         }
 
         private fun tileDecodeWidth(displayImageWidth: Int, sourceWidth: Int): Int {
+            if (isPdfSource) {
+                return (displayImageWidth * PDF_TILE_RENDER_SCALE)
+                    .coerceAtLeast(displayImageWidth)
+                    .coerceAtMost(PDF_MAX_TILE_RENDER_WIDTH)
+            }
+
             return maxOf(
                 displayImageWidth,
                 decodeWidth,
                 sourceWidth.coerceAtMost(MAX_READER_TILE_DECODE_WIDTH)
             )
                 .coerceAtMost(MAX_READER_TILE_DECODE_WIDTH)
+        }
+
+        private fun shouldPreloadFullPages(isFastScroll: Boolean, isIdle: Boolean): Boolean {
+            return if (isPdfSource) {
+                isIdle
+            } else {
+                !isFastScroll || isIdle
+            }
+        }
+
+        private fun maxPdfRenderWidthByPixels(bounds: ComicArchive.ImageBounds): Int {
+            if (bounds.width <= 0 || bounds.height <= 0) {
+                return PDF_MAX_FULL_RENDER_WIDTH
+            }
+
+            val maxWidth = kotlin.math.sqrt(
+                PDF_MAX_FULL_RENDER_PIXELS.toDouble() *
+                    bounds.width.toDouble() /
+                    bounds.height.toDouble()
+            ).roundToInt()
+            return maxWidth.coerceAtLeast(baseDisplayWidth)
         }
 
         private fun isHorizontalReading(): Boolean {
@@ -2946,7 +3045,8 @@ class MangaReaderActivity : AppCompatActivity() {
                     lastIndex: Int,
                     scrollDirection: Int,
                     isFastScroll: Boolean,
-                    isIdle: Boolean
+                    isIdle: Boolean,
+                    isPdfSource: Boolean
                 ): PreloadWindow {
                     val movingForward = scrollDirection >= 0
                     val fullBefore: Int
@@ -2955,6 +3055,41 @@ class MangaReaderActivity : AppCompatActivity() {
                     val previewAfter: Int
 
                     when {
+                        isPdfSource && isIdle -> {
+                            fullBefore = PDF_IDLE_FULL_PRELOAD_BEFORE_COUNT
+                            fullAfter = PDF_IDLE_FULL_PRELOAD_AFTER_COUNT
+                            previewBefore = PDF_IDLE_PREVIEW_PRELOAD_BEFORE_COUNT
+                            previewAfter = PDF_IDLE_PREVIEW_PRELOAD_AFTER_COUNT
+                        }
+
+                        isPdfSource && isFastScroll && movingForward -> {
+                            fullBefore = 0
+                            fullAfter = 0
+                            previewBefore = PDF_FAST_PREVIEW_PRELOAD_BEFORE_COUNT
+                            previewAfter = PDF_FAST_PREVIEW_PRELOAD_FORWARD_COUNT
+                        }
+
+                        isPdfSource && isFastScroll -> {
+                            fullBefore = 0
+                            fullAfter = 0
+                            previewBefore = PDF_FAST_PREVIEW_PRELOAD_FORWARD_COUNT
+                            previewAfter = PDF_FAST_PREVIEW_PRELOAD_BEFORE_COUNT
+                        }
+
+                        isPdfSource && movingForward -> {
+                            fullBefore = 0
+                            fullAfter = 0
+                            previewBefore = PDF_NORMAL_PREVIEW_PRELOAD_BEFORE_COUNT
+                            previewAfter = PDF_NORMAL_PREVIEW_PRELOAD_FORWARD_COUNT
+                        }
+
+                        isPdfSource -> {
+                            fullBefore = 0
+                            fullAfter = 0
+                            previewBefore = PDF_NORMAL_PREVIEW_PRELOAD_FORWARD_COUNT
+                            previewAfter = PDF_NORMAL_PREVIEW_PRELOAD_BEFORE_COUNT
+                        }
+
                         isIdle -> {
                             fullBefore = IDLE_FULL_PRELOAD_BEFORE_COUNT
                             fullAfter = IDLE_FULL_PRELOAD_AFTER_COUNT
@@ -2995,8 +3130,18 @@ class MangaReaderActivity : AppCompatActivity() {
                     val fullEnd = (lastVisible + fullAfter).coerceAtMost(lastIndex)
                     val previewStart = (firstVisible - previewBefore).coerceAtLeast(0)
                     val previewEnd = (lastVisible + previewAfter).coerceAtMost(lastIndex)
-                    val protectedStart = (firstVisible - CACHE_PROTECTED_BEFORE_COUNT).coerceAtLeast(0)
-                    val protectedEnd = (lastVisible + CACHE_PROTECTED_AFTER_COUNT).coerceAtMost(lastIndex)
+                    val cacheProtectedBefore = if (isPdfSource) {
+                        PDF_CACHE_PROTECTED_BEFORE_COUNT
+                    } else {
+                        CACHE_PROTECTED_BEFORE_COUNT
+                    }
+                    val cacheProtectedAfter = if (isPdfSource) {
+                        PDF_CACHE_PROTECTED_AFTER_COUNT
+                    } else {
+                        CACHE_PROTECTED_AFTER_COUNT
+                    }
+                    val protectedStart = (firstVisible - cacheProtectedBefore).coerceAtLeast(0)
+                    val protectedEnd = (lastVisible + cacheProtectedAfter).coerceAtMost(lastIndex)
 
                     val previewPositions = orderedPreloadPositions(
                         firstVisible = firstVisible,
@@ -3103,6 +3248,16 @@ class MangaReaderActivity : AppCompatActivity() {
             private const val IDLE_PREVIEW_PRELOAD_AFTER_COUNT = 6
             private const val CACHE_PROTECTED_BEFORE_COUNT = 2
             private const val CACHE_PROTECTED_AFTER_COUNT = 6
+            private const val PDF_NORMAL_PREVIEW_PRELOAD_BEFORE_COUNT = 1
+            private const val PDF_NORMAL_PREVIEW_PRELOAD_FORWARD_COUNT = 3
+            private const val PDF_FAST_PREVIEW_PRELOAD_BEFORE_COUNT = 1
+            private const val PDF_FAST_PREVIEW_PRELOAD_FORWARD_COUNT = 5
+            private const val PDF_IDLE_FULL_PRELOAD_BEFORE_COUNT = 1
+            private const val PDF_IDLE_FULL_PRELOAD_AFTER_COUNT = 1
+            private const val PDF_IDLE_PREVIEW_PRELOAD_BEFORE_COUNT = 2
+            private const val PDF_IDLE_PREVIEW_PRELOAD_AFTER_COUNT = 4
+            private const val PDF_CACHE_PROTECTED_BEFORE_COUNT = 1
+            private const val PDF_CACHE_PROTECTED_AFTER_COUNT = 2
             private const val FULL_CACHE_TRIM_THRESHOLD_PERCENT = 88
             private const val UI_REFRESH_THROTTLE_MS = 24L
             private const val UI_REFRESH_RETRY_MS = 48L
@@ -3117,15 +3272,35 @@ class MangaReaderActivity : AppCompatActivity() {
             private const val TILED_DECODED_PIXEL_THRESHOLD = 10_000_000L
             private const val TILE_MAX_DISPLAY_HEIGHT = 2400
             private const val TILE_MIN_SOURCE_HEIGHT = 512
+            private const val PDF_TILE_MIN_SOURCE_HEIGHT = 128
             private const val TILE_MAX_SOURCE_PIXELS = 4_000_000
+            private const val TILE_MAX_DECODED_PIXELS = 4_000_000L
+            private const val PDF_FULL_RENDER_SCALE = 3
+            private const val PDF_TILE_RENDER_SCALE = 2
+            private const val PDF_MAX_FULL_RENDER_WIDTH = 4096
+            private const val PDF_MAX_FULL_RENDER_HEIGHT = 4096
+            private const val PDF_MAX_TILE_RENDER_WIDTH = 3072
+            private const val PDF_MAX_FULL_RENDER_PIXELS = 18_000_000L
+            private const val PDF_TILED_RENDER_PIXEL_THRESHOLD = 8_000_000L
 
-            private fun previewBitmapCacheSizeKb(): Int {
+            private fun previewBitmapCacheSizeKb(isPdfSource: Boolean): Int {
                 val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
+                if (isPdfSource) {
+                    return (maxMemoryKb / 18)
+                        .coerceAtLeast(8 * 1024)
+                        .coerceAtMost(maxMemoryKb / 8)
+                }
                 return (maxMemoryKb / 24).coerceAtLeast(6 * 1024)
             }
 
-            private fun fullBitmapCacheSizeKb(): Int {
+            private fun fullBitmapCacheSizeKb(isPdfSource: Boolean): Int {
                 val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
+                if (isPdfSource) {
+                    return (maxMemoryKb / 3)
+                        .coerceAtLeast(64 * 1024)
+                        .coerceAtMost(maxMemoryKb / 2)
+                        .coerceAtMost(192 * 1024)
+                }
                 return (maxMemoryKb / 6).coerceAtLeast(16 * 1024)
             }
 

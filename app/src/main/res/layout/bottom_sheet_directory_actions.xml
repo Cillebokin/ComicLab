@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="@color/comiclab_surface_card"
@@ -32,7 +33,6 @@
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"
         android:background="@drawable/bg_bottom_sheet_action_item"
-        android:drawableStart="@drawable/png_star_icon"
         android:drawablePadding="@dimen/space_lg"
         android:gravity="center_vertical"
         android:includeFontPadding="false"
@@ -40,14 +40,14 @@
         android:paddingEnd="@dimen/space_xl"
         android:text="@string/favorite_path_action"
         android:textColor="@color/comiclab_text_primary"
-        android:textSize="@dimen/text_body" />
+        android:textSize="@dimen/text_body"
+        app:drawableStartCompat="@drawable/png_star_icon" />
 
     <TextView
         android:id="@+id/btnCopyPathName"
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"
         android:background="@drawable/bg_bottom_sheet_action_item"
-        android:drawableStart="@drawable/png_title_icon"
         android:drawablePadding="@dimen/space_lg"
         android:gravity="center_vertical"
         android:includeFontPadding="false"
@@ -55,14 +55,14 @@
         android:paddingEnd="@dimen/space_xl"
         android:text="@string/copy_path_name"
         android:textColor="@color/comiclab_text_primary"
-        android:textSize="@dimen/text_body" />
+        android:textSize="@dimen/text_body"
+        app:drawableStartCompat="@drawable/png_title_icon" />
 
     <TextView
         android:id="@+id/btnRenameDirectoryName"
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"
         android:background="@drawable/bg_bottom_sheet_action_item"
-        android:drawableStart="@drawable/png_title_change_icon"
         android:drawablePadding="@dimen/space_lg"
         android:gravity="center_vertical"
         android:includeFontPadding="false"
@@ -70,5 +70,6 @@
         android:paddingEnd="@dimen/space_xl"
         android:text="@string/rename_directory_name"
         android:textColor="@color/comiclab_text_primary"
-        android:textSize="@dimen/text_body" />
+        android:textSize="@dimen/text_body"
+        app:drawableStartCompat="@drawable/png_title_change_icon" />
 </LinearLayout>

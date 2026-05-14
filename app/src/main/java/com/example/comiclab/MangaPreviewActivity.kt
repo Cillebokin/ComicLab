@@ -285,7 +285,15 @@ class MangaPreviewActivity : AppCompatActivity() {
                         true
                     }
                     MENU_PREVIEW_DELETE -> {
-                        confirmDeletePreviewImage(file, entryName)
+                        if (ComicArchive.isPdf(file)) {
+                            Toast.makeText(
+                                this@MangaPreviewActivity,
+                                R.string.delete_pdf_page_unsupported,
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            confirmDeletePreviewImage(file, entryName)
+                        }
                         true
                     }
                     else -> false
@@ -307,6 +315,11 @@ class MangaPreviewActivity : AppCompatActivity() {
     }
 
     private fun deletePreviewImage(file: File, entryName: String) {
+        if (ComicArchive.isPdf(file)) {
+            Toast.makeText(this, R.string.delete_pdf_page_unsupported, Toast.LENGTH_SHORT).show()
+            return
+        }
+
         if (!ComicArchive.canDeleteEntry(file)) {
             Toast.makeText(this, R.string.delete_archive_image_unsupported, Toast.LENGTH_SHORT).show()
             return
@@ -386,7 +399,12 @@ class MangaPreviewActivity : AppCompatActivity() {
         startFromBeginning: Boolean,
         startPageIndex: Int = NO_EXPLICIT_START_PAGE
     ) {
-        val intent = Intent(this, MangaReaderPrepareActivity::class.java).apply {
+        val targetActivity = if (ComicArchive.isPdf(file)) {
+            MangaReaderActivity::class.java
+        } else {
+            MangaReaderPrepareActivity::class.java
+        }
+        val intent = Intent(this, targetActivity).apply {
             putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
             putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
             putExtra(MangaReaderActivity.EXTRA_START_PAGE_INDEX, startPageIndex)

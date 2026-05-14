@@ -3,7 +3,11 @@ package com.example.comiclab
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
+import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Rect
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
 import net.sf.sevenzipjbinding.ExtractAskMode
 import net.sf.sevenzipjbinding.ExtractOperationResult
 import net.sf.sevenzipjbinding.IArchiveExtractCallback
@@ -31,6 +35,10 @@ import java.util.zip.ZipOutputStream
 object ComicArchive {
     private const val ZIP_PREVIEW_DECODE_THREAD_COUNT = 2
     private const val PREPARED_READER_MANIFEST_FILE = "reader_manifest.json"
+    private const val PDF_PAGE_ENTRY_PREFIX = "pdf_page_"
+    private const val PDF_MAX_RENDER_WIDTH = 4096
+    private const val DELETE_BACKUP_DIR_NAME = ".ComicLabBackups"
+    private const val DELETE_BACKUP_COPY_BUFFER_SIZE = 1024 * 1024
 
     data class ImageBounds(
         val width: Int,
@@ -38,6 +46,7 @@ object ComicArchive {
     )
 
     interface ImageReaderSession : Closeable {
+        fun isPdfSource(): Boolean = false
         fun readBounds(entryName: String): ImageBounds?
         fun decodePreviewForWidth(entryName: String, targetWidth: Int): Bitmap?
         fun decodeImageForWidth(entryName: String, targetWidth: Int): Bitmap?
@@ -52,7 +61,8 @@ object ComicArchive {
 
     private val zipArchiveExtensions = setOf("zip", "cbz")
     private val sevenZipArchiveExtensions = setOf("rar", "cbr", "7z", "cb7")
-    private val supportedArchiveExtensions = zipArchiveExtensions + sevenZipArchiveExtensions
+    private val pdfExtensions = setOf("pdf")
+    private val supportedArchiveExtensions = zipArchiveExtensions + sevenZipArchiveExtensions + pdfExtensions
     private val archiveExtensions = supportedArchiveExtensions + setOf("tar", "gz")
     private val imageExtensions = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
     private val naturalEntryNameComparator = Comparator<String> { left, right ->
@@ -67,25 +77,43 @@ object ComicArchive {
         return file.isFile && file.extension.lowercase(Locale.ROOT) in supportedArchiveExtensions
     }
 
+    fun isPdf(file: File): Boolean {
+        return file.isFile && file.extension.lowercase(Locale.ROOT) in pdfExtensions
+    }
+
     fun imageEntries(file: File): List<String> {
-        return when (file.extension.lowercase(Locale.ROOT)) {
-            in zipArchiveExtensions -> zipImageEntries(file)
-            in sevenZipArchiveExtensions -> sevenZipImageEntries(file)
-            else -> emptyList()
+        if (!file.isFile) {
+            return emptyList()
         }
+
+        return runCatching {
+            when (file.extension.lowercase(Locale.ROOT)) {
+                in zipArchiveExtensions -> zipImageEntries(file)
+                in sevenZipArchiveExtensions -> sevenZipImageEntries(file)
+                in pdfExtensions -> pdfImageEntries(file)
+                else -> emptyList()
+            }
+        }.getOrDefault(emptyList())
     }
 
     fun firstImageEntryIfFirstFileIsImage(file: File): String? {
-        return when (file.extension.lowercase(Locale.ROOT)) {
-            in zipArchiveExtensions -> zipFileEntries(file)
-            in sevenZipArchiveExtensions -> sevenZipFileEntries(file)
-            else -> emptyList()
-        }.firstOrNull()
-            ?.takeIf { it.isImageEntryName() }
+        if (!file.isFile) {
+            return null
+        }
+
+        return runCatching {
+            when (file.extension.lowercase(Locale.ROOT)) {
+                in zipArchiveExtensions -> zipFileEntries(file)
+                in sevenZipArchiveExtensions -> sevenZipFileEntries(file)
+                in pdfExtensions -> pdfImageEntries(file)
+                else -> emptyList()
+            }.firstOrNull()
+                ?.takeIf { it.isImageEntryName() || it.isPdfPageEntryName() }
+        }.getOrNull()
     }
 
     fun canDeleteEntry(file: File): Boolean {
-        return isSupportedArchive(file)
+        return isSupportedArchive(file) && !isPdf(file)
     }
 
     fun deleteEntry(file: File, entryName: String): Boolean {
@@ -93,14 +121,25 @@ object ComicArchive {
             return false
         }
 
-        return when (file.extension.lowercase(Locale.ROOT)) {
+        val backupFile = createDeleteBackup(file) ?: return false
+        val deleted = when (file.extension.lowercase(Locale.ROOT)) {
             in zipArchiveExtensions -> deleteZipEntry(file, entryName)
             in sevenZipArchiveExtensions -> rebuildSevenZipReadableArchiveWithoutEntry(file, entryName)
             else -> false
         }
+
+        if (!deleted) {
+            restoreOriginalFromDeleteBackupIfNeeded(file, backupFile)
+        }
+
+        return deleted
     }
 
     fun decodeImage(file: File, entryName: String, maxSize: Int): Bitmap? {
+        if (isPdf(file)) {
+            return renderPdfPageFitMaxSize(file, entryName, maxSize)
+        }
+
         val bytes = imageBytes(file, entryName) ?: return null
         return decodeBitmap(
             bytes = bytes,
@@ -110,6 +149,10 @@ object ComicArchive {
     }
 
     fun decodeImageForWidth(file: File, entryName: String, targetWidth: Int): Bitmap? {
+        if (isPdf(file)) {
+            return renderPdfPageForWidth(file, entryName, targetWidth)
+        }
+
         val bytes = imageBytes(file, entryName) ?: return null
         return decodeBitmap(
             bytes = bytes,
@@ -127,12 +170,17 @@ object ComicArchive {
         when (file.extension.lowercase(Locale.ROOT)) {
             in zipArchiveExtensions -> decodeZipImages(file, entryNames, maxSize, onDecoded)
             in sevenZipArchiveExtensions -> decodeSevenZipImages(file, entryNames, maxSize, onDecoded)
+            in pdfExtensions -> decodePdfImages(file, entryNames, maxSize, onDecoded)
             else -> Unit
         }
     }
 
-    fun openReaderSession(file: File, cacheRoot: File): ReaderSession {
-        return ReaderSession(file, cacheRoot)
+    fun openReaderSession(file: File, cacheRoot: File): ImageReaderSession {
+        return if (isPdf(file)) {
+            PdfReaderSession(file)
+        } else {
+            ReaderSession(file, cacheRoot)
+        }
     }
 
     fun openPreparedReaderSession(directory: File, deleteOnClose: Boolean): ImageReaderSession {
@@ -457,6 +505,104 @@ object ComicArchive {
         }
     }
 
+    private class PdfReaderSession(
+        file: File
+    ) : ImageReaderSession {
+
+        private val pdfLock = Any()
+        private val parcelFileDescriptor =
+            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        private val pdfRenderer = PdfRenderer(parcelFileDescriptor)
+
+        override fun isPdfSource(): Boolean = true
+
+        override fun readBounds(entryName: String): ImageBounds? {
+            val pageIndex = pdfPageIndex(entryName) ?: return null
+            synchronized(pdfLock) {
+                if (pageIndex !in 0 until pdfRenderer.pageCount) {
+                    return null
+                }
+
+                val page = pdfRenderer.openPage(pageIndex)
+                return try {
+                    ImageBounds(page.width, page.height)
+                } finally {
+                    page.close()
+                }
+            }
+        }
+
+        override fun decodePreviewForWidth(entryName: String, targetWidth: Int): Bitmap? {
+            return renderPage(entryName, targetWidth, 0, RenderMode.WIDTH)
+        }
+
+        override fun decodeImageForWidth(entryName: String, targetWidth: Int): Bitmap? {
+            return renderPage(entryName, targetWidth, 0, RenderMode.WIDTH)
+        }
+
+        override fun decodeImageForPage(
+            entryName: String,
+            targetWidth: Int,
+            targetHeight: Int
+        ): Bitmap? {
+            return renderPage(entryName, targetWidth, targetHeight, RenderMode.FIT_BOUNDS)
+        }
+
+        override fun decodeRegionForWidth(
+            entryName: String,
+            sourceRect: Rect,
+            targetWidth: Int
+        ): Bitmap? {
+            val pageIndex = pdfPageIndex(entryName) ?: return null
+            synchronized(pdfLock) {
+                if (pageIndex !in 0 until pdfRenderer.pageCount) {
+                    return null
+                }
+
+                val page = pdfRenderer.openPage(pageIndex)
+                return try {
+                    renderPdfPageRegion(page, sourceRect, targetWidth)
+                } finally {
+                    page.close()
+                }
+            }
+        }
+
+        override fun close() {
+            pdfRenderer.close()
+            parcelFileDescriptor.close()
+        }
+
+        private fun renderPage(
+            entryName: String,
+            targetWidth: Int,
+            targetHeight: Int,
+            mode: RenderMode
+        ): Bitmap? {
+            val pageIndex = pdfPageIndex(entryName) ?: return null
+            synchronized(pdfLock) {
+                if (pageIndex !in 0 until pdfRenderer.pageCount) {
+                    return null
+                }
+
+                val page = pdfRenderer.openPage(pageIndex)
+                return try {
+                    when (mode) {
+                        RenderMode.WIDTH -> renderPdfPageForWidth(page, targetWidth)
+                        RenderMode.FIT_BOUNDS -> renderPdfPageFitBounds(page, targetWidth, targetHeight)
+                    }
+                } finally {
+                    page.close()
+                }
+            }
+        }
+
+        private enum class RenderMode {
+            WIDTH,
+            FIT_BOUNDS
+        }
+    }
+
     class PreparedImageExtractor internal constructor(
         private val file: File,
         private val outputDir: File
@@ -578,6 +724,167 @@ object ComicArchive {
                 directory.deleteRecursively()
             }
         }
+    }
+
+    private fun pdfImageEntries(file: File): List<String> {
+        return runCatching {
+            withPdfRenderer(file) { renderer ->
+                (0 until renderer.pageCount).map(::pdfPageEntryName)
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun decodePdfImages(
+        file: File,
+        entryNames: List<String>,
+        maxSize: Int,
+        onDecoded: (entryName: String, bitmap: Bitmap?) -> Boolean
+    ) {
+        runCatching {
+            withPdfRenderer(file) { renderer ->
+                for (entryName in entryNames) {
+                    val pageIndex = pdfPageIndex(entryName)
+                    val bitmap = if (pageIndex != null && pageIndex in 0 until renderer.pageCount) {
+                        val page = renderer.openPage(pageIndex)
+                        try {
+                            renderPdfPageFitMaxSize(page, maxSize)
+                        } finally {
+                            page.close()
+                        }
+                    } else {
+                        null
+                    }
+
+                    if (!onDecoded(entryName, bitmap)) {
+                        break
+                    }
+                }
+            }
+        }
+    }
+
+    private fun renderPdfPageFitMaxSize(file: File, entryName: String, maxSize: Int): Bitmap? {
+        val pageIndex = pdfPageIndex(entryName) ?: return null
+        return runCatching {
+            withPdfRenderer(file) { renderer ->
+                if (pageIndex !in 0 until renderer.pageCount) {
+                    return@withPdfRenderer null
+                }
+
+                val page = renderer.openPage(pageIndex)
+                try {
+                    renderPdfPageFitMaxSize(page, maxSize)
+                } finally {
+                    page.close()
+                }
+            }
+        }.getOrNull()
+    }
+
+    private fun renderPdfPageForWidth(file: File, entryName: String, targetWidth: Int): Bitmap? {
+        val pageIndex = pdfPageIndex(entryName) ?: return null
+        return runCatching {
+            withPdfRenderer(file) { renderer ->
+                if (pageIndex !in 0 until renderer.pageCount) {
+                    return@withPdfRenderer null
+                }
+
+                val page = renderer.openPage(pageIndex)
+                try {
+                    renderPdfPageForWidth(page, targetWidth)
+                } finally {
+                    page.close()
+                }
+            }
+        }.getOrNull()
+    }
+
+    private fun renderPdfPageFitMaxSize(page: PdfRenderer.Page, maxSize: Int): Bitmap? {
+        if (maxSize <= 0 || page.width <= 0 || page.height <= 0) {
+            return null
+        }
+
+        return renderPdfPageFitBounds(page, maxSize, maxSize)
+    }
+
+    private fun renderPdfPageForWidth(page: PdfRenderer.Page, targetWidth: Int): Bitmap? {
+        if (targetWidth <= 0 || page.width <= 0 || page.height <= 0) {
+            return null
+        }
+
+        val boundedTargetWidth = targetWidth.coerceAtMost(PDF_MAX_RENDER_WIDTH)
+        val scale = boundedTargetWidth.toFloat() / page.width.toFloat()
+        val targetHeight = (page.height * scale).toInt().coerceAtLeast(1)
+        return renderPdfPage(page, boundedTargetWidth.coerceAtLeast(1), targetHeight, scale)
+    }
+
+    private fun renderPdfPageFitBounds(
+        page: PdfRenderer.Page,
+        targetWidth: Int,
+        targetHeight: Int
+    ): Bitmap? {
+        if (targetWidth <= 0 || targetHeight <= 0 || page.width <= 0 || page.height <= 0) {
+            return null
+        }
+
+        val boundedTargetWidth = targetWidth.coerceAtMost(PDF_MAX_RENDER_WIDTH)
+        val scale = minOf(
+            boundedTargetWidth.toFloat() / page.width.toFloat(),
+            targetHeight.toFloat() / page.height.toFloat()
+        )
+        val bitmapWidth = (page.width * scale).toInt().coerceAtLeast(1)
+        val bitmapHeight = (page.height * scale).toInt().coerceAtLeast(1)
+        return renderPdfPage(page, bitmapWidth, bitmapHeight, scale)
+    }
+
+    private fun renderPdfPageRegion(
+        page: PdfRenderer.Page,
+        sourceRect: Rect,
+        targetWidth: Int
+    ): Bitmap? {
+        if (targetWidth <= 0 || page.width <= 0 || page.height <= 0) {
+            return null
+        }
+
+        val boundedRect = Rect(sourceRect).apply {
+            left = left.coerceIn(0, page.width)
+            top = top.coerceIn(0, page.height)
+            right = right.coerceIn(left, page.width)
+            bottom = bottom.coerceIn(top, page.height)
+        }
+        if (boundedRect.width() <= 0 || boundedRect.height() <= 0) {
+            return null
+        }
+
+        val scale = targetWidth.toFloat() / boundedRect.width().toFloat()
+        val bitmapHeight = (boundedRect.height() * scale).toInt().coerceAtLeast(1)
+        val bitmap = Bitmap.createBitmap(targetWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(Color.WHITE)
+        val matrix = Matrix().apply {
+            postScale(scale, scale)
+            postTranslate(-boundedRect.left * scale, -boundedRect.top * scale)
+        }
+        page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+        return bitmap
+    }
+
+    private fun renderPdfPage(
+        page: PdfRenderer.Page,
+        bitmapWidth: Int,
+        bitmapHeight: Int,
+        scale: Float
+    ): Bitmap? {
+        if (bitmapWidth <= 0 || bitmapHeight <= 0 || scale <= 0f) {
+            return null
+        }
+
+        val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(Color.WHITE)
+        val matrix = Matrix().apply {
+            setScale(scale, scale)
+        }
+        page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+        return bitmap
     }
 
     private fun zipImageEntries(file: File): List<String> {
@@ -736,6 +1043,100 @@ object ComicArchive {
         tempFile.delete()
         backupFile.renameTo(originalFile)
         return false
+    }
+
+    private fun createDeleteBackup(file: File): File? {
+        val parent = file.parentFile ?: return null
+        if (!file.isFile || file.length() <= 0L) {
+            return null
+        }
+
+        val backupDir = File(parent, DELETE_BACKUP_DIR_NAME)
+        if (!backupDir.exists() && !backupDir.mkdirs()) {
+            return null
+        }
+
+        val backupFile = uniqueDeleteBackupFile(backupDir, file)
+        val tempFile = File(backupDir, "${backupFile.name}.part")
+        tempFile.delete()
+
+        val copied = runCatching {
+            file.inputStream().buffered().use { input ->
+                tempFile.outputStream().buffered().use { output ->
+                    input.copyTo(output, DELETE_BACKUP_COPY_BUFFER_SIZE)
+                }
+            }
+            tempFile.isFile && tempFile.length() == file.length()
+        }.getOrDefault(false)
+
+        if (!copied) {
+            tempFile.delete()
+            return null
+        }
+
+        if (tempFile.renameTo(backupFile)) {
+            return backupFile
+        }
+
+        tempFile.delete()
+        return null
+    }
+
+    private fun uniqueDeleteBackupFile(backupDir: File, file: File): File {
+        val baseName = file.nameWithoutExtension.ifBlank { "archive" }
+        val extension = file.extension
+            .takeIf { it.isNotBlank() }
+            ?.let { ".$it" }
+            .orEmpty()
+        val timestamp = System.currentTimeMillis()
+        var candidate = File(backupDir, "${baseName}.delete_backup_$timestamp$extension")
+        var index = 0
+        while (candidate.exists()) {
+            candidate = File(
+                backupDir,
+                String.format(
+                    Locale.ROOT,
+                    "%s.delete_backup_%d_%03d%s",
+                    baseName,
+                    timestamp,
+                    index,
+                    extension
+                )
+            )
+            index++
+        }
+        return candidate
+    }
+
+    private fun restoreOriginalFromDeleteBackupIfNeeded(originalFile: File, backupFile: File) {
+        if (originalFile.isFile && originalFile.length() > 0L) {
+            return
+        }
+
+        val parent = originalFile.parentFile ?: return
+        val restoreTempFile = File(parent, "${originalFile.name}.restore_${System.currentTimeMillis()}.tmp")
+        restoreTempFile.delete()
+
+        val copied = runCatching {
+            backupFile.inputStream().buffered().use { input ->
+                restoreTempFile.outputStream().buffered().use { output ->
+                    input.copyTo(output, DELETE_BACKUP_COPY_BUFFER_SIZE)
+                }
+            }
+            restoreTempFile.isFile && restoreTempFile.length() == backupFile.length()
+        }.getOrDefault(false)
+
+        if (!copied) {
+            restoreTempFile.delete()
+            return
+        }
+
+        if (originalFile.exists()) {
+            originalFile.delete()
+        }
+        if (!restoreTempFile.renameTo(originalFile)) {
+            restoreTempFile.delete()
+        }
     }
 
     private fun writeStoredZipEntry(
@@ -1247,6 +1648,10 @@ object ComicArchive {
         return extension in imageExtensions
     }
 
+    private fun String.isPdfPageEntryName(): Boolean {
+        return pdfPageIndex(this) != null
+    }
+
     private fun String.toZipEntryPath(isFolder: Boolean): String {
         return if (isFolder && !endsWith("/")) {
             "$this/"
@@ -1346,6 +1751,33 @@ object ComicArchive {
             archive?.close()
             randomAccessFile.close()
         }
+    }
+
+    private fun <T> withPdfRenderer(file: File, block: (PdfRenderer) -> T): T {
+        val parcelFileDescriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        var renderer: PdfRenderer? = null
+        try {
+            renderer = PdfRenderer(parcelFileDescriptor)
+            return block(renderer)
+        } finally {
+            renderer?.close()
+            parcelFileDescriptor.close()
+        }
+    }
+
+    private fun pdfPageEntryName(index: Int): String {
+        return String.format(Locale.ROOT, "%s%06d", PDF_PAGE_ENTRY_PREFIX, index)
+    }
+
+    private fun pdfPageIndex(entryName: String): Int? {
+        if (!entryName.startsWith(PDF_PAGE_ENTRY_PREFIX)) {
+            return null
+        }
+
+        return entryName
+            .removePrefix(PDF_PAGE_ENTRY_PREFIX)
+            .toIntOrNull()
+            ?.takeIf { it >= 0 }
     }
 
     private fun compareNaturalEntryNames(left: String, right: String): Int {

@@ -79,6 +79,11 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
     }
 
     private fun prepareReader(file: File) {
+        if (ComicArchive.isPdf(file)) {
+            openReaderDirect(file)
+            return
+        }
+
         clearOldPreparedReaderCaches()
         val outputDir = createPreparedReaderDirectory(file)
         preparedDirectory = outputDir
@@ -188,7 +193,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
     private fun setProgress(completed: Int, total: Int) {
         if (total <= 0) {
             progressPrepareReader.isIndeterminate = true
-            tvPrepareStatus.text = "正在准备阅读..."
+            tvPrepareStatus.setText(R.string.preparing_reading)
             return
         }
 
@@ -196,7 +201,12 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
         progressPrepareReader.max = total
         progressPrepareReader.progress = completed.coerceIn(0, total)
         val percent = ((completed.toFloat() / total.toFloat()) * 100f).toInt().coerceIn(0, 100)
-        tvPrepareStatus.text = "正在准备快速阅读 $completed / $total  $percent%"
+        tvPrepareStatus.text = getString(
+            R.string.preparing_fast_reading_progress,
+            completed,
+            total,
+            percent
+        )
     }
 
     private fun openReader(file: File, outputDir: File) {
@@ -206,6 +216,17 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
             putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
             putExtra(MangaReaderActivity.EXTRA_START_PAGE_INDEX, explicitStartPageIndex)
             putExtra(MangaReaderActivity.EXTRA_PREPARED_READER_CACHE_DIR, outputDir.absolutePath)
+        }
+        startActivity(intent)
+        finish()
+    }
+
+    private fun openReaderDirect(file: File) {
+        launchedReader = true
+        val intent = Intent(this, MangaReaderActivity::class.java).apply {
+            putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
+            putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
+            putExtra(MangaReaderActivity.EXTRA_START_PAGE_INDEX, explicitStartPageIndex)
         }
         startActivity(intent)
         finish()

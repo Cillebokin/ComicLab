@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="@dimen/reader_preview_item_height"
+    android:background="@drawable/bg_reader_preview_item"
+    android:clickable="true"
+    android:focusable="true"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="6dp">
+
+    <ImageView
+        android:id="@+id/imgReaderPreview"
+        android:layout_width="@dimen/reader_preview_thumbnail_width"
+        android:layout_height="@dimen/reader_preview_thumbnail_height"
+        android:background="@color/black"
+        android:contentDescription="@string/reader_image"
+        android:scaleType="centerInside" />
+
+    <TextView
+        android:id="@+id/tvReaderPreviewPage"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:textColor="@color/white"
+        android:textSize="12sp" />
+</LinearLayout>

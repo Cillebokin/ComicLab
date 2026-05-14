@@ -634,7 +634,11 @@ class MainActivity : AppCompatActivity() {
                 fileItems.addAll(items)
                 etPath.setText(resolvedPath)
                 notifyListChanged()
-                pathToCenter?.let { centerFileItemIfPresent(it) }
+                if (pathToCenter == null) {
+                    scrollFileListToTop()
+                } else {
+                    centerFileItemIfPresent(pathToCenter)
+                }
             }
         }
     }
@@ -657,6 +661,12 @@ class MainActivity : AppCompatActivity() {
 
         listView.post {
             centerListPosition(targetIndex)
+        }
+    }
+
+    private fun scrollFileListToTop() {
+        listView.post {
+            listView.setSelectionFromTop(0, 0)
         }
     }
 
@@ -698,7 +708,7 @@ class MainActivity : AppCompatActivity() {
 
         AlertDialog.Builder(this)
             .setTitle(R.string.classify_comics_confirm_title)
-            .setMessage(getString(R.string.classify_comics_confirm_message, rootDirectory.absolutePath))
+            .setMessage(R.string.classify_comics_confirm_message)
             .setPositiveButton(R.string.yes) { _, _ ->
                 startClassifyComics(rootDirectory)
             }

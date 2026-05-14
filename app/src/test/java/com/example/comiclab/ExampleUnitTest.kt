@@ -99,6 +99,107 @@ class ExampleUnitTest {
         }
     }
 
+    @Test
+    fun deleteEntry_createsPersistentBackupBeforeModifyingZip() {
+        val root = Files.createTempDirectory("comiclab-delete-backup").toFile()
+        try {
+            val archive = File(root, "comic.cbz")
+            ZipOutputStream(archive.outputStream()).use { output ->
+                output.writeEntry("001.jpg", "one")
+                output.writeEntry("002.jpg", "two")
+            }
+            val originalBytes = archive.readBytes()
+
+            assertTrue(ComicArchive.deleteEntry(archive, "002.jpg"))
+
+            val backupFiles = File(root, ".ComicLabBackups")
+                .listFiles()
+                ?.filter { it.isFile && it.extension == "cbz" }
+                .orEmpty()
+            assertEquals(1, backupFiles.size)
+            assertArrayEquals(originalBytes, backupFiles.first().readBytes())
+
+            ZipFile(backupFiles.first()).use { backupZip ->
+                assertNotNull(backupZip.getEntry("001.jpg"))
+                assertNotNull(backupZip.getEntry("002.jpg"))
+            }
+            ZipFile(archive).use { currentZip ->
+                assertNotNull(currentZip.getEntry("001.jpg"))
+                assertNull(currentZip.getEntry("002.jpg"))
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun imageEntries_returnsEmptyWhenArchiveWasMovedOrDeleted() {
+        val root = Files.createTempDirectory("comiclab-missing-archive").toFile()
+        try {
+            val archive = File(root, "deleted.cbz")
+            ZipOutputStream(archive.outputStream()).use { output ->
+                output.writeEntry("001.jpg", "one")
+            }
+            assertTrue(archive.delete())
+
+            assertTrue(ComicArchive.imageEntries(archive).isEmpty())
+            assertNull(ComicArchive.firstImageEntryIfFirstFileIsImage(archive))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun imageEntries_returnsEmptyForDamagedZip() {
+        val root = Files.createTempDirectory("comiclab-damaged-zip").toFile()
+        try {
+            val archive = File(root, "damaged.cbz")
+            archive.writeText("this is not a zip archive")
+
+            assertTrue(ComicArchive.imageEntries(archive).isEmpty())
+            assertNull(ComicArchive.firstImageEntryIfFirstFileIsImage(archive))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun imageEntries_returnsEmptyForDamagedPdf() {
+        val root = Files.createTempDirectory("comiclab-damaged-pdf").toFile()
+        try {
+            val pdf = File(root, "damaged.pdf")
+            pdf.writeText("this is not a pdf file")
+
+            assertTrue(ComicArchive.imageEntries(pdf).isEmpty())
+            assertNull(ComicArchive.firstImageEntryIfFirstFileIsImage(pdf))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun imageEntries_sortsLargeZipNaturally() {
+        val root = Files.createTempDirectory("comiclab-large-zip").toFile()
+        try {
+            val archive = File(root, "large.cbz")
+            ZipOutputStream(archive.outputStream()).use { output ->
+                (120 downTo 1).forEach { index ->
+                    output.writeEntry("$index.jpg", "page-$index")
+                }
+            }
+
+            val entries = ComicArchive.imageEntries(archive)
+
+            assertEquals(120, entries.size)
+            assertEquals("1.jpg", entries[0])
+            assertEquals("2.jpg", entries[1])
+            assertEquals("10.jpg", entries[9])
+            assertEquals("120.jpg", entries.last())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun ZipOutputStream.writeEntry(name: String, content: String) {
         putNextEntry(ZipEntry(name))
         write(content.toByteArray())
