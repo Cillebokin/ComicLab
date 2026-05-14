@@ -634,7 +634,11 @@ class MainActivity : AppCompatActivity() {
                 fileItems.addAll(items)
                 etPath.setText(resolvedPath)
                 notifyListChanged()
-                pathToCenter?.let { centerFileItemIfPresent(it) }
+                if (pathToCenter == null) {
+                    scrollFileListToTop()
+                } else {
+                    centerFileItemIfPresent(pathToCenter)
+                }
             }
         }
     }
@@ -657,6 +661,12 @@ class MainActivity : AppCompatActivity() {
 
         listView.post {
             centerListPosition(targetIndex)
+        }
+    }
+
+    private fun scrollFileListToTop() {
+        listView.post {
+            listView.setSelectionFromTop(0, 0)
         }
     }
 
