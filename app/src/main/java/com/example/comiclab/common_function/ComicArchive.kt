@@ -36,7 +36,7 @@ object ComicArchive {
     private const val ZIP_PREVIEW_DECODE_THREAD_COUNT = 2
     private const val PREPARED_READER_MANIFEST_FILE = "reader_manifest.json"
     private const val PDF_PAGE_ENTRY_PREFIX = "pdf_page_"
-    private const val PDF_MAX_RENDER_WIDTH = 3072
+    private const val PDF_MAX_RENDER_WIDTH = 4096
 
     data class ImageBounds(
         val width: Int,
@@ -44,6 +44,7 @@ object ComicArchive {
     )
 
     interface ImageReaderSession : Closeable {
+        fun isPdfSource(): Boolean = false
         fun readBounds(entryName: String): ImageBounds?
         fun decodePreviewForWidth(entryName: String, targetWidth: Int): Bitmap?
         fun decodeImageForWidth(entryName: String, targetWidth: Int): Bitmap?
@@ -491,6 +492,8 @@ object ComicArchive {
         private val parcelFileDescriptor =
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
         private val pdfRenderer = PdfRenderer(parcelFileDescriptor)
+
+        override fun isPdfSource(): Boolean = true
 
         override fun readBounds(entryName: String): ImageBounds? {
             val pageIndex = pdfPageIndex(entryName) ?: return null

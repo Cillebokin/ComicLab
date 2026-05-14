@@ -73,9 +73,15 @@ class ReaderPageZoomLayout @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        scaleDetector.onTouchEvent(event)
+
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            captureTouch(event)
+            isDragging = false
+        }
+
         if (event.pointerCount > 1 || scaleDetector.isInProgress) {
             parent?.requestDisallowInterceptTouchEvent(true)
-            scaleDetector.onTouchEvent(event)
             lastTouchX = event.x
             lastTouchY = event.y
             if (event.actionMasked == MotionEvent.ACTION_UP ||

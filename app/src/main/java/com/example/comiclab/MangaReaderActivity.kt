@@ -1896,6 +1896,7 @@ class MangaReaderActivity : AppCompatActivity() {
         private val boundPositions = Collections.synchronizedSet(mutableSetOf<Int>())
         private val pendingRefreshPositions = Collections.synchronizedSet(mutableSetOf<Int>())
         private val pageBounds = Collections.synchronizedMap(mutableMapOf<Int, ComicArchive.ImageBounds>())
+        private val isPdfSource = session.isPdfSource()
         private val cacheLock = Any()
         private val previewBitmapCache = object : LruCache<Int, Bitmap>(previewBitmapCacheSizeKb()) {
             override fun sizeOf(key: Int, value: Bitmap): Int {
@@ -2219,7 +2220,8 @@ class MangaReaderActivity : AppCompatActivity() {
             holder.imageView.setBackgroundColor(Color.BLACK)
             holder.imageView.setImageBitmap(previewBitmap(position))
 
-            val tiles = buildTiles(bounds, imageWidth)
+            val tileDecodeWidth = tileDecodeWidth(imageWidth, bounds.width)
+            val tiles = buildTiles(bounds, imageWidth, tileDecodeWidth)
             holder.tileContainer.removeAllViews()
             tiles.forEach { tile ->
                 val tileView = ImageView(context).apply {
@@ -2228,7 +2230,6 @@ class MangaReaderActivity : AppCompatActivity() {
                     adjustViewBounds = false
                 }
                 setTileChildSize(tileView, bounds, tile.sourceRect, imageWidth, imageHeight)
-                val tileDecodeWidth = tileDecodeWidth(imageWidth, bounds.width)
                 val key = TileKey(position, tile.index, imageWidth, tileDecodeWidth)
                 tileView.tag = key
 
@@ -2689,14 +2690,31 @@ class MangaReaderActivity : AppCompatActivity() {
 
         private fun buildTiles(
             bounds: ComicArchive.ImageBounds,
-            imageWidth: Int
+            imageWidth: Int,
+            tileDecodeWidth: Int
         ): List<PageTile> {
             val sourceTileHeightByDisplay = (TILE_MAX_DISPLAY_HEIGHT.toFloat() * bounds.width / imageWidth)
                 .roundToInt()
             val sourceTileHeightByPixels = (TILE_MAX_SOURCE_PIXELS / bounds.width.coerceAtLeast(1))
                 .coerceAtLeast(TILE_MIN_SOURCE_HEIGHT)
-            val sourceTileHeight = minOf(sourceTileHeightByDisplay, sourceTileHeightByPixels)
-                .coerceAtLeast(TILE_MIN_SOURCE_HEIGHT)
+            val sourceTileHeightByDecodedPixels = if (tileDecodeWidth > 0 && bounds.width > 0) {
+                (TILE_MAX_DECODED_PIXELS.toFloat() * bounds.width.toFloat() /
+                    (tileDecodeWidth.toFloat() * tileDecodeWidth.toFloat()))
+                    .roundToInt()
+            } else {
+                sourceTileHeightByPixels
+            }
+            val minSourceTileHeight = if (isPdfSource) {
+                PDF_TILE_MIN_SOURCE_HEIGHT
+            } else {
+                TILE_MIN_SOURCE_HEIGHT
+            }
+            val sourceTileHeight = minOf(
+                sourceTileHeightByDisplay,
+                sourceTileHeightByPixels,
+                sourceTileHeightByDecodedPixels
+            )
+                .coerceAtLeast(minSourceTileHeight)
             val tiles = mutableListOf<PageTile>()
             var top = 0
             var index = 0
@@ -2711,6 +2729,10 @@ class MangaReaderActivity : AppCompatActivity() {
 
         private fun shouldUseTiledPage(bounds: ComicArchive.ImageBounds): Boolean {
             if (isHorizontalReading()) {
+                return false
+            }
+
+            if (isPdfSource) {
                 return false
             }
 
@@ -2841,16 +2863,34 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         private fun fullPageDecodeWidth(bounds: ComicArchive.ImageBounds): Int {
+            if (isPdfSource) {
+                return (baseDisplayWidth * PDF_FULL_RENDER_SCALE)
+                    .coerceAtLeast(baseDisplayWidth)
+                    .coerceAtMost(PDF_MAX_FULL_RENDER_WIDTH)
+            }
+
             return maxOf(decodeWidth, bounds.width.coerceAtMost(MAX_READER_DECODE_WIDTH))
                 .coerceAtMost(MAX_READER_DECODE_WIDTH)
         }
 
         private fun fullPageDecodeHeight(bounds: ComicArchive.ImageBounds): Int {
+            if (isPdfSource) {
+                return (baseDisplayHeight * PDF_FULL_RENDER_SCALE)
+                    .coerceAtLeast(baseDisplayHeight)
+                    .coerceAtMost(PDF_MAX_FULL_RENDER_HEIGHT)
+            }
+
             return maxOf(decodeHeight, bounds.height.coerceAtMost(MAX_READER_DECODE_HEIGHT))
                 .coerceAtMost(MAX_READER_DECODE_HEIGHT)
         }
 
         private fun tileDecodeWidth(displayImageWidth: Int, sourceWidth: Int): Int {
+            if (isPdfSource) {
+                return (displayImageWidth * PDF_TILE_RENDER_SCALE)
+                    .coerceAtLeast(displayImageWidth)
+                    .coerceAtMost(PDF_MAX_TILE_RENDER_WIDTH)
+            }
+
             return maxOf(
                 displayImageWidth,
                 decodeWidth,
@@ -3117,7 +3157,15 @@ class MangaReaderActivity : AppCompatActivity() {
             private const val TILED_DECODED_PIXEL_THRESHOLD = 10_000_000L
             private const val TILE_MAX_DISPLAY_HEIGHT = 2400
             private const val TILE_MIN_SOURCE_HEIGHT = 512
+            private const val PDF_TILE_MIN_SOURCE_HEIGHT = 128
             private const val TILE_MAX_SOURCE_PIXELS = 4_000_000
+            private const val TILE_MAX_DECODED_PIXELS = 4_000_000L
+            private const val PDF_FULL_RENDER_SCALE = 3
+            private const val PDF_TILE_RENDER_SCALE = 2
+            private const val PDF_MAX_FULL_RENDER_WIDTH = 4096
+            private const val PDF_MAX_FULL_RENDER_HEIGHT = 4096
+            private const val PDF_MAX_TILE_RENDER_WIDTH = 3072
+            private const val PDF_TILED_RENDER_PIXEL_THRESHOLD = 8_000_000L
 
             private fun previewBitmapCacheSizeKb(): Int {
                 val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
