@@ -205,8 +205,13 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun bindDebugTools() {
-        layoutDebugTools.visibility = View.VISIBLE
-        btnRunReaderStressTest.visibility = if (isDebuggableBuild()) View.VISIBLE else View.GONE
+        val showDebugTools = isDebuggableBuild()
+        layoutDebugTools.visibility = if (showDebugTools) View.VISIBLE else View.GONE
+        btnExportCrashLog.visibility = if (showDebugTools) View.VISIBLE else View.GONE
+        btnRunReaderStressTest.visibility = if (showDebugTools) View.VISIBLE else View.GONE
+        if (!showDebugTools) {
+            return
+        }
 
         btnExportCrashLog.setOnClickListener {
             exportCrashLog()

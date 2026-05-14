@@ -15,7 +15,9 @@ import android.provider.Settings
 import android.util.Log
 import android.util.LruCache
 import android.view.Gravity
+import android.view.GestureDetector
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -1440,20 +1442,17 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PageViewHolder {
-            val container = FrameLayout(context).apply {
+            val container = ReaderTapFrameLayout(context).apply {
                 setBackgroundColor(Color.BLACK)
                 isClickable = true
                 layoutParams = initialPageLayoutParams()
-                setOnClickListener {
-                    onPageTap()
-                }
+                onReaderTap = onPageTap
             }
             val imageView = ReaderSubsamplingImageView(context).apply {
                 layoutParams = FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.MATCH_PARENT
                 )
-                onReaderTap = onPageTap
             }
             val statusText = TextView(context).apply {
                 layoutParams = FrameLayout.LayoutParams(
@@ -1478,7 +1477,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
             val file = pageFiles[position]
             val bounds = pageBounds[position]
-            holder.imageView.onReaderTap = onPageTap
+            holder.container.onReaderTap = onPageTap
             applyPageLayout(holder.container, bounds)
 
             if (!file.isFile || file.length() <= 0L) {
@@ -1840,8 +1839,37 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         }
 
+        private class ReaderTapFrameLayout(context: Context) : FrameLayout(context) {
+            var onReaderTap: (() -> Unit)? = null
+
+            private val tapDetector = GestureDetector(
+                context,
+                object : GestureDetector.SimpleOnGestureListener() {
+                    override fun onDown(e: MotionEvent): Boolean {
+                        return true
+                    }
+
+                    override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                        performClick()
+                        return true
+                    }
+                }
+            )
+
+            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+                tapDetector.onTouchEvent(event)
+                return super.dispatchTouchEvent(event)
+            }
+
+            override fun performClick(): Boolean {
+                super.performClick()
+                onReaderTap?.invoke()
+                return true
+            }
+        }
+
         class PageViewHolder(
-            val container: FrameLayout,
+            val container: ReaderTapFrameLayout,
             val imageView: ReaderSubsamplingImageView,
             val statusText: TextView
         ) : RecyclerView.ViewHolder(container) {
