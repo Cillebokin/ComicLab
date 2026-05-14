@@ -79,6 +79,11 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
     }
 
     private fun prepareReader(file: File) {
+        if (ComicArchive.isPdf(file)) {
+            openReaderDirect(file)
+            return
+        }
+
         clearOldPreparedReaderCaches()
         val outputDir = createPreparedReaderDirectory(file)
         preparedDirectory = outputDir
@@ -206,6 +211,17 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
             putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
             putExtra(MangaReaderActivity.EXTRA_START_PAGE_INDEX, explicitStartPageIndex)
             putExtra(MangaReaderActivity.EXTRA_PREPARED_READER_CACHE_DIR, outputDir.absolutePath)
+        }
+        startActivity(intent)
+        finish()
+    }
+
+    private fun openReaderDirect(file: File) {
+        launchedReader = true
+        val intent = Intent(this, MangaReaderActivity::class.java).apply {
+            putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
+            putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
+            putExtra(MangaReaderActivity.EXTRA_START_PAGE_INDEX, explicitStartPageIndex)
         }
         startActivity(intent)
         finish()

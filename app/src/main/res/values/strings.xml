@@ -108,9 +108,10 @@
     <string name="delete_archive_image_success">已删除图片</string>
     <string name="delete_archive_image_failed">删除图片失败</string>
     <string name="delete_archive_image_unsupported">当前文件不支持修改源文件</string>
-    <string name="no_preview_images">压缩包中没有可预览的图片</string>
-    <string name="no_reading_images">压缩包中没有可阅读的图片</string>
-    <string name="unsupported_archive_format">当前支持 ZIP/CBZ/7Z/CB7/RAR/CBR 格式漫画包</string>
+    <string name="delete_pdf_page_unsupported">当前文件为PDF，暂不支持删除页面</string>
+    <string name="no_preview_images">文件中没有可预览的图片或页面</string>
+    <string name="no_reading_images">文件中没有可阅读的图片或页面</string>
+    <string name="unsupported_archive_format">当前支持 ZIP/CBZ/7Z/CB7/RAR/CBR/PDF 格式漫画文件</string>
     <string name="comic_cover">漫画封面</string>
     <string name="reader_image">漫画页</string>
     <string name="reader_preview">预览</string>
