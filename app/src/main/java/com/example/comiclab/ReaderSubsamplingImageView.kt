@@ -18,6 +18,10 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
     private val tapDetector = GestureDetector(
         context,
         object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean {
+                return true
+            }
+
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 performClick()
                 return true
