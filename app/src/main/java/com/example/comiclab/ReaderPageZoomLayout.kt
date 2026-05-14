@@ -121,7 +121,7 @@ class ReaderPageZoomLayout @JvmOverloads constructor(
                     parent?.requestDisallowInterceptTouchEvent(false)
                     settleTransform()
                     if (!wasDragging && isTap(event)) {
-                        onTap?.invoke()
+                        performClick()
                     }
                     return true
                 }
@@ -136,10 +136,16 @@ class ReaderPageZoomLayout @JvmOverloads constructor(
         }
 
         if (event.actionMasked == MotionEvent.ACTION_UP && isTap(event)) {
-            onTap?.invoke()
+            performClick()
             return true
         }
 
+        return true
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        onTap?.invoke()
         return true
     }
 

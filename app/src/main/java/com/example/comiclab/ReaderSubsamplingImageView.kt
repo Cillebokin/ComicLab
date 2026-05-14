@@ -19,7 +19,7 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
         context,
         object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                onReaderTap?.invoke()
+                performClick()
                 return true
             }
         }
@@ -42,6 +42,12 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
         tapDetector.onTouchEvent(event)
         parent?.requestDisallowInterceptTouchEvent(shouldKeepTouchInPage(event))
         return super.onTouchEvent(event)
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        onReaderTap?.invoke()
+        return true
     }
 
     override fun canScrollHorizontally(direction: Int): Boolean {

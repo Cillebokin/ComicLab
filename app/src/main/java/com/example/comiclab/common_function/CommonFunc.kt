@@ -17,9 +17,9 @@ object CommonFunc {
 
         return when {
             size < kb -> "$size B"
-            size < mb -> String.format("%.1f KB", size / kb)
-            size < gb -> String.format("%.1f MB", size / mb)
-            else -> String.format("%.1f GB", size / gb)
+            size < mb -> String.format(Locale.getDefault(), "%.1f KB", size / kb)
+            size < gb -> String.format(Locale.getDefault(), "%.1f MB", size / mb)
+            else -> String.format(Locale.getDefault(), "%.1f GB", size / gb)
         }
     }
 

@@ -80,22 +80,34 @@ object ComicArchive {
     }
 
     fun imageEntries(file: File): List<String> {
-        return when (file.extension.lowercase(Locale.ROOT)) {
-            in zipArchiveExtensions -> zipImageEntries(file)
-            in sevenZipArchiveExtensions -> sevenZipImageEntries(file)
-            in pdfExtensions -> pdfImageEntries(file)
-            else -> emptyList()
+        if (!file.isFile) {
+            return emptyList()
         }
+
+        return runCatching {
+            when (file.extension.lowercase(Locale.ROOT)) {
+                in zipArchiveExtensions -> zipImageEntries(file)
+                in sevenZipArchiveExtensions -> sevenZipImageEntries(file)
+                in pdfExtensions -> pdfImageEntries(file)
+                else -> emptyList()
+            }
+        }.getOrDefault(emptyList())
     }
 
     fun firstImageEntryIfFirstFileIsImage(file: File): String? {
-        return when (file.extension.lowercase(Locale.ROOT)) {
-            in zipArchiveExtensions -> zipFileEntries(file)
-            in sevenZipArchiveExtensions -> sevenZipFileEntries(file)
-            in pdfExtensions -> pdfImageEntries(file)
-            else -> emptyList()
-        }.firstOrNull()
-            ?.takeIf { it.isImageEntryName() || it.isPdfPageEntryName() }
+        if (!file.isFile) {
+            return null
+        }
+
+        return runCatching {
+            when (file.extension.lowercase(Locale.ROOT)) {
+                in zipArchiveExtensions -> zipFileEntries(file)
+                in sevenZipArchiveExtensions -> sevenZipFileEntries(file)
+                in pdfExtensions -> pdfImageEntries(file)
+                else -> emptyList()
+            }.firstOrNull()
+                ?.takeIf { it.isImageEntryName() || it.isPdfPageEntryName() }
+        }.getOrNull()
     }
 
     fun canDeleteEntry(file: File): Boolean {

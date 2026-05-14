@@ -75,9 +75,11 @@
                 android:textSize="15sp" />
 
             <TextView
+                android:id="@+id/tvStartMarkerErrorTags"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
+                android:labelFor="@id/inputStartMarkerErrorTags"
                 android:text="@string/start_marker_error_tags"
                 android:textColor="#333333"
                 android:textSize="15sp" />
@@ -102,6 +104,49 @@
                 android:layout_marginTop="14dp"
                 android:layout_marginBottom="14dp"
                 android:background="#E0E0E0" />
+
+            <LinearLayout
+                android:id="@+id/layoutDebugTools"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/stability_tools"
+                    android:textColor="#222222"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btnExportCrashLog"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_preview_action_button"
+                    android:text="@string/export_crash_log"
+                    android:textColor="@color/white"
+                    android:textSize="14sp" />
+
+                <Button
+                    android:id="@+id/btnRunReaderStressTest"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_preview_action_button"
+                    android:text="@string/run_reader_stress_test"
+                    android:textColor="@color/white"
+                    android:textSize="14sp" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="14dp"
+                    android:layout_marginBottom="14dp"
+                    android:background="#E0E0E0" />
+            </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"

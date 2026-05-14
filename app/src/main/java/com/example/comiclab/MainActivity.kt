@@ -708,7 +708,7 @@ class MainActivity : AppCompatActivity() {
 
         AlertDialog.Builder(this)
             .setTitle(R.string.classify_comics_confirm_title)
-            .setMessage(getString(R.string.classify_comics_confirm_message, rootDirectory.absolutePath))
+            .setMessage(R.string.classify_comics_confirm_message)
             .setPositiveButton(R.string.yes) { _, _ ->
                 startClassifyComics(rootDirectory)
             }

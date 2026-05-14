@@ -193,7 +193,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
     private fun setProgress(completed: Int, total: Int) {
         if (total <= 0) {
             progressPrepareReader.isIndeterminate = true
-            tvPrepareStatus.text = "正在准备阅读..."
+            tvPrepareStatus.setText(R.string.preparing_reading)
             return
         }
 
@@ -201,7 +201,12 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
         progressPrepareReader.max = total
         progressPrepareReader.progress = completed.coerceIn(0, total)
         val percent = ((completed.toFloat() / total.toFloat()) * 100f).toInt().coerceIn(0, 100)
-        tvPrepareStatus.text = "正在准备快速阅读 $completed / $total  $percent%"
+        tvPrepareStatus.text = getString(
+            R.string.preparing_fast_reading_progress,
+            completed,
+            total,
+            percent
+        )
     }
 
     private fun openReader(file: File, outputDir: File) {

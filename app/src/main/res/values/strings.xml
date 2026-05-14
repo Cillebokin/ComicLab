@@ -135,6 +135,17 @@
     <string name="auto_hide_system_bars">自动隐藏状态栏/导航栏</string>
     <string name="custom_brightness">自定义亮度</string>
     <string name="brightness_percent">%1$d%%</string>
+    <string name="stability_tools">稳定性工具</string>
+    <string name="export_crash_log">导出崩溃日志</string>
+    <string name="crash_log_empty">暂无崩溃日志</string>
+    <string name="crash_log_share_title">导出 ComicLab 崩溃日志</string>
+    <string name="run_reader_stress_test">启动阅读器压力测试</string>
+    <string name="debug_stress_scanning">正在扫描较大的漫画文件…</string>
+    <string name="debug_stress_no_comic_found">当前路径下没有找到可测试的漫画文件</string>
+    <string name="debug_stress_reader_unavailable">当前版本不支持内置压力测试入口</string>
+    <string name="debug_stress_starting">正在启动压力测试：%1$s</string>
+    <string name="preparing_reading">正在准备阅读…</string>
+    <string name="preparing_fast_reading_progress">正在准备快速阅读 %1$d / %2$d  %3$d%%</string>
     <string name="about">关于</string>
     <string name="app_author">作者：Cillebokin / swcillebokin@gmail.com</string>
     <string name="app_version">版本：V1.0.1.0512_Base</string>
