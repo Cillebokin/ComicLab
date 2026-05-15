@@ -44,14 +44,18 @@
             android:layout_marginStart="8dp"
             android:background="@drawable/bg_preview_action_button"
             android:gravity="center"
+            android:includeFontPadding="false"
             android:minWidth="0dp"
             android:minHeight="0dp"
-            android:paddingStart="0dp"
-            android:paddingEnd="0dp"
+            android:paddingStart="6dp"
+            android:paddingTop="0dp"
+            android:paddingEnd="6dp"
+            android:paddingBottom="0dp"
+            android:singleLine="true"
             android:text="@string/reader_preview"
             android:textAllCaps="false"
             android:textColor="@color/white"
-            android:textSize="13sp" />
+            android:textSize="12sp" />
     </LinearLayout>
 
     <View
