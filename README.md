@@ -16,7 +16,8 @@ ComicLab 是一个面向 Android 的本地漫画阅读器，主要用于浏览�
 
 | 类型 | 格式 |
 | --- | --- |
-| 漫画压缩包 | ZIP, CBZ, RAR, CBR, 7Z, CB7 |
+| 漫画       | pdf                            |
+| 漫画压缩包 | ZIP, CBZ, RAR, CBR, 7Z, CB7    |
 | 图片 | JPG, JPEG, PNG, WEBP, GIF, BMP |
 
 ## 运行环境
