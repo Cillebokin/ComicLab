@@ -71,6 +71,7 @@ class MainActivity : AppCompatActivity() {
     @Volatile
     private var isClassifyingComics = false
     private var browserInitialized = false
+    private var skipNextResumeDirectoryReload = false
     private var currentPath = STORAGE_ROOT_PATH
 
     private val prefs by lazy {
@@ -192,16 +193,23 @@ class MainActivity : AppCompatActivity() {
             true
         }
 
+        val restoredScrollState = savedInstanceState?.readFileListScrollState()
         if (!showStoragePermissionNoticeIfNeeded()) {
-            initializeBrowserIfPermitted()
+            initializeBrowserIfPermitted(restoredScrollState)
+            skipNextResumeDirectoryReload = true
         }
     }
 
     override fun onResume() {
         super.onResume()
         clearFileListTouchState()
+        if (skipNextResumeDirectoryReload) {
+            skipNextResumeDirectoryReload = false
+            return
+        }
+
         if (prefs.getBoolean(KEY_STORAGE_PERMISSION_PROMPTED, false)) {
-            initializeBrowserIfPermitted()
+            initializeBrowserIfPermitted(captureFileListScrollState())
         }
     }
 
@@ -210,6 +218,11 @@ class MainActivity : AppCompatActivity() {
         clearFileListTouchState()
         saveCurrentPath()
         super.onPause()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        captureFileListScrollState()?.writeTo(outState)
     }
 
     override fun onDestroy() {
@@ -529,7 +542,7 @@ class MainActivity : AppCompatActivity() {
         ).show()
     }
 
-    private fun initializeBrowserIfPermitted() {
+    private fun initializeBrowserIfPermitted(scrollStateToRestore: FileListScrollState? = null) {
         if (!Environment.isExternalStorageManager()) {
             etPath.setText(R.string.storage_permission_required)
             fileItems.clear()
@@ -538,13 +551,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (browserInitialized) {
-            loadCurrentDirectory()
+            loadCurrentDirectory(scrollStateToRestore = scrollStateToRestore)
             return
         }
 
         browserInitialized = true
         currentPath = savedCurrentPath()
-        loadCurrentDirectory()
+        loadCurrentDirectory(scrollStateToRestore = scrollStateToRestore)
     }
 
     private fun goParent() {
@@ -587,7 +600,10 @@ class MainActivity : AppCompatActivity() {
         return File(currentPath).absolutePath == File(STORAGE_ROOT_PATH).absolutePath
     }
 
-    private fun loadCurrentDirectory(pathToCenter: String? = null) {
+    private fun loadCurrentDirectory(
+        pathToCenter: String? = null,
+        scrollStateToRestore: FileListScrollState? = null
+    ) {
         if (!Environment.isExternalStorageManager()) {
             etPath.setText(R.string.storage_permission_required)
             fileItems.clear()
@@ -635,7 +651,11 @@ class MainActivity : AppCompatActivity() {
                 etPath.setText(resolvedPath)
                 notifyListChanged()
                 if (pathToCenter == null) {
-                    scrollFileListToTop()
+                    if (scrollStateToRestore != null) {
+                        restoreFileListScrollState(scrollStateToRestore, resolvedPath)
+                    } else {
+                        scrollFileListToTop()
+                    }
                 } else {
                     centerFileItemIfPresent(pathToCenter)
                 }
@@ -667,6 +687,50 @@ class MainActivity : AppCompatActivity() {
     private fun scrollFileListToTop() {
         listView.post {
             listView.setSelectionFromTop(0, 0)
+        }
+    }
+
+    private fun captureFileListScrollState(): FileListScrollState? {
+        val firstVisiblePosition = listView.firstVisiblePosition
+        if (firstVisiblePosition !in fileItems.indices) {
+            return null
+        }
+
+        val firstVisibleItem = fileItems[firstVisiblePosition]
+        return FileListScrollState(
+            directoryPath = File(currentPath).absolutePath,
+            firstVisiblePosition = firstVisiblePosition,
+            firstVisibleTop = listView.getChildAt(0)?.top ?: 0,
+            anchorPath = firstVisibleItem.file?.absolutePath,
+            anchorIsParent = firstVisibleItem.isParent
+        )
+    }
+
+    private fun restoreFileListScrollState(
+        scrollState: FileListScrollState,
+        resolvedPath: String
+    ) {
+        if (File(scrollState.directoryPath).absolutePath != File(resolvedPath).absolutePath) {
+            scrollFileListToTop()
+            return
+        }
+
+        listView.post {
+            if (fileItems.isEmpty()) {
+                return@post
+            }
+
+            val anchorPosition = when {
+                scrollState.anchorIsParent -> fileItems.indexOfFirst { it.isParent }
+                !scrollState.anchorPath.isNullOrBlank() ->
+                    fileItems.indexOfFirst { it.file?.absolutePath == scrollState.anchorPath }
+                else -> -1
+            }
+            val targetPosition = anchorPosition
+                .takeIf { it in fileItems.indices }
+                ?: scrollState.firstVisiblePosition.coerceIn(0, fileItems.lastIndex)
+
+            listView.setSelectionFromTop(targetPosition, scrollState.firstVisibleTop)
         }
     }
 
@@ -1304,11 +1368,50 @@ class MainActivity : AppCompatActivity() {
         return savedPath ?: STORAGE_ROOT_PATH
     }
 
+    private fun Bundle.readFileListScrollState(): FileListScrollState? {
+        val directoryPath = getString(KEY_FILE_LIST_SCROLL_DIRECTORY_PATH)
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        val firstVisiblePosition = getInt(KEY_FILE_LIST_SCROLL_POSITION, -1)
+        if (firstVisiblePosition < 0) {
+            return null
+        }
+
+        return FileListScrollState(
+            directoryPath = directoryPath,
+            firstVisiblePosition = firstVisiblePosition,
+            firstVisibleTop = getInt(KEY_FILE_LIST_SCROLL_TOP, 0),
+            anchorPath = getString(KEY_FILE_LIST_SCROLL_ANCHOR_PATH),
+            anchorIsParent = getBoolean(KEY_FILE_LIST_SCROLL_ANCHOR_IS_PARENT, false)
+        )
+    }
+
+    private data class FileListScrollState(
+        val directoryPath: String,
+        val firstVisiblePosition: Int,
+        val firstVisibleTop: Int,
+        val anchorPath: String?,
+        val anchorIsParent: Boolean
+    ) {
+        fun writeTo(outState: Bundle) {
+            outState.putString(KEY_FILE_LIST_SCROLL_DIRECTORY_PATH, directoryPath)
+            outState.putInt(KEY_FILE_LIST_SCROLL_POSITION, firstVisiblePosition)
+            outState.putInt(KEY_FILE_LIST_SCROLL_TOP, firstVisibleTop)
+            outState.putString(KEY_FILE_LIST_SCROLL_ANCHOR_PATH, anchorPath)
+            outState.putBoolean(KEY_FILE_LIST_SCROLL_ANCHOR_IS_PARENT, anchorIsParent)
+        }
+    }
+
     companion object {
         private const val PREFS_NAME = "saf_prefs"
         private const val KEY_STORAGE_PERMISSION_PROMPTED = "storage_permission_prompted"
         private const val KEY_SORT_MODE = "sort_mode"
         private const val KEY_CURRENT_PATH = "current_path"
+        private const val KEY_FILE_LIST_SCROLL_DIRECTORY_PATH = "file_list_scroll_directory_path"
+        private const val KEY_FILE_LIST_SCROLL_POSITION = "file_list_scroll_position"
+        private const val KEY_FILE_LIST_SCROLL_TOP = "file_list_scroll_top"
+        private const val KEY_FILE_LIST_SCROLL_ANCHOR_PATH = "file_list_scroll_anchor_path"
+        private const val KEY_FILE_LIST_SCROLL_ANCHOR_IS_PARENT = "file_list_scroll_anchor_is_parent"
         private const val CLEAR_CLICK_STATE_DELAY_MS = 120L
         private const val FILE_ITEM_HEIGHT_DP = 75
         private val INVALID_FILE_NAME_CHARS = setOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')
