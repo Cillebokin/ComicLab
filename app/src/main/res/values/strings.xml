@@ -90,6 +90,16 @@
     <string name="rename_directory_name_exists">已存在同名文件夹</string>
     <string name="rename_directory_name_success">已修改文件夹名</string>
     <string name="rename_directory_name_failed">修改文件夹名失败</string>
+    <string name="delete_file">删除文件</string>
+    <string name="delete_file_title">删除文件</string>
+    <string name="delete_file_message">是否删除该文件？\n（删除后无法恢复！）</string>
+    <string name="delete_file_success">已删除文件</string>
+    <string name="delete_file_failed">删除文件失败</string>
+    <string name="delete_directory">删除文件夹</string>
+    <string name="delete_directory_title">删除文件夹</string>
+    <string name="delete_directory_message">是否删除该文件夹？\n（删除后无法恢复！）</string>
+    <string name="delete_directory_success">已删除文件夹</string>
+    <string name="delete_directory_failed">删除文件夹失败</string>
     <string name="copy_start_marker">复制起始标记</string>
     <string name="copied_path">已复制路径</string>
     <string name="copied_file_name">已复制文件名</string>

@@ -979,10 +979,16 @@ class MainActivity : AppCompatActivity() {
         val btnFavoritePath = content.findViewById<TextView>(R.id.btnFavoritePathAction)
         val btnCopyPathName = content.findViewById<TextView>(R.id.btnCopyPathName)
         val btnRenameDirectoryName = content.findViewById<TextView>(R.id.btnRenameDirectoryName)
+        val btnDeleteDirectory = content.findViewById<TextView>(R.id.btnDeleteDirectory)
         val isFavorite = FavoritePathStore.isFavorite(this, directory)
 
         tvDirectoryActionTitle.text = directory.name
-        sizeBottomSheetActionIcons(btnFavoritePath, btnCopyPathName, btnRenameDirectoryName)
+        sizeBottomSheetActionIcons(
+            btnFavoritePath,
+            btnCopyPathName,
+            btnRenameDirectoryName,
+            btnDeleteDirectory
+        )
         btnFavoritePath.text = getString(
             if (isFavorite) R.string.cancel_favorite else R.string.favorite_path_action
         )
@@ -1027,6 +1033,11 @@ class MainActivity : AppCompatActivity() {
         btnRenameDirectoryName.setOnClickListener {
             dialog.dismiss()
             showRenameDirectoryDialog(directory)
+        }
+
+        btnDeleteDirectory.setOnClickListener {
+            dialog.dismiss()
+            confirmDeleteDirectory(directory)
         }
 
         dialog.setContentView(content)
@@ -1108,6 +1119,7 @@ class MainActivity : AppCompatActivity() {
         val btnCopyStartMarker = content.findViewById<TextView>(R.id.btnCopyStartMarker)
         val btnFavoriteComic = content.findViewById<TextView>(R.id.btnFavoriteComicAction)
         val btnRead = content.findViewById<TextView>(R.id.btnReadComic)
+        val btnDeleteFile = content.findViewById<TextView>(R.id.btnDeleteFile)
         val isFavorite = FavoriteComicStore.isFavorite(this, file)
 
         tvArchiveActionTitle.text = file.name
@@ -1116,7 +1128,8 @@ class MainActivity : AppCompatActivity() {
             btnFavoriteComic,
             btnCopyFileName,
             btnRenameFileName,
-            btnCopyStartMarker
+            btnCopyStartMarker,
+            btnDeleteFile
         )
         btnFavoriteComic.text = getString(
             if (isFavorite) R.string.cancel_favorite else R.string.favorite_comic_action
@@ -1192,8 +1205,82 @@ class MainActivity : AppCompatActivity() {
             openMangaPreview(file)
         }
 
+        btnDeleteFile.setOnClickListener {
+            dialog.dismiss()
+            confirmDeleteFile(file)
+        }
+
         dialog.setContentView(content)
         dialog.show()
+    }
+
+    private fun confirmDeleteFile(file: File) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.delete_file_title)
+            .setMessage(R.string.delete_file_message)
+            .setPositiveButton(R.string.yes) { _, _ ->
+                deleteFileFromBrowser(file)
+            }
+            .setNegativeButton(R.string.no, null)
+            .show()
+    }
+
+    private fun deleteFileFromBrowser(file: File) {
+        if (!file.isFile) {
+            showMessage(getString(R.string.message_invalid_file))
+            loadCurrentDirectory(scrollStateToRestore = captureFileListScrollState())
+            return
+        }
+
+        val scrollState = captureFileListScrollState()
+        directoryLoadExecutor.execute {
+            val deleted = runCatching { file.delete() }.getOrDefault(false)
+            runOnUiThread {
+                if (deleted) {
+                    FavoriteComicStore.remove(this, file)
+                    ReadingHistoryStore.remove(this, file)
+                    showMessage(getString(R.string.delete_file_success))
+                    loadCurrentDirectory(scrollStateToRestore = scrollState)
+                } else {
+                    showMessage(getString(R.string.delete_file_failed))
+                }
+            }
+        }
+    }
+
+    private fun confirmDeleteDirectory(directory: File) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.delete_directory_title)
+            .setMessage(R.string.delete_directory_message)
+            .setPositiveButton(R.string.yes) { _, _ ->
+                deleteDirectoryFromBrowser(directory)
+            }
+            .setNegativeButton(R.string.no, null)
+            .show()
+    }
+
+    private fun deleteDirectoryFromBrowser(directory: File) {
+        if (!directory.isDirectory ||
+            File(directory.absolutePath).absolutePath == File(STORAGE_ROOT_PATH).absolutePath
+        ) {
+            showMessage(getString(R.string.message_invalid_directory))
+            loadCurrentDirectory(scrollStateToRestore = captureFileListScrollState())
+            return
+        }
+
+        val scrollState = captureFileListScrollState()
+        directoryLoadExecutor.execute {
+            val deleted = runCatching { directory.deleteRecursively() }.getOrDefault(false)
+            runOnUiThread {
+                if (deleted) {
+                    FavoritePathStore.remove(this, directory)
+                    showMessage(getString(R.string.delete_directory_success))
+                    loadCurrentDirectory(scrollStateToRestore = scrollState)
+                } else {
+                    showMessage(getString(R.string.delete_directory_failed))
+                }
+            }
+        }
     }
 
     private fun showRenameFileDialog(file: File) {
