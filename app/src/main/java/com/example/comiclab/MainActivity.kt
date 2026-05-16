@@ -20,6 +20,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ListView
+import android.widget.PopupMenu
 import android.widget.PopupWindow
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -31,6 +32,9 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -70,6 +74,8 @@ class MainActivity : AppCompatActivity() {
     private var favoritePathAdapter: FavoritePathAdapter? = null
     @Volatile
     private var isClassifyingComics = false
+    @Volatile
+    private var isBuildingDirectorySimilarityReport = false
     private var browserInitialized = false
     private var skipNextResumeDirectoryReload = false
     private var pendingCenterTargetPath: String? = null
@@ -137,7 +143,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnClassify.setOnClickListener {
-            confirmClassifyCurrentDirectory()
+            showClassifyMenu()
         }
 
         btnSearch.setOnClickListener {
@@ -810,6 +816,29 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun showClassifyMenu() {
+        PopupMenu(this, btnClassify).apply {
+            menu.add(0, MENU_CLASSIFY_BY_START_MARKER, 0, getString(R.string.classify_comics))
+            menu.add(0, MENU_FIND_SIMILAR_DIRECTORY_NAMES, 1, MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES)
+            setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    MENU_CLASSIFY_BY_START_MARKER -> {
+                        confirmClassifyCurrentDirectory()
+                        true
+                    }
+
+                    MENU_FIND_SIMILAR_DIRECTORY_NAMES -> {
+                        startFindSimilarDirectoryNames()
+                        true
+                    }
+
+                    else -> false
+                }
+            }
+            show()
+        }
+    }
+
     private fun confirmClassifyCurrentDirectory() {
         if (!Environment.isExternalStorageManager()) {
             openManageAllFilesAccessSettings()
@@ -818,6 +847,11 @@ class MainActivity : AppCompatActivity() {
 
         if (isClassifyingComics) {
             showMessage(getString(R.string.classify_comics_running))
+            return
+        }
+
+        if (isBuildingDirectorySimilarityReport) {
+            showMessage(MESSAGE_FINDING_SIMILAR_DIRECTORY_NAMES)
             return
         }
 
@@ -889,6 +923,87 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun startFindSimilarDirectoryNames() {
+        if (!Environment.isExternalStorageManager()) {
+            openManageAllFilesAccessSettings()
+            return
+        }
+
+        if (isClassifyingComics) {
+            showMessage(getString(R.string.classify_comics_running))
+            return
+        }
+
+        if (isBuildingDirectorySimilarityReport) {
+            showMessage(MESSAGE_FINDING_SIMILAR_DIRECTORY_NAMES)
+            return
+        }
+
+        val rootDirectory = File(currentPath)
+        if (!rootDirectory.isDirectory) {
+            showMessage(getString(R.string.message_invalid_directory))
+            return
+        }
+
+        val generation = classifyGeneration.incrementAndGet()
+        val rootPath = rootDirectory.absolutePath
+        val scrollState = captureFileListScrollState()
+        val content = layoutInflater.inflate(R.layout.dialog_classify_progress, null)
+        val tvStatus = content.findViewById<TextView>(R.id.tvClassifyProgressStatus)
+        val progressBar = content.findViewById<ProgressBar>(R.id.progressClassifyComics)
+        val tvCount = content.findViewById<TextView>(R.id.tvClassifyProgressCount)
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle(MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES)
+            .setView(content)
+            .setCancelable(false)
+            .create()
+
+        isBuildingDirectorySimilarityReport = true
+        progressBar.isIndeterminate = true
+        tvStatus.text = MESSAGE_SCANNING_DIRECTORIES
+        tvCount.text = ""
+        progressDialog.show()
+
+        runCatching {
+            classifyExecutor.execute {
+                val result = runCatching {
+                    buildDirectorySimilarityReport(rootDirectory) { progress ->
+                        runOnUiThread {
+                            if (generation == classifyGeneration.get() && !isDestroyed) {
+                                updateDirectorySimilarityProgress(progress, progressBar, tvStatus, tvCount)
+                            }
+                        }
+                    }
+                }
+
+                runOnUiThread {
+                    if (generation != classifyGeneration.get() || isDestroyed) {
+                        return@runOnUiThread
+                    }
+
+                    isBuildingDirectorySimilarityReport = false
+                    progressDialog.dismiss()
+                    result
+                        .onSuccess { report ->
+                            showMessage(
+                                "已生成报告：${report.outputFile.name}，相似组合 ${report.pairCount} 组"
+                            )
+                            if (File(currentPath).absolutePath == rootPath) {
+                                loadCurrentDirectory(scrollStateToRestore = scrollState)
+                            }
+                        }
+                        .onFailure {
+                            showMessage(MESSAGE_DIRECTORY_SIMILARITY_REPORT_FAILED)
+                        }
+                }
+            }
+        }.onFailure {
+            isBuildingDirectorySimilarityReport = false
+            progressDialog.dismiss()
+            showMessage(MESSAGE_DIRECTORY_SIMILARITY_REPORT_FAILED)
+        }
+    }
+
     private fun updateClassifyProgress(
         progress: ComicClassifier.Progress,
         progressBar: ProgressBar,
@@ -936,6 +1051,276 @@ class MainActivity : AppCompatActivity() {
                 outputDirectory.name
             )
         )
+    }
+
+    private fun updateDirectorySimilarityProgress(
+        progress: DirectorySimilarityProgress,
+        progressBar: ProgressBar,
+        tvStatus: TextView,
+        tvCount: TextView
+    ) {
+        tvStatus.text = progress.message
+        if (progress.total <= 0) {
+            progressBar.isIndeterminate = true
+            tvCount.text = ""
+            return
+        }
+
+        progressBar.isIndeterminate = false
+        progressBar.max = progress.total
+        progressBar.progress = progress.completed.coerceIn(0, progress.total)
+        tvCount.text = getString(
+            R.string.classify_comics_progress_count,
+            progress.completed,
+            progress.total
+        )
+    }
+
+    private fun buildDirectorySimilarityReport(
+        rootDirectory: File,
+        onProgress: (DirectorySimilarityProgress) -> Unit
+    ): DirectorySimilarityReport {
+        onProgress(DirectorySimilarityProgress(MESSAGE_SCANNING_DIRECTORIES))
+        val directories = scanDirectoriesForSimilarity(rootDirectory)
+        onProgress(
+            DirectorySimilarityProgress(
+                message = MESSAGE_COMPARING_DIRECTORY_NAMES,
+                completed = 0,
+                total = directories.size
+            )
+        )
+
+        val pairs = findSimilarDirectoryNamePairs(directories) { completed, total ->
+            onProgress(
+                DirectorySimilarityProgress(
+                    message = MESSAGE_COMPARING_DIRECTORY_NAMES,
+                    completed = completed,
+                    total = total
+                )
+            )
+        }
+        val outputFile = createDirectorySimilarityReportFile(rootDirectory)
+        outputFile.writeText(
+            buildDirectorySimilarityReportText(rootDirectory, directories, pairs)
+        )
+        return DirectorySimilarityReport(
+            outputFile = outputFile,
+            directoryCount = directories.size,
+            pairCount = pairs.size
+        )
+    }
+
+    private fun scanDirectoriesForSimilarity(rootDirectory: File): List<SimilarDirectoryInfo> {
+        val result = mutableListOf<SimilarDirectoryInfo>()
+        val pending = ArrayDeque<File>()
+        val visited = mutableSetOf<String>()
+
+        runCatching {
+            rootDirectory.listFiles()
+                ?.filter { it.isDirectory && !it.name.startsWith(".") }
+                ?.sortedByDescending { it.name.lowercase(Locale.ROOT) }
+                ?.forEach { pending.add(it) }
+        }
+
+        while (pending.isNotEmpty()) {
+            val directory = pending.removeLast()
+            if (!directory.isDirectory || directory.name.startsWith(".")) {
+                continue
+            }
+
+            val stablePath = runCatching { directory.canonicalPath }
+                .getOrDefault(directory.absolutePath)
+            if (!visited.add(stablePath)) {
+                continue
+            }
+
+            result.add(
+                SimilarDirectoryInfo(
+                    name = directory.name,
+                    path = directory.absolutePath
+                )
+            )
+
+            val children = runCatching {
+                directory.listFiles()
+                    ?.filter { it.isDirectory && !it.name.startsWith(".") }
+                    ?.sortedByDescending { it.name.lowercase(Locale.ROOT) }
+                    .orEmpty()
+            }.getOrDefault(emptyList())
+            children.forEach { pending.add(it) }
+        }
+
+        return result.sortedBy { it.path.lowercase(Locale.ROOT) }
+    }
+
+    private fun findSimilarDirectoryNamePairs(
+        directories: List<SimilarDirectoryInfo>,
+        onProgress: (completed: Int, total: Int) -> Unit
+    ): List<SimilarDirectoryNamePair> {
+        val candidates = directories
+            .mapNotNull { directory ->
+                normalizeDirectoryNameForSimilarity(directory.name)
+                    .takeIf { it.isNotBlank() }
+                    ?.let { normalizedName ->
+                        SimilarDirectoryNameCandidate(directory, normalizedName)
+                    }
+            }
+
+        if (candidates.size < 2) {
+            onProgress(candidates.size, candidates.size)
+            return emptyList()
+        }
+
+        val pairs = mutableListOf<SimilarDirectoryNamePair>()
+        for (leftIndex in 0 until candidates.lastIndex) {
+            val left = candidates[leftIndex]
+            for (rightIndex in (leftIndex + 1)..candidates.lastIndex) {
+                val right = candidates[rightIndex]
+                val maxLength = maxOf(left.normalizedName.length, right.normalizedName.length)
+                val minLength = minOf(left.normalizedName.length, right.normalizedName.length)
+                if (maxLength <= 0 ||
+                    minLength.toDouble() / maxLength.toDouble() < DIRECTORY_NAME_SIMILARITY_THRESHOLD
+                ) {
+                    continue
+                }
+
+                val similarity = directoryNameSimilarity(left.normalizedName, right.normalizedName)
+                if (similarity >= DIRECTORY_NAME_SIMILARITY_THRESHOLD) {
+                    pairs.add(
+                        SimilarDirectoryNamePair(
+                            left = left.directory,
+                            right = right.directory,
+                            similarity = similarity
+                        )
+                    )
+                }
+            }
+
+            if (leftIndex % DIRECTORY_SIMILARITY_PROGRESS_ROW_INTERVAL == 0 ||
+                leftIndex == candidates.lastIndex - 1
+            ) {
+                onProgress(leftIndex + 1, candidates.size)
+            }
+        }
+        onProgress(candidates.size, candidates.size)
+
+        return pairs.sortedWith(
+            compareByDescending<SimilarDirectoryNamePair> { it.similarity }
+                .thenBy { it.left.name.lowercase(Locale.ROOT) }
+                .thenBy { it.right.name.lowercase(Locale.ROOT) }
+                .thenBy { it.left.path.lowercase(Locale.ROOT) }
+                .thenBy { it.right.path.lowercase(Locale.ROOT) }
+        )
+    }
+
+    private fun buildDirectorySimilarityReportText(
+        rootDirectory: File,
+        directories: List<SimilarDirectoryInfo>,
+        pairs: List<SimilarDirectoryNamePair>
+    ): String {
+        val generatedAt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+        return buildString {
+            appendLine("ComicLab 命名接近的文件夹路径报告")
+            appendLine("生成时间：$generatedAt")
+            appendLine("扫描根目录：${rootDirectory.absolutePath}")
+            appendLine(
+                "比较规则：仅使用文件夹名计算归一化 Levenshtein 相似度，阈值 >= " +
+                    similarityPercent(DIRECTORY_NAME_SIMILARITY_THRESHOLD)
+            )
+            appendLine("扫描文件夹数：${directories.size}")
+            appendLine("命名接近组合数：${pairs.size}")
+            appendLine()
+
+            if (pairs.isEmpty()) {
+                appendLine("没有找到达到阈值的命名接近文件夹。")
+                return@buildString
+            }
+
+            pairs.forEachIndexed { index, pair ->
+                appendLine("[${String.format(Locale.ROOT, "%03d", index + 1)}] 相似度：${similarityPercent(pair.similarity)}")
+                appendLine("名称 A：${pair.left.name}")
+                appendLine("路径 A：${pair.left.path}")
+                appendLine("名称 B：${pair.right.name}")
+                appendLine("路径 B：${pair.right.path}")
+                appendLine()
+            }
+        }
+    }
+
+    private fun createDirectorySimilarityReportFile(rootDirectory: File): File {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
+        var outputFile = File(
+            rootDirectory,
+            "$DIRECTORY_SIMILARITY_REPORT_PREFIX$timestamp$DIRECTORY_SIMILARITY_REPORT_EXTENSION"
+        )
+        var index = 1
+        while (outputFile.exists()) {
+            outputFile = File(
+                rootDirectory,
+                "$DIRECTORY_SIMILARITY_REPORT_PREFIX${timestamp}_" +
+                    "${String.format(Locale.ROOT, "%03d", index)}$DIRECTORY_SIMILARITY_REPORT_EXTENSION"
+            )
+            index++
+        }
+        return outputFile
+    }
+
+    private fun normalizeDirectoryNameForSimilarity(value: String): String {
+        return value
+            .trim()
+            .lowercase(Locale.ROOT)
+            .filterNot { char ->
+                char.isWhitespace() || char in DIRECTORY_NAME_SIMILARITY_IGNORED_CHARS
+            }
+    }
+
+    private fun directoryNameSimilarity(left: String, right: String): Double {
+        if (left == right) {
+            return 1.0
+        }
+        val maxLength = maxOf(left.length, right.length)
+        if (maxLength <= 0) {
+            return 0.0
+        }
+        val distance = levenshteinDistance(left, right)
+        return (1.0 - (distance.toDouble() / maxLength.toDouble())).coerceIn(0.0, 1.0)
+    }
+
+    private fun levenshteinDistance(left: String, right: String): Int {
+        if (left == right) {
+            return 0
+        }
+        if (left.isEmpty()) {
+            return right.length
+        }
+        if (right.isEmpty()) {
+            return left.length
+        }
+
+        var previous = IntArray(right.length + 1) { it }
+        var current = IntArray(right.length + 1)
+
+        for (leftIndex in 1..left.length) {
+            current[0] = leftIndex
+            for (rightIndex in 1..right.length) {
+                val cost = if (left[leftIndex - 1] == right[rightIndex - 1]) 0 else 1
+                current[rightIndex] = minOf(
+                    current[rightIndex - 1] + 1,
+                    previous[rightIndex] + 1,
+                    previous[rightIndex - 1] + cost
+                )
+            }
+
+            val swap = previous
+            previous = current
+            current = swap
+        }
+
+        return previous[right.length]
+    }
+
+    private fun similarityPercent(value: Double): String {
+        return String.format(Locale.getDefault(), "%.2f%%", value * 100.0)
     }
 
     private fun sortFiles(files: List<File>): List<File> {
@@ -1546,6 +1931,34 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private data class DirectorySimilarityProgress(
+        val message: String,
+        val completed: Int = 0,
+        val total: Int = 0
+    )
+
+    private data class DirectorySimilarityReport(
+        val outputFile: File,
+        val directoryCount: Int,
+        val pairCount: Int
+    )
+
+    private data class SimilarDirectoryInfo(
+        val name: String,
+        val path: String
+    )
+
+    private data class SimilarDirectoryNameCandidate(
+        val directory: SimilarDirectoryInfo,
+        val normalizedName: String
+    )
+
+    private data class SimilarDirectoryNamePair(
+        val left: SimilarDirectoryInfo,
+        val right: SimilarDirectoryInfo,
+        val similarity: Double
+    )
+
     companion object {
         private const val PREFS_NAME = "saf_prefs"
         const val EXTRA_CENTER_TARGET_PATH = "center_target_path"
@@ -1564,6 +1977,31 @@ class MainActivity : AppCompatActivity() {
         private const val READING_HISTORY_PANEL_ELEVATION_DP = 8
         private const val READING_HISTORY_PANEL_ENTER_ANIMATION_MS = 180L
         private const val READING_HISTORY_PANEL_EXIT_ANIMATION_MS = 150L
+        private const val MENU_CLASSIFY_BY_START_MARKER = 1
+        private const val MENU_FIND_SIMILAR_DIRECTORY_NAMES = 2
+        private const val DIRECTORY_NAME_SIMILARITY_THRESHOLD = 0.78
+        private const val DIRECTORY_SIMILARITY_PROGRESS_ROW_INTERVAL = 25
+        private const val DIRECTORY_SIMILARITY_REPORT_PREFIX = "ComicLab_similar_directory_names_"
+        private const val DIRECTORY_SIMILARITY_REPORT_EXTENSION = ".txt"
+        private const val MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES = "查找相似文件夹"
+        private const val MESSAGE_FINDING_SIMILAR_DIRECTORY_NAMES = "正在查找命名接近的路径"
+        private const val MESSAGE_SCANNING_DIRECTORIES = "正在扫描文件夹..."
+        private const val MESSAGE_COMPARING_DIRECTORY_NAMES = "正在比较文件夹名称..."
+        private const val MESSAGE_DIRECTORY_SIMILARITY_REPORT_FAILED = "生成命名接近路径报告失败"
+        private val DIRECTORY_NAME_SIMILARITY_IGNORED_CHARS = setOf(
+            '_',
+            '-',
+            '.',
+            '·',
+            '[',
+            ']',
+            '(',
+            ')',
+            '（',
+            '）',
+            '【',
+            '】'
+        )
         private val STORAGE_ROOT_PATH = Environment.getExternalStorageDirectory().absolutePath
     }
 

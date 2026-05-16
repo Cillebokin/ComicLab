@@ -89,8 +89,8 @@
 
             <ImageButton
                 android:id="@+id/btnRunSearch"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
                 android:layout_marginStart="@dimen/space_md"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/search"
@@ -110,7 +110,7 @@
                 android:id="@+id/checkSearchDirectories"
                 android:layout_width="wrap_content"
                 android:layout_height="match_parent"
-                android:buttonTint="@color/comiclab_blue"
+                android:button="@drawable/selector_search_checkbox"
                 android:checked="true"
                 android:gravity="center_vertical"
                 android:includeFontPadding="false"
@@ -123,7 +123,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="match_parent"
                 android:layout_marginStart="@dimen/space_lg"
-                android:buttonTint="@color/comiclab_blue"
+                android:button="@drawable/selector_search_checkbox"
                 android:checked="true"
                 android:gravity="center_vertical"
                 android:includeFontPadding="false"
