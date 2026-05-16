@@ -65,6 +65,17 @@
     <string name="sort_by_modified_asc">修改时间从旧到新</string>
     <string name="sort_by_size_desc">大小从大到小</string>
     <string name="sort_by_size_asc">大小从小到大</string>
+    <string name="search">搜索</string>
+    <string name="search_keyword_hint">输入文件或文件夹关键字</string>
+    <string name="search_root">搜索范围：%1$s</string>
+    <string name="search_idle">请输入关键字后搜索</string>
+    <string name="search_empty_keyword">请输入搜索关键字</string>
+    <string name="search_directories">搜索文件夹</string>
+    <string name="search_files">搜索文件</string>
+    <string name="search_no_selected_types">没有待搜索的类型</string>
+    <string name="searching">正在搜索...</string>
+    <string name="search_no_results">没有找到匹配项</string>
+    <string name="search_results_count">找到 %1$d 项</string>
     <string name="open_file">刷新</string>
     <string name="back">返回</string>
     <string name="go_storage_root">返回初始路径</string>

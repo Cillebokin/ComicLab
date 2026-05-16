@@ -72,6 +72,7 @@ class MainActivity : AppCompatActivity() {
     private var isClassifyingComics = false
     private var browserInitialized = false
     private var skipNextResumeDirectoryReload = false
+    private var pendingCenterTargetPath: String? = null
     private var currentPath = STORAGE_ROOT_PATH
 
     private val prefs by lazy {
@@ -140,7 +141,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnSearch.setOnClickListener {
-            loadCurrentDirectory()
+            openSearch()
         }
 
         etPath.setOnLongClickListener {
@@ -193,9 +194,23 @@ class MainActivity : AppCompatActivity() {
             true
         }
 
+        pendingCenterTargetPath = intent.getStringExtra(EXTRA_CENTER_TARGET_PATH)
         val restoredScrollState = savedInstanceState?.readFileListScrollState()
         if (!showStoragePermissionNoticeIfNeeded()) {
             initializeBrowserIfPermitted(restoredScrollState)
+            skipNextResumeDirectoryReload = true
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingCenterTargetPath = intent.getStringExtra(EXTRA_CENTER_TARGET_PATH)
+        if (!pendingCenterTargetPath.isNullOrBlank() &&
+            Environment.isExternalStorageManager()
+        ) {
+            dismissSidePanels()
+            initializeBrowserIfPermitted()
             skipNextResumeDirectoryReload = true
         }
     }
@@ -550,6 +565,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        if (openPendingCenteredTargetIfPresent()) {
+            return
+        }
+
         if (browserInitialized) {
             loadCurrentDirectory(scrollStateToRestore = scrollStateToRestore)
             return
@@ -558,6 +577,44 @@ class MainActivity : AppCompatActivity() {
         browserInitialized = true
         currentPath = savedCurrentPath()
         loadCurrentDirectory(scrollStateToRestore = scrollStateToRestore)
+    }
+
+    private fun openSearch() {
+        if (!Environment.isExternalStorageManager()) {
+            openManageAllFilesAccessSettings()
+            return
+        }
+
+        val intent = Intent(this, SearchActivity::class.java).apply {
+            putExtra(SearchActivity.EXTRA_SEARCH_ROOT_PATH, currentPath)
+        }
+        startActivity(intent)
+    }
+
+    private fun openPendingCenteredTargetIfPresent(): Boolean {
+        val targetPath = pendingCenterTargetPath?.takeIf { it.isNotBlank() } ?: return false
+        pendingCenterTargetPath = null
+        browserInitialized = true
+        openDirectoryContainingTarget(targetPath)
+        return true
+    }
+
+    private fun openDirectoryContainingTarget(targetPath: String) {
+        val storageRoot = File(STORAGE_ROOT_PATH)
+        val target = File(targetPath)
+        val targetAbsolutePath = target.absolutePath
+        if (targetAbsolutePath == storageRoot.absolutePath) {
+            setCurrentPath(storageRoot.absolutePath)
+            loadCurrentDirectory()
+            return
+        }
+
+        val parentDirectory = target.parentFile
+            ?.takeIf { it.isDirectory }
+            ?: target.takeIf { it.isDirectory }
+            ?: storageRoot
+        setCurrentPath(parentDirectory.absolutePath)
+        loadCurrentDirectory(targetAbsolutePath)
     }
 
     private fun goParent() {
@@ -1491,6 +1548,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val PREFS_NAME = "saf_prefs"
+        const val EXTRA_CENTER_TARGET_PATH = "center_target_path"
         private const val KEY_STORAGE_PERMISSION_PROMPTED = "storage_permission_prompted"
         private const val KEY_SORT_MODE = "sort_mode"
         private const val KEY_CURRENT_PATH = "current_path"

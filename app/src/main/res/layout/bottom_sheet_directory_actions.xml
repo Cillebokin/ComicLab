@@ -86,5 +86,5 @@
         android:text="@string/delete_directory"
         android:textColor="@color/comiclab_danger"
         android:textSize="@dimen/text_body"
-        app:drawableStartCompat="@drawable/ic_delete_menu" />
+        app:drawableStartCompat="@drawable/png_delete_icon" />
 </LinearLayout>

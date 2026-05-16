@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/main"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/comiclab_surface">
+
+    <View
+        android:id="@+id/statusBarBackground"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:background="@color/comiclab_blue"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <LinearLayout
+        android:id="@+id/layoutSearchToolbar"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:background="@color/comiclab_blue"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="@dimen/space_lg"
+        android:paddingEnd="@dimen/space_lg"
+        app:layout_constraintTop_toBottomOf="@+id/statusBarBackground">
+
+        <ImageButton
+            android:id="@+id/btnBack"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/back"
+            android:scaleType="centerInside"
+            android:src="@drawable/png_back_icon"
+            app:tint="@color/white" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/space_lg"
+            android:includeFontPadding="false"
+            android:text="@string/search"
+            android:textColor="@color/white"
+            android:textSize="@dimen/text_title"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layoutSearchInput"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/comiclab_surface_card"
+        android:orientation="vertical"
+        android:padding="@dimen/space_md"
+        app:layout_constraintTop_toBottomOf="@+id/layoutSearchToolbar">
+
+        <TextView
+            android:id="@+id/tvSearchRoot"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="@color/comiclab_text_secondary"
+            android:textSize="@dimen/text_caption" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="@dimen/space_sm"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <EditText
+                android:id="@+id/inputSearchKeyword"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:backgroundTint="@color/comiclab_blue"
+                android:hint="@string/search_keyword_hint"
+                android:imeOptions="actionSearch"
+                android:importantForAutofill="no"
+                android:inputType="text"
+                android:maxLines="1"
+                android:singleLine="true"
+                android:textColor="@color/comiclab_text_primary"
+                android:textColorHint="@color/comiclab_text_tertiary"
+                android:textSize="@dimen/text_body" />
+
+            <ImageButton
+                android:id="@+id/btnRunSearch"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_marginStart="@dimen/space_md"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/search"
+                android:scaleType="centerInside"
+                android:src="@drawable/png_search_icon" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/layoutSearchTypeOptions"
+            android:layout_width="match_parent"
+            android:layout_height="32dp"
+            android:layout_marginTop="@dimen/space_sm"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <CheckBox
+                android:id="@+id/checkSearchDirectories"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:buttonTint="@color/comiclab_blue"
+                android:checked="true"
+                android:gravity="center_vertical"
+                android:includeFontPadding="false"
+                android:text="@string/search_directories"
+                android:textColor="@color/comiclab_text_secondary"
+                android:textSize="@dimen/text_caption" />
+
+            <CheckBox
+                android:id="@+id/checkSearchFiles"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:layout_marginStart="@dimen/space_lg"
+                android:buttonTint="@color/comiclab_blue"
+                android:checked="true"
+                android:gravity="center_vertical"
+                android:includeFontPadding="false"
+                android:text="@string/search_files"
+                android:textColor="@color/comiclab_text_secondary"
+                android:textSize="@dimen/text_caption" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layoutSearchStatus"
+        android:layout_width="match_parent"
+        android:layout_height="34dp"
+        android:background="@color/comiclab_surface"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="@dimen/space_md"
+        android:paddingEnd="@dimen/space_md"
+        app:layout_constraintTop_toBottomOf="@+id/layoutSearchInput">
+
+        <ProgressBar
+            android:id="@+id/progressSearch"
+            style="?android:attr/progressBarStyleSmall"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:indeterminateTint="@color/comiclab_blue" />
+
+        <TextView
+            android:id="@+id/tvSearchStatus"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/space_sm"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="@color/comiclab_text_secondary"
+            android:textSize="@dimen/text_caption" />
+    </LinearLayout>
+
+    <ListView
+        android:id="@+id/listSearchResults"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:background="@color/comiclab_surface"
+        android:choiceMode="none"
+        android:clipToPadding="false"
+        android:divider="@color/comiclab_divider"
+        android:dividerHeight="1dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/layoutSearchStatus" />
+</androidx.constraintlayout.widget.ConstraintLayout>

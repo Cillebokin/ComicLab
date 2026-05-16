@@ -144,7 +144,7 @@
             android:layout_height="24dp"
             android:layout_marginStart="16dp"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/open_file"
+            android:contentDescription="@string/search"
             android:scaleType="centerInside"
             android:src="@drawable/png_search_icon" />
 
