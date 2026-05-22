@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.util.LruCache
 import android.view.LayoutInflater
 import android.view.View
@@ -15,6 +16,7 @@ import java.io.File
 import java.util.Collections
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class ReaderPreviewAdapter(
     private val context: Context,
@@ -91,10 +93,10 @@ class ReaderPreviewAdapter(
         val previousPosition = selectedPosition
         selectedPosition = boundedPosition
         if (previousPosition != RecyclerView.NO_POSITION) {
-            notifyItemChanged(previousPosition)
+            notifyItemChangedSafely(previousPosition)
         }
         if (selectedPosition != RecyclerView.NO_POSITION) {
-            notifyItemChanged(selectedPosition)
+            notifyItemChangedSafely(selectedPosition)
         }
     }
 
@@ -106,9 +108,39 @@ class ReaderPreviewAdapter(
         synchronized(cache) {
             cache.evictAll()
         }
-        synchronized(sessionLock) {
-            runCatching { readerSession?.close() }
-            readerSession = null
+        closeSessionAfterDecoderStops()
+    }
+
+    private fun closeSessionAfterDecoderStops() {
+        Thread(
+            {
+                if (!awaitDecoderTermination()) {
+                    return@Thread
+                }
+                synchronized(cache) {
+                    cache.evictAll()
+                }
+                synchronized(sessionLock) {
+                    runCatching { readerSession?.close() }
+                        .onFailure { Log.w(LOG_TAG, "reader preview session close failed", it) }
+                    readerSession = null
+                }
+            },
+            "ComicLabReaderPreviewClose"
+        ).start()
+    }
+
+    private fun awaitDecoderTermination(): Boolean {
+        while (true) {
+            try {
+                if (decodeExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
+                    return true
+                }
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                Log.w(LOG_TAG, "reader preview close interrupted", interrupted)
+                return false
+            }
         }
     }
 
@@ -147,8 +179,19 @@ class ReaderPreviewAdapter(
                     }
                     mainHandler.post {
                         if (!closed && position in entries.indices) {
-                            notifyItemChanged(position)
+                            notifyItemChangedSafely(position)
                         }
+                    }
+                } catch (throwable: Throwable) {
+                    failedPositions.add(position)
+                    if (throwable is OutOfMemoryError) {
+                        synchronized(cache) {
+                            cache.evictAll()
+                        }
+                        Log.w(LOG_TAG, "reader preview thumbnail OOM position=$position")
+                        System.gc()
+                    } else {
+                        Log.w(LOG_TAG, "reader preview thumbnail failed position=$position", throwable)
                     }
                 } finally {
                     loadingPositions.remove(position)
@@ -156,6 +199,14 @@ class ReaderPreviewAdapter(
             }
         }.onFailure {
             loadingPositions.remove(position)
+        }
+    }
+
+    private fun notifyItemChangedSafely(position: Int) {
+        runCatching {
+            notifyItemChanged(position)
+        }.onFailure {
+            Log.w(LOG_TAG, "reader preview refresh failed position=$position", it)
         }
     }
 
@@ -173,9 +224,13 @@ class ReaderPreviewAdapter(
     }
 
     companion object {
+        private const val LOG_TAG = "ComicLabReader"
+
         private fun thumbnailCacheSizeKb(): Int {
             val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
-            return (maxMemoryKb / 32).coerceAtLeast(4 * 1024)
+            return (maxMemoryKb / 64)
+                .coerceAtLeast(2 * 1024)
+                .coerceAtMost(8 * 1024)
         }
     }
 }

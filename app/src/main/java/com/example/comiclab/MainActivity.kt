@@ -76,6 +76,10 @@ class MainActivity : AppCompatActivity() {
     private var isClassifyingComics = false
     @Volatile
     private var isBuildingDirectorySimilarityReport = false
+    @Volatile
+    private var isMergingComics = false
+    @Volatile
+    private var isMergingFiles = false
     private var browserInitialized = false
     private var skipNextResumeDirectoryReload = false
     private var pendingCenterTargetPath: String? = null
@@ -820,6 +824,8 @@ class MainActivity : AppCompatActivity() {
         PopupMenu(this, btnClassify).apply {
             menu.add(0, MENU_CLASSIFY_BY_START_MARKER, 0, getString(R.string.classify_comics))
             menu.add(0, MENU_FIND_SIMILAR_DIRECTORY_NAMES, 1, MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES)
+            menu.add(0, MENU_MERGE_COMICS_NON_RECURSIVE, 2, MENU_TITLE_MERGE_COMICS_NON_RECURSIVE)
+            menu.add(0, MENU_MERGE_FILES_NON_RECURSIVE, 3, MENU_TITLE_MERGE_FILES_NON_RECURSIVE)
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     MENU_CLASSIFY_BY_START_MARKER -> {
@@ -829,6 +835,16 @@ class MainActivity : AppCompatActivity() {
 
                     MENU_FIND_SIMILAR_DIRECTORY_NAMES -> {
                         startFindSimilarDirectoryNames()
+                        true
+                    }
+
+                    MENU_MERGE_COMICS_NON_RECURSIVE -> {
+                        startMergeComicsNonRecursive()
+                        true
+                    }
+
+                    MENU_MERGE_FILES_NON_RECURSIVE -> {
+                        startMergeFilesNonRecursive()
                         true
                     }
 
@@ -852,6 +868,16 @@ class MainActivity : AppCompatActivity() {
 
         if (isBuildingDirectorySimilarityReport) {
             showMessage(MESSAGE_FINDING_SIMILAR_DIRECTORY_NAMES)
+            return
+        }
+
+        if (isMergingComics) {
+            showMessage(MESSAGE_MERGING_COMICS)
+            return
+        }
+
+        if (isMergingFiles) {
+            showMessage(MESSAGE_MERGING_FILES)
             return
         }
 
@@ -934,6 +960,16 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        if (isMergingComics) {
+            showMessage(MESSAGE_MERGING_COMICS)
+            return
+        }
+
+        if (isMergingFiles) {
+            showMessage(MESSAGE_MERGING_FILES)
+            return
+        }
+
         if (isBuildingDirectorySimilarityReport) {
             showMessage(MESSAGE_FINDING_SIMILAR_DIRECTORY_NAMES)
             return
@@ -1004,6 +1040,184 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun startMergeComicsNonRecursive() {
+        if (!Environment.isExternalStorageManager()) {
+            openManageAllFilesAccessSettings()
+            return
+        }
+
+        if (isClassifyingComics) {
+            showMessage(getString(R.string.classify_comics_running))
+            return
+        }
+
+        if (isBuildingDirectorySimilarityReport) {
+            showMessage(MESSAGE_FINDING_SIMILAR_DIRECTORY_NAMES)
+            return
+        }
+
+        if (isMergingComics) {
+            showMessage(MESSAGE_MERGING_COMICS)
+            return
+        }
+
+        if (isMergingFiles) {
+            showMessage(MESSAGE_MERGING_FILES)
+            return
+        }
+
+        val rootDirectory = File(currentPath)
+        if (!rootDirectory.isDirectory) {
+            showMessage(getString(R.string.message_invalid_directory))
+            return
+        }
+
+        val generation = classifyGeneration.incrementAndGet()
+        val rootPath = rootDirectory.absolutePath
+        val scrollState = captureFileListScrollState()
+        val content = layoutInflater.inflate(R.layout.dialog_classify_progress, null)
+        val tvStatus = content.findViewById<TextView>(R.id.tvClassifyProgressStatus)
+        val progressBar = content.findViewById<ProgressBar>(R.id.progressClassifyComics)
+        val tvCount = content.findViewById<TextView>(R.id.tvClassifyProgressCount)
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle(MENU_TITLE_MERGE_COMICS_NON_RECURSIVE)
+            .setView(content)
+            .setCancelable(false)
+            .create()
+
+        isMergingComics = true
+        progressBar.isIndeterminate = true
+        tvStatus.text = MESSAGE_SCANNING_COMIC_ARCHIVES
+        tvCount.text = ""
+        progressDialog.show()
+
+        runCatching {
+            classifyExecutor.execute {
+                val result = runCatching {
+                    mergeComicsNonRecursive(rootDirectory) { progress ->
+                        runOnUiThread {
+                            if (generation == classifyGeneration.get() && !isDestroyed) {
+                                updateComicMergeProgress(progress, progressBar, tvStatus, tvCount)
+                            }
+                        }
+                    }
+                }
+
+                runOnUiThread {
+                    if (generation != classifyGeneration.get() || isDestroyed) {
+                        return@runOnUiThread
+                    }
+
+                    isMergingComics = false
+                    progressDialog.dismiss()
+                    result
+                        .onSuccess { mergeResult ->
+                            handleComicMergeResult(mergeResult)
+                            if (File(currentPath).absolutePath == rootPath) {
+                                loadCurrentDirectory(scrollStateToRestore = scrollState)
+                            }
+                        }
+                        .onFailure {
+                            showMessage(MESSAGE_MERGE_COMICS_FAILED)
+                        }
+                }
+            }
+        }.onFailure {
+            isMergingComics = false
+            progressDialog.dismiss()
+            showMessage(MESSAGE_MERGE_COMICS_FAILED)
+        }
+    }
+
+    private fun startMergeFilesNonRecursive() {
+        if (!Environment.isExternalStorageManager()) {
+            openManageAllFilesAccessSettings()
+            return
+        }
+
+        if (isClassifyingComics) {
+            showMessage(getString(R.string.classify_comics_running))
+            return
+        }
+
+        if (isBuildingDirectorySimilarityReport) {
+            showMessage(MESSAGE_FINDING_SIMILAR_DIRECTORY_NAMES)
+            return
+        }
+
+        if (isMergingComics) {
+            showMessage(MESSAGE_MERGING_COMICS)
+            return
+        }
+
+        if (isMergingFiles) {
+            showMessage(MESSAGE_MERGING_FILES)
+            return
+        }
+
+        val rootDirectory = File(currentPath)
+        if (!rootDirectory.isDirectory) {
+            showMessage(getString(R.string.message_invalid_directory))
+            return
+        }
+
+        val generation = classifyGeneration.incrementAndGet()
+        val rootPath = rootDirectory.absolutePath
+        val scrollState = captureFileListScrollState()
+        val content = layoutInflater.inflate(R.layout.dialog_classify_progress, null)
+        val tvStatus = content.findViewById<TextView>(R.id.tvClassifyProgressStatus)
+        val progressBar = content.findViewById<ProgressBar>(R.id.progressClassifyComics)
+        val tvCount = content.findViewById<TextView>(R.id.tvClassifyProgressCount)
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle(MENU_TITLE_MERGE_FILES_NON_RECURSIVE)
+            .setView(content)
+            .setCancelable(false)
+            .create()
+
+        isMergingFiles = true
+        progressBar.isIndeterminate = true
+        tvStatus.text = MESSAGE_SCANNING_IMAGE_DIRECTORIES
+        tvCount.text = ""
+        progressDialog.show()
+
+        runCatching {
+            classifyExecutor.execute {
+                val result = runCatching {
+                    mergeFilesNonRecursive(rootDirectory) { progress ->
+                        runOnUiThread {
+                            if (generation == classifyGeneration.get() && !isDestroyed) {
+                                updateComicMergeProgress(progress, progressBar, tvStatus, tvCount)
+                            }
+                        }
+                    }
+                }
+
+                runOnUiThread {
+                    if (generation != classifyGeneration.get() || isDestroyed) {
+                        return@runOnUiThread
+                    }
+
+                    isMergingFiles = false
+                    progressDialog.dismiss()
+                    result
+                        .onSuccess { mergeResult ->
+                            handleFileMergeResult(mergeResult)
+                            if (File(currentPath).absolutePath == rootPath) {
+                                loadCurrentDirectory(scrollStateToRestore = scrollState)
+                            }
+                        }
+                        .onFailure {
+                            showMessage(MESSAGE_MERGE_FILES_FAILED)
+                        }
+                }
+            }
+        }.onFailure {
+            isMergingFiles = false
+            progressDialog.dismiss()
+            showMessage(MESSAGE_MERGE_FILES_FAILED)
+        }
+    }
+
     private fun updateClassifyProgress(
         progress: ComicClassifier.Progress,
         progressBar: ProgressBar,
@@ -1050,6 +1264,63 @@ class MainActivity : AppCompatActivity() {
                 result.failedCount,
                 outputDirectory.name
             )
+        )
+    }
+
+    private fun updateComicMergeProgress(
+        progress: ComicMergeProgress,
+        progressBar: ProgressBar,
+        tvStatus: TextView,
+        tvCount: TextView
+    ) {
+        tvStatus.text = progress.message
+        if (progress.total <= 0) {
+            progressBar.isIndeterminate = true
+            tvCount.text = ""
+            return
+        }
+
+        progressBar.isIndeterminate = false
+        progressBar.max = progress.total
+        progressBar.progress = progress.completed.coerceIn(0, progress.total)
+        tvCount.text = getString(
+            R.string.classify_comics_progress_count,
+            progress.completed,
+            progress.total
+        )
+    }
+
+    private fun handleComicMergeResult(result: ComicMergeResult) {
+        val outputDirectory = result.outputDirectory
+        if (result.archiveCount <= 0) {
+            showMessage(MESSAGE_MERGE_COMICS_NO_ARCHIVES)
+            return
+        }
+        if (result.totalImageCount <= 0 || outputDirectory == null) {
+            showMessage(MESSAGE_MERGE_COMICS_NO_IMAGES)
+            return
+        }
+
+        showMessage(
+            "整合完成：已复制 ${result.copiedCount} / ${result.totalImageCount}，" +
+                "失败 ${result.failedCount}，输出：${outputDirectory.name}"
+        )
+    }
+
+    private fun handleFileMergeResult(result: FileMergeResult) {
+        val outputDirectory = result.outputDirectory
+        if (result.folderCount <= 0) {
+            showMessage(MESSAGE_MERGE_FILES_NO_FOLDERS)
+            return
+        }
+        if (result.totalImageCount <= 0 || outputDirectory == null) {
+            showMessage(MESSAGE_MERGE_FILES_NO_IMAGES)
+            return
+        }
+
+        showMessage(
+            "文件整合完成：已复制 ${result.copiedCount} / ${result.totalImageCount}，" +
+                "失败 ${result.failedCount}，输出：${outputDirectory.name}"
         )
     }
 
@@ -1108,6 +1379,384 @@ class MainActivity : AppCompatActivity() {
             directoryCount = directories.size,
             pairCount = pairs.size
         )
+    }
+
+    private fun mergeComicsNonRecursive(
+        rootDirectory: File,
+        onProgress: (ComicMergeProgress) -> Unit
+    ): ComicMergeResult {
+        onProgress(ComicMergeProgress(MESSAGE_SCANNING_COMIC_ARCHIVES))
+        val archives = comicArchivesInCurrentDirectory(rootDirectory)
+        if (archives.isEmpty()) {
+            return ComicMergeResult(
+                outputDirectory = null,
+                archiveCount = 0,
+                totalImageCount = 0,
+                copiedCount = 0,
+                failedCount = 0
+            )
+        }
+
+        val sources = mutableListOf<ComicMergeSource>()
+        archives.forEachIndexed { index, archive ->
+            onProgress(
+                ComicMergeProgress(
+                    message = MESSAGE_READING_COMIC_ARCHIVES,
+                    completed = index,
+                    total = archives.size
+                )
+            )
+            val entries = ComicArchive.imageEntries(archive)
+            if (entries.isNotEmpty()) {
+                sources.add(ComicMergeSource(archive, entries))
+            }
+        }
+        onProgress(
+            ComicMergeProgress(
+                message = MESSAGE_READING_COMIC_ARCHIVES,
+                completed = archives.size,
+                total = archives.size
+            )
+        )
+
+        val totalImageCount = sources.sumOf { it.entries.size }
+        if (totalImageCount <= 0) {
+            return ComicMergeResult(
+                outputDirectory = null,
+                archiveCount = archives.size,
+                totalImageCount = 0,
+                copiedCount = 0,
+                failedCount = 0
+            )
+        }
+
+        val outputDirectory = createComicMergeOutputDirectory(rootDirectory)
+        if (!outputDirectory.mkdirs()) {
+            error("Failed to create comic merge output directory: ${outputDirectory.absolutePath}")
+        }
+
+        val numberWidth = maxOf(MERGED_COMIC_MIN_FILE_NUMBER_WIDTH, totalImageCount.toString().length)
+        var completedCount = 0
+        var copiedCount = 0
+        var failedCount = 0
+        var nextOutputIndex = 1
+
+        sources.forEach { source ->
+            source.entries.forEach { entryName ->
+                val outputName = buildMergedComicImageFileName(nextOutputIndex, numberWidth, entryName)
+                val targetFile = File(outputDirectory, outputName)
+                val copied = ComicArchive.extractImageEntryToFile(source.archive, entryName, targetFile)
+                completedCount++
+
+                if (copied) {
+                    copiedCount++
+                    nextOutputIndex++
+                } else {
+                    failedCount++
+                    targetFile.delete()
+                }
+
+                onProgress(
+                    ComicMergeProgress(
+                        message = "正在整合：${source.archive.name}",
+                        completed = completedCount,
+                        total = totalImageCount
+                    )
+                )
+            }
+        }
+
+        return ComicMergeResult(
+            outputDirectory = outputDirectory,
+            archiveCount = archives.size,
+            totalImageCount = totalImageCount,
+            copiedCount = copiedCount,
+            failedCount = failedCount
+        )
+    }
+
+    private fun mergeFilesNonRecursive(
+        rootDirectory: File,
+        onProgress: (ComicMergeProgress) -> Unit
+    ): FileMergeResult {
+        onProgress(ComicMergeProgress(MESSAGE_SCANNING_IMAGE_DIRECTORIES))
+        val directories = imageSourceDirectoriesInCurrentDirectory(rootDirectory)
+        if (directories.isEmpty()) {
+            return FileMergeResult(
+                outputDirectory = null,
+                folderCount = 0,
+                totalImageCount = 0,
+                copiedCount = 0,
+                failedCount = 0
+            )
+        }
+
+        val sources = mutableListOf<FileMergeSource>()
+        directories.forEachIndexed { index, directory ->
+            onProgress(
+                ComicMergeProgress(
+                    message = MESSAGE_READING_IMAGE_DIRECTORIES,
+                    completed = index,
+                    total = directories.size
+                )
+            )
+            val images = imageFilesInDirectory(directory)
+            if (images.isNotEmpty()) {
+                sources.add(FileMergeSource(directory, images))
+            }
+        }
+        onProgress(
+            ComicMergeProgress(
+                message = MESSAGE_READING_IMAGE_DIRECTORIES,
+                completed = directories.size,
+                total = directories.size
+            )
+        )
+
+        val totalImageCount = sources.sumOf { it.images.size }
+        if (totalImageCount <= 0) {
+            return FileMergeResult(
+                outputDirectory = null,
+                folderCount = directories.size,
+                totalImageCount = 0,
+                copiedCount = 0,
+                failedCount = 0
+            )
+        }
+
+        val outputDirectory = createFileMergeOutputDirectory(rootDirectory)
+        if (!outputDirectory.mkdirs()) {
+            error("Failed to create file merge output directory: ${outputDirectory.absolutePath}")
+        }
+
+        val numberWidth = maxOf(MERGED_COMIC_MIN_FILE_NUMBER_WIDTH, totalImageCount.toString().length)
+        var completedCount = 0
+        var copiedCount = 0
+        var failedCount = 0
+        var nextOutputIndex = 1
+
+        sources.forEach { source ->
+            source.images.forEach { imageFile ->
+                val outputName = buildMergedComicImageFileName(nextOutputIndex, numberWidth, imageFile.name)
+                val targetFile = File(outputDirectory, outputName)
+                val copied = copyImageFileToMergedTarget(imageFile, targetFile)
+                completedCount++
+
+                if (copied) {
+                    copiedCount++
+                    nextOutputIndex++
+                } else {
+                    failedCount++
+                    targetFile.delete()
+                }
+
+                onProgress(
+                    ComicMergeProgress(
+                        message = "正在整合：${source.directory.name}",
+                        completed = completedCount,
+                        total = totalImageCount
+                    )
+                )
+            }
+        }
+
+        return FileMergeResult(
+            outputDirectory = outputDirectory,
+            folderCount = directories.size,
+            totalImageCount = totalImageCount,
+            copiedCount = copiedCount,
+            failedCount = failedCount
+        )
+    }
+
+    private fun comicArchivesInCurrentDirectory(rootDirectory: File): List<File> {
+        return runCatching {
+            rootDirectory.listFiles()
+                ?.filter { file ->
+                    file.isFile &&
+                        ComicArchive.isSupportedArchive(file) &&
+                        !ComicArchive.isPdf(file)
+                }
+                ?.sortedWith { left, right -> compareNaturalNames(left.name, right.name) }
+                .orEmpty()
+        }.getOrDefault(emptyList())
+    }
+
+    private fun imageSourceDirectoriesInCurrentDirectory(rootDirectory: File): List<File> {
+        return runCatching {
+            rootDirectory.listFiles()
+                ?.filter { file ->
+                    file.isDirectory &&
+                        !file.name.startsWith(".") &&
+                        !isGeneratedMergeDirectory(file.name)
+                }
+                ?.sortedWith { left, right -> compareNaturalNames(left.name, right.name) }
+                .orEmpty()
+        }.getOrDefault(emptyList())
+    }
+
+    private fun imageFilesInDirectory(directory: File): List<File> {
+        return runCatching {
+            directory.listFiles()
+                ?.filter { file ->
+                    file.isFile &&
+                        file.extension.lowercase(Locale.ROOT) in MERGED_COMIC_IMAGE_EXTENSIONS
+                }
+                ?.sortedWith { left, right -> compareNaturalNames(left.name, right.name) }
+                .orEmpty()
+        }.getOrDefault(emptyList())
+    }
+
+    private fun isGeneratedMergeDirectory(name: String): Boolean {
+        return name.startsWith(MERGED_COMIC_DIRECTORY_PREFIX) ||
+            name.startsWith(MERGED_FILE_DIRECTORY_PREFIX)
+    }
+
+    private fun createComicMergeOutputDirectory(rootDirectory: File): File {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
+        var outputDirectory = File(rootDirectory, "$MERGED_COMIC_DIRECTORY_PREFIX$timestamp")
+        var index = 1
+        while (outputDirectory.exists()) {
+            outputDirectory = File(
+                rootDirectory,
+                "$MERGED_COMIC_DIRECTORY_PREFIX${timestamp}_${String.format(Locale.ROOT, "%03d", index)}"
+            )
+            index++
+        }
+        return outputDirectory
+    }
+
+    private fun createFileMergeOutputDirectory(rootDirectory: File): File {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
+        var outputDirectory = File(rootDirectory, "$MERGED_FILE_DIRECTORY_PREFIX$timestamp")
+        var index = 1
+        while (outputDirectory.exists()) {
+            outputDirectory = File(
+                rootDirectory,
+                "$MERGED_FILE_DIRECTORY_PREFIX${timestamp}_${String.format(Locale.ROOT, "%03d", index)}"
+            )
+            index++
+        }
+        return outputDirectory
+    }
+
+    private fun copyImageFileToMergedTarget(sourceFile: File, targetFile: File): Boolean {
+        if (!sourceFile.isFile || sourceFile.length() <= 0L) {
+            return false
+        }
+
+        targetFile.parentFile?.mkdirs()
+        val tempFile = File(targetFile.parentFile, "${targetFile.name}.part")
+        tempFile.delete()
+        val copied = runCatching {
+            sourceFile.copyTo(tempFile, overwrite = true, bufferSize = MERGED_FILE_COPY_BUFFER_SIZE)
+            tempFile.isFile && tempFile.length() == sourceFile.length()
+        }.getOrDefault(false)
+
+        if (!copied) {
+            tempFile.delete()
+            return false
+        }
+
+        if (targetFile.exists()) {
+            targetFile.delete()
+        }
+
+        if (!tempFile.renameTo(targetFile)) {
+            tempFile.delete()
+            return false
+        }
+
+        targetFile.setLastModified(sourceFile.lastModified())
+        return true
+    }
+
+    private fun buildMergedComicImageFileName(index: Int, numberWidth: Int, entryName: String): String {
+        val extension = entryName.substringAfterLast('.', "")
+            .lowercase(Locale.ROOT)
+            .takeIf { it in MERGED_COMIC_IMAGE_EXTENSIONS }
+            ?: MERGED_COMIC_DEFAULT_IMAGE_EXTENSION
+        return "${index.toString().padStart(numberWidth, '0')}.$extension"
+    }
+
+    private fun compareNaturalNames(left: String, right: String): Int {
+        var leftIndex = 0
+        var rightIndex = 0
+
+        while (leftIndex < left.length && rightIndex < right.length) {
+            val leftChar = left[leftIndex]
+            val rightChar = right[rightIndex]
+
+            if (leftChar.isDigit() && rightChar.isDigit()) {
+                val leftEnd = findNumberRunEnd(left, leftIndex)
+                val rightEnd = findNumberRunEnd(right, rightIndex)
+                val numberComparison = compareNumberRuns(left, leftIndex, leftEnd, right, rightIndex, rightEnd)
+                if (numberComparison != 0) {
+                    return numberComparison
+                }
+                leftIndex = leftEnd
+                rightIndex = rightEnd
+                continue
+            }
+
+            val charComparison = leftChar.lowercaseChar().compareTo(rightChar.lowercaseChar())
+            if (charComparison != 0) {
+                return charComparison
+            }
+
+            leftIndex++
+            rightIndex++
+        }
+
+        if (leftIndex != left.length || rightIndex != right.length) {
+            return (left.length - leftIndex).compareTo(right.length - rightIndex)
+        }
+
+        return left.compareTo(right)
+    }
+
+    private fun findNumberRunEnd(value: String, startIndex: Int): Int {
+        var index = startIndex
+        while (index < value.length && value[index].isDigit()) {
+            index++
+        }
+        return index
+    }
+
+    private fun compareNumberRuns(
+        left: String,
+        leftStart: Int,
+        leftEnd: Int,
+        right: String,
+        rightStart: Int,
+        rightEnd: Int
+    ): Int {
+        val leftSignificantStart = findSignificantNumberStart(left, leftStart, leftEnd)
+        val rightSignificantStart = findSignificantNumberStart(right, rightStart, rightEnd)
+        val leftSignificantLength = leftEnd - leftSignificantStart
+        val rightSignificantLength = rightEnd - rightSignificantStart
+
+        if (leftSignificantLength != rightSignificantLength) {
+            return leftSignificantLength.compareTo(rightSignificantLength)
+        }
+
+        for (offset in 0 until leftSignificantLength) {
+            val digitComparison = left[leftSignificantStart + offset]
+                .compareTo(right[rightSignificantStart + offset])
+            if (digitComparison != 0) {
+                return digitComparison
+            }
+        }
+
+        return 0
+    }
+
+    private fun findSignificantNumberStart(value: String, startIndex: Int, endIndex: Int): Int {
+        var index = startIndex
+        while (index < endIndex - 1 && value[index] == '0') {
+            index++
+        }
+        return index
     }
 
     private fun scanDirectoriesForSimilarity(rootDirectory: File): List<SimilarDirectoryInfo> {
@@ -1943,6 +2592,38 @@ class MainActivity : AppCompatActivity() {
         val pairCount: Int
     )
 
+    private data class ComicMergeProgress(
+        val message: String,
+        val completed: Int = 0,
+        val total: Int = 0
+    )
+
+    private data class ComicMergeResult(
+        val outputDirectory: File?,
+        val archiveCount: Int,
+        val totalImageCount: Int,
+        val copiedCount: Int,
+        val failedCount: Int
+    )
+
+    private data class ComicMergeSource(
+        val archive: File,
+        val entries: List<String>
+    )
+
+    private data class FileMergeResult(
+        val outputDirectory: File?,
+        val folderCount: Int,
+        val totalImageCount: Int,
+        val copiedCount: Int,
+        val failedCount: Int
+    )
+
+    private data class FileMergeSource(
+        val directory: File,
+        val images: List<File>
+    )
+
     private data class SimilarDirectoryInfo(
         val name: String,
         val path: String
@@ -1979,15 +2660,37 @@ class MainActivity : AppCompatActivity() {
         private const val READING_HISTORY_PANEL_EXIT_ANIMATION_MS = 150L
         private const val MENU_CLASSIFY_BY_START_MARKER = 1
         private const val MENU_FIND_SIMILAR_DIRECTORY_NAMES = 2
+        private const val MENU_MERGE_COMICS_NON_RECURSIVE = 3
+        private const val MENU_MERGE_FILES_NON_RECURSIVE = 4
         private const val DIRECTORY_NAME_SIMILARITY_THRESHOLD = 0.78
         private const val DIRECTORY_SIMILARITY_PROGRESS_ROW_INTERVAL = 25
         private const val DIRECTORY_SIMILARITY_REPORT_PREFIX = "ComicLab_similar_directory_names_"
         private const val DIRECTORY_SIMILARITY_REPORT_EXTENSION = ".txt"
+        private const val MERGED_COMIC_DIRECTORY_PREFIX = "ComicLab_merged_"
+        private const val MERGED_FILE_DIRECTORY_PREFIX = "ComicLab_file_merged_"
+        private const val MERGED_COMIC_MIN_FILE_NUMBER_WIDTH = 4
+        private const val MERGED_COMIC_DEFAULT_IMAGE_EXTENSION = "jpg"
+        private const val MERGED_FILE_COPY_BUFFER_SIZE = 1024 * 1024
         private const val MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES = "查找相似文件夹"
+        private const val MENU_TITLE_MERGE_COMICS_NON_RECURSIVE = "漫画整合（不递归）"
+        private const val MENU_TITLE_MERGE_FILES_NON_RECURSIVE = "文件整合（不递归）"
         private const val MESSAGE_FINDING_SIMILAR_DIRECTORY_NAMES = "正在查找命名接近的路径"
+        private const val MESSAGE_MERGING_COMICS = "正在整合漫画"
+        private const val MESSAGE_MERGING_FILES = "正在整合文件"
         private const val MESSAGE_SCANNING_DIRECTORIES = "正在扫描文件夹..."
         private const val MESSAGE_COMPARING_DIRECTORY_NAMES = "正在比较文件夹名称..."
+        private const val MESSAGE_SCANNING_COMIC_ARCHIVES = "正在扫描当前路径下的漫画压缩包..."
+        private const val MESSAGE_READING_COMIC_ARCHIVES = "正在读取压缩包图片列表..."
+        private const val MESSAGE_SCANNING_IMAGE_DIRECTORIES = "正在扫描当前路径下的图片文件夹..."
+        private const val MESSAGE_READING_IMAGE_DIRECTORIES = "正在读取文件夹图片列表..."
         private const val MESSAGE_DIRECTORY_SIMILARITY_REPORT_FAILED = "生成命名接近路径报告失败"
+        private const val MESSAGE_MERGE_COMICS_FAILED = "漫画整合失败"
+        private const val MESSAGE_MERGE_COMICS_NO_ARCHIVES = "当前路径下没有找到漫画压缩包"
+        private const val MESSAGE_MERGE_COMICS_NO_IMAGES = "漫画压缩包中没有找到可整合的图片"
+        private const val MESSAGE_MERGE_FILES_FAILED = "文件整合失败"
+        private const val MESSAGE_MERGE_FILES_NO_FOLDERS = "当前路径下没有找到可整合的文件夹"
+        private const val MESSAGE_MERGE_FILES_NO_IMAGES = "文件夹中没有找到可整合的图片"
+        private val MERGED_COMIC_IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
         private val DIRECTORY_NAME_SIMILARITY_IGNORED_CHARS = setOf(
             '_',
             '-',
