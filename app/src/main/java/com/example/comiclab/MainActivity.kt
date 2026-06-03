@@ -95,7 +95,9 @@ class MainActivity : AppCompatActivity() {
         SystemBars.fitContentBelowSystemBars(
             this,
             findViewById<View>(R.id.main),
-            findViewById<View>(R.id.statusBarBackground)
+            findViewById<View>(R.id.statusBarBackground),
+            statusBarColorResId = R.color.comiclab_file_picker_background,
+            lightStatusBars = true
         )
 
         listView = findViewById(R.id.listFiles)
@@ -2651,7 +2653,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_FILE_LIST_SCROLL_TOP = "file_list_scroll_top"
         private const val KEY_FILE_LIST_SCROLL_ANCHOR_PATH = "file_list_scroll_anchor_path"
         private const val KEY_FILE_LIST_SCROLL_ANCHOR_IS_PARENT = "file_list_scroll_anchor_is_parent"
-        private const val CLEAR_CLICK_STATE_DELAY_MS = 120L
+        private const val CLEAR_CLICK_STATE_DELAY_MS = 240L
         private const val FILE_ITEM_HEIGHT_DP = 75
         private val INVALID_FILE_NAME_CHARS = setOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')
         private const val MIN_READING_HISTORY_PANEL_WIDTH_DP = 180

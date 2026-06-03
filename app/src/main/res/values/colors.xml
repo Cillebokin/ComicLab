@@ -5,6 +5,7 @@
     <color name="comiclab_blue">#0196FA</color>
     <color name="comiclab_blue_pressed">#0178D0</color>
     <color name="comiclab_blue_soft">#E7F4FF</color>
+    <color name="comiclab_file_picker_background">#F2F3F5</color>
     <color name="comiclab_surface">#F6F7F9</color>
     <color name="comiclab_surface_card">#FFFFFFFF</color>
     <color name="comiclab_surface_subtle">#F1F4F8</color>

@@ -1,16 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_pressed="true">
-        <shape android:shape="rectangle">
-            <solid android:color="@color/comiclab_blue_soft" />
-            <stroke android:width="1dp" android:color="@color/comiclab_blue" />
-        </shape>
+        <inset
+            android:insetBottom="3dp"
+            android:insetLeft="10dp"
+            android:insetRight="10dp"
+            android:insetTop="3dp">
+            <shape android:shape="rectangle">
+                <corners android:radius="8dp" />
+                <solid android:color="#EDEFF2" />
+            </shape>
+        </inset>
+    </item>
+
+    <item android:state_focused="true">
+        <inset
+            android:insetBottom="3dp"
+            android:insetLeft="10dp"
+            android:insetRight="10dp"
+            android:insetTop="3dp">
+            <shape android:shape="rectangle">
+                <corners android:radius="8dp" />
+                <solid android:color="#EDEFF2" />
+            </shape>
+        </inset>
+    </item>
+
+    <item android:state_activated="true">
+        <inset
+            android:insetBottom="3dp"
+            android:insetLeft="10dp"
+            android:insetRight="10dp"
+            android:insetTop="3dp">
+            <shape android:shape="rectangle">
+                <corners android:radius="8dp" />
+                <solid android:color="#EDEFF2" />
+            </shape>
+        </inset>
     </item>
 
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="@color/comiclab_surface_card" />
-            <stroke android:width="1dp" android:color="@color/comiclab_divider" />
+            <solid android:color="@android:color/transparent" />
         </shape>
     </item>
 </selector>
