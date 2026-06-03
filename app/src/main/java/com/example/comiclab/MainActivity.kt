@@ -19,8 +19,8 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.ListView
-import android.widget.PopupMenu
 import android.widget.PopupWindow
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -805,55 +805,116 @@ class MainActivity : AppCompatActivity() {
 
     private fun showSortDialog() {
         val sortModes = FileSortMode.values()
-        val labels = sortModes.map { getString(it.labelResId) }.toTypedArray()
         val currentMode = currentSortMode()
-        val checkedItem = sortModes.indexOf(currentMode).coerceAtLeast(0)
-
-        AlertDialog.Builder(this)
-            .setTitle(R.string.sort)
-            .setSingleChoiceItems(labels, checkedItem) { dialog, which ->
-                val selectedMode = sortModes.getOrNull(which) ?: return@setSingleChoiceItems
+        val items = sortModes.map { sortMode ->
+            RoundedPopupMenuItem(
+                label = getString(sortMode.labelResId),
+                isSelected = sortMode == currentMode
+            ) {
                 prefs.edit()
-                    .putString(KEY_SORT_MODE, selectedMode.name)
+                    .putString(KEY_SORT_MODE, sortMode.name)
                     .apply()
-                dialog.dismiss()
                 loadCurrentDirectory()
             }
-            .show()
+        }
+
+        showRoundedPopupMenu(btnSort, items, widthDp = 208)
     }
 
     private fun showClassifyMenu() {
-        PopupMenu(this, btnClassify).apply {
-            menu.add(0, MENU_CLASSIFY_BY_START_MARKER, 0, getString(R.string.classify_comics))
-            menu.add(0, MENU_FIND_SIMILAR_DIRECTORY_NAMES, 1, MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES)
-            menu.add(0, MENU_MERGE_COMICS_NON_RECURSIVE, 2, MENU_TITLE_MERGE_COMICS_NON_RECURSIVE)
-            menu.add(0, MENU_MERGE_FILES_NON_RECURSIVE, 3, MENU_TITLE_MERGE_FILES_NON_RECURSIVE)
-            setOnMenuItemClickListener { item ->
-                when (item.itemId) {
-                    MENU_CLASSIFY_BY_START_MARKER -> {
-                        confirmClassifyCurrentDirectory()
-                        true
-                    }
+        val items = listOf(
+            RoundedPopupMenuItem(getString(R.string.classify_comics)) {
+                confirmClassifyCurrentDirectory()
+            },
+            RoundedPopupMenuItem(MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES) {
+                startFindSimilarDirectoryNames()
+            },
+            RoundedPopupMenuItem(MENU_TITLE_MERGE_COMICS_NON_RECURSIVE) {
+                startMergeComicsNonRecursive()
+            },
+            RoundedPopupMenuItem(MENU_TITLE_MERGE_FILES_NON_RECURSIVE) {
+                startMergeFilesNonRecursive()
+            }
+        )
 
-                    MENU_FIND_SIMILAR_DIRECTORY_NAMES -> {
-                        startFindSimilarDirectoryNames()
-                        true
-                    }
+        showRoundedPopupMenu(btnClassify, items, widthDp = 252)
+    }
 
-                    MENU_MERGE_COMICS_NON_RECURSIVE -> {
-                        startMergeComicsNonRecursive()
-                        true
-                    }
+    private fun showRoundedPopupMenu(
+        anchor: View,
+        items: List<RoundedPopupMenuItem>,
+        widthDp: Int
+    ) {
+        if (items.isEmpty()) {
+            return
+        }
 
-                    MENU_MERGE_FILES_NON_RECURSIVE -> {
-                        startMergeFilesNonRecursive()
-                        true
-                    }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundResource(R.drawable.bg_file_picker_popup_panel)
+            setPadding(
+                dpToPx(ROUNDED_MENU_PADDING_HORIZONTAL_DP),
+                dpToPx(ROUNDED_MENU_PADDING_VERTICAL_DP),
+                dpToPx(ROUNDED_MENU_PADDING_HORIZONTAL_DP),
+                dpToPx(ROUNDED_MENU_PADDING_VERTICAL_DP)
+            )
+        }
 
-                    else -> false
+        var popupWindow: PopupWindow? = null
+        items.forEach { item ->
+            val row = TextView(this).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dpToPx(ROUNDED_MENU_ITEM_HEIGHT_DP)
+                )
+                background = getDrawable(R.drawable.bg_file_picker_popup_item)
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                gravity = Gravity.CENTER_VERTICAL
+                includeFontPadding = false
+                maxLines = 1
+                setPadding(
+                    dpToPx(ROUNDED_MENU_ITEM_PADDING_HORIZONTAL_DP),
+                    0,
+                    dpToPx(ROUNDED_MENU_ITEM_PADDING_HORIZONTAL_DP),
+                    0
+                )
+                text = item.label
+                textSize = 14f
+                setTextColor(
+                    getColor(
+                        if (item.isSelected) {
+                            R.color.comiclab_blue
+                        } else {
+                            R.color.comiclab_text_primary
+                        }
+                    )
+                )
+                if (item.isSelected) {
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                }
+                setOnClickListener {
+                    popupWindow?.dismiss()
+                    item.onClick()
                 }
             }
-            show()
+            content.addView(row)
+        }
+
+        val popupWidthPx = dpToPx(widthDp)
+        popupWindow = PopupWindow(
+            content,
+            popupWidthPx,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            true
+        ).apply {
+            isOutsideTouchable = true
+            setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+            elevation = dpToPx(ROUNDED_MENU_ELEVATION_DP).toFloat()
+            showAsDropDown(
+                anchor,
+                anchor.width - popupWidthPx,
+                dpToPx(ROUNDED_MENU_VERTICAL_OFFSET_DP)
+            )
         }
     }
 
@@ -2582,6 +2643,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private data class RoundedPopupMenuItem(
+        val label: String,
+        val isSelected: Boolean = false,
+        val onClick: () -> Unit
+    )
+
     private data class DirectorySimilarityProgress(
         val message: String,
         val completed: Int = 0,
@@ -2656,6 +2723,12 @@ class MainActivity : AppCompatActivity() {
         private const val CLEAR_CLICK_STATE_DELAY_MS = 240L
         private const val FILE_ITEM_HEIGHT_DP = 75
         private val INVALID_FILE_NAME_CHARS = setOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')
+        private const val ROUNDED_MENU_PADDING_HORIZONTAL_DP = 6
+        private const val ROUNDED_MENU_PADDING_VERTICAL_DP = 6
+        private const val ROUNDED_MENU_ITEM_HEIGHT_DP = 44
+        private const val ROUNDED_MENU_ITEM_PADDING_HORIZONTAL_DP = 14
+        private const val ROUNDED_MENU_VERTICAL_OFFSET_DP = 8
+        private const val ROUNDED_MENU_ELEVATION_DP = 8
         private const val MIN_READING_HISTORY_PANEL_WIDTH_DP = 180
         private const val READING_HISTORY_PANEL_ELEVATION_DP = 8
         private const val READING_HISTORY_PANEL_ENTER_ANIMATION_MS = 180L
