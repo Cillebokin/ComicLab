@@ -3,25 +3,45 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/main"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="@color/comiclab_file_picker_background">
 
     <View
         android:id="@+id/statusBarBackground"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:background="@color/comiclab_blue"
+        android:background="@color/comiclab_file_picker_background"
         app:layout_constraintTop_toTopOf="parent" />
 
     <LinearLayout
         android:id="@+id/layoutSettingsToolbar"
-        android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:background="@color/comiclab_blue"
+        android:layout_width="0dp"
+        android:layout_height="52dp"
+        android:layout_marginStart="12dp"
+        android:layout_marginTop="12dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/bg_file_picker_card"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/statusBarBackground">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:text="@string/settings"
+            android:textColor="@color/black"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1" />
 
         <ImageButton
             android:id="@+id/btnBack"
@@ -31,214 +51,236 @@
             android:contentDescription="@string/back"
             android:scaleType="centerInside"
             android:src="@drawable/png_back_icon"
-            app:tint="@color/white" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:text="@string/settings"
-            android:textColor="@color/white"
-            android:textSize="18sp"
-            android:textStyle="bold" />
+            app:tint="@color/black" />
     </LinearLayout>
 
     <ScrollView
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="0dp"
+        android:clipToPadding="true"
         android:fillViewport="false"
+        android:paddingStart="12dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="12dp"
         app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/layoutSettingsToolbar">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="16dp">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/file_browser"
-                android:textColor="#222222"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/switchDetectMangaCollections"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="8dp"
-                android:gravity="center_vertical"
-                android:text="@string/detect_manga_collections"
-                android:textColor="#333333"
-                android:textSize="15sp" />
-
-            <TextView
-                android:id="@+id/tvStartMarkerErrorTags"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/inputStartMarkerErrorTags"
-                android:text="@string/start_marker_error_tags"
-                android:textColor="#333333"
-                android:textSize="15sp" />
-
-            <EditText
-                android:id="@+id/inputStartMarkerErrorTags"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:backgroundTint="@color/comiclab_blue"
-                android:hint="@string/start_marker_error_tags_empty_hint"
-                android:importantForAutofill="no"
-                android:inputType="text"
-                android:maxLines="1"
-                android:singleLine="true"
-                android:textColor="#222222"
-                android:textColorHint="#999999"
-                android:textSize="15sp" />
-
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="14dp"
-                android:layout_marginBottom="14dp"
-                android:background="#E0E0E0" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/reading_direction"
-                android:textColor="#222222"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <RadioGroup
-                android:id="@+id/radioReadingDirection"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:orientation="vertical">
-
-                <RadioButton
-                    android:id="@+id/radioTopToBottom"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:buttonTint="@color/comiclab_blue"
-                    android:gravity="center_vertical"
-                    android:text="@string/reading_direction_top_to_bottom"
-                    android:textColor="#333333"
-                    android:textSize="15sp" />
-
-                <RadioButton
-                    android:id="@+id/radioRightToLeft"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:buttonTint="@color/comiclab_blue"
-                    android:gravity="center_vertical"
-                    android:text="@string/reading_direction_right_to_left"
-                    android:textColor="#333333"
-                    android:textSize="15sp" />
-
-                <RadioButton
-                    android:id="@+id/radioLeftToRight"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:buttonTint="@color/comiclab_blue"
-                    android:gravity="center_vertical"
-                    android:text="@string/reading_direction_left_to_right"
-                    android:textColor="#333333"
-                    android:textSize="15sp" />
-            </RadioGroup>
-
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="14dp"
-                android:layout_marginBottom="14dp"
-                android:background="#E0E0E0" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/reader_controls"
-                android:textColor="#222222"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/switchVolumeKeyPageTurn"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="8dp"
-                android:gravity="center_vertical"
-                android:thumbTint="@color/comiclab_switch_thumb_tint"
-                android:trackTint="@color/comiclab_switch_track_tint"
-                android:text="@string/volume_key_page_turn"
-                android:textColor="#333333"
-                android:textSize="15sp" />
-
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/switchAutoHideSystemBars"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:gravity="center_vertical"
-                android:thumbTint="@color/comiclab_switch_thumb_tint"
-                android:trackTint="@color/comiclab_switch_track_tint"
-                android:text="@string/auto_hide_system_bars"
-                android:textColor="#333333"
-                android:textSize="15sp" />
-
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/switchCustomReaderBrightness"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:gravity="center_vertical"
-                android:thumbTint="@color/comiclab_switch_thumb_tint"
-                android:trackTint="@color/comiclab_switch_track_tint"
-                android:text="@string/custom_brightness"
-                android:textColor="#333333"
-                android:textSize="15sp" />
+            android:orientation="vertical">
 
             <LinearLayout
+                android:id="@+id/cardFileBrowser"
                 android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <SeekBar
-                    android:id="@+id/sliderSettingsReaderBrightness"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
-                    android:layout_weight="1"
-                    android:max="255"
-                    android:progress="128"
-                    android:progressBackgroundTint="@color/reader_brightness_track_tint"
-                    android:progressTint="@color/comiclab_blue"
-                    android:thumbTint="@color/reader_brightness_thumb_tint" />
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_file_picker_card"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingTop="14dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="14dp">
 
                 <TextView
-                    android:id="@+id/tvSettingsBrightnessValue"
-                    android:layout_width="52dp"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:gravity="end"
+                    android:text="@string/file_browser"
+                    android:textColor="#222222"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switchDetectMangaCollections"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical"
+                    android:text="@string/detect_manga_collections"
                     android:textColor="#333333"
-                    android:textSize="14sp" />
+                    android:textSize="15sp"
+                    android:thumbTint="@color/comiclab_switch_thumb_tint"
+                    android:trackTint="@color/comiclab_switch_track_tint" />
+
+                <TextView
+                    android:id="@+id/tvStartMarkerErrorTags"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:labelFor="@id/inputStartMarkerErrorTags"
+                    android:text="@string/start_marker_error_tags"
+                    android:textColor="#333333"
+                    android:textSize="15sp" />
+
+                <EditText
+                    android:id="@+id/inputStartMarkerErrorTags"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:backgroundTint="@color/comiclab_blue"
+                    android:hint="@string/start_marker_error_tags_empty_hint"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:maxLines="1"
+                    android:singleLine="true"
+                    android:textColor="#222222"
+                    android:textColorHint="#999999"
+                    android:textSize="15sp" />
             </LinearLayout>
 
-            <View
+            <LinearLayout
+                android:id="@+id/cardReadingDirection"
                 android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="14dp"
-                android:layout_marginBottom="14dp"
-                android:background="#E0E0E0" />
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_file_picker_card"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingTop="14dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="14dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/reading_direction"
+                    android:textColor="#222222"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <RadioGroup
+                    android:id="@+id/radioReadingDirection"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="vertical">
+
+                    <RadioButton
+                        android:id="@+id/radioTopToBottom"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:buttonTint="@color/comiclab_blue"
+                        android:gravity="center_vertical"
+                        android:text="@string/reading_direction_top_to_bottom"
+                        android:textColor="#333333"
+                        android:textSize="15sp" />
+
+                    <RadioButton
+                        android:id="@+id/radioRightToLeft"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:buttonTint="@color/comiclab_blue"
+                        android:gravity="center_vertical"
+                        android:text="@string/reading_direction_right_to_left"
+                        android:textColor="#333333"
+                        android:textSize="15sp" />
+
+                    <RadioButton
+                        android:id="@+id/radioLeftToRight"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:buttonTint="@color/comiclab_blue"
+                        android:gravity="center_vertical"
+                        android:text="@string/reading_direction_left_to_right"
+                        android:textColor="#333333"
+                        android:textSize="15sp" />
+                </RadioGroup>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/cardReaderControls"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_file_picker_card"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingTop="14dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="14dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/reader_controls"
+                    android:textColor="#222222"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switchVolumeKeyPageTurn"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical"
+                    android:thumbTint="@color/comiclab_switch_thumb_tint"
+                    android:trackTint="@color/comiclab_switch_track_tint"
+                    android:text="@string/volume_key_page_turn"
+                    android:textColor="#333333"
+                    android:textSize="15sp" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switchAutoHideSystemBars"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:gravity="center_vertical"
+                    android:thumbTint="@color/comiclab_switch_thumb_tint"
+                    android:trackTint="@color/comiclab_switch_track_tint"
+                    android:text="@string/auto_hide_system_bars"
+                    android:textColor="#333333"
+                    android:textSize="15sp" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switchCustomReaderBrightness"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:gravity="center_vertical"
+                    android:thumbTint="@color/comiclab_switch_thumb_tint"
+                    android:trackTint="@color/comiclab_switch_track_tint"
+                    android:text="@string/custom_brightness"
+                    android:textColor="#333333"
+                    android:textSize="15sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <SeekBar
+                        android:id="@+id/sliderSettingsReaderBrightness"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_weight="1"
+                        android:max="255"
+                        android:progress="128"
+                        android:progressBackgroundTint="@color/reader_brightness_track_tint"
+                        android:progressTint="@color/comiclab_blue"
+                        android:thumbTint="@color/reader_brightness_thumb_tint" />
+
+                    <TextView
+                        android:id="@+id/tvSettingsBrightnessValue"
+                        android:layout_width="52dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:gravity="end"
+                        android:textColor="#333333"
+                        android:textSize="14sp" />
+                </LinearLayout>
+            </LinearLayout>
 
             <LinearLayout
                 android:id="@+id/layoutDebugTools"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_file_picker_card"
                 android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingTop="14dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="14dp"
                 android:visibility="gone">
 
                 <TextView
@@ -268,47 +310,53 @@
                     android:text="@string/run_reader_stress_test"
                     android:textColor="@color/white"
                     android:textSize="14sp" />
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:layout_marginTop="14dp"
-                    android:layout_marginBottom="14dp"
-                    android:background="#E0E0E0" />
             </LinearLayout>
 
-            <TextView
+            <LinearLayout
+                android:id="@+id/cardAbout"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/about"
-                android:textColor="#222222"
-                android:textSize="16sp"
-                android:textStyle="bold" />
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_file_picker_card"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingTop="14dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="14dp">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="32dp"
-                android:layout_marginTop="8dp"
-                android:gravity="center_vertical"
-                android:text="@string/app_author"
-                android:textColor="#333333"
-                android:textSize="15sp" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/about"
+                    android:textColor="#222222"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="32dp"
-                android:gravity="center_vertical"
-                android:text="@string/app_version"
-                android:textColor="#333333"
-                android:textSize="15sp" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="32dp"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical"
+                    android:text="@string/app_author"
+                    android:textColor="#333333"
+                    android:textSize="15sp" />
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="32dp"
-                android:gravity="center_vertical"
-                android:text="@string/app_link"
-                android:textColor="#333333"
-                android:textSize="15sp" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="32dp"
+                    android:gravity="center_vertical"
+                    android:text="@string/app_version"
+                    android:textColor="#333333"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="32dp"
+                    android:gravity="center_vertical"
+                    android:text="@string/app_link"
+                    android:textColor="#333333"
+                    android:textSize="15sp" />
+            </LinearLayout>
         </LinearLayout>
     </ScrollView>
 </androidx.constraintlayout.widget.ConstraintLayout>

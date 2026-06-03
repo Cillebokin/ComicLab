@@ -49,7 +49,9 @@ class SettingsActivity : AppCompatActivity() {
         SystemBars.fitContentBelowSystemBars(
             this,
             findViewById<View>(R.id.main),
-            findViewById<View>(R.id.statusBarBackground)
+            findViewById<View>(R.id.statusBarBackground),
+            statusBarColorResId = R.color.comiclab_file_picker_background,
+            lightStatusBars = true
         )
 
         btnBack = findViewById(R.id.btnBack)
