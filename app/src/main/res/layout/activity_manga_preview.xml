@@ -3,25 +3,30 @@
     android:id="@+id/main"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/comiclab_surface"
-    android:clipToPadding="false"
+    android:background="@color/comiclab_file_picker_background"
+    android:clipToPadding="true"
     android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:orientation="vertical"
+        android:paddingBottom="12dp">
 
         <View
             android:id="@+id/statusBarBackground"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:background="@color/comiclab_blue" />
+            android:background="@color/comiclab_file_picker_background" />
 
         <LinearLayout
+            android:id="@+id/layoutPreviewInfoCard"
             android:layout_width="match_parent"
             android:layout_height="@dimen/preview_header_height"
-            android:background="@color/comiclab_blue"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="12dp"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/bg_file_picker_card"
             android:gravity="center_vertical"
             android:orientation="horizontal"
             android:paddingStart="@dimen/space_md"
@@ -30,9 +35,8 @@
             android:paddingBottom="@dimen/space_md">
 
             <FrameLayout
-                android:layout_width="0dp"
+                android:layout_width="@dimen/preview_header_cover_width"
                 android:layout_height="match_parent"
-                android:layout_weight="1"
                 android:paddingEnd="@dimen/space_sm">
 
                 <ImageView
@@ -62,7 +66,7 @@
                     android:gravity="top|start"
                     android:includeFontPadding="false"
                     android:maxLines="5"
-                    android:textColor="@color/white"
+                    android:textColor="@color/black"
                     android:textSize="19sp"
                     android:textStyle="bold" />
 
@@ -74,18 +78,22 @@
                     android:gravity="end"
                     android:includeFontPadding="false"
                     android:maxLines="1"
-                    android:textColor="#DDF1FF"
+                    android:textColor="@color/comiclab_text_secondary"
                     android:textSize="@dimen/text_caption" />
             </LinearLayout>
         </LinearLayout>
 
         <LinearLayout
+            android:id="@+id/layoutPreviewActionCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="@color/comiclab_surface"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="10dp"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/bg_file_picker_card"
             android:orientation="vertical"
             android:paddingStart="@dimen/space_md"
-            android:paddingTop="@dimen/space_sm"
+            android:paddingTop="@dimen/space_md"
             android:paddingEnd="@dimen/space_md"
             android:paddingBottom="@dimen/space_md">
 
@@ -125,7 +133,7 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
+                android:layout_marginTop="@dimen/space_sm"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -140,41 +148,47 @@
                     android:textColor="@color/comiclab_text_secondary"
                     android:textSize="@dimen/text_caption" />
 
-                <Button
+                <ImageButton
                     android:id="@+id/btnFullRead"
-                    android:layout_width="wrap_content"
+                    android:layout_width="40dp"
                     android:layout_height="40dp"
-                    android:background="@drawable/bg_preview_action_button"
-                    android:backgroundTint="@null"
-                    android:minHeight="0dp"
-                    android:minWidth="80dp"
-                    android:paddingStart="@dimen/space_xl"
-                    android:paddingEnd="@dimen/space_xl"
-                    android:text="@string/full_read"
-                    android:textColor="@color/white"
-                    android:textSize="@dimen/text_caption" />
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/full_read"
+                    android:padding="8dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/png_read_icon" />
 
-                <Button
+                <ImageButton
                     android:id="@+id/btnExitPreview"
-                    android:layout_width="wrap_content"
+                    android:layout_width="40dp"
                     android:layout_height="40dp"
                     android:layout_marginStart="@dimen/space_sm"
-                    android:background="@drawable/bg_preview_action_button"
-                    android:backgroundTint="@null"
-                    android:minHeight="0dp"
-                    android:minWidth="80dp"
-                    android:paddingStart="@dimen/space_xl"
-                    android:paddingEnd="@dimen/space_xl"
-                    android:text="@string/exit_preview"
-                    android:textColor="@color/white"
-                    android:textSize="@dimen/text_caption" />
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/exit_preview"
+                    android:padding="8dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/png_back_icon" />
             </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/layoutPreviewGridCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="10dp"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/bg_file_picker_card"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/space_md"
+            android:paddingTop="@dimen/space_md"
+            android:paddingEnd="@dimen/space_md"
+            android:paddingBottom="@dimen/space_md">
 
             <GridLayout
                 android:id="@+id/gridPreview"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_sm"
                 android:columnCount="3"
                 android:useDefaultMargins="false" />
 

@@ -316,7 +316,7 @@ class MainActivity : AppCompatActivity() {
         val content = layoutInflater.inflate(R.layout.panel_reading_history, null)
         val listReadingHistory = content.findViewById<RecyclerView>(R.id.listReadingHistory)
         val tvReadingHistoryEmpty = content.findViewById<TextView>(R.id.tvReadingHistoryEmpty)
-        val btnClearReadingHistory = content.findViewById<Button>(R.id.btnClearReadingHistory)
+        val btnClearReadingHistory = content.findViewById<ImageButton>(R.id.btnClearReadingHistory)
         val historyItems = ReadingHistoryStore.items(this).toMutableList()
         val historyAdapter = ReadingHistoryAdapter(
             context = this,
@@ -381,7 +381,7 @@ class MainActivity : AppCompatActivity() {
         val content = layoutInflater.inflate(R.layout.panel_favorite_paths, null)
         val listFavoritePaths = content.findViewById<RecyclerView>(R.id.listFavoritePaths)
         val tvFavoritePathsEmpty = content.findViewById<TextView>(R.id.tvFavoritePathsEmpty)
-        val btnClearFavoritePaths = content.findViewById<Button>(R.id.btnClearFavoritePaths)
+        val btnClearFavoritePaths = content.findViewById<ImageButton>(R.id.btnClearFavoritePaths)
         val favoriteItems = FavoritePathStore.items(this).toMutableList()
         val adapter = FavoritePathAdapter(
             context = this,
@@ -448,7 +448,7 @@ class MainActivity : AppCompatActivity() {
         val content = layoutInflater.inflate(R.layout.panel_favorite_comics, null)
         val listFavoriteComics = content.findViewById<RecyclerView>(R.id.listFavoriteComics)
         val tvFavoriteComicsEmpty = content.findViewById<TextView>(R.id.tvFavoriteComicsEmpty)
-        val btnClearFavoriteComics = content.findViewById<Button>(R.id.btnClearFavoriteComics)
+        val btnClearFavoriteComics = content.findViewById<ImageButton>(R.id.btnClearFavoriteComics)
         val favoriteItems = FavoriteComicStore.items(this).toMutableList()
         val adapter = FavoriteComicAdapter(
             context = this,

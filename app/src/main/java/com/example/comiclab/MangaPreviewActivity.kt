@@ -1,13 +1,14 @@
 package com.example.comiclab
 
 import android.graphics.Bitmap
+import android.graphics.drawable.ColorDrawable
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
 import android.widget.GridLayout
+import android.widget.ImageButton
 import android.widget.ImageView
-import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
@@ -21,8 +22,8 @@ class MangaPreviewActivity : AppCompatActivity() {
     private lateinit var imgCover: ImageView
     private lateinit var tvComicName: TextView
     private lateinit var tvComicFileSize: TextView
-    private lateinit var btnFullRead: Button
-    private lateinit var btnExitPreview: Button
+    private lateinit var btnFullRead: ImageButton
+    private lateinit var btnExitPreview: ImageButton
     private lateinit var progressReading: ProgressBar
     private lateinit var tvReadingProgress: TextView
     private lateinit var gridPreview: GridLayout
@@ -49,7 +50,9 @@ class MangaPreviewActivity : AppCompatActivity() {
         SystemBars.fitContentBelowSystemBars(
             this,
             findViewById<View>(R.id.main),
-            findViewById<View>(R.id.statusBarBackground)
+            findViewById<View>(R.id.statusBarBackground),
+            statusBarColorResId = R.color.comiclab_file_picker_background,
+            lightStatusBars = true
         )
 
         imgCover = findViewById(R.id.imgCover)
@@ -275,32 +278,27 @@ class MangaPreviewActivity : AppCompatActivity() {
         val file = archiveFile ?: return
         val entryName = imageEntries.getOrNull(imageIndex) ?: return
 
-        PopupMenu(this, anchor).apply {
-            menu.add(0, MENU_PREVIEW_JUMP, 0, getString(R.string.jump))
-            menu.add(0, MENU_PREVIEW_DELETE, 1, getString(R.string.delete))
-            setOnMenuItemClickListener { item ->
-                when (item.itemId) {
-                    MENU_PREVIEW_JUMP -> {
-                        openMangaReader(file, startFromBeginning = false, startPageIndex = imageIndex)
-                        true
+        RoundedPopupMenu.show(
+            context = this,
+            anchor = anchor,
+            widthDp = 148,
+            items = listOf(
+                RoundedPopupMenu.Item(getString(R.string.jump)) {
+                    openMangaReader(file, startFromBeginning = false, startPageIndex = imageIndex)
+                },
+                RoundedPopupMenu.Item(getString(R.string.delete)) {
+                    if (ComicArchive.isPdf(file)) {
+                        Toast.makeText(
+                            this@MangaPreviewActivity,
+                            R.string.delete_pdf_page_unsupported,
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        confirmDeletePreviewImage(file, entryName)
                     }
-                    MENU_PREVIEW_DELETE -> {
-                        if (ComicArchive.isPdf(file)) {
-                            Toast.makeText(
-                                this@MangaPreviewActivity,
-                                R.string.delete_pdf_page_unsupported,
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        } else {
-                            confirmDeletePreviewImage(file, entryName)
-                        }
-                        true
-                    }
-                    else -> false
                 }
-            }
-            show()
-        }
+            )
+        )
     }
 
     private fun confirmDeletePreviewImage(file: File, entryName: String) {
@@ -382,16 +380,24 @@ class MangaPreviewActivity : AppCompatActivity() {
     }
 
     private fun showReadingProgressDialog(file: File) {
-        AlertDialog.Builder(this)
-            .setTitle(R.string.reader_progress_dialog_title)
-            .setMessage(R.string.reader_progress_dialog_message)
-            .setPositiveButton(R.string.continue_reading) { _, _ ->
-                openMangaReader(file, startFromBeginning = false)
-            }
-            .setNegativeButton(R.string.read_from_beginning) { _, _ ->
-                openMangaReader(file, startFromBeginning = true)
-            }
-            .show()
+        val content = layoutInflater.inflate(R.layout.dialog_reader_progress, null)
+        val dialog = AlertDialog.Builder(this)
+            .setView(content)
+            .create()
+
+        content.findViewById<View>(R.id.btnContinueReading).setOnClickListener {
+            dialog.dismiss()
+            openMangaReader(file, startFromBeginning = false)
+        }
+        content.findViewById<View>(R.id.btnReadFromBeginning).setOnClickListener {
+            dialog.dismiss()
+            openMangaReader(file, startFromBeginning = true)
+        }
+
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+        }
+        dialog.show()
     }
 
     private fun openMangaReader(
@@ -439,7 +445,5 @@ class MangaPreviewActivity : AppCompatActivity() {
         private const val PREVIEW_IMAGE_MAX_SIZE = 360
         private const val PREVIEW_THREAD_COUNT = 2
         private const val NO_EXPLICIT_START_PAGE = -1
-        private const val MENU_PREVIEW_JUMP = 1
-        private const val MENU_PREVIEW_DELETE = 2
     }
 }

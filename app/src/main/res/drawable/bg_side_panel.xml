@@ -3,5 +3,5 @@
     <corners
         android:bottomLeftRadius="18dp"
         android:topLeftRadius="18dp" />
-    <solid android:color="@color/white" />
+    <solid android:color="@color/comiclab_file_picker_background" />
 </shape>
