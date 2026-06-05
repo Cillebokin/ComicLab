@@ -4,54 +4,69 @@
     android:id="@+id/main"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/comiclab_surface">
+    android:background="@color/comiclab_file_picker_background">
 
     <View
         android:id="@+id/statusBarBackground"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:background="@color/comiclab_blue"
+        android:background="@color/comiclab_file_picker_background"
         app:layout_constraintTop_toTopOf="parent" />
 
     <LinearLayout
         android:id="@+id/layoutSearchToolbar"
-        android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:background="@color/comiclab_blue"
+        android:layout_width="0dp"
+        android:layout_height="52dp"
+        android:layout_marginStart="12dp"
+        android:layout_marginTop="12dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/bg_file_picker_card"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="@dimen/space_lg"
         android:paddingEnd="@dimen/space_lg"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/statusBarBackground">
-
-        <ImageButton
-            android:id="@+id/btnBack"
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/back"
-            android:scaleType="centerInside"
-            android:src="@drawable/png_back_icon"
-            app:tint="@color/white" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="@dimen/space_lg"
             android:includeFontPadding="false"
             android:text="@string/search"
-            android:textColor="@color/white"
+            android:textColor="@color/black"
             android:textSize="@dimen/text_title"
             android:textStyle="bold" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1" />
+
+        <ImageButton
+            android:id="@+id/btnBack"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/back"
+            android:padding="6dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/png_back_icon"
+            app:tint="@color/black" />
     </LinearLayout>
 
     <LinearLayout
         android:id="@+id/layoutSearchInput"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:background="@color/comiclab_surface_card"
+        android:layout_marginStart="12dp"
+        android:layout_marginTop="10dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/bg_file_picker_card"
         android:orientation="vertical"
         android:padding="@dimen/space_md"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/layoutSearchToolbar">
 
         <TextView
@@ -76,7 +91,7 @@
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
                 android:layout_weight="1"
-                android:backgroundTint="@color/comiclab_blue"
+                android:backgroundTint="@color/comiclab_accent"
                 android:hint="@string/search_keyword_hint"
                 android:imeOptions="actionSearch"
                 android:importantForAutofill="no"
@@ -89,11 +104,12 @@
 
             <ImageButton
                 android:id="@+id/btnRunSearch"
-                android:layout_width="26dp"
-                android:layout_height="26dp"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
                 android:layout_marginStart="@dimen/space_md"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/search"
+                android:padding="7dp"
                 android:scaleType="centerInside"
                 android:src="@drawable/png_search_icon" />
         </LinearLayout>
@@ -135,13 +151,18 @@
 
     <LinearLayout
         android:id="@+id/layoutSearchStatus"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="34dp"
-        android:background="@color/comiclab_surface"
+        android:layout_marginStart="12dp"
+        android:layout_marginTop="10dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/bg_file_picker_card"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="@dimen/space_md"
         android:paddingEnd="@dimen/space_md"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/layoutSearchInput">
 
         <ProgressBar
@@ -149,7 +170,7 @@
             style="?android:attr/progressBarStyleSmall"
             android:layout_width="24dp"
             android:layout_height="24dp"
-            android:indeterminateTint="@color/comiclab_blue" />
+            android:indeterminateTint="@color/comiclab_accent" />
 
         <TextView
             android:id="@+id/tvSearchStatus"
@@ -164,15 +185,32 @@
             android:textSize="@dimen/text_caption" />
     </LinearLayout>
 
-    <ListView
-        android:id="@+id/listSearchResults"
-        android:layout_width="match_parent"
+    <FrameLayout
+        android:id="@+id/searchResultsPanel"
+        android:layout_width="0dp"
         android:layout_height="0dp"
-        android:background="@color/comiclab_surface"
-        android:choiceMode="none"
-        android:clipToPadding="false"
-        android:divider="@color/comiclab_divider"
-        android:dividerHeight="1dp"
+        android:layout_marginStart="12dp"
+        android:layout_marginTop="10dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="12dp"
+        android:background="@drawable/bg_file_picker_card"
+        android:clipToOutline="true"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/layoutSearchStatus" />
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/layoutSearchStatus">
+
+        <ListView
+            android:id="@+id/listSearchResults"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@android:color/transparent"
+            android:choiceMode="none"
+            android:clipToPadding="false"
+            android:divider="@drawable/divider_file_picker_item"
+            android:dividerHeight="1dp"
+            android:listSelector="@android:color/transparent" />
+    </FrameLayout>
 </androidx.constraintlayout.widget.ConstraintLayout>

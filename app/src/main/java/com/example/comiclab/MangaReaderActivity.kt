@@ -272,7 +272,8 @@ class MangaReaderActivity : AppCompatActivity() {
         WindowInsetsControllerCompat(window, rootView).systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
-        val toolbarInitialPaddingTop = layoutReaderToolbar.paddingTop
+        val toolbarInitialMarginTop =
+            (layoutReaderToolbar.layoutParams as FrameLayout.LayoutParams).topMargin
         val progressInitialMarginBottom =
             (layoutReaderProgress.layoutParams as FrameLayout.LayoutParams).bottomMargin
         val previewPanelInitialTopMargin =
@@ -281,12 +282,10 @@ class MangaReaderActivity : AppCompatActivity() {
             (layoutReaderPreviewPanel.layoutParams as FrameLayout.LayoutParams).bottomMargin
         ViewCompat.setOnApplyWindowInsetsListener(rootView) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            layoutReaderToolbar.setPadding(
-                layoutReaderToolbar.paddingLeft,
-                toolbarInitialPaddingTop + systemBars.top,
-                layoutReaderToolbar.paddingRight,
-                layoutReaderToolbar.paddingBottom
-            )
+            (layoutReaderToolbar.layoutParams as FrameLayout.LayoutParams).apply {
+                topMargin = toolbarInitialMarginTop + systemBars.top
+                layoutReaderToolbar.layoutParams = this
+            }
             (layoutReaderProgress.layoutParams as FrameLayout.LayoutParams).apply {
                 bottomMargin = progressInitialMarginBottom + systemBars.bottom
                 layoutReaderProgress.layoutParams = this

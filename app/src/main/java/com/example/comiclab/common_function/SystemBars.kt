@@ -15,7 +15,7 @@ object SystemBars {
         activity: Activity,
         rootView: View,
         statusBarBackground: View? = null,
-        statusBarColorResId: Int = R.color.comiclab_blue,
+        statusBarColorResId: Int = R.color.comiclab_accent,
         lightStatusBars: Boolean = false
     ) {
         WindowCompat.setDecorFitsSystemWindows(activity.window, false)

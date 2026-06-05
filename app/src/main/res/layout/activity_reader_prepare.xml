@@ -29,7 +29,7 @@
         android:max="100"
         android:progress="0"
         android:progressBackgroundTint="#333333"
-        android:progressTint="@color/comiclab_blue" />
+        android:progressTint="@color/comiclab_accent" />
 
     <TextView
         android:id="@+id/tvPrepareStatus"

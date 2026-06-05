@@ -5,7 +5,7 @@
             <size
                 android:width="18dp"
                 android:height="18dp" />
-            <solid android:color="@color/comiclab_blue" />
+            <solid android:color="@color/comiclab_accent" />
             <corners android:radius="3dp" />
         </shape>
     </item>

@@ -114,7 +114,7 @@
                     android:max="0"
                     android:progress="0"
                     android:progressBackgroundTint="@color/comiclab_divider"
-                    android:progressTint="@color/comiclab_blue" />
+                    android:progressTint="@color/comiclab_accent" />
 
                 <TextView
                     android:id="@+id/tvReadingProgress"

@@ -309,7 +309,7 @@ class MangaPreviewActivity : AppCompatActivity() {
                 deletePreviewImage(file, entryName)
             }
             .setNegativeButton(R.string.no, null)
-            .show()
+            .showRounded()
     }
 
     private fun deletePreviewImage(file: File, entryName: String) {

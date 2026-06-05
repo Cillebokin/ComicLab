@@ -258,7 +258,7 @@ class SettingsActivity : AppCompatActivity() {
             .setTitle(R.string.run_reader_stress_test)
             .setMessage(R.string.debug_stress_scanning)
             .setCancelable(false)
-            .create()
+            .createRounded()
         progressDialog.show()
 
         val scanRoot = savedBrowserDirectoryForStress()

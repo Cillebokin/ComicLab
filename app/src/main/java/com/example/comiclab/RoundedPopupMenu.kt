@@ -63,7 +63,7 @@ object RoundedPopupMenu {
                     ContextCompat.getColor(
                         context,
                         if (item.isSelected) {
-                            R.color.comiclab_blue
+                            R.color.comiclab_accent
                         } else {
                             R.color.comiclab_text_primary
                         }

@@ -285,7 +285,7 @@ class MainActivity : AppCompatActivity() {
                 openManageAllFilesAccessSettings()
             }
             .setCancelable(false)
-            .show()
+            .showRounded()
 
         return true
     }
@@ -332,6 +332,12 @@ class MainActivity : AppCompatActivity() {
         )
 
         listReadingHistory.layoutManager = LinearLayoutManager(this)
+        listReadingHistory.addItemDecoration(
+            InsetDividerItemDecoration(
+                context = this,
+                skipAdjacentViewTypes = setOf(READING_HISTORY_DATE_HEADER_VIEW_TYPE)
+            )
+        )
         listReadingHistory.adapter = historyAdapter
         listReadingHistory.visibility = if (historyItems.isEmpty()) View.GONE else View.VISIBLE
         tvReadingHistoryEmpty.visibility = if (historyItems.isEmpty()) View.VISIBLE else View.GONE
@@ -344,7 +350,7 @@ class MainActivity : AppCompatActivity() {
                     historyAdapter.clearItems()
                 }
                 .setNegativeButton(R.string.no, null)
-                .show()
+                .showRounded()
         }
 
         dismissSidePanels()
@@ -398,6 +404,7 @@ class MainActivity : AppCompatActivity() {
         )
 
         listFavoritePaths.layoutManager = LinearLayoutManager(this)
+        listFavoritePaths.addItemDecoration(InsetDividerItemDecoration(this))
         listFavoritePaths.adapter = adapter
         listFavoritePaths.visibility = if (favoriteItems.isEmpty()) View.GONE else View.VISIBLE
         tvFavoritePathsEmpty.visibility = if (favoriteItems.isEmpty()) View.VISIBLE else View.GONE
@@ -411,7 +418,7 @@ class MainActivity : AppCompatActivity() {
                     notifyListChanged()
                 }
                 .setNegativeButton(R.string.no, null)
-                .show()
+                .showRounded()
         }
 
         dismissSidePanels()
@@ -464,6 +471,7 @@ class MainActivity : AppCompatActivity() {
         )
 
         listFavoriteComics.layoutManager = LinearLayoutManager(this)
+        listFavoriteComics.addItemDecoration(InsetDividerItemDecoration(this))
         listFavoriteComics.adapter = adapter
         listFavoriteComics.visibility = if (favoriteItems.isEmpty()) View.GONE else View.VISIBLE
         tvFavoriteComicsEmpty.visibility = if (favoriteItems.isEmpty()) View.VISIBLE else View.GONE
@@ -477,7 +485,7 @@ class MainActivity : AppCompatActivity() {
                     notifyListChanged()
                 }
                 .setNegativeButton(R.string.no, null)
-                .show()
+                .showRounded()
         }
 
         dismissSidePanels()
@@ -883,7 +891,7 @@ class MainActivity : AppCompatActivity() {
                 setTextColor(
                     getColor(
                         if (item.isSelected) {
-                            R.color.comiclab_blue
+                            R.color.comiclab_accent
                         } else {
                             R.color.comiclab_text_primary
                         }
@@ -957,7 +965,7 @@ class MainActivity : AppCompatActivity() {
                 startClassifyComics(rootDirectory)
             }
             .setNegativeButton(R.string.no, null)
-            .show()
+            .showRounded()
     }
 
     private fun startClassifyComics(rootDirectory: File) {
@@ -970,7 +978,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle(R.string.classify_comics)
             .setView(content)
             .setCancelable(false)
-            .create()
+            .createRounded()
 
         isClassifyingComics = true
         progressDialog.show()
@@ -1055,7 +1063,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle(MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES)
             .setView(content)
             .setCancelable(false)
-            .create()
+            .createRounded()
 
         isBuildingDirectorySimilarityReport = true
         progressBar.isIndeterminate = true
@@ -1146,7 +1154,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle(MENU_TITLE_MERGE_COMICS_NON_RECURSIVE)
             .setView(content)
             .setCancelable(false)
-            .create()
+            .createRounded()
 
         isMergingComics = true
         progressBar.isIndeterminate = true
@@ -1235,7 +1243,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle(MENU_TITLE_MERGE_FILES_NON_RECURSIVE)
             .setView(content)
             .setCancelable(false)
-            .create()
+            .createRounded()
 
         isMergingFiles = true
         progressBar.isIndeterminate = true
@@ -2194,8 +2202,7 @@ class MainActivity : AppCompatActivity() {
             confirmDeleteDirectory(directory)
         }
 
-        dialog.setContentView(content)
-        dialog.show()
+        dialog.showRoundedContent(content)
     }
 
     private fun showRenameDirectoryDialog(directory: File) {
@@ -2217,7 +2224,7 @@ class MainActivity : AppCompatActivity() {
                 renameDirectory(directory, input.text?.toString().orEmpty())
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .showRounded()
     }
 
     private fun renameDirectory(directory: File, rawName: String) {
@@ -2364,8 +2371,7 @@ class MainActivity : AppCompatActivity() {
             confirmDeleteFile(file)
         }
 
-        dialog.setContentView(content)
-        dialog.show()
+        dialog.showRoundedContent(content)
     }
 
     private fun confirmDeleteFile(file: File) {
@@ -2376,7 +2382,7 @@ class MainActivity : AppCompatActivity() {
                 deleteFileFromBrowser(file)
             }
             .setNegativeButton(R.string.no, null)
-            .show()
+            .showRounded()
     }
 
     private fun deleteFileFromBrowser(file: File) {
@@ -2410,7 +2416,7 @@ class MainActivity : AppCompatActivity() {
                 deleteDirectoryFromBrowser(directory)
             }
             .setNegativeButton(R.string.no, null)
-            .show()
+            .showRounded()
     }
 
     private fun deleteDirectoryFromBrowser(directory: File) {
@@ -2456,7 +2462,7 @@ class MainActivity : AppCompatActivity() {
                 renameArchiveFile(file, input.text?.toString().orEmpty())
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .showRounded()
     }
 
     private fun renameArchiveFile(file: File, rawName: String) {
@@ -2733,6 +2739,7 @@ class MainActivity : AppCompatActivity() {
         private const val READING_HISTORY_PANEL_ELEVATION_DP = 8
         private const val READING_HISTORY_PANEL_ENTER_ANIMATION_MS = 180L
         private const val READING_HISTORY_PANEL_EXIT_ANIMATION_MS = 150L
+        private const val READING_HISTORY_DATE_HEADER_VIEW_TYPE = 0
         private const val MENU_CLASSIFY_BY_START_MARKER = 1
         private const val MENU_FIND_SIMILAR_DIRECTORY_NAMES = 2
         private const val MENU_MERGE_COMICS_NON_RECURSIVE = 3
