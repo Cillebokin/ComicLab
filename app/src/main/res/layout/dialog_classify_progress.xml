@@ -28,7 +28,7 @@
         android:max="100"
         android:progress="0"
         android:progressBackgroundTint="#DDDDDD"
-        android:progressTint="@color/comiclab_blue" />
+        android:progressTint="@color/comiclab_accent" />
 
     <TextView
         android:id="@+id/tvClassifyProgressCount"

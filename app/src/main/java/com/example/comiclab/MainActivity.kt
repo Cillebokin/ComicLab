@@ -19,6 +19,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.PopupWindow
 import android.widget.ProgressBar
@@ -31,6 +32,9 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -70,7 +74,15 @@ class MainActivity : AppCompatActivity() {
     private var favoritePathAdapter: FavoritePathAdapter? = null
     @Volatile
     private var isClassifyingComics = false
+    @Volatile
+    private var isBuildingDirectorySimilarityReport = false
+    @Volatile
+    private var isMergingComics = false
+    @Volatile
+    private var isMergingFiles = false
     private var browserInitialized = false
+    private var skipNextResumeDirectoryReload = false
+    private var pendingCenterTargetPath: String? = null
     private var currentPath = STORAGE_ROOT_PATH
 
     private val prefs by lazy {
@@ -83,7 +95,9 @@ class MainActivity : AppCompatActivity() {
         SystemBars.fitContentBelowSystemBars(
             this,
             findViewById<View>(R.id.main),
-            findViewById<View>(R.id.statusBarBackground)
+            findViewById<View>(R.id.statusBarBackground),
+            statusBarColorResId = R.color.comiclab_file_picker_background,
+            lightStatusBars = true
         )
 
         listView = findViewById(R.id.listFiles)
@@ -135,11 +149,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnClassify.setOnClickListener {
-            confirmClassifyCurrentDirectory()
+            showClassifyMenu()
         }
 
         btnSearch.setOnClickListener {
-            loadCurrentDirectory()
+            openSearch()
         }
 
         etPath.setOnLongClickListener {
@@ -192,16 +206,37 @@ class MainActivity : AppCompatActivity() {
             true
         }
 
+        pendingCenterTargetPath = intent.getStringExtra(EXTRA_CENTER_TARGET_PATH)
+        val restoredScrollState = savedInstanceState?.readFileListScrollState()
         if (!showStoragePermissionNoticeIfNeeded()) {
+            initializeBrowserIfPermitted(restoredScrollState)
+            skipNextResumeDirectoryReload = true
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingCenterTargetPath = intent.getStringExtra(EXTRA_CENTER_TARGET_PATH)
+        if (!pendingCenterTargetPath.isNullOrBlank() &&
+            Environment.isExternalStorageManager()
+        ) {
+            dismissSidePanels()
             initializeBrowserIfPermitted()
+            skipNextResumeDirectoryReload = true
         }
     }
 
     override fun onResume() {
         super.onResume()
         clearFileListTouchState()
+        if (skipNextResumeDirectoryReload) {
+            skipNextResumeDirectoryReload = false
+            return
+        }
+
         if (prefs.getBoolean(KEY_STORAGE_PERMISSION_PROMPTED, false)) {
-            initializeBrowserIfPermitted()
+            initializeBrowserIfPermitted(captureFileListScrollState())
         }
     }
 
@@ -210,6 +245,11 @@ class MainActivity : AppCompatActivity() {
         clearFileListTouchState()
         saveCurrentPath()
         super.onPause()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        captureFileListScrollState()?.writeTo(outState)
     }
 
     override fun onDestroy() {
@@ -245,7 +285,7 @@ class MainActivity : AppCompatActivity() {
                 openManageAllFilesAccessSettings()
             }
             .setCancelable(false)
-            .show()
+            .showRounded()
 
         return true
     }
@@ -276,7 +316,7 @@ class MainActivity : AppCompatActivity() {
         val content = layoutInflater.inflate(R.layout.panel_reading_history, null)
         val listReadingHistory = content.findViewById<RecyclerView>(R.id.listReadingHistory)
         val tvReadingHistoryEmpty = content.findViewById<TextView>(R.id.tvReadingHistoryEmpty)
-        val btnClearReadingHistory = content.findViewById<Button>(R.id.btnClearReadingHistory)
+        val btnClearReadingHistory = content.findViewById<ImageButton>(R.id.btnClearReadingHistory)
         val historyItems = ReadingHistoryStore.items(this).toMutableList()
         val historyAdapter = ReadingHistoryAdapter(
             context = this,
@@ -292,6 +332,12 @@ class MainActivity : AppCompatActivity() {
         )
 
         listReadingHistory.layoutManager = LinearLayoutManager(this)
+        listReadingHistory.addItemDecoration(
+            InsetDividerItemDecoration(
+                context = this,
+                skipAdjacentViewTypes = setOf(READING_HISTORY_DATE_HEADER_VIEW_TYPE)
+            )
+        )
         listReadingHistory.adapter = historyAdapter
         listReadingHistory.visibility = if (historyItems.isEmpty()) View.GONE else View.VISIBLE
         tvReadingHistoryEmpty.visibility = if (historyItems.isEmpty()) View.VISIBLE else View.GONE
@@ -304,7 +350,7 @@ class MainActivity : AppCompatActivity() {
                     historyAdapter.clearItems()
                 }
                 .setNegativeButton(R.string.no, null)
-                .show()
+                .showRounded()
         }
 
         dismissSidePanels()
@@ -341,7 +387,7 @@ class MainActivity : AppCompatActivity() {
         val content = layoutInflater.inflate(R.layout.panel_favorite_paths, null)
         val listFavoritePaths = content.findViewById<RecyclerView>(R.id.listFavoritePaths)
         val tvFavoritePathsEmpty = content.findViewById<TextView>(R.id.tvFavoritePathsEmpty)
-        val btnClearFavoritePaths = content.findViewById<Button>(R.id.btnClearFavoritePaths)
+        val btnClearFavoritePaths = content.findViewById<ImageButton>(R.id.btnClearFavoritePaths)
         val favoriteItems = FavoritePathStore.items(this).toMutableList()
         val adapter = FavoritePathAdapter(
             context = this,
@@ -358,6 +404,7 @@ class MainActivity : AppCompatActivity() {
         )
 
         listFavoritePaths.layoutManager = LinearLayoutManager(this)
+        listFavoritePaths.addItemDecoration(InsetDividerItemDecoration(this))
         listFavoritePaths.adapter = adapter
         listFavoritePaths.visibility = if (favoriteItems.isEmpty()) View.GONE else View.VISIBLE
         tvFavoritePathsEmpty.visibility = if (favoriteItems.isEmpty()) View.VISIBLE else View.GONE
@@ -371,7 +418,7 @@ class MainActivity : AppCompatActivity() {
                     notifyListChanged()
                 }
                 .setNegativeButton(R.string.no, null)
-                .show()
+                .showRounded()
         }
 
         dismissSidePanels()
@@ -408,7 +455,7 @@ class MainActivity : AppCompatActivity() {
         val content = layoutInflater.inflate(R.layout.panel_favorite_comics, null)
         val listFavoriteComics = content.findViewById<RecyclerView>(R.id.listFavoriteComics)
         val tvFavoriteComicsEmpty = content.findViewById<TextView>(R.id.tvFavoriteComicsEmpty)
-        val btnClearFavoriteComics = content.findViewById<Button>(R.id.btnClearFavoriteComics)
+        val btnClearFavoriteComics = content.findViewById<ImageButton>(R.id.btnClearFavoriteComics)
         val favoriteItems = FavoriteComicStore.items(this).toMutableList()
         val adapter = FavoriteComicAdapter(
             context = this,
@@ -424,6 +471,7 @@ class MainActivity : AppCompatActivity() {
         )
 
         listFavoriteComics.layoutManager = LinearLayoutManager(this)
+        listFavoriteComics.addItemDecoration(InsetDividerItemDecoration(this))
         listFavoriteComics.adapter = adapter
         listFavoriteComics.visibility = if (favoriteItems.isEmpty()) View.GONE else View.VISIBLE
         tvFavoriteComicsEmpty.visibility = if (favoriteItems.isEmpty()) View.VISIBLE else View.GONE
@@ -437,7 +485,7 @@ class MainActivity : AppCompatActivity() {
                     notifyListChanged()
                 }
                 .setNegativeButton(R.string.no, null)
-                .show()
+                .showRounded()
         }
 
         dismissSidePanels()
@@ -529,7 +577,7 @@ class MainActivity : AppCompatActivity() {
         ).show()
     }
 
-    private fun initializeBrowserIfPermitted() {
+    private fun initializeBrowserIfPermitted(scrollStateToRestore: FileListScrollState? = null) {
         if (!Environment.isExternalStorageManager()) {
             etPath.setText(R.string.storage_permission_required)
             fileItems.clear()
@@ -537,14 +585,56 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        if (openPendingCenteredTargetIfPresent()) {
+            return
+        }
+
         if (browserInitialized) {
-            loadCurrentDirectory()
+            loadCurrentDirectory(scrollStateToRestore = scrollStateToRestore)
             return
         }
 
         browserInitialized = true
         currentPath = savedCurrentPath()
-        loadCurrentDirectory()
+        loadCurrentDirectory(scrollStateToRestore = scrollStateToRestore)
+    }
+
+    private fun openSearch() {
+        if (!Environment.isExternalStorageManager()) {
+            openManageAllFilesAccessSettings()
+            return
+        }
+
+        val intent = Intent(this, SearchActivity::class.java).apply {
+            putExtra(SearchActivity.EXTRA_SEARCH_ROOT_PATH, currentPath)
+        }
+        startActivity(intent)
+    }
+
+    private fun openPendingCenteredTargetIfPresent(): Boolean {
+        val targetPath = pendingCenterTargetPath?.takeIf { it.isNotBlank() } ?: return false
+        pendingCenterTargetPath = null
+        browserInitialized = true
+        openDirectoryContainingTarget(targetPath)
+        return true
+    }
+
+    private fun openDirectoryContainingTarget(targetPath: String) {
+        val storageRoot = File(STORAGE_ROOT_PATH)
+        val target = File(targetPath)
+        val targetAbsolutePath = target.absolutePath
+        if (targetAbsolutePath == storageRoot.absolutePath) {
+            setCurrentPath(storageRoot.absolutePath)
+            loadCurrentDirectory()
+            return
+        }
+
+        val parentDirectory = target.parentFile
+            ?.takeIf { it.isDirectory }
+            ?: target.takeIf { it.isDirectory }
+            ?: storageRoot
+        setCurrentPath(parentDirectory.absolutePath)
+        loadCurrentDirectory(targetAbsolutePath)
     }
 
     private fun goParent() {
@@ -587,7 +677,10 @@ class MainActivity : AppCompatActivity() {
         return File(currentPath).absolutePath == File(STORAGE_ROOT_PATH).absolutePath
     }
 
-    private fun loadCurrentDirectory(pathToCenter: String? = null) {
+    private fun loadCurrentDirectory(
+        pathToCenter: String? = null,
+        scrollStateToRestore: FileListScrollState? = null
+    ) {
         if (!Environment.isExternalStorageManager()) {
             etPath.setText(R.string.storage_permission_required)
             fileItems.clear()
@@ -635,7 +728,11 @@ class MainActivity : AppCompatActivity() {
                 etPath.setText(resolvedPath)
                 notifyListChanged()
                 if (pathToCenter == null) {
-                    scrollFileListToTop()
+                    if (scrollStateToRestore != null) {
+                        restoreFileListScrollState(scrollStateToRestore, resolvedPath)
+                    } else {
+                        scrollFileListToTop()
+                    }
                 } else {
                     centerFileItemIfPresent(pathToCenter)
                 }
@@ -670,23 +767,163 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun captureFileListScrollState(): FileListScrollState? {
+        val firstVisiblePosition = listView.firstVisiblePosition
+        if (firstVisiblePosition !in fileItems.indices) {
+            return null
+        }
+
+        val firstVisibleItem = fileItems[firstVisiblePosition]
+        return FileListScrollState(
+            directoryPath = File(currentPath).absolutePath,
+            firstVisiblePosition = firstVisiblePosition,
+            firstVisibleTop = listView.getChildAt(0)?.top ?: 0,
+            anchorPath = firstVisibleItem.file?.absolutePath,
+            anchorIsParent = firstVisibleItem.isParent
+        )
+    }
+
+    private fun restoreFileListScrollState(
+        scrollState: FileListScrollState,
+        resolvedPath: String
+    ) {
+        if (File(scrollState.directoryPath).absolutePath != File(resolvedPath).absolutePath) {
+            scrollFileListToTop()
+            return
+        }
+
+        listView.post {
+            if (fileItems.isEmpty()) {
+                return@post
+            }
+
+            val anchorPosition = when {
+                scrollState.anchorIsParent -> fileItems.indexOfFirst { it.isParent }
+                !scrollState.anchorPath.isNullOrBlank() ->
+                    fileItems.indexOfFirst { it.file?.absolutePath == scrollState.anchorPath }
+                else -> -1
+            }
+            val targetPosition = anchorPosition
+                .takeIf { it in fileItems.indices }
+                ?: scrollState.firstVisiblePosition.coerceIn(0, fileItems.lastIndex)
+
+            listView.setSelectionFromTop(targetPosition, scrollState.firstVisibleTop)
+        }
+    }
+
     private fun showSortDialog() {
         val sortModes = FileSortMode.values()
-        val labels = sortModes.map { getString(it.labelResId) }.toTypedArray()
         val currentMode = currentSortMode()
-        val checkedItem = sortModes.indexOf(currentMode).coerceAtLeast(0)
-
-        AlertDialog.Builder(this)
-            .setTitle(R.string.sort)
-            .setSingleChoiceItems(labels, checkedItem) { dialog, which ->
-                val selectedMode = sortModes.getOrNull(which) ?: return@setSingleChoiceItems
+        val items = sortModes.map { sortMode ->
+            RoundedPopupMenuItem(
+                label = getString(sortMode.labelResId),
+                isSelected = sortMode == currentMode
+            ) {
                 prefs.edit()
-                    .putString(KEY_SORT_MODE, selectedMode.name)
+                    .putString(KEY_SORT_MODE, sortMode.name)
                     .apply()
-                dialog.dismiss()
                 loadCurrentDirectory()
             }
-            .show()
+        }
+
+        showRoundedPopupMenu(btnSort, items, widthDp = 208)
+    }
+
+    private fun showClassifyMenu() {
+        val items = listOf(
+            RoundedPopupMenuItem(getString(R.string.classify_comics)) {
+                confirmClassifyCurrentDirectory()
+            },
+            RoundedPopupMenuItem(MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES) {
+                startFindSimilarDirectoryNames()
+            },
+            RoundedPopupMenuItem(MENU_TITLE_MERGE_COMICS_NON_RECURSIVE) {
+                startMergeComicsNonRecursive()
+            },
+            RoundedPopupMenuItem(MENU_TITLE_MERGE_FILES_NON_RECURSIVE) {
+                startMergeFilesNonRecursive()
+            }
+        )
+
+        showRoundedPopupMenu(btnClassify, items, widthDp = 252)
+    }
+
+    private fun showRoundedPopupMenu(
+        anchor: View,
+        items: List<RoundedPopupMenuItem>,
+        widthDp: Int
+    ) {
+        if (items.isEmpty()) {
+            return
+        }
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundResource(R.drawable.bg_file_picker_popup_panel)
+            setPadding(
+                dpToPx(ROUNDED_MENU_PADDING_HORIZONTAL_DP),
+                dpToPx(ROUNDED_MENU_PADDING_VERTICAL_DP),
+                dpToPx(ROUNDED_MENU_PADDING_HORIZONTAL_DP),
+                dpToPx(ROUNDED_MENU_PADDING_VERTICAL_DP)
+            )
+        }
+
+        var popupWindow: PopupWindow? = null
+        items.forEach { item ->
+            val row = TextView(this).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dpToPx(ROUNDED_MENU_ITEM_HEIGHT_DP)
+                )
+                background = getDrawable(R.drawable.bg_file_picker_popup_item)
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                gravity = Gravity.CENTER_VERTICAL
+                includeFontPadding = false
+                maxLines = 1
+                setPadding(
+                    dpToPx(ROUNDED_MENU_ITEM_PADDING_HORIZONTAL_DP),
+                    0,
+                    dpToPx(ROUNDED_MENU_ITEM_PADDING_HORIZONTAL_DP),
+                    0
+                )
+                text = item.label
+                textSize = 14f
+                setTextColor(
+                    getColor(
+                        if (item.isSelected) {
+                            R.color.comiclab_accent
+                        } else {
+                            R.color.comiclab_text_primary
+                        }
+                    )
+                )
+                if (item.isSelected) {
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                }
+                setOnClickListener {
+                    popupWindow?.dismiss()
+                    item.onClick()
+                }
+            }
+            content.addView(row)
+        }
+
+        val popupWidthPx = dpToPx(widthDp)
+        popupWindow = PopupWindow(
+            content,
+            popupWidthPx,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            true
+        ).apply {
+            isOutsideTouchable = true
+            setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+            elevation = dpToPx(ROUNDED_MENU_ELEVATION_DP).toFloat()
+            showAsDropDown(
+                anchor,
+                anchor.width - popupWidthPx,
+                dpToPx(ROUNDED_MENU_VERTICAL_OFFSET_DP)
+            )
+        }
     }
 
     private fun confirmClassifyCurrentDirectory() {
@@ -697,6 +934,21 @@ class MainActivity : AppCompatActivity() {
 
         if (isClassifyingComics) {
             showMessage(getString(R.string.classify_comics_running))
+            return
+        }
+
+        if (isBuildingDirectorySimilarityReport) {
+            showMessage(MESSAGE_FINDING_SIMILAR_DIRECTORY_NAMES)
+            return
+        }
+
+        if (isMergingComics) {
+            showMessage(MESSAGE_MERGING_COMICS)
+            return
+        }
+
+        if (isMergingFiles) {
+            showMessage(MESSAGE_MERGING_FILES)
             return
         }
 
@@ -713,7 +965,7 @@ class MainActivity : AppCompatActivity() {
                 startClassifyComics(rootDirectory)
             }
             .setNegativeButton(R.string.no, null)
-            .show()
+            .showRounded()
     }
 
     private fun startClassifyComics(rootDirectory: File) {
@@ -726,7 +978,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle(R.string.classify_comics)
             .setView(content)
             .setCancelable(false)
-            .create()
+            .createRounded()
 
         isClassifyingComics = true
         progressDialog.show()
@@ -765,6 +1017,275 @@ class MainActivity : AppCompatActivity() {
             isClassifyingComics = false
             progressDialog.dismiss()
             showMessage(getString(R.string.classify_comics_failed))
+        }
+    }
+
+    private fun startFindSimilarDirectoryNames() {
+        if (!Environment.isExternalStorageManager()) {
+            openManageAllFilesAccessSettings()
+            return
+        }
+
+        if (isClassifyingComics) {
+            showMessage(getString(R.string.classify_comics_running))
+            return
+        }
+
+        if (isMergingComics) {
+            showMessage(MESSAGE_MERGING_COMICS)
+            return
+        }
+
+        if (isMergingFiles) {
+            showMessage(MESSAGE_MERGING_FILES)
+            return
+        }
+
+        if (isBuildingDirectorySimilarityReport) {
+            showMessage(MESSAGE_FINDING_SIMILAR_DIRECTORY_NAMES)
+            return
+        }
+
+        val rootDirectory = File(currentPath)
+        if (!rootDirectory.isDirectory) {
+            showMessage(getString(R.string.message_invalid_directory))
+            return
+        }
+
+        val generation = classifyGeneration.incrementAndGet()
+        val rootPath = rootDirectory.absolutePath
+        val scrollState = captureFileListScrollState()
+        val content = layoutInflater.inflate(R.layout.dialog_classify_progress, null)
+        val tvStatus = content.findViewById<TextView>(R.id.tvClassifyProgressStatus)
+        val progressBar = content.findViewById<ProgressBar>(R.id.progressClassifyComics)
+        val tvCount = content.findViewById<TextView>(R.id.tvClassifyProgressCount)
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle(MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES)
+            .setView(content)
+            .setCancelable(false)
+            .createRounded()
+
+        isBuildingDirectorySimilarityReport = true
+        progressBar.isIndeterminate = true
+        tvStatus.text = MESSAGE_SCANNING_DIRECTORIES
+        tvCount.text = ""
+        progressDialog.show()
+
+        runCatching {
+            classifyExecutor.execute {
+                val result = runCatching {
+                    buildDirectorySimilarityReport(rootDirectory) { progress ->
+                        runOnUiThread {
+                            if (generation == classifyGeneration.get() && !isDestroyed) {
+                                updateDirectorySimilarityProgress(progress, progressBar, tvStatus, tvCount)
+                            }
+                        }
+                    }
+                }
+
+                runOnUiThread {
+                    if (generation != classifyGeneration.get() || isDestroyed) {
+                        return@runOnUiThread
+                    }
+
+                    isBuildingDirectorySimilarityReport = false
+                    progressDialog.dismiss()
+                    result
+                        .onSuccess { report ->
+                            showMessage(
+                                "已生成报告：${report.outputFile.name}，相似组合 ${report.pairCount} 组"
+                            )
+                            if (File(currentPath).absolutePath == rootPath) {
+                                loadCurrentDirectory(scrollStateToRestore = scrollState)
+                            }
+                        }
+                        .onFailure {
+                            showMessage(MESSAGE_DIRECTORY_SIMILARITY_REPORT_FAILED)
+                        }
+                }
+            }
+        }.onFailure {
+            isBuildingDirectorySimilarityReport = false
+            progressDialog.dismiss()
+            showMessage(MESSAGE_DIRECTORY_SIMILARITY_REPORT_FAILED)
+        }
+    }
+
+    private fun startMergeComicsNonRecursive() {
+        if (!Environment.isExternalStorageManager()) {
+            openManageAllFilesAccessSettings()
+            return
+        }
+
+        if (isClassifyingComics) {
+            showMessage(getString(R.string.classify_comics_running))
+            return
+        }
+
+        if (isBuildingDirectorySimilarityReport) {
+            showMessage(MESSAGE_FINDING_SIMILAR_DIRECTORY_NAMES)
+            return
+        }
+
+        if (isMergingComics) {
+            showMessage(MESSAGE_MERGING_COMICS)
+            return
+        }
+
+        if (isMergingFiles) {
+            showMessage(MESSAGE_MERGING_FILES)
+            return
+        }
+
+        val rootDirectory = File(currentPath)
+        if (!rootDirectory.isDirectory) {
+            showMessage(getString(R.string.message_invalid_directory))
+            return
+        }
+
+        val generation = classifyGeneration.incrementAndGet()
+        val rootPath = rootDirectory.absolutePath
+        val scrollState = captureFileListScrollState()
+        val content = layoutInflater.inflate(R.layout.dialog_classify_progress, null)
+        val tvStatus = content.findViewById<TextView>(R.id.tvClassifyProgressStatus)
+        val progressBar = content.findViewById<ProgressBar>(R.id.progressClassifyComics)
+        val tvCount = content.findViewById<TextView>(R.id.tvClassifyProgressCount)
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle(MENU_TITLE_MERGE_COMICS_NON_RECURSIVE)
+            .setView(content)
+            .setCancelable(false)
+            .createRounded()
+
+        isMergingComics = true
+        progressBar.isIndeterminate = true
+        tvStatus.text = MESSAGE_SCANNING_COMIC_ARCHIVES
+        tvCount.text = ""
+        progressDialog.show()
+
+        runCatching {
+            classifyExecutor.execute {
+                val result = runCatching {
+                    mergeComicsNonRecursive(rootDirectory) { progress ->
+                        runOnUiThread {
+                            if (generation == classifyGeneration.get() && !isDestroyed) {
+                                updateComicMergeProgress(progress, progressBar, tvStatus, tvCount)
+                            }
+                        }
+                    }
+                }
+
+                runOnUiThread {
+                    if (generation != classifyGeneration.get() || isDestroyed) {
+                        return@runOnUiThread
+                    }
+
+                    isMergingComics = false
+                    progressDialog.dismiss()
+                    result
+                        .onSuccess { mergeResult ->
+                            handleComicMergeResult(mergeResult)
+                            if (File(currentPath).absolutePath == rootPath) {
+                                loadCurrentDirectory(scrollStateToRestore = scrollState)
+                            }
+                        }
+                        .onFailure {
+                            showMessage(MESSAGE_MERGE_COMICS_FAILED)
+                        }
+                }
+            }
+        }.onFailure {
+            isMergingComics = false
+            progressDialog.dismiss()
+            showMessage(MESSAGE_MERGE_COMICS_FAILED)
+        }
+    }
+
+    private fun startMergeFilesNonRecursive() {
+        if (!Environment.isExternalStorageManager()) {
+            openManageAllFilesAccessSettings()
+            return
+        }
+
+        if (isClassifyingComics) {
+            showMessage(getString(R.string.classify_comics_running))
+            return
+        }
+
+        if (isBuildingDirectorySimilarityReport) {
+            showMessage(MESSAGE_FINDING_SIMILAR_DIRECTORY_NAMES)
+            return
+        }
+
+        if (isMergingComics) {
+            showMessage(MESSAGE_MERGING_COMICS)
+            return
+        }
+
+        if (isMergingFiles) {
+            showMessage(MESSAGE_MERGING_FILES)
+            return
+        }
+
+        val rootDirectory = File(currentPath)
+        if (!rootDirectory.isDirectory) {
+            showMessage(getString(R.string.message_invalid_directory))
+            return
+        }
+
+        val generation = classifyGeneration.incrementAndGet()
+        val rootPath = rootDirectory.absolutePath
+        val scrollState = captureFileListScrollState()
+        val content = layoutInflater.inflate(R.layout.dialog_classify_progress, null)
+        val tvStatus = content.findViewById<TextView>(R.id.tvClassifyProgressStatus)
+        val progressBar = content.findViewById<ProgressBar>(R.id.progressClassifyComics)
+        val tvCount = content.findViewById<TextView>(R.id.tvClassifyProgressCount)
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle(MENU_TITLE_MERGE_FILES_NON_RECURSIVE)
+            .setView(content)
+            .setCancelable(false)
+            .createRounded()
+
+        isMergingFiles = true
+        progressBar.isIndeterminate = true
+        tvStatus.text = MESSAGE_SCANNING_IMAGE_DIRECTORIES
+        tvCount.text = ""
+        progressDialog.show()
+
+        runCatching {
+            classifyExecutor.execute {
+                val result = runCatching {
+                    mergeFilesNonRecursive(rootDirectory) { progress ->
+                        runOnUiThread {
+                            if (generation == classifyGeneration.get() && !isDestroyed) {
+                                updateComicMergeProgress(progress, progressBar, tvStatus, tvCount)
+                            }
+                        }
+                    }
+                }
+
+                runOnUiThread {
+                    if (generation != classifyGeneration.get() || isDestroyed) {
+                        return@runOnUiThread
+                    }
+
+                    isMergingFiles = false
+                    progressDialog.dismiss()
+                    result
+                        .onSuccess { mergeResult ->
+                            handleFileMergeResult(mergeResult)
+                            if (File(currentPath).absolutePath == rootPath) {
+                                loadCurrentDirectory(scrollStateToRestore = scrollState)
+                            }
+                        }
+                        .onFailure {
+                            showMessage(MESSAGE_MERGE_FILES_FAILED)
+                        }
+                }
+            }
+        }.onFailure {
+            isMergingFiles = false
+            progressDialog.dismiss()
+            showMessage(MESSAGE_MERGE_FILES_FAILED)
         }
     }
 
@@ -815,6 +1336,711 @@ class MainActivity : AppCompatActivity() {
                 outputDirectory.name
             )
         )
+    }
+
+    private fun updateComicMergeProgress(
+        progress: ComicMergeProgress,
+        progressBar: ProgressBar,
+        tvStatus: TextView,
+        tvCount: TextView
+    ) {
+        tvStatus.text = progress.message
+        if (progress.total <= 0) {
+            progressBar.isIndeterminate = true
+            tvCount.text = ""
+            return
+        }
+
+        progressBar.isIndeterminate = false
+        progressBar.max = progress.total
+        progressBar.progress = progress.completed.coerceIn(0, progress.total)
+        tvCount.text = getString(
+            R.string.classify_comics_progress_count,
+            progress.completed,
+            progress.total
+        )
+    }
+
+    private fun handleComicMergeResult(result: ComicMergeResult) {
+        val outputDirectory = result.outputDirectory
+        if (result.archiveCount <= 0) {
+            showMessage(MESSAGE_MERGE_COMICS_NO_ARCHIVES)
+            return
+        }
+        if (result.totalImageCount <= 0 || outputDirectory == null) {
+            showMessage(MESSAGE_MERGE_COMICS_NO_IMAGES)
+            return
+        }
+
+        showMessage(
+            "整合完成：已复制 ${result.copiedCount} / ${result.totalImageCount}，" +
+                "失败 ${result.failedCount}，输出：${outputDirectory.name}"
+        )
+    }
+
+    private fun handleFileMergeResult(result: FileMergeResult) {
+        val outputDirectory = result.outputDirectory
+        if (result.folderCount <= 0) {
+            showMessage(MESSAGE_MERGE_FILES_NO_FOLDERS)
+            return
+        }
+        if (result.totalImageCount <= 0 || outputDirectory == null) {
+            showMessage(MESSAGE_MERGE_FILES_NO_IMAGES)
+            return
+        }
+
+        showMessage(
+            "文件整合完成：已复制 ${result.copiedCount} / ${result.totalImageCount}，" +
+                "失败 ${result.failedCount}，输出：${outputDirectory.name}"
+        )
+    }
+
+    private fun updateDirectorySimilarityProgress(
+        progress: DirectorySimilarityProgress,
+        progressBar: ProgressBar,
+        tvStatus: TextView,
+        tvCount: TextView
+    ) {
+        tvStatus.text = progress.message
+        if (progress.total <= 0) {
+            progressBar.isIndeterminate = true
+            tvCount.text = ""
+            return
+        }
+
+        progressBar.isIndeterminate = false
+        progressBar.max = progress.total
+        progressBar.progress = progress.completed.coerceIn(0, progress.total)
+        tvCount.text = getString(
+            R.string.classify_comics_progress_count,
+            progress.completed,
+            progress.total
+        )
+    }
+
+    private fun buildDirectorySimilarityReport(
+        rootDirectory: File,
+        onProgress: (DirectorySimilarityProgress) -> Unit
+    ): DirectorySimilarityReport {
+        onProgress(DirectorySimilarityProgress(MESSAGE_SCANNING_DIRECTORIES))
+        val directories = scanDirectoriesForSimilarity(rootDirectory)
+        onProgress(
+            DirectorySimilarityProgress(
+                message = MESSAGE_COMPARING_DIRECTORY_NAMES,
+                completed = 0,
+                total = directories.size
+            )
+        )
+
+        val pairs = findSimilarDirectoryNamePairs(directories) { completed, total ->
+            onProgress(
+                DirectorySimilarityProgress(
+                    message = MESSAGE_COMPARING_DIRECTORY_NAMES,
+                    completed = completed,
+                    total = total
+                )
+            )
+        }
+        val outputFile = createDirectorySimilarityReportFile(rootDirectory)
+        outputFile.writeText(
+            buildDirectorySimilarityReportText(rootDirectory, directories, pairs)
+        )
+        return DirectorySimilarityReport(
+            outputFile = outputFile,
+            directoryCount = directories.size,
+            pairCount = pairs.size
+        )
+    }
+
+    private fun mergeComicsNonRecursive(
+        rootDirectory: File,
+        onProgress: (ComicMergeProgress) -> Unit
+    ): ComicMergeResult {
+        onProgress(ComicMergeProgress(MESSAGE_SCANNING_COMIC_ARCHIVES))
+        val archives = comicArchivesInCurrentDirectory(rootDirectory)
+        if (archives.isEmpty()) {
+            return ComicMergeResult(
+                outputDirectory = null,
+                archiveCount = 0,
+                totalImageCount = 0,
+                copiedCount = 0,
+                failedCount = 0
+            )
+        }
+
+        val sources = mutableListOf<ComicMergeSource>()
+        archives.forEachIndexed { index, archive ->
+            onProgress(
+                ComicMergeProgress(
+                    message = MESSAGE_READING_COMIC_ARCHIVES,
+                    completed = index,
+                    total = archives.size
+                )
+            )
+            val entries = ComicArchive.imageEntries(archive)
+            if (entries.isNotEmpty()) {
+                sources.add(ComicMergeSource(archive, entries))
+            }
+        }
+        onProgress(
+            ComicMergeProgress(
+                message = MESSAGE_READING_COMIC_ARCHIVES,
+                completed = archives.size,
+                total = archives.size
+            )
+        )
+
+        val totalImageCount = sources.sumOf { it.entries.size }
+        if (totalImageCount <= 0) {
+            return ComicMergeResult(
+                outputDirectory = null,
+                archiveCount = archives.size,
+                totalImageCount = 0,
+                copiedCount = 0,
+                failedCount = 0
+            )
+        }
+
+        val outputDirectory = createComicMergeOutputDirectory(rootDirectory)
+        if (!outputDirectory.mkdirs()) {
+            error("Failed to create comic merge output directory: ${outputDirectory.absolutePath}")
+        }
+
+        val numberWidth = maxOf(MERGED_COMIC_MIN_FILE_NUMBER_WIDTH, totalImageCount.toString().length)
+        var completedCount = 0
+        var copiedCount = 0
+        var failedCount = 0
+        var nextOutputIndex = 1
+
+        sources.forEach { source ->
+            source.entries.forEach { entryName ->
+                val outputName = buildMergedComicImageFileName(nextOutputIndex, numberWidth, entryName)
+                val targetFile = File(outputDirectory, outputName)
+                val copied = ComicArchive.extractImageEntryToFile(source.archive, entryName, targetFile)
+                completedCount++
+
+                if (copied) {
+                    copiedCount++
+                    nextOutputIndex++
+                } else {
+                    failedCount++
+                    targetFile.delete()
+                }
+
+                onProgress(
+                    ComicMergeProgress(
+                        message = "正在整合：${source.archive.name}",
+                        completed = completedCount,
+                        total = totalImageCount
+                    )
+                )
+            }
+        }
+
+        return ComicMergeResult(
+            outputDirectory = outputDirectory,
+            archiveCount = archives.size,
+            totalImageCount = totalImageCount,
+            copiedCount = copiedCount,
+            failedCount = failedCount
+        )
+    }
+
+    private fun mergeFilesNonRecursive(
+        rootDirectory: File,
+        onProgress: (ComicMergeProgress) -> Unit
+    ): FileMergeResult {
+        onProgress(ComicMergeProgress(MESSAGE_SCANNING_IMAGE_DIRECTORIES))
+        val directories = imageSourceDirectoriesInCurrentDirectory(rootDirectory)
+        if (directories.isEmpty()) {
+            return FileMergeResult(
+                outputDirectory = null,
+                folderCount = 0,
+                totalImageCount = 0,
+                copiedCount = 0,
+                failedCount = 0
+            )
+        }
+
+        val sources = mutableListOf<FileMergeSource>()
+        directories.forEachIndexed { index, directory ->
+            onProgress(
+                ComicMergeProgress(
+                    message = MESSAGE_READING_IMAGE_DIRECTORIES,
+                    completed = index,
+                    total = directories.size
+                )
+            )
+            val images = imageFilesInDirectory(directory)
+            if (images.isNotEmpty()) {
+                sources.add(FileMergeSource(directory, images))
+            }
+        }
+        onProgress(
+            ComicMergeProgress(
+                message = MESSAGE_READING_IMAGE_DIRECTORIES,
+                completed = directories.size,
+                total = directories.size
+            )
+        )
+
+        val totalImageCount = sources.sumOf { it.images.size }
+        if (totalImageCount <= 0) {
+            return FileMergeResult(
+                outputDirectory = null,
+                folderCount = directories.size,
+                totalImageCount = 0,
+                copiedCount = 0,
+                failedCount = 0
+            )
+        }
+
+        val outputDirectory = createFileMergeOutputDirectory(rootDirectory)
+        if (!outputDirectory.mkdirs()) {
+            error("Failed to create file merge output directory: ${outputDirectory.absolutePath}")
+        }
+
+        val numberWidth = maxOf(MERGED_COMIC_MIN_FILE_NUMBER_WIDTH, totalImageCount.toString().length)
+        var completedCount = 0
+        var copiedCount = 0
+        var failedCount = 0
+        var nextOutputIndex = 1
+
+        sources.forEach { source ->
+            source.images.forEach { imageFile ->
+                val outputName = buildMergedComicImageFileName(nextOutputIndex, numberWidth, imageFile.name)
+                val targetFile = File(outputDirectory, outputName)
+                val copied = copyImageFileToMergedTarget(imageFile, targetFile)
+                completedCount++
+
+                if (copied) {
+                    copiedCount++
+                    nextOutputIndex++
+                } else {
+                    failedCount++
+                    targetFile.delete()
+                }
+
+                onProgress(
+                    ComicMergeProgress(
+                        message = "正在整合：${source.directory.name}",
+                        completed = completedCount,
+                        total = totalImageCount
+                    )
+                )
+            }
+        }
+
+        return FileMergeResult(
+            outputDirectory = outputDirectory,
+            folderCount = directories.size,
+            totalImageCount = totalImageCount,
+            copiedCount = copiedCount,
+            failedCount = failedCount
+        )
+    }
+
+    private fun comicArchivesInCurrentDirectory(rootDirectory: File): List<File> {
+        return runCatching {
+            rootDirectory.listFiles()
+                ?.filter { file ->
+                    file.isFile &&
+                        ComicArchive.isSupportedArchive(file) &&
+                        !ComicArchive.isPdf(file)
+                }
+                ?.sortedWith { left, right -> compareNaturalNames(left.name, right.name) }
+                .orEmpty()
+        }.getOrDefault(emptyList())
+    }
+
+    private fun imageSourceDirectoriesInCurrentDirectory(rootDirectory: File): List<File> {
+        return runCatching {
+            rootDirectory.listFiles()
+                ?.filter { file ->
+                    file.isDirectory &&
+                        !file.name.startsWith(".") &&
+                        !isGeneratedMergeDirectory(file.name)
+                }
+                ?.sortedWith { left, right -> compareNaturalNames(left.name, right.name) }
+                .orEmpty()
+        }.getOrDefault(emptyList())
+    }
+
+    private fun imageFilesInDirectory(directory: File): List<File> {
+        return runCatching {
+            directory.listFiles()
+                ?.filter { file ->
+                    file.isFile &&
+                        file.extension.lowercase(Locale.ROOT) in MERGED_COMIC_IMAGE_EXTENSIONS
+                }
+                ?.sortedWith { left, right -> compareNaturalNames(left.name, right.name) }
+                .orEmpty()
+        }.getOrDefault(emptyList())
+    }
+
+    private fun isGeneratedMergeDirectory(name: String): Boolean {
+        return name.startsWith(MERGED_COMIC_DIRECTORY_PREFIX) ||
+            name.startsWith(MERGED_FILE_DIRECTORY_PREFIX)
+    }
+
+    private fun createComicMergeOutputDirectory(rootDirectory: File): File {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
+        var outputDirectory = File(rootDirectory, "$MERGED_COMIC_DIRECTORY_PREFIX$timestamp")
+        var index = 1
+        while (outputDirectory.exists()) {
+            outputDirectory = File(
+                rootDirectory,
+                "$MERGED_COMIC_DIRECTORY_PREFIX${timestamp}_${String.format(Locale.ROOT, "%03d", index)}"
+            )
+            index++
+        }
+        return outputDirectory
+    }
+
+    private fun createFileMergeOutputDirectory(rootDirectory: File): File {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
+        var outputDirectory = File(rootDirectory, "$MERGED_FILE_DIRECTORY_PREFIX$timestamp")
+        var index = 1
+        while (outputDirectory.exists()) {
+            outputDirectory = File(
+                rootDirectory,
+                "$MERGED_FILE_DIRECTORY_PREFIX${timestamp}_${String.format(Locale.ROOT, "%03d", index)}"
+            )
+            index++
+        }
+        return outputDirectory
+    }
+
+    private fun copyImageFileToMergedTarget(sourceFile: File, targetFile: File): Boolean {
+        if (!sourceFile.isFile || sourceFile.length() <= 0L) {
+            return false
+        }
+
+        targetFile.parentFile?.mkdirs()
+        val tempFile = File(targetFile.parentFile, "${targetFile.name}.part")
+        tempFile.delete()
+        val copied = runCatching {
+            sourceFile.copyTo(tempFile, overwrite = true, bufferSize = MERGED_FILE_COPY_BUFFER_SIZE)
+            tempFile.isFile && tempFile.length() == sourceFile.length()
+        }.getOrDefault(false)
+
+        if (!copied) {
+            tempFile.delete()
+            return false
+        }
+
+        if (targetFile.exists()) {
+            targetFile.delete()
+        }
+
+        if (!tempFile.renameTo(targetFile)) {
+            tempFile.delete()
+            return false
+        }
+
+        targetFile.setLastModified(sourceFile.lastModified())
+        return true
+    }
+
+    private fun buildMergedComicImageFileName(index: Int, numberWidth: Int, entryName: String): String {
+        val extension = entryName.substringAfterLast('.', "")
+            .lowercase(Locale.ROOT)
+            .takeIf { it in MERGED_COMIC_IMAGE_EXTENSIONS }
+            ?: MERGED_COMIC_DEFAULT_IMAGE_EXTENSION
+        return "${index.toString().padStart(numberWidth, '0')}.$extension"
+    }
+
+    private fun compareNaturalNames(left: String, right: String): Int {
+        var leftIndex = 0
+        var rightIndex = 0
+
+        while (leftIndex < left.length && rightIndex < right.length) {
+            val leftChar = left[leftIndex]
+            val rightChar = right[rightIndex]
+
+            if (leftChar.isDigit() && rightChar.isDigit()) {
+                val leftEnd = findNumberRunEnd(left, leftIndex)
+                val rightEnd = findNumberRunEnd(right, rightIndex)
+                val numberComparison = compareNumberRuns(left, leftIndex, leftEnd, right, rightIndex, rightEnd)
+                if (numberComparison != 0) {
+                    return numberComparison
+                }
+                leftIndex = leftEnd
+                rightIndex = rightEnd
+                continue
+            }
+
+            val charComparison = leftChar.lowercaseChar().compareTo(rightChar.lowercaseChar())
+            if (charComparison != 0) {
+                return charComparison
+            }
+
+            leftIndex++
+            rightIndex++
+        }
+
+        if (leftIndex != left.length || rightIndex != right.length) {
+            return (left.length - leftIndex).compareTo(right.length - rightIndex)
+        }
+
+        return left.compareTo(right)
+    }
+
+    private fun findNumberRunEnd(value: String, startIndex: Int): Int {
+        var index = startIndex
+        while (index < value.length && value[index].isDigit()) {
+            index++
+        }
+        return index
+    }
+
+    private fun compareNumberRuns(
+        left: String,
+        leftStart: Int,
+        leftEnd: Int,
+        right: String,
+        rightStart: Int,
+        rightEnd: Int
+    ): Int {
+        val leftSignificantStart = findSignificantNumberStart(left, leftStart, leftEnd)
+        val rightSignificantStart = findSignificantNumberStart(right, rightStart, rightEnd)
+        val leftSignificantLength = leftEnd - leftSignificantStart
+        val rightSignificantLength = rightEnd - rightSignificantStart
+
+        if (leftSignificantLength != rightSignificantLength) {
+            return leftSignificantLength.compareTo(rightSignificantLength)
+        }
+
+        for (offset in 0 until leftSignificantLength) {
+            val digitComparison = left[leftSignificantStart + offset]
+                .compareTo(right[rightSignificantStart + offset])
+            if (digitComparison != 0) {
+                return digitComparison
+            }
+        }
+
+        return 0
+    }
+
+    private fun findSignificantNumberStart(value: String, startIndex: Int, endIndex: Int): Int {
+        var index = startIndex
+        while (index < endIndex - 1 && value[index] == '0') {
+            index++
+        }
+        return index
+    }
+
+    private fun scanDirectoriesForSimilarity(rootDirectory: File): List<SimilarDirectoryInfo> {
+        val result = mutableListOf<SimilarDirectoryInfo>()
+        val pending = ArrayDeque<File>()
+        val visited = mutableSetOf<String>()
+
+        runCatching {
+            rootDirectory.listFiles()
+                ?.filter { it.isDirectory && !it.name.startsWith(".") }
+                ?.sortedByDescending { it.name.lowercase(Locale.ROOT) }
+                ?.forEach { pending.add(it) }
+        }
+
+        while (pending.isNotEmpty()) {
+            val directory = pending.removeLast()
+            if (!directory.isDirectory || directory.name.startsWith(".")) {
+                continue
+            }
+
+            val stablePath = runCatching { directory.canonicalPath }
+                .getOrDefault(directory.absolutePath)
+            if (!visited.add(stablePath)) {
+                continue
+            }
+
+            result.add(
+                SimilarDirectoryInfo(
+                    name = directory.name,
+                    path = directory.absolutePath
+                )
+            )
+
+            val children = runCatching {
+                directory.listFiles()
+                    ?.filter { it.isDirectory && !it.name.startsWith(".") }
+                    ?.sortedByDescending { it.name.lowercase(Locale.ROOT) }
+                    .orEmpty()
+            }.getOrDefault(emptyList())
+            children.forEach { pending.add(it) }
+        }
+
+        return result.sortedBy { it.path.lowercase(Locale.ROOT) }
+    }
+
+    private fun findSimilarDirectoryNamePairs(
+        directories: List<SimilarDirectoryInfo>,
+        onProgress: (completed: Int, total: Int) -> Unit
+    ): List<SimilarDirectoryNamePair> {
+        val candidates = directories
+            .mapNotNull { directory ->
+                normalizeDirectoryNameForSimilarity(directory.name)
+                    .takeIf { it.isNotBlank() }
+                    ?.let { normalizedName ->
+                        SimilarDirectoryNameCandidate(directory, normalizedName)
+                    }
+            }
+
+        if (candidates.size < 2) {
+            onProgress(candidates.size, candidates.size)
+            return emptyList()
+        }
+
+        val pairs = mutableListOf<SimilarDirectoryNamePair>()
+        for (leftIndex in 0 until candidates.lastIndex) {
+            val left = candidates[leftIndex]
+            for (rightIndex in (leftIndex + 1)..candidates.lastIndex) {
+                val right = candidates[rightIndex]
+                val maxLength = maxOf(left.normalizedName.length, right.normalizedName.length)
+                val minLength = minOf(left.normalizedName.length, right.normalizedName.length)
+                if (maxLength <= 0 ||
+                    minLength.toDouble() / maxLength.toDouble() < DIRECTORY_NAME_SIMILARITY_THRESHOLD
+                ) {
+                    continue
+                }
+
+                val similarity = directoryNameSimilarity(left.normalizedName, right.normalizedName)
+                if (similarity >= DIRECTORY_NAME_SIMILARITY_THRESHOLD) {
+                    pairs.add(
+                        SimilarDirectoryNamePair(
+                            left = left.directory,
+                            right = right.directory,
+                            similarity = similarity
+                        )
+                    )
+                }
+            }
+
+            if (leftIndex % DIRECTORY_SIMILARITY_PROGRESS_ROW_INTERVAL == 0 ||
+                leftIndex == candidates.lastIndex - 1
+            ) {
+                onProgress(leftIndex + 1, candidates.size)
+            }
+        }
+        onProgress(candidates.size, candidates.size)
+
+        return pairs.sortedWith(
+            compareByDescending<SimilarDirectoryNamePair> { it.similarity }
+                .thenBy { it.left.name.lowercase(Locale.ROOT) }
+                .thenBy { it.right.name.lowercase(Locale.ROOT) }
+                .thenBy { it.left.path.lowercase(Locale.ROOT) }
+                .thenBy { it.right.path.lowercase(Locale.ROOT) }
+        )
+    }
+
+    private fun buildDirectorySimilarityReportText(
+        rootDirectory: File,
+        directories: List<SimilarDirectoryInfo>,
+        pairs: List<SimilarDirectoryNamePair>
+    ): String {
+        val generatedAt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+        return buildString {
+            appendLine("ComicLab 命名接近的文件夹路径报告")
+            appendLine("生成时间：$generatedAt")
+            appendLine("扫描根目录：${rootDirectory.absolutePath}")
+            appendLine(
+                "比较规则：仅使用文件夹名计算归一化 Levenshtein 相似度，阈值 >= " +
+                    similarityPercent(DIRECTORY_NAME_SIMILARITY_THRESHOLD)
+            )
+            appendLine("扫描文件夹数：${directories.size}")
+            appendLine("命名接近组合数：${pairs.size}")
+            appendLine()
+
+            if (pairs.isEmpty()) {
+                appendLine("没有找到达到阈值的命名接近文件夹。")
+                return@buildString
+            }
+
+            pairs.forEachIndexed { index, pair ->
+                appendLine("[${String.format(Locale.ROOT, "%03d", index + 1)}] 相似度：${similarityPercent(pair.similarity)}")
+                appendLine("名称 A：${pair.left.name}")
+                appendLine("路径 A：${pair.left.path}")
+                appendLine("名称 B：${pair.right.name}")
+                appendLine("路径 B：${pair.right.path}")
+                appendLine()
+            }
+        }
+    }
+
+    private fun createDirectorySimilarityReportFile(rootDirectory: File): File {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
+        var outputFile = File(
+            rootDirectory,
+            "$DIRECTORY_SIMILARITY_REPORT_PREFIX$timestamp$DIRECTORY_SIMILARITY_REPORT_EXTENSION"
+        )
+        var index = 1
+        while (outputFile.exists()) {
+            outputFile = File(
+                rootDirectory,
+                "$DIRECTORY_SIMILARITY_REPORT_PREFIX${timestamp}_" +
+                    "${String.format(Locale.ROOT, "%03d", index)}$DIRECTORY_SIMILARITY_REPORT_EXTENSION"
+            )
+            index++
+        }
+        return outputFile
+    }
+
+    private fun normalizeDirectoryNameForSimilarity(value: String): String {
+        return value
+            .trim()
+            .lowercase(Locale.ROOT)
+            .filterNot { char ->
+                char.isWhitespace() || char in DIRECTORY_NAME_SIMILARITY_IGNORED_CHARS
+            }
+    }
+
+    private fun directoryNameSimilarity(left: String, right: String): Double {
+        if (left == right) {
+            return 1.0
+        }
+        val maxLength = maxOf(left.length, right.length)
+        if (maxLength <= 0) {
+            return 0.0
+        }
+        val distance = levenshteinDistance(left, right)
+        return (1.0 - (distance.toDouble() / maxLength.toDouble())).coerceIn(0.0, 1.0)
+    }
+
+    private fun levenshteinDistance(left: String, right: String): Int {
+        if (left == right) {
+            return 0
+        }
+        if (left.isEmpty()) {
+            return right.length
+        }
+        if (right.isEmpty()) {
+            return left.length
+        }
+
+        var previous = IntArray(right.length + 1) { it }
+        var current = IntArray(right.length + 1)
+
+        for (leftIndex in 1..left.length) {
+            current[0] = leftIndex
+            for (rightIndex in 1..right.length) {
+                val cost = if (left[leftIndex - 1] == right[rightIndex - 1]) 0 else 1
+                current[rightIndex] = minOf(
+                    current[rightIndex - 1] + 1,
+                    previous[rightIndex] + 1,
+                    previous[rightIndex - 1] + cost
+                )
+            }
+
+            val swap = previous
+            previous = current
+            current = swap
+        }
+
+        return previous[right.length]
+    }
+
+    private fun similarityPercent(value: Double): String {
+        return String.format(Locale.getDefault(), "%.2f%%", value * 100.0)
     }
 
     private fun sortFiles(files: List<File>): List<File> {
@@ -915,10 +2141,16 @@ class MainActivity : AppCompatActivity() {
         val btnFavoritePath = content.findViewById<TextView>(R.id.btnFavoritePathAction)
         val btnCopyPathName = content.findViewById<TextView>(R.id.btnCopyPathName)
         val btnRenameDirectoryName = content.findViewById<TextView>(R.id.btnRenameDirectoryName)
+        val btnDeleteDirectory = content.findViewById<TextView>(R.id.btnDeleteDirectory)
         val isFavorite = FavoritePathStore.isFavorite(this, directory)
 
         tvDirectoryActionTitle.text = directory.name
-        sizeBottomSheetActionIcons(btnFavoritePath, btnCopyPathName, btnRenameDirectoryName)
+        sizeBottomSheetActionIcons(
+            btnFavoritePath,
+            btnCopyPathName,
+            btnRenameDirectoryName,
+            btnDeleteDirectory
+        )
         btnFavoritePath.text = getString(
             if (isFavorite) R.string.cancel_favorite else R.string.favorite_path_action
         )
@@ -965,8 +2197,12 @@ class MainActivity : AppCompatActivity() {
             showRenameDirectoryDialog(directory)
         }
 
-        dialog.setContentView(content)
-        dialog.show()
+        btnDeleteDirectory.setOnClickListener {
+            dialog.dismiss()
+            confirmDeleteDirectory(directory)
+        }
+
+        dialog.showRoundedContent(content)
     }
 
     private fun showRenameDirectoryDialog(directory: File) {
@@ -988,7 +2224,7 @@ class MainActivity : AppCompatActivity() {
                 renameDirectory(directory, input.text?.toString().orEmpty())
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .showRounded()
     }
 
     private fun renameDirectory(directory: File, rawName: String) {
@@ -1044,6 +2280,7 @@ class MainActivity : AppCompatActivity() {
         val btnCopyStartMarker = content.findViewById<TextView>(R.id.btnCopyStartMarker)
         val btnFavoriteComic = content.findViewById<TextView>(R.id.btnFavoriteComicAction)
         val btnRead = content.findViewById<TextView>(R.id.btnReadComic)
+        val btnDeleteFile = content.findViewById<TextView>(R.id.btnDeleteFile)
         val isFavorite = FavoriteComicStore.isFavorite(this, file)
 
         tvArchiveActionTitle.text = file.name
@@ -1052,7 +2289,8 @@ class MainActivity : AppCompatActivity() {
             btnFavoriteComic,
             btnCopyFileName,
             btnRenameFileName,
-            btnCopyStartMarker
+            btnCopyStartMarker,
+            btnDeleteFile
         )
         btnFavoriteComic.text = getString(
             if (isFavorite) R.string.cancel_favorite else R.string.favorite_comic_action
@@ -1128,8 +2366,81 @@ class MainActivity : AppCompatActivity() {
             openMangaPreview(file)
         }
 
-        dialog.setContentView(content)
-        dialog.show()
+        btnDeleteFile.setOnClickListener {
+            dialog.dismiss()
+            confirmDeleteFile(file)
+        }
+
+        dialog.showRoundedContent(content)
+    }
+
+    private fun confirmDeleteFile(file: File) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.delete_file_title)
+            .setMessage(R.string.delete_file_message)
+            .setPositiveButton(R.string.yes) { _, _ ->
+                deleteFileFromBrowser(file)
+            }
+            .setNegativeButton(R.string.no, null)
+            .showRounded()
+    }
+
+    private fun deleteFileFromBrowser(file: File) {
+        if (!file.isFile) {
+            showMessage(getString(R.string.message_invalid_file))
+            loadCurrentDirectory(scrollStateToRestore = captureFileListScrollState())
+            return
+        }
+
+        val scrollState = captureFileListScrollState()
+        directoryLoadExecutor.execute {
+            val deleted = runCatching { file.delete() }.getOrDefault(false)
+            runOnUiThread {
+                if (deleted) {
+                    FavoriteComicStore.remove(this, file)
+                    ReadingHistoryStore.remove(this, file)
+                    showMessage(getString(R.string.delete_file_success))
+                    loadCurrentDirectory(scrollStateToRestore = scrollState)
+                } else {
+                    showMessage(getString(R.string.delete_file_failed))
+                }
+            }
+        }
+    }
+
+    private fun confirmDeleteDirectory(directory: File) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.delete_directory_title)
+            .setMessage(R.string.delete_directory_message)
+            .setPositiveButton(R.string.yes) { _, _ ->
+                deleteDirectoryFromBrowser(directory)
+            }
+            .setNegativeButton(R.string.no, null)
+            .showRounded()
+    }
+
+    private fun deleteDirectoryFromBrowser(directory: File) {
+        if (!directory.isDirectory ||
+            File(directory.absolutePath).absolutePath == File(STORAGE_ROOT_PATH).absolutePath
+        ) {
+            showMessage(getString(R.string.message_invalid_directory))
+            loadCurrentDirectory(scrollStateToRestore = captureFileListScrollState())
+            return
+        }
+
+        val scrollState = captureFileListScrollState()
+        directoryLoadExecutor.execute {
+            val deleted = runCatching { directory.deleteRecursively() }.getOrDefault(false)
+            runOnUiThread {
+                if (deleted) {
+                    FavoritePathStore.remove(this, directory)
+                    showMessage(getString(R.string.delete_directory_success))
+                    loadCurrentDirectory(scrollStateToRestore = scrollState)
+                } else {
+                    showMessage(getString(R.string.delete_directory_failed))
+                }
+            }
+        }
     }
 
     private fun showRenameFileDialog(file: File) {
@@ -1151,7 +2462,7 @@ class MainActivity : AppCompatActivity() {
                 renameArchiveFile(file, input.text?.toString().orEmpty())
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .showRounded()
     }
 
     private fun renameArchiveFile(file: File, rawName: String) {
@@ -1304,18 +2615,178 @@ class MainActivity : AppCompatActivity() {
         return savedPath ?: STORAGE_ROOT_PATH
     }
 
+    private fun Bundle.readFileListScrollState(): FileListScrollState? {
+        val directoryPath = getString(KEY_FILE_LIST_SCROLL_DIRECTORY_PATH)
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        val firstVisiblePosition = getInt(KEY_FILE_LIST_SCROLL_POSITION, -1)
+        if (firstVisiblePosition < 0) {
+            return null
+        }
+
+        return FileListScrollState(
+            directoryPath = directoryPath,
+            firstVisiblePosition = firstVisiblePosition,
+            firstVisibleTop = getInt(KEY_FILE_LIST_SCROLL_TOP, 0),
+            anchorPath = getString(KEY_FILE_LIST_SCROLL_ANCHOR_PATH),
+            anchorIsParent = getBoolean(KEY_FILE_LIST_SCROLL_ANCHOR_IS_PARENT, false)
+        )
+    }
+
+    private data class FileListScrollState(
+        val directoryPath: String,
+        val firstVisiblePosition: Int,
+        val firstVisibleTop: Int,
+        val anchorPath: String?,
+        val anchorIsParent: Boolean
+    ) {
+        fun writeTo(outState: Bundle) {
+            outState.putString(KEY_FILE_LIST_SCROLL_DIRECTORY_PATH, directoryPath)
+            outState.putInt(KEY_FILE_LIST_SCROLL_POSITION, firstVisiblePosition)
+            outState.putInt(KEY_FILE_LIST_SCROLL_TOP, firstVisibleTop)
+            outState.putString(KEY_FILE_LIST_SCROLL_ANCHOR_PATH, anchorPath)
+            outState.putBoolean(KEY_FILE_LIST_SCROLL_ANCHOR_IS_PARENT, anchorIsParent)
+        }
+    }
+
+    private data class RoundedPopupMenuItem(
+        val label: String,
+        val isSelected: Boolean = false,
+        val onClick: () -> Unit
+    )
+
+    private data class DirectorySimilarityProgress(
+        val message: String,
+        val completed: Int = 0,
+        val total: Int = 0
+    )
+
+    private data class DirectorySimilarityReport(
+        val outputFile: File,
+        val directoryCount: Int,
+        val pairCount: Int
+    )
+
+    private data class ComicMergeProgress(
+        val message: String,
+        val completed: Int = 0,
+        val total: Int = 0
+    )
+
+    private data class ComicMergeResult(
+        val outputDirectory: File?,
+        val archiveCount: Int,
+        val totalImageCount: Int,
+        val copiedCount: Int,
+        val failedCount: Int
+    )
+
+    private data class ComicMergeSource(
+        val archive: File,
+        val entries: List<String>
+    )
+
+    private data class FileMergeResult(
+        val outputDirectory: File?,
+        val folderCount: Int,
+        val totalImageCount: Int,
+        val copiedCount: Int,
+        val failedCount: Int
+    )
+
+    private data class FileMergeSource(
+        val directory: File,
+        val images: List<File>
+    )
+
+    private data class SimilarDirectoryInfo(
+        val name: String,
+        val path: String
+    )
+
+    private data class SimilarDirectoryNameCandidate(
+        val directory: SimilarDirectoryInfo,
+        val normalizedName: String
+    )
+
+    private data class SimilarDirectoryNamePair(
+        val left: SimilarDirectoryInfo,
+        val right: SimilarDirectoryInfo,
+        val similarity: Double
+    )
+
     companion object {
         private const val PREFS_NAME = "saf_prefs"
+        const val EXTRA_CENTER_TARGET_PATH = "center_target_path"
         private const val KEY_STORAGE_PERMISSION_PROMPTED = "storage_permission_prompted"
         private const val KEY_SORT_MODE = "sort_mode"
         private const val KEY_CURRENT_PATH = "current_path"
-        private const val CLEAR_CLICK_STATE_DELAY_MS = 120L
+        private const val KEY_FILE_LIST_SCROLL_DIRECTORY_PATH = "file_list_scroll_directory_path"
+        private const val KEY_FILE_LIST_SCROLL_POSITION = "file_list_scroll_position"
+        private const val KEY_FILE_LIST_SCROLL_TOP = "file_list_scroll_top"
+        private const val KEY_FILE_LIST_SCROLL_ANCHOR_PATH = "file_list_scroll_anchor_path"
+        private const val KEY_FILE_LIST_SCROLL_ANCHOR_IS_PARENT = "file_list_scroll_anchor_is_parent"
+        private const val CLEAR_CLICK_STATE_DELAY_MS = 240L
         private const val FILE_ITEM_HEIGHT_DP = 75
         private val INVALID_FILE_NAME_CHARS = setOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')
+        private const val ROUNDED_MENU_PADDING_HORIZONTAL_DP = 6
+        private const val ROUNDED_MENU_PADDING_VERTICAL_DP = 6
+        private const val ROUNDED_MENU_ITEM_HEIGHT_DP = 44
+        private const val ROUNDED_MENU_ITEM_PADDING_HORIZONTAL_DP = 14
+        private const val ROUNDED_MENU_VERTICAL_OFFSET_DP = 8
+        private const val ROUNDED_MENU_ELEVATION_DP = 8
         private const val MIN_READING_HISTORY_PANEL_WIDTH_DP = 180
         private const val READING_HISTORY_PANEL_ELEVATION_DP = 8
         private const val READING_HISTORY_PANEL_ENTER_ANIMATION_MS = 180L
         private const val READING_HISTORY_PANEL_EXIT_ANIMATION_MS = 150L
+        private const val READING_HISTORY_DATE_HEADER_VIEW_TYPE = 0
+        private const val MENU_CLASSIFY_BY_START_MARKER = 1
+        private const val MENU_FIND_SIMILAR_DIRECTORY_NAMES = 2
+        private const val MENU_MERGE_COMICS_NON_RECURSIVE = 3
+        private const val MENU_MERGE_FILES_NON_RECURSIVE = 4
+        private const val DIRECTORY_NAME_SIMILARITY_THRESHOLD = 0.78
+        private const val DIRECTORY_SIMILARITY_PROGRESS_ROW_INTERVAL = 25
+        private const val DIRECTORY_SIMILARITY_REPORT_PREFIX = "ComicLab_similar_directory_names_"
+        private const val DIRECTORY_SIMILARITY_REPORT_EXTENSION = ".txt"
+        private const val MERGED_COMIC_DIRECTORY_PREFIX = "ComicLab_merged_"
+        private const val MERGED_FILE_DIRECTORY_PREFIX = "ComicLab_file_merged_"
+        private const val MERGED_COMIC_MIN_FILE_NUMBER_WIDTH = 4
+        private const val MERGED_COMIC_DEFAULT_IMAGE_EXTENSION = "jpg"
+        private const val MERGED_FILE_COPY_BUFFER_SIZE = 1024 * 1024
+        private const val MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES = "查找相似文件夹"
+        private const val MENU_TITLE_MERGE_COMICS_NON_RECURSIVE = "漫画整合（不递归）"
+        private const val MENU_TITLE_MERGE_FILES_NON_RECURSIVE = "文件整合（不递归）"
+        private const val MESSAGE_FINDING_SIMILAR_DIRECTORY_NAMES = "正在查找命名接近的路径"
+        private const val MESSAGE_MERGING_COMICS = "正在整合漫画"
+        private const val MESSAGE_MERGING_FILES = "正在整合文件"
+        private const val MESSAGE_SCANNING_DIRECTORIES = "正在扫描文件夹..."
+        private const val MESSAGE_COMPARING_DIRECTORY_NAMES = "正在比较文件夹名称..."
+        private const val MESSAGE_SCANNING_COMIC_ARCHIVES = "正在扫描当前路径下的漫画压缩包..."
+        private const val MESSAGE_READING_COMIC_ARCHIVES = "正在读取压缩包图片列表..."
+        private const val MESSAGE_SCANNING_IMAGE_DIRECTORIES = "正在扫描当前路径下的图片文件夹..."
+        private const val MESSAGE_READING_IMAGE_DIRECTORIES = "正在读取文件夹图片列表..."
+        private const val MESSAGE_DIRECTORY_SIMILARITY_REPORT_FAILED = "生成命名接近路径报告失败"
+        private const val MESSAGE_MERGE_COMICS_FAILED = "漫画整合失败"
+        private const val MESSAGE_MERGE_COMICS_NO_ARCHIVES = "当前路径下没有找到漫画压缩包"
+        private const val MESSAGE_MERGE_COMICS_NO_IMAGES = "漫画压缩包中没有找到可整合的图片"
+        private const val MESSAGE_MERGE_FILES_FAILED = "文件整合失败"
+        private const val MESSAGE_MERGE_FILES_NO_FOLDERS = "当前路径下没有找到可整合的文件夹"
+        private const val MESSAGE_MERGE_FILES_NO_IMAGES = "文件夹中没有找到可整合的图片"
+        private val MERGED_COMIC_IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
+        private val DIRECTORY_NAME_SIMILARITY_IGNORED_CHARS = setOf(
+            '_',
+            '-',
+            '.',
+            '·',
+            '[',
+            ']',
+            '(',
+            ')',
+            '（',
+            '）',
+            '【',
+            '】'
+        )
         private val STORAGE_ROOT_PATH = Environment.getExternalStorageDirectory().absolutePath
     }
 

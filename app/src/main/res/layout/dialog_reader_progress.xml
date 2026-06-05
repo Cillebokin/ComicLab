@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_dialog_rounded"
+    android:orientation="vertical"
+    android:paddingStart="20dp"
+    android:paddingTop="18dp"
+    android:paddingEnd="20dp"
+    android:paddingBottom="14dp">
+
+    <TextView
+        android:id="@+id/tvReaderProgressDialogTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:includeFontPadding="false"
+        android:text="@string/reader_progress_dialog_title"
+        android:textColor="@color/black"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/tvReaderProgressDialogMessage"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:lineSpacingExtra="2dp"
+        android:text="@string/reader_progress_dialog_message"
+        android:textColor="@color/comiclab_text_secondary"
+        android:textSize="15sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:layout_marginTop="18dp"
+        android:gravity="end|center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/btnReadFromBeginning"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:background="@drawable/bg_file_picker_popup_item"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:minWidth="88dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="@string/read_from_beginning"
+            android:textColor="@color/comiclab_text_primary"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/btnContinueReading"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_preview_action_button"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:minWidth="88dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="@string/continue_reading"
+            android:textColor="@color/white"
+            android:textSize="14sp" />
+    </LinearLayout>
+</LinearLayout>

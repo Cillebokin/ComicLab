@@ -6,7 +6,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageButton
 import android.widget.ImageView
-import android.widget.PopupMenu
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 
@@ -57,14 +56,16 @@ class FavoritePathAdapter(
     private fun showItemOptionsMenu(anchor: View, position: Int) {
         val item = items.getOrNull(position) ?: return
 
-        PopupMenu(context, anchor).apply {
-            menu.add(R.string.delete_path)
-            setOnMenuItemClickListener {
-                removeItem(item)
-                true
-            }
-            show()
-        }
+        RoundedPopupMenu.show(
+            context = context,
+            anchor = anchor,
+            widthDp = 148,
+            items = listOf(
+                RoundedPopupMenu.Item(context.getString(R.string.delete_path)) {
+                    removeItem(item)
+                }
+            )
+        )
     }
 
     private fun removeItem(item: FavoritePathStore.Item) {

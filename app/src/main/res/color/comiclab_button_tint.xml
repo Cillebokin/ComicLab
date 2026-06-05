@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_enabled="false" android:color="@color/comiclab_text_tertiary" />
-    <item android:state_pressed="true" android:color="@color/comiclab_blue_pressed" />
-    <item android:color="@color/comiclab_blue" />
+    <item android:state_pressed="true" android:color="@color/comiclab_accent_pressed" />
+    <item android:color="@color/comiclab_accent" />
 </selector>

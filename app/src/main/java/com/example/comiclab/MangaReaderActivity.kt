@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -163,6 +164,7 @@ class MangaReaderActivity : AppCompatActivity() {
         volumeKeyPageTurnEnabled = AppSettings.isVolumeKeyPageTurnEnabled(this)
         autoHideSystemBarsEnabled = AppSettings.isAutoHideSystemBarsEnabled(this)
         updateSystemBarsVisibilityForReaderControls()
+        updateReaderGestureExclusionRects()
         applyReaderBrightnessSetting()
         updateBrightnessControls()
     }
@@ -254,6 +256,9 @@ class MangaReaderActivity : AppCompatActivity() {
         listReaderPages.itemAnimator = null
         listReaderPages.setHasFixedSize(false)
         listReaderPages.setItemViewCacheSize(READER_VIEW_CACHE_SIZE)
+        rootView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            updateReaderGestureExclusionRects()
+        }
 
         listReaderPreview.layoutManager = LinearLayoutManager(this)
         listReaderPreview.itemAnimator = null
@@ -267,7 +272,8 @@ class MangaReaderActivity : AppCompatActivity() {
         WindowInsetsControllerCompat(window, rootView).systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
-        val toolbarInitialPaddingTop = layoutReaderToolbar.paddingTop
+        val toolbarInitialMarginTop =
+            (layoutReaderToolbar.layoutParams as FrameLayout.LayoutParams).topMargin
         val progressInitialMarginBottom =
             (layoutReaderProgress.layoutParams as FrameLayout.LayoutParams).bottomMargin
         val previewPanelInitialTopMargin =
@@ -276,12 +282,10 @@ class MangaReaderActivity : AppCompatActivity() {
             (layoutReaderPreviewPanel.layoutParams as FrameLayout.LayoutParams).bottomMargin
         ViewCompat.setOnApplyWindowInsetsListener(rootView) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            layoutReaderToolbar.setPadding(
-                layoutReaderToolbar.paddingLeft,
-                toolbarInitialPaddingTop + systemBars.top,
-                layoutReaderToolbar.paddingRight,
-                layoutReaderToolbar.paddingBottom
-            )
+            (layoutReaderToolbar.layoutParams as FrameLayout.LayoutParams).apply {
+                topMargin = toolbarInitialMarginTop + systemBars.top
+                layoutReaderToolbar.layoutParams = this
+            }
             (layoutReaderProgress.layoutParams as FrameLayout.LayoutParams).apply {
                 bottomMargin = progressInitialMarginBottom + systemBars.bottom
                 layoutReaderProgress.layoutParams = this
@@ -1253,10 +1257,38 @@ class MangaReaderActivity : AppCompatActivity() {
             updateBrightnessControls()
         }
         updateSystemBarsVisibilityForReaderControls()
+        updateReaderGestureExclusionRects()
     }
 
     private fun updateSystemBarsVisibilityForReaderControls() {
         setSystemBarsVisible(!autoHideSystemBarsEnabled || readerControlsVisible)
+    }
+
+    private fun updateReaderGestureExclusionRects() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || !::rootView.isInitialized) {
+            return
+        }
+
+        val width = rootView.width
+        val height = rootView.height
+        val exclusionRects = if (!readerControlsVisible &&
+            !readerPreviewPanelVisible &&
+            width > 0 &&
+            height > 0
+        ) {
+            val edgeWidth = (resources.displayMetrics.density *
+                READER_GESTURE_EXCLUSION_EDGE_WIDTH_DP)
+                .roundToInt()
+                .coerceAtLeast(1)
+                .coerceAtMost((width / 4).coerceAtLeast(1))
+            listOf(
+                Rect(0, 0, edgeWidth, height),
+                Rect(width - edgeWidth, 0, width, height)
+            )
+        } else {
+            emptyList()
+        }
+        rootView.systemGestureExclusionRects = exclusionRects
     }
 
     private fun setSystemBarsVisible(visible: Boolean) {
@@ -1282,7 +1314,11 @@ class MangaReaderActivity : AppCompatActivity() {
         runCatching {
             readerLoadExecutor.execute {
                 if (!destroyed) {
-                    block()
+                    try {
+                        block()
+                    } catch (throwable: Throwable) {
+                        Log.e(READER_LOG_TAG, "reader load task failed", throwable)
+                    }
                 }
             }
         }
@@ -1576,7 +1612,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 holder.imageView.recycle()
                 holder.boundFilePath = null
             }
-            notifyDataSetChanged()
+            notifyDataSetChangedSafely()
         }
 
         override fun flushPendingRefreshesIfIdle() = Unit
@@ -1584,7 +1620,6 @@ class MangaReaderActivity : AppCompatActivity() {
         override fun close() {
             closed = true
             extractExecutor.shutdownNow()
-            runCatching { extractor?.close() }
             for (index in 0 until recyclerView.childCount) {
                 val holder = recyclerView.getChildViewHolder(recyclerView.getChildAt(index))
                     as? PageViewHolder
@@ -1594,7 +1629,50 @@ class MangaReaderActivity : AppCompatActivity() {
             }
             loadingPositions.clear()
             failedPositions.clear()
-            preparedCacheDir.deleteRecursively()
+            closeExtractorAndDeleteCacheAfterExtractionStops()
+        }
+
+        private fun closeExtractorAndDeleteCacheAfterExtractionStops() {
+            Thread(
+                {
+                    if (!awaitExtractorTermination()) {
+                        return@Thread
+                    }
+                    runCatching { extractor?.close() }
+                        .onFailure { Log.w(READER_ADAPTER_LOG_TAG, "prepared extractor close failed", it) }
+                    runCatching { preparedCacheDir.deleteRecursively() }
+                        .onFailure { Log.w(READER_ADAPTER_LOG_TAG, "prepared cache delete failed", it) }
+                },
+                "ComicLabPreparedReaderClose"
+            ).start()
+        }
+
+        private fun awaitExtractorTermination(): Boolean {
+            while (true) {
+                try {
+                    if (extractExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
+                        return true
+                    }
+                } catch (interrupted: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    Log.w(READER_ADAPTER_LOG_TAG, "prepared extractor close interrupted", interrupted)
+                    return false
+                }
+            }
+        }
+
+        private fun notifyDataSetChangedSafely() {
+            mainHandler.post {
+                if (closed) {
+                    return@post
+                }
+
+                if (!recyclerView.isComputingLayout) {
+                    notifyDataSetChanged()
+                } else {
+                    mainHandler.postDelayed({ notifyDataSetChangedSafely() }, UI_REFRESH_RETRY_MS)
+                }
+            }
         }
 
         private fun initialPageLayoutParams(): RecyclerView.LayoutParams {
@@ -1720,6 +1798,18 @@ class MangaReaderActivity : AppCompatActivity() {
                     notifyPageFileReady(position)
                 } else {
                     failedPositions.add(position)
+                }
+            } catch (throwable: Throwable) {
+                failedPositions.add(position)
+                if (throwable is OutOfMemoryError) {
+                    Log.w(READER_ADAPTER_LOG_TAG, "prepared page extraction OOM position=$position")
+                    System.gc()
+                } else {
+                    Log.w(
+                        READER_ADAPTER_LOG_TAG,
+                        "prepared page extraction failed position=$position",
+                        throwable
+                    )
                 }
             } finally {
                 loadingPositions.remove(position)
@@ -1888,6 +1978,7 @@ class MangaReaderActivity : AppCompatActivity() {
             private const val IDLE_PREPARE_BEFORE_COUNT = 3
             private const val IDLE_PREPARE_FORWARD_COUNT = 18
             private const val UI_REFRESH_RETRY_MS = 48L
+            private const val READER_ADAPTER_LOG_TAG = "ComicLabReader"
         }
     }
 
@@ -2143,7 +2234,39 @@ class MangaReaderActivity : AppCompatActivity() {
             boundPositions.clear()
             pendingRefreshPositions.clear()
             pageBounds.clear()
-            session.close()
+            closeSessionAfterDecoderStops()
+        }
+
+        private fun closeSessionAfterDecoderStops() {
+            Thread(
+                {
+                    if (!awaitDecodeExecutorTermination()) {
+                        return@Thread
+                    }
+                    synchronized(cacheLock) {
+                        previewBitmapCache.evictAll()
+                        fullBitmapCache.evictAll()
+                        tileBitmapCache.evictAll()
+                    }
+                    runCatching { session.close() }
+                        .onFailure { Log.w(READER_ADAPTER_LOG_TAG, "reader session close failed", it) }
+                },
+                "ComicLabReaderSessionClose"
+            ).start()
+        }
+
+        private fun awaitDecodeExecutorTermination(): Boolean {
+            while (true) {
+                try {
+                    if (decodeExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
+                        return true
+                    }
+                } catch (interrupted: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    Log.w(READER_ADAPTER_LOG_TAG, "reader session close interrupted", interrupted)
+                    return false
+                }
+            }
         }
 
         private fun bindBestAvailable(holder: PageViewHolder, position: Int) {
@@ -2323,9 +2446,14 @@ class MangaReaderActivity : AppCompatActivity() {
                     if (isPreload && !isUsefulPreload(position, generation)) {
                         return@submitTask
                     }
+                    if (previewBitmap(position) != null) {
+                        return@submitTask
+                    }
 
                     val bitmap = runCatching {
                         session.decodePreviewForWidth(entries[position], previewDecodeWidth())
+                    }.onFailure {
+                        handleDecodeFailure(position, DecodeTaskKind.PREVIEW, it)
                     }.getOrNull()
 
                     if (bitmap == null) {
@@ -2390,9 +2518,13 @@ class MangaReaderActivity : AppCompatActivity() {
                     if (isPreload && !isUsefulPreload(position, generation)) {
                         return@submitTask
                     }
+                    if (position in tiledPages || fullBitmap(position) != null) {
+                        return@submitTask
+                    }
 
                     val bounds = pageBounds[position]
                         ?: runCatching { session.readBounds(entries[position]) }
+                            .onFailure { handleDecodeFailure(position, DecodeTaskKind.FULL, it) }
                             .getOrNull()
                             ?.also { pageBounds[position] = it }
 
@@ -2411,6 +2543,8 @@ class MangaReaderActivity : AppCompatActivity() {
                         if (previewBitmap(position) == null) {
                             runCatching {
                                 session.decodePreviewForWidth(entries[position], previewDecodeWidth())
+                            }.onFailure {
+                                handleDecodeFailure(position, DecodeTaskKind.PREVIEW, it)
                             }.getOrNull()?.let { putPreviewBitmap(position, it) }
                         }
                         if (isPreload && !isUsefulPreload(position, generation)) {
@@ -2434,6 +2568,8 @@ class MangaReaderActivity : AppCompatActivity() {
                                 fullPageDecodeWidth(bounds)
                             )
                         }
+                    }.onFailure {
+                        handleDecodeFailure(position, DecodeTaskKind.FULL, it)
                     }.getOrNull()
 
                     if (bitmap == null) {
@@ -2487,6 +2623,8 @@ class MangaReaderActivity : AppCompatActivity() {
                 try {
                     val bitmap = runCatching {
                         session.decodeRegionForWidth(entries[position], tile.sourceRect, tileDecodeWidth)
+                    }.onFailure {
+                        handleDecodeFailure(position, DecodeTaskKind.TILE, it)
                     }.getOrNull() ?: return@submitTask
 
                     putTileBitmap(key, bitmap)
@@ -2638,19 +2776,40 @@ class MangaReaderActivity : AppCompatActivity() {
                 return
             }
 
+            val task = DecodeTask(
+                priority = priority,
+                position = position,
+                generation = generation,
+                kind = kind,
+                cancelable = cancelable,
+                tileKey = tileKey,
+                sequence = taskSequence.getAndIncrement(),
+                block = block
+            )
             runCatching {
-                decodeExecutor.execute(
-                    DecodeTask(
-                        priority = priority,
-                        position = position,
-                        generation = generation,
-                        kind = kind,
-                        cancelable = cancelable,
-                        tileKey = tileKey,
-                        sequence = taskSequence.getAndIncrement(),
-                        block = block
-                    )
-                )
+                decodeExecutor.execute(task)
+            }.onFailure {
+                clearLoadingForCanceledTask(task)
+                handleDecodeFailure(position, kind, it)
+            }
+        }
+
+        private fun handleDecodeFailure(position: Int, kind: DecodeTaskKind, throwable: Throwable) {
+            if (closed) {
+                return
+            }
+
+            if (throwable is OutOfMemoryError) {
+                Log.w(READER_ADAPTER_LOG_TAG, "decode OOM kind=$kind position=$position")
+                synchronized(cacheLock) {
+                    previewBitmapCache.evictAll()
+                    tileBitmapCache.evictAll()
+                    fullBitmapCache.evictAll()
+                }
+                notifyDataSetChangedSafely()
+                System.gc()
+            } else {
+                Log.w(READER_ADAPTER_LOG_TAG, "decode failed kind=$kind position=$position", throwable)
             }
         }
 
@@ -2907,8 +3066,11 @@ class MangaReaderActivity : AppCompatActivity() {
                     .coerceAtMost(PDF_MAX_FULL_RENDER_WIDTH)
             }
 
-            return maxOf(decodeWidth, bounds.width.coerceAtMost(MAX_READER_DECODE_WIDTH))
-                .coerceAtMost(MAX_READER_DECODE_WIDTH)
+            val sourceWidth = bounds.width.coerceAtMost(MAX_READER_DECODE_WIDTH).coerceAtLeast(1)
+            val minimumWidth = baseDisplayWidth.coerceAtMost(sourceWidth).coerceAtLeast(1)
+            return decodeWidth
+                .coerceAtMost(sourceWidth)
+                .coerceAtLeast(minimumWidth)
         }
 
         private fun fullPageDecodeHeight(bounds: ComicArchive.ImageBounds): Int {
@@ -2918,8 +3080,15 @@ class MangaReaderActivity : AppCompatActivity() {
                     .coerceAtMost(PDF_MAX_FULL_RENDER_HEIGHT)
             }
 
-            return maxOf(decodeHeight, bounds.height.coerceAtMost(MAX_READER_DECODE_HEIGHT))
-                .coerceAtMost(MAX_READER_DECODE_HEIGHT)
+            if (!isHorizontalReading()) {
+                return MAX_READER_DECODE_HEIGHT
+            }
+
+            val sourceHeight = bounds.height.coerceAtMost(MAX_READER_DECODE_HEIGHT).coerceAtLeast(1)
+            val minimumHeight = baseDisplayHeight.coerceAtMost(sourceHeight).coerceAtLeast(1)
+            return decodeHeight
+                .coerceAtMost(sourceHeight)
+                .coerceAtLeast(minimumHeight)
         }
 
         private fun tileDecodeWidth(displayImageWidth: Int, sourceWidth: Int): Int {
@@ -2982,18 +3151,30 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         private fun putPreviewBitmap(position: Int, bitmap: Bitmap) {
+            if (closed) {
+                bitmap.recycle()
+                return
+            }
             synchronized(cacheLock) {
                 previewBitmapCache.put(position, bitmap)
             }
         }
 
         private fun putFullBitmap(position: Int, bitmap: Bitmap) {
+            if (closed) {
+                bitmap.recycle()
+                return
+            }
             synchronized(cacheLock) {
                 fullBitmapCache.put(position, bitmap)
             }
         }
 
         private fun putTileBitmap(key: TileKey, bitmap: Bitmap) {
+            if (closed) {
+                bitmap.recycle()
+                return
+            }
             synchronized(cacheLock) {
                 tileBitmapCache.put(key, bitmap)
             }
@@ -3217,7 +3398,20 @@ class MangaReaderActivity : AppCompatActivity() {
                 if (cancelled) {
                     return
                 }
-                block()
+                try {
+                    block()
+                } catch (throwable: Throwable) {
+                    if (throwable is OutOfMemoryError) {
+                        Log.w(READER_ADAPTER_LOG_TAG, "decode task OOM kind=$kind position=$position")
+                        System.gc()
+                    } else {
+                        Log.w(
+                            READER_ADAPTER_LOG_TAG,
+                            "decode task failed kind=$kind position=$position",
+                            throwable
+                        )
+                    }
+                }
             }
 
             override fun compareTo(other: DecodeTask): Int {
@@ -3230,7 +3424,7 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         companion object {
-            private const val READER_DECODE_THREAD_COUNT = 2
+            private const val READER_DECODE_THREAD_COUNT = 1
             private const val ESTIMATED_READER_PAGE_HEIGHT_RATIO = 1.45f
             private const val MIN_READER_PAGE_HEIGHT = 320
             private const val PLACEHOLDER_COLOR = 0xFF101010.toInt()
@@ -3242,12 +3436,12 @@ class MangaReaderActivity : AppCompatActivity() {
             private const val NORMAL_PREVIEW_PRELOAD_FORWARD_COUNT = 5
             private const val FAST_PREVIEW_PRELOAD_BEFORE_COUNT = 1
             private const val FAST_PREVIEW_PRELOAD_FORWARD_COUNT = 8
-            private const val IDLE_FULL_PRELOAD_BEFORE_COUNT = 2
-            private const val IDLE_FULL_PRELOAD_AFTER_COUNT = 2
-            private const val IDLE_PREVIEW_PRELOAD_BEFORE_COUNT = 3
-            private const val IDLE_PREVIEW_PRELOAD_AFTER_COUNT = 6
-            private const val CACHE_PROTECTED_BEFORE_COUNT = 2
-            private const val CACHE_PROTECTED_AFTER_COUNT = 6
+            private const val IDLE_FULL_PRELOAD_BEFORE_COUNT = 1
+            private const val IDLE_FULL_PRELOAD_AFTER_COUNT = 1
+            private const val IDLE_PREVIEW_PRELOAD_BEFORE_COUNT = 2
+            private const val IDLE_PREVIEW_PRELOAD_AFTER_COUNT = 4
+            private const val CACHE_PROTECTED_BEFORE_COUNT = 1
+            private const val CACHE_PROTECTED_AFTER_COUNT = 3
             private const val PDF_NORMAL_PREVIEW_PRELOAD_BEFORE_COUNT = 1
             private const val PDF_NORMAL_PREVIEW_PRELOAD_FORWARD_COUNT = 3
             private const val PDF_FAST_PREVIEW_PRELOAD_BEFORE_COUNT = 1
@@ -3268,45 +3462,51 @@ class MangaReaderActivity : AppCompatActivity() {
             private const val PRIORITY_PRELOAD_PREVIEW = 20
             private const val TILED_SOURCE_HEIGHT_THRESHOLD = 5200
             private const val TILED_DECODED_HEIGHT_THRESHOLD = 5200
-            private const val TILED_SOURCE_PIXEL_THRESHOLD = 16_000_000L
-            private const val TILED_DECODED_PIXEL_THRESHOLD = 10_000_000L
+            private const val TILED_SOURCE_PIXEL_THRESHOLD = 12_000_000L
+            private const val TILED_DECODED_PIXEL_THRESHOLD = 8_000_000L
             private const val TILE_MAX_DISPLAY_HEIGHT = 2400
             private const val TILE_MIN_SOURCE_HEIGHT = 512
             private const val PDF_TILE_MIN_SOURCE_HEIGHT = 128
             private const val TILE_MAX_SOURCE_PIXELS = 4_000_000
             private const val TILE_MAX_DECODED_PIXELS = 4_000_000L
-            private const val PDF_FULL_RENDER_SCALE = 3
+            private const val PDF_FULL_RENDER_SCALE = 2
             private const val PDF_TILE_RENDER_SCALE = 2
-            private const val PDF_MAX_FULL_RENDER_WIDTH = 4096
+            private const val PDF_MAX_FULL_RENDER_WIDTH = 3072
             private const val PDF_MAX_FULL_RENDER_HEIGHT = 4096
             private const val PDF_MAX_TILE_RENDER_WIDTH = 3072
-            private const val PDF_MAX_FULL_RENDER_PIXELS = 18_000_000L
+            private const val PDF_MAX_FULL_RENDER_PIXELS = 8_000_000L
             private const val PDF_TILED_RENDER_PIXEL_THRESHOLD = 8_000_000L
+            private const val READER_ADAPTER_LOG_TAG = "ComicLabReader"
 
             private fun previewBitmapCacheSizeKb(isPdfSource: Boolean): Int {
                 val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
                 if (isPdfSource) {
-                    return (maxMemoryKb / 18)
-                        .coerceAtLeast(8 * 1024)
-                        .coerceAtMost(maxMemoryKb / 8)
+                    return (maxMemoryKb / 32)
+                        .coerceAtLeast(4 * 1024)
+                        .coerceAtMost(12 * 1024)
                 }
-                return (maxMemoryKb / 24).coerceAtLeast(6 * 1024)
+                return (maxMemoryKb / 48)
+                    .coerceAtLeast(4 * 1024)
+                    .coerceAtMost(12 * 1024)
             }
 
             private fun fullBitmapCacheSizeKb(isPdfSource: Boolean): Int {
                 val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
                 if (isPdfSource) {
-                    return (maxMemoryKb / 3)
-                        .coerceAtLeast(64 * 1024)
-                        .coerceAtMost(maxMemoryKb / 2)
-                        .coerceAtMost(192 * 1024)
+                    return (maxMemoryKb / 8)
+                        .coerceAtLeast(24 * 1024)
+                        .coerceAtMost(64 * 1024)
                 }
-                return (maxMemoryKb / 6).coerceAtLeast(16 * 1024)
+                return (maxMemoryKb / 10)
+                    .coerceAtLeast(12 * 1024)
+                    .coerceAtMost(64 * 1024)
             }
 
             private fun tileBitmapCacheSizeKb(): Int {
                 val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
-                return (maxMemoryKb / 6).coerceAtLeast(16 * 1024)
+                return (maxMemoryKb / 10)
+                    .coerceAtLeast(8 * 1024)
+                    .coerceAtMost(48 * 1024)
             }
         }
     }
@@ -3323,7 +3523,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
         private const val READER_PREFS_NAME = "reader_prefs"
         private const val MIN_READER_IMAGE_WIDTH = 320
-        private const val HIGH_QUALITY_READER_DECODE_SCALE = 4
+        private const val HIGH_QUALITY_READER_DECODE_SCALE = 3
         private const val MAX_READER_DECODE_WIDTH = 8192
         private const val MAX_READER_DECODE_HEIGHT = 8192
         private const val MAX_READER_TILE_DECODE_WIDTH = 8192
@@ -3332,7 +3532,8 @@ class MangaReaderActivity : AppCompatActivity() {
         private const val SUPPRESS_TAP_AFTER_ZOOM_MS = 250L
         private const val RESTORE_READER_POSITION_MAX_ATTEMPTS = 16
         private const val RESTORE_READER_POSITION_RETRY_MS = 250L
-        private const val READER_VIEW_CACHE_SIZE = 6
+        private const val READER_VIEW_CACHE_SIZE = 2
+        private const val READER_GESTURE_EXCLUSION_EDGE_WIDTH_DP = 36f
         private const val FAST_SCROLL_DY_THRESHOLD_PX = 160
         private const val VOLUME_KEY_PAGE_TURN_MIN_INTERVAL_MS = 180L
         private const val DEFAULT_READER_BRIGHTNESS = 128
@@ -3356,6 +3557,7 @@ class MangaReaderActivity : AppCompatActivity() {
         private const val DEBUG_READER_STRESS_START_DELAY_MS = 700L
         private const val DEBUG_READER_STRESS_LOG_EVERY = 30
         private const val DEBUG_READER_STRESS_TAG = "ComicLabReaderStress"
+        private const val READER_LOG_TAG = "ComicLabReader"
         private const val NO_EXPLICIT_START_PAGE = -1
 
         fun hasSavedReadingProgress(context: Context, file: File): Boolean {

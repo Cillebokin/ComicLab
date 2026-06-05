@@ -175,6 +175,25 @@ object ComicArchive {
         }
     }
 
+    fun extractImageEntryToFile(file: File, entryName: String, targetFile: File): Boolean {
+        if (!file.isFile || entryName.isBlank() || !entryName.isImageEntryName() || isPdf(file)) {
+            return false
+        }
+
+        return runCatching {
+            when (file.extension.lowercase(Locale.ROOT)) {
+                in zipArchiveExtensions -> extractZipEntryToFile(file, entryName, targetFile)
+                in sevenZipArchiveExtensions -> withSevenZipArchive(file) { archive ->
+                    val entryIndex = (0 until archive.numberOfItems).firstOrNull { index ->
+                        !archive.isFolder(index) && archive.entryPath(index) == entryName
+                    } ?: return@withSevenZipArchive false
+                    extractSevenZipEntryToFile(archive, entryIndex, targetFile)
+                }
+                else -> false
+            }
+        }.getOrDefault(false)
+    }
+
     fun openReaderSession(file: File, cacheRoot: File): ImageReaderSession {
         return if (isPdf(file)) {
             PdfReaderSession(file)
@@ -1248,6 +1267,21 @@ object ComicArchive {
         ZipFile(file).use { zipFile ->
             val entry = zipFile.getEntry(entryName) ?: return null
             return zipFile.getInputStream(entry).use { it.readBytes() }
+        }
+    }
+
+    private fun extractZipEntryToFile(file: File, entryName: String, targetFile: File): Boolean {
+        ZipFile(file).use { zipFile ->
+            val entry = zipFile.getEntry(entryName) ?: return false
+            val copied = writeAtomic(targetFile) { output ->
+                zipFile.getInputStream(entry).use { input ->
+                    input.copyTo(output)
+                }
+            }
+            if (!copied) {
+                targetFile.delete()
+            }
+            return copied && targetFile.isFile && targetFile.length() > 0L
         }
     }
 

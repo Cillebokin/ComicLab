@@ -49,7 +49,9 @@ class SettingsActivity : AppCompatActivity() {
         SystemBars.fitContentBelowSystemBars(
             this,
             findViewById<View>(R.id.main),
-            findViewById<View>(R.id.statusBarBackground)
+            findViewById<View>(R.id.statusBarBackground),
+            statusBarColorResId = R.color.comiclab_file_picker_background,
+            lightStatusBars = true
         )
 
         btnBack = findViewById(R.id.btnBack)
@@ -256,7 +258,7 @@ class SettingsActivity : AppCompatActivity() {
             .setTitle(R.string.run_reader_stress_test)
             .setMessage(R.string.debug_stress_scanning)
             .setCancelable(false)
-            .create()
+            .createRounded()
         progressDialog.show()
 
         val scanRoot = savedBrowserDirectoryForStress()
