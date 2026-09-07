@@ -2173,6 +2173,17 @@ class MangaReaderActivity : AppCompatActivity() {
                 ensurePreview(position, PRIORITY_PRELOAD_PREVIEW, generation, isPreload = true)
             }
 
+            if (isPdfSource && isIdle) {
+                (firstVisible..lastVisible).forEach { position ->
+                    ensureFullOrTiledPage(
+                        position,
+                        PRIORITY_VISIBLE,
+                        generation = 0,
+                        isPreload = false
+                    )
+                }
+            }
+
             if (shouldPreloadFullPages(isFastScroll, isIdle)) {
                 window.fullPositions.forEach { position ->
                     ensureFullOrTiledPage(position, PRIORITY_PRELOAD, generation, isPreload = true)
@@ -2399,7 +2410,23 @@ class MangaReaderActivity : AppCompatActivity() {
 
         private fun ensureVisiblePage(position: Int) {
             if (isPdfSource) {
-                ensureFullOrTiledPage(position, PRIORITY_VISIBLE, generation = 0, isPreload = false)
+                ensurePreview(
+                    position,
+                    visiblePreviewPriorityForReader(
+                        isPdfSource = true,
+                        previewPriority = PRIORITY_VISIBLE_PREVIEW,
+                        fullPriority = PRIORITY_VISIBLE
+                    ),
+                    generation = 0,
+                    isPreload = false
+                )
+                if (shouldScheduleImmediateFullDecodeForReader(
+                        isPdfSource = true,
+                        isReaderIdle = recyclerView.scrollState == RecyclerView.SCROLL_STATE_IDLE
+                    )
+                ) {
+                    ensureFullOrTiledPage(position, PRIORITY_VISIBLE, generation = 0, isPreload = false)
+                }
                 return
             }
 
@@ -2685,7 +2712,7 @@ class MangaReaderActivity : AppCompatActivity() {
             if (closed) {
                 return
             }
-            if (!canNotifyRecyclerView()) {
+            if (recyclerView.isComputingLayout) {
                 scheduleRefreshFlush()
                 return
             }
@@ -2697,9 +2724,23 @@ class MangaReaderActivity : AppCompatActivity() {
             }
 
             positions.forEach { position ->
-                if (!closed && position in entries.indices && shouldRefreshPosition(position)) {
-                    notifyItemChanged(position)
+                if (closed || position !in entries.indices || !shouldRefreshPosition(position)) {
+                    return@forEach
                 }
+
+                if (refreshBoundPositionDirectly(position)) {
+                    return@forEach
+                }
+
+                if (canNotifyRecyclerView()) {
+                    notifyItemChanged(position)
+                } else {
+                    pendingRefreshPositions.add(position)
+                }
+            }
+
+            if (pendingRefreshPositions.isNotEmpty()) {
+                scheduleRefreshFlush()
             }
         }
 
@@ -2733,7 +2774,11 @@ class MangaReaderActivity : AppCompatActivity() {
 
             val holder = recyclerView.findViewHolderForAdapterPosition(position) as? PageViewHolder
                 ?: return false
-            if (holder.boundPosition != position) {
+            if (!shouldRefreshBoundReaderPageImmediately(
+                    isBoundToPosition = holder.boundPosition == position,
+                    isComputingLayout = recyclerView.isComputingLayout
+                )
+            ) {
                 return false
             }
 
@@ -3110,11 +3155,7 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         private fun shouldPreloadFullPages(isFastScroll: Boolean, isIdle: Boolean): Boolean {
-            return if (isPdfSource) {
-                isIdle
-            } else {
-                !isFastScroll || isIdle
-            }
+            return shouldPreloadBackgroundFullPagesForReader(isPdfSource, isFastScroll, isIdle)
         }
 
         private fun isHorizontalReading(): Boolean {
@@ -3616,4 +3657,42 @@ internal fun calculatePdfRenderWidthByPixelBudget(
         .toInt()
 
     return minOf(preferredWidth, safeMaxRenderWidth, maxWidthByPixels)
+}
+
+internal fun visiblePreviewPriorityForReader(
+    isPdfSource: Boolean,
+    previewPriority: Int,
+    fullPriority: Int
+): Int {
+    return if (isPdfSource) {
+        maxOf(previewPriority, fullPriority + 1)
+    } else {
+        previewPriority
+    }
+}
+
+internal fun shouldScheduleImmediateFullDecodeForReader(
+    isPdfSource: Boolean,
+    isReaderIdle: Boolean
+): Boolean {
+    return !isPdfSource || isReaderIdle
+}
+
+internal fun shouldPreloadBackgroundFullPagesForReader(
+    isPdfSource: Boolean,
+    isFastScroll: Boolean,
+    isIdle: Boolean
+): Boolean {
+    return if (isPdfSource) {
+        false
+    } else {
+        !isFastScroll || isIdle
+    }
+}
+
+internal fun shouldRefreshBoundReaderPageImmediately(
+    isBoundToPosition: Boolean,
+    isComputingLayout: Boolean
+): Boolean {
+    return isBoundToPosition && !isComputingLayout
 }
