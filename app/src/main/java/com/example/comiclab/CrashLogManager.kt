@@ -8,6 +8,7 @@ import java.io.StringWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 import kotlin.system.exitProcess
 
 object CrashLogManager {
@@ -17,6 +18,8 @@ object CrashLogManager {
     private const val READER_DIAGNOSTIC_PREFS_NAME = "reader_diagnostics"
     private const val READER_CHECKPOINT_KEY = "latest_checkpoint"
     private const val READER_RENDER_KEY = "latest_render"
+    private const val READER_RENDER_PHASE_KEY = "latest_render_phase"
+    private const val READER_SESSION_KEY = "active_reader_session"
     private const val MAX_CRASH_LOG_COUNT = 10
     private val timestampFormatter = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.ROOT)
     private val displayTimeFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.ROOT)
@@ -42,6 +45,7 @@ object CrashLogManager {
                 exitProcess(2)
             }
         }
+        recoverInterruptedReaderSession(appContext)
     }
 
     fun latestCrashLog(context: Context): File? {
@@ -65,7 +69,8 @@ object CrashLogManager {
         context: Context,
         file: File,
         position: Int,
-        offset: Int
+        offset: Int,
+        durable: Boolean = false
     ) {
         val snapshot = formatReaderCheckpoint(
             filePath = file.absolutePath,
@@ -74,8 +79,70 @@ object CrashLogManager {
             position = position,
             offset = offset
         )
-        diagnosticPrefs(context).edit()
+        val editor = diagnosticPrefs(context).edit()
             .putString(READER_CHECKPOINT_KEY, snapshot)
+        if (durable) {
+            editor.commit()
+        } else {
+            editor.apply()
+        }
+    }
+
+    fun recordReaderSessionStarted(context: Context, file: File): String {
+        val marker = formatReaderSessionMarker(
+            filePath = file.absolutePath,
+            fileSize = file.length(),
+            fileModified = file.lastModified()
+        ) + " token=${UUID.randomUUID()}"
+        diagnosticPrefs(context).edit()
+            .putString(READER_SESSION_KEY, marker)
+            .remove(READER_RENDER_KEY)
+            .putString(READER_RENDER_PHASE_KEY, "session_started")
+            .commit()
+        return marker
+    }
+
+    fun recordReaderSessionFinished(context: Context, marker: String?) {
+        val prefs = diagnosticPrefs(context)
+        if (!isSameReaderSessionMarker(prefs.getString(READER_SESSION_KEY, null), marker)) {
+            return
+        }
+        prefs.edit()
+            .remove(READER_SESSION_KEY)
+            .remove(READER_RENDER_PHASE_KEY)
+            .commit()
+    }
+
+    fun recordReaderRenderStarted(
+        context: Context,
+        file: File,
+        position: Int,
+        kind: String,
+        targetWidth: Int?,
+        targetHeight: Int?
+    ) {
+        val runtime = Runtime.getRuntime()
+        val snapshot = formatReaderRender(
+            filePath = file.absolutePath,
+            fileSize = file.length(),
+            fileModified = file.lastModified(),
+            position = position,
+            kind = kind,
+            targetWidth = targetWidth,
+            targetHeight = targetHeight,
+            bitmapBytes = null,
+            usedHeapKb = (runtime.totalMemory() - runtime.freeMemory()) / 1024L,
+            maxHeapKb = runtime.maxMemory() / 1024L
+        )
+        diagnosticPrefs(context).edit()
+            .putString(READER_RENDER_KEY, snapshot)
+            .putString(READER_RENDER_PHASE_KEY, "started")
+            .commit()
+    }
+
+    fun recordReaderRenderCompleted(context: Context) {
+        diagnosticPrefs(context).edit()
+            .putString(READER_RENDER_PHASE_KEY, "completed")
             .apply()
     }
 
@@ -139,7 +206,9 @@ object CrashLogManager {
             appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
             appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
             val diagnostics = diagnosticPrefs(context)
+            appendLine("Reader session: ${diagnostics.getString(READER_SESSION_KEY, "none")}")
             appendLine("Reader checkpoint: ${diagnostics.getString(READER_CHECKPOINT_KEY, "unknown")}")
+            appendLine("Reader render phase: ${diagnostics.getString(READER_RENDER_PHASE_KEY, "unknown")}")
             appendLine("Reader render: ${diagnostics.getString(READER_RENDER_KEY, "unknown")}")
             appendLine()
             appendLine(stackTrace)
@@ -164,6 +233,42 @@ object CrashLogManager {
         }
     }
 
+    private fun recoverInterruptedReaderSession(context: Context) {
+        val prefs = diagnosticPrefs(context)
+        val marker = prefs.getString(READER_SESSION_KEY, null) ?: return
+        if (!isReaderSessionMarkerActive(marker)) {
+            prefs.edit().remove(READER_SESSION_KEY).apply()
+            return
+        }
+
+        val logDir = crashLogDir(context).apply {
+            mkdirs()
+        }
+        val now = Date()
+        val logFile = File(logDir, "reader_interrupted_${timestampFormatter.format(now)}.txt")
+        val recovered = runCatching {
+            logFile.writeText(
+                buildString {
+                    appendLine("ComicLab Suspected Reader Interruption")
+                    appendLine("Time: ${displayTimeFormatter.format(now)}")
+                    appendLine("Reason: reader session was still active when the process started")
+                    appendLine("Reader session: $marker")
+                    appendLine("Reader checkpoint: ${prefs.getString(READER_CHECKPOINT_KEY, "unknown")}")
+                    appendLine("Reader render phase: ${prefs.getString(READER_RENDER_PHASE_KEY, "unknown")}")
+                    appendLine("Reader render: ${prefs.getString(READER_RENDER_KEY, "unknown")}")
+                }
+            )
+            trimOldCrashLogs(logDir)
+            true
+        }.getOrDefault(false)
+        if (recovered) {
+            prefs.edit()
+                .remove(READER_SESSION_KEY)
+                .putString(READER_RENDER_PHASE_KEY, "recovered")
+                .apply()
+        }
+    }
+
     private fun crashLogDir(context: Context): File {
         return File(context.filesDir, CRASH_LOG_DIR_NAME)
     }
@@ -181,6 +286,22 @@ internal fun formatReaderCheckpoint(
 ): String {
     return "file=$filePath size=$fileSize modified=$fileModified " +
         "page=${position + 1} position=$position offset=$offset"
+}
+
+internal fun formatReaderSessionMarker(
+    filePath: String,
+    fileSize: Long,
+    fileModified: Long
+): String {
+    return "state=active file=$filePath size=$fileSize modified=$fileModified"
+}
+
+internal fun isReaderSessionMarkerActive(marker: String?): Boolean {
+    return marker?.startsWith("state=active ") == true
+}
+
+internal fun isSameReaderSessionMarker(actual: String?, expected: String?): Boolean {
+    return actual != null && expected != null && actual == expected
 }
 
 internal fun formatReaderRender(

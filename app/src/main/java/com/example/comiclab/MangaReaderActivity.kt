@@ -91,6 +91,7 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private var archiveFile: File? = null
+    private var readerSessionMarker: String? = null
     private var imageEntries: List<String> = emptyList()
     private var pageAdapter: ReaderPageAdapterController? = null
     private var readerPreviewAdapter: ReaderPreviewAdapter? = null
@@ -146,6 +147,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
         archiveFile = file
         tvReaderTitle.text = file.nameWithoutExtension
+        readerSessionMarker = CrashLogManager.recordReaderSessionStarted(this, file)
         shouldStartFromBeginning = intent.getBooleanExtra(EXTRA_START_FROM_BEGINNING, false)
         explicitStartPageIndex = intent.getIntExtra(EXTRA_START_PAGE_INDEX, NO_EXPLICIT_START_PAGE)
         configureDebugReaderStress()
@@ -192,6 +194,8 @@ class MangaReaderActivity : AppCompatActivity() {
         readerLoadExecutor.shutdownNow()
         readerProgressExecutor.shutdown()
         handler.removeCallbacksAndMessages(null)
+        CrashLogManager.recordReaderSessionFinished(this, readerSessionMarker)
+        readerSessionMarker = null
         pageAdapter?.close()
         pageAdapter = null
         readerPreviewAdapter?.close()
@@ -202,11 +206,13 @@ class MangaReaderActivity : AppCompatActivity() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         pageAdapter?.trimMemory(level)
+        readerPreviewAdapter?.trimMemory(level)
     }
 
     override fun onLowMemory() {
         super.onLowMemory()
         pageAdapter?.trimMemory(ComponentCallbacks2.TRIM_MEMORY_COMPLETE)
+        readerPreviewAdapter?.trimMemory(ComponentCallbacks2.TRIM_MEMORY_COMPLETE)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -602,13 +608,20 @@ class MangaReaderActivity : AppCompatActivity() {
         val decodeScale = readerPageDecodeScale()
         val decodeWidth = (displayWidth * decodeScale).coerceAtMost(MAX_READER_DECODE_WIDTH)
         val decodeHeight = (displayHeight * decodeScale).coerceAtMost(MAX_READER_DECODE_HEIGHT)
+        val sharedSession = if (session.isPdfSource()) {
+            ComicArchive.SharedImageReaderSession.wrap(session)
+        } else {
+            null
+        }
+        val pageSession = sharedSession?.acquire() ?: session
+        val previewSession = sharedSession?.acquire()
 
         pageAdapter?.close()
         val adapter = MangaPageAdapter(
             context = this,
             recyclerView = listReaderPages,
             archiveFile = readerFile,
-            session = session,
+            session = pageSession,
             entries = entries,
             baseDisplayWidth = displayWidth,
             baseDisplayHeight = displayHeight,
@@ -626,16 +639,21 @@ class MangaReaderActivity : AppCompatActivity() {
         )
         pageAdapter = adapter
         listReaderPages.adapter = adapter
-        bindReaderPreviewAdapter(entries, readerFile)
+        bindReaderPreviewAdapter(entries, readerFile, previewSession)
         initializeReaderPosition(entries)
     }
 
-    private fun bindReaderPreviewAdapter(entries: List<String>, file: File) {
+    private fun bindReaderPreviewAdapter(
+        entries: List<String>,
+        file: File,
+        sharedSession: ComicArchive.ImageReaderSession? = null
+    ) {
         readerPreviewAdapter?.close()
         val adapter = ReaderPreviewAdapter(
             context = this,
             archiveFile = file,
             entries = entries,
+            sharedSession = sharedSession,
             onPageClick = { position ->
                 hideReaderPreviewPanel()
                 jumpReaderToPage(position)
@@ -1076,12 +1094,6 @@ class MangaReaderActivity : AppCompatActivity() {
         val editor = readerPrefs.edit()
             .putInt(readerPositionKey(file), positionToSave)
             .putInt(readerOffsetKey(file), offsetToSave)
-        CrashLogManager.recordReaderCheckpoint(
-            context = this,
-            file = file,
-            position = positionToSave,
-            offset = offsetToSave
-        )
         if (readerProgressExecutor.isShutdown) {
             return
         }
@@ -1091,6 +1103,13 @@ class MangaReaderActivity : AppCompatActivity() {
             } else {
                 editor.apply()
             }
+            CrashLogManager.recordReaderCheckpoint(
+                context = this,
+                file = file,
+                position = positionToSave,
+                offset = offsetToSave,
+                durable = forceCommit
+            )
         }
     }
 
@@ -2059,6 +2078,9 @@ class MangaReaderActivity : AppCompatActivity() {
         private val loadingTiles = Collections.synchronizedSet(mutableSetOf<TileKey>())
         private val failedPreviewPages = Collections.synchronizedSet(mutableSetOf<Int>())
         private val failedFullPages = Collections.synchronizedSet(mutableSetOf<Int>())
+        private val failedTileKeys = Collections.synchronizedSet(mutableSetOf<TileKey>())
+        private val pdfPreviewRetryUsedPages = Collections.synchronizedSet(mutableSetOf<Int>())
+        private val pdfFullFailureRetryUsedPages = Collections.synchronizedSet(mutableSetOf<Int>())
         private val fullDecodeRetriedPages = Collections.synchronizedSet(mutableSetOf<Int>())
         private val tiledPages = Collections.synchronizedSet(mutableSetOf<Int>())
         private val boundPositions = Collections.synchronizedSet(mutableSetOf<Int>())
@@ -2084,6 +2106,9 @@ class MangaReaderActivity : AppCompatActivity() {
 
         @Volatile
         private var closed = false
+
+        @Volatile
+        private var pdfLowMemoryMode = false
 
         @Volatile
         private var preloadWindowStart = 0
@@ -2219,8 +2244,15 @@ class MangaReaderActivity : AppCompatActivity() {
             cancelStalePreloadTasks(generation)
             trimDistantCaches()
 
-            window.previewPositions.forEach { position ->
-                ensurePreview(position, PRIORITY_PRELOAD_PREVIEW, generation, isPreload = true)
+            if (!shouldSkipPdfPreloadAfterMemoryTrim(
+                    isPdfSource = isPdfSource,
+                    lowMemoryMode = pdfLowMemoryMode,
+                    isPreload = true
+                )
+            ) {
+                window.previewPositions.forEach { position ->
+                    ensurePreview(position, PRIORITY_PRELOAD_PREVIEW, generation, isPreload = true)
+                }
             }
 
             if (isPdfSource && shouldScheduleImmediateFullDecodeForReader(
@@ -2269,6 +2301,18 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         override fun trimMemory(level: Int) {
+            if (isPdfSource && level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+                pdfLowMemoryMode = true
+                cancelQueuedPreloadTasks()
+                clearNonProtectedCachesAfterOom()
+                if (level >= ComponentCallbacks2.TRIM_MEMORY_COMPLETE) {
+                    synchronized(cacheLock) {
+                        fullBitmapCache.evictAll()
+                    }
+                }
+                return
+            }
+
             if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
                 synchronized(cacheLock) {
                     previewBitmapCache.evictAll()
@@ -2304,6 +2348,9 @@ class MangaReaderActivity : AppCompatActivity() {
             loadingTiles.clear()
             failedPreviewPages.clear()
             failedFullPages.clear()
+            failedTileKeys.clear()
+            pdfPreviewRetryUsedPages.clear()
+            pdfFullFailureRetryUsedPages.clear()
             fullDecodeRetriedPages.clear()
             tiledPages.clear()
             boundPositions.clear()
@@ -2331,10 +2378,21 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         private fun awaitDecodeExecutorTermination(): Boolean {
+            val startedAt = SystemClock.elapsedRealtime()
+            var timeoutLogged = false
             while (true) {
                 try {
                     if (decodeExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
                         return true
+                    }
+                    if (!timeoutLogged &&
+                        SystemClock.elapsedRealtime() - startedAt >= READER_CLOSE_WAIT_LOG_MS
+                    ) {
+                        timeoutLogged = true
+                        Log.w(
+                            READER_ADAPTER_LOG_TAG,
+                            "reader session close is waiting for decoder termination"
+                        )
                     }
                 } catch (interrupted: InterruptedException) {
                     Thread.currentThread().interrupt()
@@ -2582,7 +2640,18 @@ class MangaReaderActivity : AppCompatActivity() {
                 if (isPreload) {
                     return
                 }
+                if (isPdfSource && !shouldRetryPdfPageAfterFailure(
+                        isPdfSource = true,
+                        isPreload = isPreload,
+                        retryAlreadyUsed = position in pdfPreviewRetryUsedPages
+                    )
+                ) {
+                    return
+                }
                 failedPreviewPages.remove(position)
+                if (isPdfSource) {
+                    pdfPreviewRetryUsedPages.add(position)
+                }
             }
 
             val registeredLoading = loadingPreviewPages.add(position)
@@ -2606,28 +2675,30 @@ class MangaReaderActivity : AppCompatActivity() {
                     }
 
                     val targetWidth = previewDecodeWidth()
-                    CrashLogManager.recordReaderRender(
-                        context = context,
-                        file = archiveFile,
+                    val bitmap = decodeWithRenderDiagnostics(
                         position = position,
                         kind = "PREVIEW",
                         targetWidth = targetWidth,
                         targetHeight = null
-                    )
-                    val bitmap = runCatching {
-                        session.decodePreviewForWidth(entries[position], targetWidth)
-                    }.onFailure {
-                        handleDecodeFailure(
-                            position = position,
-                            kind = DecodeTaskKind.PREVIEW,
-                            throwable = it,
-                            targetWidth = targetWidth
-                        )
-                    }.getOrNull()
+                    ) {
+                        runCatching {
+                            session.decodePreviewForWidth(entries[position], targetWidth)
+                        }.onFailure {
+                            handleDecodeFailure(
+                                position = position,
+                                kind = DecodeTaskKind.PREVIEW,
+                                throwable = it,
+                                targetWidth = targetWidth
+                            )
+                        }.getOrNull()
+                    }
 
                     if (bitmap == null) {
-                        if (!isPreload) {
+                        if (isPdfSource || !isPreload) {
                             failedPreviewPages.add(position)
+                        }
+                        if (isPdfSource && !isPreload) {
+                            pdfPreviewRetryUsedPages.add(position)
                         }
                         return@submitTask
                     }
@@ -2643,6 +2714,15 @@ class MangaReaderActivity : AppCompatActivity() {
                     )
 
                     if (isPreload && !isUsefulPreload(position, generation)) {
+                        bitmap.recycle()
+                        return@submitTask
+                    }
+                    if (shouldSkipPdfPreloadAfterMemoryTrim(
+                            isPdfSource = isPdfSource,
+                            lowMemoryMode = pdfLowMemoryMode,
+                            isPreload = isPreload
+                        )
+                    ) {
                         bitmap.recycle()
                         return@submitTask
                     }
@@ -2676,12 +2756,23 @@ class MangaReaderActivity : AppCompatActivity() {
             }
             if (position in failedFullPages) {
                 if (isPdfSource) {
+                    if (!shouldRetryPdfPageAfterFailure(
+                            isPdfSource = true,
+                            isPreload = isPreload,
+                            retryAlreadyUsed = position in pdfFullFailureRetryUsedPages
+                        )
+                    ) {
+                        return
+                    }
+                    failedFullPages.remove(position)
+                    pdfFullFailureRetryUsedPages.add(position)
+                }
+                if (!isPdfSource && isPreload) {
                     return
                 }
-                if (isPreload) {
-                    return
+                if (!isPdfSource) {
+                    failedFullPages.remove(position)
                 }
-                failedFullPages.remove(position)
             }
 
             val registeredLoading = loadingFullPages.add(position)
@@ -2711,8 +2802,11 @@ class MangaReaderActivity : AppCompatActivity() {
                             ?.also { pageBounds[position] = it }
 
                     if (bounds == null) {
-                        if (!isPreload) {
+                        if (isPdfSource || !isPreload) {
                             failedFullPages.add(position)
+                        }
+                        if (isPdfSource && !isPreload) {
+                            pdfFullFailureRetryUsedPages.add(position)
                         }
                         return@submitTask
                     }
@@ -2723,16 +2817,24 @@ class MangaReaderActivity : AppCompatActivity() {
 
                     if (shouldUseTiledPage(bounds)) {
                         if (previewBitmap(position) == null) {
-                            runCatching {
-                                session.decodePreviewForWidth(entries[position], previewDecodeWidth())
-                            }.onFailure {
-                                handleDecodeFailure(
-                                    position = position,
-                                    kind = DecodeTaskKind.PREVIEW,
-                                    throwable = it,
-                                    targetWidth = previewDecodeWidth()
-                                )
-                            }.getOrNull()?.let { putPreviewBitmap(position, it) }
+                            val previewWidth = previewDecodeWidth()
+                            decodeWithRenderDiagnostics(
+                                position = position,
+                                kind = "PREVIEW",
+                                targetWidth = previewWidth,
+                                targetHeight = null
+                            ) {
+                                runCatching {
+                                    session.decodePreviewForWidth(entries[position], previewWidth)
+                                }.onFailure {
+                                    handleDecodeFailure(
+                                        position = position,
+                                        kind = DecodeTaskKind.PREVIEW,
+                                        throwable = it,
+                                        targetWidth = previewWidth
+                                    )
+                                }.getOrNull()
+                            }?.let { putPreviewBitmap(position, it) }
                         }
                         if (isPreload && !isUsefulPreload(position, generation)) {
                             return@submitTask
@@ -2772,8 +2874,11 @@ class MangaReaderActivity : AppCompatActivity() {
                     }
 
                     if (bitmap == null) {
-                        if (!isPreload) {
+                        if (isPdfSource || !isPreload) {
                             failedFullPages.add(position)
+                        }
+                        if (isPdfSource && !isPreload) {
+                            pdfFullFailureRetryUsedPages.add(position)
                         }
                         return@submitTask
                     }
@@ -2782,7 +2887,19 @@ class MangaReaderActivity : AppCompatActivity() {
                         bitmap.recycle()
                         return@submitTask
                     }
+                    if (shouldSkipPdfPreloadAfterMemoryTrim(
+                            isPdfSource = isPdfSource,
+                            lowMemoryMode = pdfLowMemoryMode,
+                            isPreload = isPreload
+                        )
+                    ) {
+                        bitmap.recycle()
+                        return@submitTask
+                    }
 
+                    if (shouldReleasePreviewAfterFullDecode(position in tiledPages)) {
+                        removePreviewBitmap(position)
+                    }
                     putFullBitmap(position, bitmap)
                     notifyPageReady(position, immediate = !isPreload)
                 } finally {
@@ -2793,41 +2910,80 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         }
 
+        private fun <T> decodeWithRenderDiagnostics(
+            position: Int,
+            kind: String,
+            targetWidth: Int?,
+            targetHeight: Int?,
+            block: () -> T
+        ): T {
+            runCatching {
+                if (isPdfSource) {
+                    CrashLogManager.recordReaderRenderStarted(
+                        context = context,
+                        file = archiveFile,
+                        position = position,
+                        kind = kind,
+                        targetWidth = targetWidth,
+                        targetHeight = targetHeight
+                    )
+                } else {
+                    CrashLogManager.recordReaderRender(
+                        context = context,
+                        file = archiveFile,
+                        position = position,
+                        kind = kind,
+                        targetWidth = targetWidth,
+                        targetHeight = targetHeight
+                    )
+                }
+            }
+
+            return try {
+                block()
+            } finally {
+                if (isPdfSource) {
+                    runCatching {
+                        CrashLogManager.recordReaderRenderCompleted(context)
+                    }
+                }
+            }
+        }
+
         private fun decodeFullPage(
             position: Int,
             targetWidth: Int,
             targetHeight: Int
         ): Bitmap? {
-            CrashLogManager.recordReaderRender(
-                context = context,
-                file = archiveFile,
+            return decodeWithRenderDiagnostics(
                 position = position,
                 kind = "FULL",
                 targetWidth = targetWidth,
                 targetHeight = targetHeight
-            )
-            return runCatching {
-                if (isHorizontalReading()) {
-                    session.decodeImageForPage(
-                        entryName = entries[position],
+            ) {
+                runCatching {
+                    if (isHorizontalReading()) {
+                        session.decodeImageForPage(
+                            entryName = entries[position],
+                            targetWidth = targetWidth,
+                            targetHeight = targetHeight
+                        )
+                    } else {
+                        session.decodeImageForWidth(
+                            entries[position],
+                            targetWidth
+                        )
+                    }
+                }.onFailure {
+                    handleDecodeFailure(
+                        position = position,
+                        kind = DecodeTaskKind.FULL,
+                        throwable = it,
                         targetWidth = targetWidth,
                         targetHeight = targetHeight
                     )
-                } else {
-                    session.decodeImageForWidth(
-                        entries[position],
-                        targetWidth
-                    )
-                }
-            }.onFailure {
-                handleDecodeFailure(
-                    position = position,
-                    kind = DecodeTaskKind.FULL,
-                    throwable = it,
-                    targetWidth = targetWidth,
-                    targetHeight = targetHeight
-                )
-            }.getOrNull()?.also { bitmap ->
+                }.getOrNull()
+            }?.also { bitmap ->
                 CrashLogManager.recordReaderRender(
                     context = context,
                     file = archiveFile,
@@ -2854,7 +3010,7 @@ class MangaReaderActivity : AppCompatActivity() {
             val displayImageWidth = (tileView.layoutParams?.width ?: zoomedDisplayWidth())
                 .coerceAtLeast(baseDisplayWidth)
             val key = TileKey(position, tile.index, displayImageWidth, tileDecodeWidth)
-            if (tileBitmap(key) != null || !loadingTiles.add(key)) {
+            if (tileBitmap(key) != null || key in failedTileKeys || !loadingTiles.add(key)) {
                 return
             }
 
@@ -2871,25 +3027,31 @@ class MangaReaderActivity : AppCompatActivity() {
                         tile.sourceRect.height().toLong() * tileDecodeWidth /
                             tile.sourceRect.width().coerceAtLeast(1)
                         ).toInt().coerceAtLeast(1)
-                    CrashLogManager.recordReaderRender(
-                        context = context,
-                        file = archiveFile,
+                    val bitmap = decodeWithRenderDiagnostics(
                         position = position,
                         kind = "TILE",
                         targetWidth = tileDecodeWidth,
                         targetHeight = targetHeight
-                    )
-                    val bitmap = runCatching {
-                        session.decodeRegionForWidth(entries[position], tile.sourceRect, tileDecodeWidth)
-                    }.onFailure {
-                        handleDecodeFailure(
-                            position = position,
-                            kind = DecodeTaskKind.TILE,
-                            throwable = it,
-                            targetWidth = tileDecodeWidth,
-                            targetHeight = targetHeight
-                        )
-                    }.getOrNull() ?: return@submitTask
+                    ) {
+                        runCatching {
+                            session.decodeRegionForWidth(
+                                entries[position],
+                                tile.sourceRect,
+                                tileDecodeWidth
+                            )
+                        }.onFailure {
+                            handleDecodeFailure(
+                                position = position,
+                                kind = DecodeTaskKind.TILE,
+                                throwable = it,
+                                targetWidth = tileDecodeWidth,
+                                targetHeight = targetHeight
+                            )
+                        }.getOrNull()
+                    } ?: run {
+                        failedTileKeys.add(key)
+                        return@submitTask
+                    }
 
                     CrashLogManager.recordReaderRender(
                         context = context,
@@ -3142,6 +3304,21 @@ class MangaReaderActivity : AppCompatActivity() {
                         isVisible = task.position in visibleWindowStart..visibleWindowEnd
                     )
                 ) {
+                    return@forEach
+                }
+
+                if (queue.remove(task)) {
+                    task.cancelled = true
+                    clearLoadingForCanceledTask(task)
+                }
+            }
+        }
+
+        private fun cancelQueuedPreloadTasks() {
+            val queue = decodeExecutor.queue
+            queue.toList().forEach { runnable ->
+                val task = runnable as? DecodeTask ?: return@forEach
+                if (!task.cancelable) {
                     return@forEach
                 }
 
@@ -3485,6 +3662,12 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         }
 
+        private fun removePreviewBitmap(position: Int) {
+            synchronized(cacheLock) {
+                previewBitmapCache.remove(position)
+            }
+        }
+
         private fun fullBitmap(position: Int): Bitmap? {
             return synchronized(cacheLock) {
                 fullBitmapCache.get(position)
@@ -3772,6 +3955,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
         companion object {
             private const val READER_DECODE_THREAD_COUNT = 1
+            private const val READER_CLOSE_WAIT_LOG_MS = 3_000L
             private const val ESTIMATED_READER_PAGE_HEIGHT_RATIO = 1.45f
             private const val MIN_READER_PAGE_HEIGHT = 320
             private const val PLACEHOLDER_COLOR = 0xFF101010.toInt()
@@ -3996,6 +4180,30 @@ internal fun shouldScheduleImmediateFullDecodeForReader(
     isDiscreteJump: Boolean = false
 ): Boolean {
     return !isPdfSource || isReaderIdle || isDiscreteJump
+}
+
+internal fun shouldReleasePreviewAfterFullDecode(isTiled: Boolean): Boolean {
+    return !isTiled
+}
+
+internal fun shouldSkipPdfPreloadAfterMemoryTrim(
+    isPdfSource: Boolean,
+    lowMemoryMode: Boolean,
+    isPreload: Boolean
+): Boolean {
+    return isPdfSource && lowMemoryMode && isPreload
+}
+
+internal fun shouldRetryPdfPageAfterFailure(
+    isPdfSource: Boolean,
+    isPreload: Boolean,
+    retryAlreadyUsed: Boolean
+): Boolean {
+    return isPdfSource && !isPreload && !retryAlreadyUsed
+}
+
+internal fun shouldSkipReaderPreviewDecodeAfterMemoryTrim(lowMemoryMode: Boolean): Boolean {
+    return lowMemoryMode
 }
 
 internal fun calculatePdfPreviewWidth(

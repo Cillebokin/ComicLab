@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.util.LruCache
 import android.view.LayoutInflater
@@ -22,6 +23,7 @@ class ReaderPreviewAdapter(
     private val context: Context,
     private val archiveFile: File,
     private val entries: List<String>,
+    private val sharedSession: ComicArchive.ImageReaderSession? = null,
     private val onPageClick: (position: Int) -> Unit
 ) : RecyclerView.Adapter<ReaderPreviewAdapter.PreviewViewHolder>() {
 
@@ -45,6 +47,9 @@ class ReaderPreviewAdapter(
 
     @Volatile
     private var closed = false
+
+    @Volatile
+    private var lowMemoryMode = false
 
     private var selectedPosition = RecyclerView.NO_POSITION
 
@@ -111,6 +116,16 @@ class ReaderPreviewAdapter(
         closeSessionAfterDecoderStops()
     }
 
+    fun trimMemory(level: Int) {
+        if (level < android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            return
+        }
+        lowMemoryMode = true
+        synchronized(cache) {
+            cache.evictAll()
+        }
+    }
+
     private fun closeSessionAfterDecoderStops() {
         Thread(
             {
@@ -121,7 +136,7 @@ class ReaderPreviewAdapter(
                     cache.evictAll()
                 }
                 synchronized(sessionLock) {
-                    runCatching { readerSession?.close() }
+                    runCatching { (sharedSession ?: readerSession)?.close() }
                         .onFailure { Log.w(LOG_TAG, "reader preview session close failed", it) }
                     readerSession = null
                 }
@@ -131,10 +146,18 @@ class ReaderPreviewAdapter(
     }
 
     private fun awaitDecoderTermination(): Boolean {
+        val startedAt = SystemClock.elapsedRealtime()
+        var timeoutLogged = false
         while (true) {
             try {
                 if (decodeExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
                     return true
+                }
+                if (!timeoutLogged &&
+                    SystemClock.elapsedRealtime() - startedAt >= PREVIEW_CLOSE_WAIT_LOG_MS
+                ) {
+                    timeoutLogged = true
+                    Log.w(LOG_TAG, "reader preview close is waiting for decoder termination")
                 }
             } catch (interrupted: InterruptedException) {
                 Thread.currentThread().interrupt()
@@ -146,6 +169,7 @@ class ReaderPreviewAdapter(
 
     private fun loadThumbnail(position: Int) {
         if (closed ||
+            shouldSkipReaderPreviewDecodeAfterMemoryTrim(lowMemoryMode) ||
             position !in entries.indices ||
             position in failedPositions ||
             !loadingPositions.add(position)
@@ -211,6 +235,7 @@ class ReaderPreviewAdapter(
     }
 
     private fun openReaderSession(): ComicArchive.ImageReaderSession {
+        sharedSession?.let { return it }
         readerSession?.let { return it }
         return synchronized(sessionLock) {
             readerSession ?: ComicArchive.openReaderSession(archiveFile, context.cacheDir)
@@ -225,6 +250,7 @@ class ReaderPreviewAdapter(
 
     companion object {
         private const val LOG_TAG = "ComicLabReader"
+        private const val PREVIEW_CLOSE_WAIT_LOG_MS = 3_000L
 
         private fun thumbnailCacheSizeKb(): Int {
             val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()

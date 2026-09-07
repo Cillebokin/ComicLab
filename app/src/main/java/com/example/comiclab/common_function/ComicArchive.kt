@@ -31,12 +31,40 @@ import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
+import kotlin.math.sqrt
+
+internal class PdfRendererLifecycleGate {
+    private val lock = Any()
+    private var closed = false
+
+    fun <T> withOpen(block: () -> T): T? {
+        return synchronized(lock) {
+            if (closed) {
+                null
+            } else {
+                block()
+            }
+        }
+    }
+
+    fun close(closeAction: () -> Unit) {
+        synchronized(lock) {
+            if (closed) {
+                return
+            }
+            closed = true
+            closeAction()
+        }
+    }
+}
 
 object ComicArchive {
     private const val ZIP_PREVIEW_DECODE_THREAD_COUNT = 2
     private const val PREPARED_READER_MANIFEST_FILE = "reader_manifest.json"
     private const val PDF_PAGE_ENTRY_PREFIX = "pdf_page_"
     private const val PDF_MAX_RENDER_WIDTH = 4096
+    private const val PDF_MAX_PREVIEW_HEIGHT = 4096
+    private const val PDF_MAX_PREVIEW_PIXELS = 2_000_000L
     private const val DELETE_BACKUP_DIR_NAME = ".ComicLabBackups"
     private const val DELETE_BACKUP_COPY_BUFFER_SIZE = 1024 * 1024
 
@@ -52,6 +80,82 @@ object ComicArchive {
         fun decodeImageForWidth(entryName: String, targetWidth: Int): Bitmap?
         fun decodeImageForPage(entryName: String, targetWidth: Int, targetHeight: Int): Bitmap?
         fun decodeRegionForWidth(entryName: String, sourceRect: Rect, targetWidth: Int): Bitmap?
+    }
+
+    class SharedImageReaderSession private constructor(
+        private val delegate: ImageReaderSession
+    ) {
+        private var activeLeases = 0
+        private var sourceClosed = false
+
+        @Synchronized
+        fun acquire(): ImageReaderSession {
+            check(!sourceClosed) { "Shared reader session is already closed" }
+            activeLeases++
+            return Lease()
+        }
+
+        @Synchronized
+        private fun release() {
+            if (activeLeases <= 0) {
+                return
+            }
+            activeLeases--
+            if (activeLeases == 0) {
+                sourceClosed = true
+                delegate.close()
+            }
+        }
+
+        private inner class Lease : ImageReaderSession {
+            private var closed = false
+
+            override fun isPdfSource(): Boolean = delegate.isPdfSource()
+
+            override fun readBounds(entryName: String): ImageBounds? {
+                return delegate.readBounds(entryName)
+            }
+
+            override fun decodePreviewForWidth(entryName: String, targetWidth: Int): Bitmap? {
+                return delegate.decodePreviewForWidth(entryName, targetWidth)
+            }
+
+            override fun decodeImageForWidth(entryName: String, targetWidth: Int): Bitmap? {
+                return delegate.decodeImageForWidth(entryName, targetWidth)
+            }
+
+            override fun decodeImageForPage(
+                entryName: String,
+                targetWidth: Int,
+                targetHeight: Int
+            ): Bitmap? {
+                return delegate.decodeImageForPage(entryName, targetWidth, targetHeight)
+            }
+
+            override fun decodeRegionForWidth(
+                entryName: String,
+                sourceRect: Rect,
+                targetWidth: Int
+            ): Bitmap? {
+                return delegate.decodeRegionForWidth(entryName, sourceRect, targetWidth)
+            }
+
+            override fun close() {
+                synchronized(this@SharedImageReaderSession) {
+                    if (closed) {
+                        return
+                    }
+                    closed = true
+                    release()
+                }
+            }
+        }
+
+        companion object {
+            fun wrap(session: ImageReaderSession): SharedImageReaderSession {
+                return SharedImageReaderSession(session)
+            }
+        }
     }
 
     data class PreparedImageEntry(
@@ -528,7 +632,7 @@ object ComicArchive {
         file: File
     ) : ImageReaderSession {
 
-        private val pdfLock = Any()
+        private val pdfLifecycleGate = PdfRendererLifecycleGate()
         private val parcelFileDescriptor =
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
         private val pdfRenderer = PdfRenderer(parcelFileDescriptor)
@@ -537,13 +641,13 @@ object ComicArchive {
 
         override fun readBounds(entryName: String): ImageBounds? {
             val pageIndex = pdfPageIndex(entryName) ?: return null
-            synchronized(pdfLock) {
+            return pdfLifecycleGate.withOpen {
                 if (pageIndex !in 0 until pdfRenderer.pageCount) {
-                    return null
+                    return@withOpen null
                 }
 
                 val page = pdfRenderer.openPage(pageIndex)
-                return try {
+                try {
                     ImageBounds(page.width, page.height)
                 } finally {
                     page.close()
@@ -573,13 +677,13 @@ object ComicArchive {
             targetWidth: Int
         ): Bitmap? {
             val pageIndex = pdfPageIndex(entryName) ?: return null
-            synchronized(pdfLock) {
+            return pdfLifecycleGate.withOpen {
                 if (pageIndex !in 0 until pdfRenderer.pageCount) {
-                    return null
+                    return@withOpen null
                 }
 
                 val page = pdfRenderer.openPage(pageIndex)
-                return try {
+                try {
                     renderPdfPageRegion(page, sourceRect, targetWidth)
                 } finally {
                     page.close()
@@ -588,8 +692,13 @@ object ComicArchive {
         }
 
         override fun close() {
-            pdfRenderer.close()
-            parcelFileDescriptor.close()
+            pdfLifecycleGate.close {
+                try {
+                    pdfRenderer.close()
+                } finally {
+                    parcelFileDescriptor.close()
+                }
+            }
         }
 
         private fun renderPage(
@@ -599,13 +708,13 @@ object ComicArchive {
             mode: RenderMode
         ): Bitmap? {
             val pageIndex = pdfPageIndex(entryName) ?: return null
-            synchronized(pdfLock) {
+            return pdfLifecycleGate.withOpen {
                 if (pageIndex !in 0 until pdfRenderer.pageCount) {
-                    return null
+                    return@withOpen null
                 }
 
                 val page = pdfRenderer.openPage(pageIndex)
-                return try {
+                try {
                     when (mode) {
                         RenderMode.WIDTH -> renderPdfPageForWidth(page, targetWidth)
                         RenderMode.FIT_BOUNDS -> renderPdfPageFitBounds(page, targetWidth, targetHeight)
@@ -831,10 +940,16 @@ object ComicArchive {
             return null
         }
 
-        val boundedTargetWidth = targetWidth.coerceAtMost(PDF_MAX_RENDER_WIDTH)
-        val scale = boundedTargetWidth.toFloat() / page.width.toFloat()
-        val targetHeight = (page.height * scale).toInt().coerceAtLeast(1)
-        return renderPdfPage(page, boundedTargetWidth.coerceAtLeast(1), targetHeight, scale)
+        val size = calculatePdfPreviewSize(
+            pageWidth = page.width,
+            pageHeight = page.height,
+            targetWidth = targetWidth,
+            maxWidth = PDF_MAX_RENDER_WIDTH,
+            maxHeight = PDF_MAX_PREVIEW_HEIGHT,
+            maxPixels = PDF_MAX_PREVIEW_PIXELS
+        ) ?: return null
+        val scale = size.width.toFloat() / page.width.toFloat()
+        return renderPdfPage(page, size.width, size.height, scale)
     }
 
     private fun renderPdfPageFitBounds(
@@ -1993,4 +2108,63 @@ object ComicArchive {
         }
         return scaledBitmap
     }
+}
+
+internal data class PdfRenderSize(
+    val width: Int,
+    val height: Int
+)
+
+internal fun calculatePdfPreviewSize(
+    pageWidth: Int,
+    pageHeight: Int,
+    targetWidth: Int,
+    maxWidth: Int,
+    maxHeight: Int,
+    maxPixels: Long
+): PdfRenderSize? {
+    if (pageWidth <= 0 ||
+        pageHeight <= 0 ||
+        targetWidth <= 0 ||
+        maxWidth <= 0 ||
+        maxHeight <= 0 ||
+        maxPixels <= 0L
+    ) {
+        return null
+    }
+
+    val widthLimit = minOf(targetWidth, maxWidth).coerceAtLeast(1)
+    val pagePixels = pageWidth.toDouble() * pageHeight.toDouble()
+    val scaleByWidth = widthLimit.toDouble() / pageWidth.toDouble()
+    val scaleByHeight = maxHeight.toDouble() / pageHeight.toDouble()
+    val scaleByPixels = sqrt(maxPixels.toDouble() / pagePixels)
+    val scale = minOf(scaleByWidth, scaleByHeight, scaleByPixels)
+    if (!scale.isFinite() || scale <= 0.0) {
+        return null
+    }
+
+    var width = (pageWidth.toDouble() * scale)
+        .toInt()
+        .coerceIn(1, widthLimit)
+    var height = (pageHeight.toDouble() * scale)
+        .toInt()
+        .coerceIn(1, maxHeight)
+
+    if (width.toLong() * height.toLong() > maxPixels) {
+        height = minOf(
+            height,
+            (maxPixels / width.toLong()).coerceAtLeast(1L)
+                .coerceAtMost(Int.MAX_VALUE.toLong())
+                .toInt()
+        )
+    }
+    if (width.toLong() * height.toLong() > maxPixels) {
+        width = minOf(
+            width,
+            (maxPixels / height.toLong()).coerceAtLeast(1L)
+                .coerceAtMost(Int.MAX_VALUE.toLong())
+                .toInt()
+        )
+    }
+    return PdfRenderSize(width, height)
 }
