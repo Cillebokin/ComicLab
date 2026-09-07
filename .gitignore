@@ -14,6 +14,9 @@
 .cxx
 local.properties
 
+/Temp
+/docs
+
 app-release.apk
 app-debug.apk
 ComicLab.apk
