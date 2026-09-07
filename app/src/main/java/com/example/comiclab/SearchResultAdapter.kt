@@ -9,6 +9,7 @@ import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.ImageView
 import android.widget.TextView
+import com.example.comiclab.ebook.ReaderFileDetector
 import java.io.File
 import java.util.Collections
 import java.util.Locale
@@ -65,7 +66,7 @@ class SearchResultAdapter(
     private fun bindIcon(file: File, imgIcon: ImageView) {
         when {
             file.isDirectory -> bindDirectoryIcon(file, imgIcon)
-            ComicArchive.isArchive(file) -> bindArchiveIcon(file, imgIcon)
+            ComicArchive.isArchive(file) || ReaderFileDetector.isMobi(file) -> bindArchiveIcon(file, imgIcon)
             else -> {
                 imgIcon.tag = null
                 setDefaultIconLayout(imgIcon)
@@ -115,6 +116,11 @@ class SearchResultAdapter(
         setDefaultIconLayout(imgIcon)
         imgIcon.scaleType = ImageView.ScaleType.CENTER_INSIDE
         imgIcon.setImageResource(R.drawable.png_press_package_icon)
+
+        if (ReaderFileDetector.isMobi(file)) {
+            imgIcon.tag = null
+            return
+        }
 
         if (!ComicArchive.isSupportedArchive(file)) {
             imgIcon.tag = null

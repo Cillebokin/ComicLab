@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import com.example.comiclab.ebook.ReaderFileDetector
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
@@ -22,7 +23,7 @@ object FavoriteComicStore {
     }
 
     fun record(context: Context, file: File): RecordResult {
-        if (!file.isFile || !ComicArchive.isSupportedArchive(file)) {
+        if (!file.isFile || !ReaderFileDetector.isSupported(file)) {
             return RecordResult.INVALID
         }
 
@@ -57,7 +58,7 @@ object FavoriteComicStore {
         val validStoredItems = mutableListOf<StoredItem>()
         val visibleItems = storedItems.mapNotNull { storedItem ->
             val file = File(storedItem.path)
-            if (!file.isFile || !ComicArchive.isSupportedArchive(file)) {
+            if (!file.isFile || !ReaderFileDetector.isSupported(file)) {
                 return@mapNotNull null
             }
 
@@ -88,7 +89,7 @@ object FavoriteComicStore {
 
     fun isFavorite(context: Context, file: File): Boolean {
         return file.isFile &&
-            ComicArchive.isSupportedArchive(file) &&
+            ReaderFileDetector.isSupported(file) &&
             favoriteFilePaths(context).contains(file.absolutePath)
     }
 
@@ -162,7 +163,7 @@ object FavoriteComicStore {
     private fun validStoredItems(items: List<StoredItem>): List<StoredItem> {
         return items.filter { item ->
             val file = File(item.path)
-            file.isFile && ComicArchive.isSupportedArchive(file)
+            file.isFile && ReaderFileDetector.isSupported(file)
         }
     }
 

@@ -1,6 +1,7 @@
 package com.example.comiclab
 
 import android.content.Context
+import com.example.comiclab.ebook.ReaderFileDetector
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -15,7 +16,7 @@ object ReadingHistoryStore {
     )
 
     fun record(context: Context, file: File) {
-        if (!ComicArchive.isSupportedArchive(file)) {
+        if (!ReaderFileDetector.isSupported(file)) {
             return
         }
 
@@ -42,7 +43,7 @@ object ReadingHistoryStore {
         val validStoredItems = mutableListOf<StoredItem>()
         val visibleItems = storedItems.mapNotNull { storedItem ->
             val file = File(storedItem.path)
-            if (!file.isFile || !ComicArchive.isSupportedArchive(file)) {
+            if (!file.isFile || !ReaderFileDetector.isSupported(file)) {
                 return@mapNotNull null
             }
 

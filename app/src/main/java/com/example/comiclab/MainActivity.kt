@@ -31,6 +31,8 @@ import androidx.core.content.FileProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.example.comiclab.ebook.ReaderFileDetector
+import com.example.comiclab.ebook.ReaderFileType
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -182,7 +184,7 @@ class MainActivity : AppCompatActivity() {
             if (file.isDirectory) {
                 setCurrentPath(file.absolutePath)
                 loadCurrentDirectory()
-            } else if (ComicArchive.isArchive(file)) {
+            } else if (ReaderFileDetector.isMobi(file) || ComicArchive.isArchive(file)) {
                 showArchiveMenu(file)
             } else {
                 openFile(file)
@@ -2328,7 +2330,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnFavoriteComic.setOnClickListener {
-            if (!ComicArchive.isSupportedArchive(file)) {
+            if (!ReaderFileDetector.isSupported(file)) {
                 showMessage(getString(R.string.unsupported_archive_format))
                 dialog.dismiss()
                 return@setOnClickListener
@@ -2528,15 +2530,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openMangaPreview(file: File) {
-        if (!ComicArchive.isSupportedArchive(file)) {
-            showMessage(getString(R.string.unsupported_archive_format))
-            return
-        }
+        when (ReaderFileDetector.typeOf(file)) {
+            ReaderFileType.MOBI -> {
+                startActivity(
+                    Intent(this, EbookPreviewActivity::class.java).apply {
+                        putExtra(EbookPreviewActivity.EXTRA_BOOK_PATH, file.absolutePath)
+                    }
+                )
+            }
 
-        val intent = Intent(this, MangaPreviewActivity::class.java).apply {
-            putExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
+            ReaderFileType.IMAGE_ARCHIVE,
+            ReaderFileType.PDF -> {
+                startActivity(
+                    Intent(this, MangaPreviewActivity::class.java).apply {
+                        putExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
+                    }
+                )
+            }
+
+            null -> showMessage(getString(R.string.unsupported_archive_format))
         }
-        startActivity(intent)
     }
 
     private fun getMimeType(file: File): String {

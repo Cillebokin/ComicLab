@@ -9,6 +9,7 @@ import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.ImageView
 import android.widget.TextView
+import com.example.comiclab.ebook.ReaderFileDetector
 import java.io.File
 import java.util.Collections
 import java.util.Locale
@@ -93,7 +94,7 @@ class FileListAdapter(
             return view
         }
 
-        if (ComicArchive.isArchive(file)) {
+        if (ComicArchive.isArchive(file) || ReaderFileDetector.isMobi(file)) {
             bindArchiveIcon(file, imgIcon)
         } else {
             imgIcon.tag = null
@@ -117,7 +118,7 @@ class FileListAdapter(
                 R.drawable.png_mark_direct_icon
 
             file.isFile &&
-                ComicArchive.isSupportedArchive(file) &&
+                ReaderFileDetector.isSupported(file) &&
                 favoriteComicPaths.contains(file.absolutePath) ->
                 R.drawable.png_mark_file_icon
 
@@ -198,6 +199,11 @@ class FileListAdapter(
         setDefaultIconLayout(imgIcon)
         imgIcon.scaleType = ImageView.ScaleType.CENTER_INSIDE
         imgIcon.setImageResource(R.drawable.png_press_package_icon)
+
+        if (ReaderFileDetector.isMobi(file)) {
+            imgIcon.tag = null
+            return
+        }
 
         if (!ComicArchive.isSupportedArchive(file)) {
             imgIcon.tag = null

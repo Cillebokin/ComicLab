@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import com.example.comiclab.ebook.ReaderFileDetector
 import java.io.File
 import java.util.Locale
 
@@ -119,7 +120,7 @@ object ComicClassifier {
             children.forEach { child ->
                 when {
                     child.isDirectory && shouldScanDirectory(child) -> stack.add(child)
-                    child.isFile && ComicArchive.isSupportedArchive(child) -> result.add(child)
+                    child.isFile && ReaderFileDetector.isSupported(child) -> result.add(child)
                 }
             }
         }

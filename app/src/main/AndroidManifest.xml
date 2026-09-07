@@ -40,6 +40,14 @@
             android:exported="false" />
 
         <activity
+            android:name="com.example.comiclab.EbookPreviewActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.example.comiclab.EbookReaderActivity"
+            android:exported="false" />
+
+        <activity
             android:name="com.example.comiclab.SettingsActivity"
             android:exported="false" />
 
