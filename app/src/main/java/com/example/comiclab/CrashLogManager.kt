@@ -14,6 +14,9 @@ object CrashLogManager {
 
     private const val CRASH_LOG_DIR_NAME = "crash_logs"
     private const val CRASH_EXPORT_DIR_NAME = "crash_exports"
+    private const val READER_DIAGNOSTIC_PREFS_NAME = "reader_diagnostics"
+    private const val READER_CHECKPOINT_KEY = "latest_checkpoint"
+    private const val READER_RENDER_KEY = "latest_render"
     private const val MAX_CRASH_LOG_COUNT = 10
     private val timestampFormatter = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.ROOT)
     private val displayTimeFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.ROOT)
@@ -58,6 +61,53 @@ object CrashLogManager {
         return exportFile
     }
 
+    fun recordReaderCheckpoint(
+        context: Context,
+        file: File,
+        position: Int,
+        offset: Int
+    ) {
+        val snapshot = formatReaderCheckpoint(
+            filePath = file.absolutePath,
+            fileSize = file.length(),
+            fileModified = file.lastModified(),
+            position = position,
+            offset = offset
+        )
+        diagnosticPrefs(context).edit()
+            .putString(READER_CHECKPOINT_KEY, snapshot)
+            .apply()
+    }
+
+    fun recordReaderRender(
+        context: Context,
+        file: File,
+        position: Int,
+        kind: String,
+        targetWidth: Int?,
+        targetHeight: Int?,
+        bitmapBytes: Int? = null,
+        usedHeapKb: Long? = null,
+        maxHeapKb: Long? = null
+    ) {
+        val runtime = Runtime.getRuntime()
+        val snapshot = formatReaderRender(
+            filePath = file.absolutePath,
+            fileSize = file.length(),
+            fileModified = file.lastModified(),
+            position = position,
+            kind = kind,
+            targetWidth = targetWidth,
+            targetHeight = targetHeight,
+            bitmapBytes = bitmapBytes,
+            usedHeapKb = usedHeapKb ?: (runtime.totalMemory() - runtime.freeMemory()) / 1024L,
+            maxHeapKb = maxHeapKb ?: runtime.maxMemory() / 1024L
+        )
+        diagnosticPrefs(context).edit()
+            .putString(READER_RENDER_KEY, snapshot)
+            .apply()
+    }
+
     private fun writeCrashLog(context: Context, thread: Thread, throwable: Throwable) {
         val logDir = crashLogDir(context).apply {
             mkdirs()
@@ -88,6 +138,9 @@ object CrashLogManager {
             appendLine("App: ${appVersionText(context)}")
             appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
             appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
+            val diagnostics = diagnosticPrefs(context)
+            appendLine("Reader checkpoint: ${diagnostics.getString(READER_CHECKPOINT_KEY, "unknown")}")
+            appendLine("Reader render: ${diagnostics.getString(READER_RENDER_KEY, "unknown")}")
             appendLine()
             appendLine(stackTrace)
         }
@@ -114,4 +167,36 @@ object CrashLogManager {
     private fun crashLogDir(context: Context): File {
         return File(context.filesDir, CRASH_LOG_DIR_NAME)
     }
+
+    private fun diagnosticPrefs(context: Context) = context.applicationContext
+        .getSharedPreferences(READER_DIAGNOSTIC_PREFS_NAME, Context.MODE_PRIVATE)
+}
+
+internal fun formatReaderCheckpoint(
+    filePath: String,
+    fileSize: Long,
+    fileModified: Long,
+    position: Int,
+    offset: Int
+): String {
+    return "file=$filePath size=$fileSize modified=$fileModified " +
+        "page=${position + 1} position=$position offset=$offset"
+}
+
+internal fun formatReaderRender(
+    filePath: String,
+    fileSize: Long,
+    fileModified: Long,
+    position: Int,
+    kind: String,
+    targetWidth: Int?,
+    targetHeight: Int?,
+    bitmapBytes: Int?,
+    usedHeapKb: Long,
+    maxHeapKb: Long
+): String {
+    return "file=$filePath size=$fileSize modified=$fileModified " +
+        "page=${position + 1} position=$position kind=$kind " +
+        "target=${targetWidth ?: "?"}x${targetHeight ?: "?"} " +
+        "bitmapBytes=${bitmapBytes ?: "?"} usedHeapKb=$usedHeapKb maxHeapKb=$maxHeapKb"
 }
