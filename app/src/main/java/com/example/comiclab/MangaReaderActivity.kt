@@ -3059,11 +3059,14 @@ class MangaReaderActivity : AppCompatActivity() {
 
         private fun fullPageDecodeWidth(bounds: ComicArchive.ImageBounds): Int {
             if (isPdfSource) {
-                val maxWidthByPixels = maxPdfRenderWidthByPixels(bounds)
-                return (baseDisplayWidth * PDF_FULL_RENDER_SCALE)
-                    .coerceAtLeast(baseDisplayWidth)
-                    .coerceAtMost(maxWidthByPixels)
-                    .coerceAtMost(PDF_MAX_FULL_RENDER_WIDTH)
+                return calculatePdfRenderWidthByPixelBudget(
+                    pageWidth = bounds.width,
+                    pageHeight = bounds.height,
+                    baseDisplayWidth = baseDisplayWidth,
+                    renderScale = PDF_FULL_RENDER_SCALE,
+                    maxRenderWidth = PDF_MAX_FULL_RENDER_WIDTH,
+                    maxRenderPixels = PDF_MAX_FULL_RENDER_PIXELS
+                )
             }
 
             val sourceWidth = bounds.width.coerceAtMost(MAX_READER_DECODE_WIDTH).coerceAtLeast(1)
@@ -3112,19 +3115,6 @@ class MangaReaderActivity : AppCompatActivity() {
             } else {
                 !isFastScroll || isIdle
             }
-        }
-
-        private fun maxPdfRenderWidthByPixels(bounds: ComicArchive.ImageBounds): Int {
-            if (bounds.width <= 0 || bounds.height <= 0) {
-                return PDF_MAX_FULL_RENDER_WIDTH
-            }
-
-            val maxWidth = kotlin.math.sqrt(
-                PDF_MAX_FULL_RENDER_PIXELS.toDouble() *
-                    bounds.width.toDouble() /
-                    bounds.height.toDouble()
-            ).roundToInt()
-            return maxWidth.coerceAtLeast(baseDisplayWidth)
         }
 
         private fun isHorizontalReading(): Boolean {
@@ -3474,7 +3464,7 @@ class MangaReaderActivity : AppCompatActivity() {
             private const val PDF_MAX_FULL_RENDER_WIDTH = 3072
             private const val PDF_MAX_FULL_RENDER_HEIGHT = 4096
             private const val PDF_MAX_TILE_RENDER_WIDTH = 3072
-            private const val PDF_MAX_FULL_RENDER_PIXELS = 8_000_000L
+            private const val PDF_MAX_FULL_RENDER_PIXELS = 4_000_000L
             private const val PDF_TILED_RENDER_PIXEL_THRESHOLD = 8_000_000L
             private const val READER_ADAPTER_LOG_TAG = "ComicLabReader"
 
@@ -3602,4 +3592,28 @@ class MangaReaderActivity : AppCompatActivity() {
             return "reader:${file.absolutePath}:${file.lastModified()}:${file.length()}"
         }
     }
+}
+
+internal fun calculatePdfRenderWidthByPixelBudget(
+    pageWidth: Int,
+    pageHeight: Int,
+    baseDisplayWidth: Int,
+    renderScale: Int,
+    maxRenderWidth: Int,
+    maxRenderPixels: Long
+): Int {
+    val safePageWidth = pageWidth.coerceAtLeast(1)
+    val safePageHeight = pageHeight.coerceAtLeast(1)
+    val safeBaseDisplayWidth = baseDisplayWidth.coerceAtLeast(1).toLong()
+    val safeRenderScale = renderScale.coerceAtLeast(1).toLong()
+    val safeMaxRenderWidth = maxRenderWidth.coerceAtLeast(1)
+    val safeMaxRenderPixels = maxRenderPixels.coerceAtLeast(1L)
+    val maxWidthByPixels = kotlin.math.sqrt(
+        safeMaxRenderPixels.toDouble() * safePageWidth.toDouble() / safePageHeight.toDouble()
+    ).toInt().coerceAtLeast(1)
+    val preferredWidth = (safeBaseDisplayWidth * safeRenderScale)
+        .coerceAtMost(Int.MAX_VALUE.toLong())
+        .toInt()
+
+    return minOf(preferredWidth, safeMaxRenderWidth, maxWidthByPixels)
 }
