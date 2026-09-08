@@ -185,6 +185,6 @@
     <string name="preparing_fast_reading_progress">正在准备快速阅读 %1$d / %2$d  %3$d%%</string>
     <string name="about">关于</string>
     <string name="app_author">作者：Cillebokin / swcillebokin@gmail.com</string>
-    <string name="app_version">版本：V1.0.3.0605</string>
+    <string name="app_version">版本：V1.0.4.0908</string>
     <string name="app_link">链接：https://github.com/Cillebokin/ComicLab</string>
 </resources>
