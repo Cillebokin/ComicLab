@@ -20,7 +20,9 @@ data class EbookResource(
     val id: String,
     val recordIndex: Int = -1,
     val mimeType: String,
-    val path: String = ""
+    val path: String = "",
+    /** Relative resource slot used by formats such as MOBI recindex. */
+    val resourceIndex: Int = -1
 )
 
 data class EbookResourceRecord(

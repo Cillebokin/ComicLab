@@ -489,7 +489,12 @@ class MobiParser {
             val prefix = readPrefix(randomAccessFile, record, IMAGE_PREFIX_LENGTH)
             val mimeType = imageMimeType(prefix) ?: continue
             val resourceId = "image-${(resources.size + 1).toString().padStart(4, '0')}"
-            resources += MobiResource(resourceId, recordIndex, mimeType)
+            resources += MobiResource(
+                id = resourceId,
+                recordIndex = recordIndex,
+                mimeType = mimeType,
+                resourceIndex = recordIndex - firstImageRecord
+            )
             resourceRecords[resourceId] = ResourceRecord(
                 id = resourceId,
                 recordIndex = recordIndex,

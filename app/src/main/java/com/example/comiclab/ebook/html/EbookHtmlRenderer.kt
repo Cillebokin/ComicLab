@@ -168,10 +168,23 @@ class EbookHtmlRenderer {
         sourcePath: String?
     ): String? {
         val normalized = reference.trim().removeSurrounding("\"").removeSurrounding("'")
+        val mobiResourceIndex = if (sourcePath == null) {
+            MOBI_RESOURCE_INDEX_REGEX.find(normalized)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.toIntOrNull()
+                ?.takeIf { it > 0 }
+        } else {
+            null
+        }
         return book.resources.firstOrNull { it.id == normalized }?.id
             ?: normalized.removePrefix("ebook-resource://")
                 .removePrefix("mobi-resource://")
                 .takeIf { value -> book.resources.any { it.id == value } }
+            ?: mobiResourceIndex?.let { index ->
+                book.resources.firstOrNull { it.resourceIndex == index - 1 }?.id
+                    ?: book.resources.getOrNull(index - 1)?.id
+            }
             ?: normalizeResourcePath(sourcePath, normalized)?.let { resourcePath ->
                 book.resources.firstOrNull { it.path == resourcePath }?.id
             }
@@ -285,5 +298,6 @@ class EbookHtmlRenderer {
         val CSS_IMPORT_REGEX = Regex("(?is)@import[^;]*;")
         val CSS_UNSAFE_DECLARATION_REGEX = Regex("(?is)(?:behavior|binding|expression)\\s*:[^;{}]+;?")
         val CSS_URL_REGEX = Regex("(?is)url\\s*\\([^)]*\\)")
+        val MOBI_RESOURCE_INDEX_REGEX = Regex("(?i)^(?:kindle:embed:)?0*(\\d+)(?:\\?.*)?$")
     }
 }
