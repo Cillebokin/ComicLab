@@ -1,18 +1,18 @@
 *.iml
 .gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-
-/build
-/captures
+local.properties
 .externalNativeBuild
 .cxx
 local.properties
+
+.idea/
+.kotlin/
+.gradle/
+.externalNativeBuild/
+.cxx/
+captures/
+build/
+**/build/
 
 .agents/
 .codex/
@@ -21,5 +21,4 @@ Temp/
 docs/
 
 *.apk
-
 .DS_Store
