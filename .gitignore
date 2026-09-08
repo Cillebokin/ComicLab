@@ -7,19 +7,19 @@
 /.idea/workspace.xml
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
-.DS_Store
+
 /build
 /captures
 .externalNativeBuild
 .cxx
 local.properties
 
-/.agents
-/.codex
-/.serena
-/Temp
-/docs
+.agents/
+.codex/
+.serena/
+Temp/
+docs/
 
-app-release.apk
-app-debug.apk
-ComicLab.apk
+*.apk
+
+.DS_Store
