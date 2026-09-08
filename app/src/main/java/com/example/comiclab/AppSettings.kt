@@ -9,6 +9,7 @@ object AppSettings {
 
     private const val PREFS_NAME = "app_settings"
     private const val KEY_READING_DIRECTION = "reading_direction"
+    private const val KEY_DOUBLE_PAGE_COVER_SINGLE = "double_page_cover_single"
     private const val KEY_VOLUME_KEY_PAGE_TURN = "volume_key_page_turn"
     private const val KEY_AUTO_HIDE_SYSTEM_BARS = "auto_hide_system_bars"
     private const val KEY_DETECT_MANGA_COLLECTIONS = "detect_manga_collections"
@@ -19,6 +20,7 @@ object AppSettings {
     const val DEFAULT_READER_BRIGHTNESS = 128
     const val MIN_READER_BRIGHTNESS = 1
     const val MAX_READER_BRIGHTNESS = 255
+    const val DEFAULT_DOUBLE_PAGE_COVER_SINGLE = true
 
     fun getReadingDirection(context: Context): String {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -36,6 +38,18 @@ object AppSettings {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_READING_DIRECTION, normalizedDirection)
+            .apply()
+    }
+
+    fun isDoublePageCoverSingleEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_DOUBLE_PAGE_COVER_SINGLE, DEFAULT_DOUBLE_PAGE_COVER_SINGLE)
+    }
+
+    fun setDoublePageCoverSingleEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_DOUBLE_PAGE_COVER_SINGLE, enabled)
             .apply()
     }
 

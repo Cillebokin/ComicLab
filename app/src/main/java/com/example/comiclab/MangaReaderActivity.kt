@@ -3,6 +3,7 @@ package com.example.comiclab
 import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
@@ -49,6 +50,27 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.roundToInt
+
+private fun readerPageContentGravity(
+    readingDirection: String,
+    position: Int,
+    doublePageReading: Boolean
+): Int {
+    if (!doublePageReading) {
+        return Gravity.CENTER
+    }
+
+    val isVisualLeftPage = if (readingDirection == AppSettings.READING_DIRECTION_RIGHT_TO_LEFT) {
+        position % 2 != 0
+    } else {
+        position % 2 == 0
+    }
+    return if (isVisualLeftPage) {
+        Gravity.RIGHT or Gravity.CENTER_VERTICAL
+    } else {
+        Gravity.LEFT or Gravity.CENTER_VERTICAL
+    }
+}
 
 class MangaReaderActivity : AppCompatActivity() {
 
@@ -113,6 +135,8 @@ class MangaReaderActivity : AppCompatActivity() {
     private var readerScrollDirection = SCROLL_DIRECTION_FORWARD
     private var readerScrollState = RecyclerView.SCROLL_STATE_IDLE
     private var readingDirection = AppSettings.READING_DIRECTION_TOP_TO_BOTTOM
+    private var readerCoverSinglePageEnabled = false
+    private var lastReaderPreloadSpreadStart = RecyclerView.NO_POSITION
     private var volumeKeyPageTurnEnabled = true
     private var autoHideSystemBarsEnabled = true
     private var lastVolumePageTurnAt = 0L
@@ -282,7 +306,11 @@ class MangaReaderActivity : AppCompatActivity() {
         )
         listReaderPages.layoutManager = readerLayoutManager
         if (isHorizontalReading()) {
-            PagerSnapHelper().attachToRecyclerView(listReaderPages)
+            if (isDoublePageReading()) {
+                ReaderDoublePageSnapHelper().attachToRecyclerView(listReaderPages)
+            } else {
+                PagerSnapHelper().attachToRecyclerView(listReaderPages)
+            }
         }
         listReaderPages.itemAnimator = null
         listReaderPages.setHasFixedSize(false)
@@ -360,12 +388,13 @@ class MangaReaderActivity : AppCompatActivity() {
                     val firstVisibleItem = readerLayoutManager.findFirstVisibleItemPosition()
                         .takeIf { it != RecyclerView.NO_POSITION }
                         ?: 0
-                    pageAdapter?.preloadAround(
-                        firstVisiblePosition = firstVisibleItem,
+                    preloadReaderAround(
+                        firstVisiblePosition = readerSpreadStartLayoutPosition(firstVisibleItem),
                         visibleItemCount = visibleReaderItemCount(),
                         scrollDirection = readerScrollDirection,
                         isFastScroll = false,
-                        isIdle = true
+                        isIdle = true,
+                        force = true
                     )
                 }
             }
@@ -393,8 +422,8 @@ class MangaReaderActivity : AppCompatActivity() {
                 val fastThreshold = (fastThresholdBase / 4).coerceAtLeast(FAST_SCROLL_DY_THRESHOLD_PX)
                 val isFastScroll = readerScrollState == RecyclerView.SCROLL_STATE_SETTLING ||
                     abs(primaryDelta) >= fastThreshold
-                pageAdapter?.preloadAround(
-                    firstVisiblePosition = firstVisibleItem,
+                preloadReaderAround(
+                    firstVisiblePosition = readerSpreadStartLayoutPosition(firstVisibleItem),
                     visibleItemCount = visibleItemCount,
                     scrollDirection = direction,
                     isFastScroll = isFastScroll,
@@ -576,14 +605,14 @@ class MangaReaderActivity : AppCompatActivity() {
         preparedCacheDir: File,
         archiveFile: File
     ) {
-        val displayWidth = listReaderPages.width
-            .takeIf { it > 0 }
-            ?: resources.displayMetrics.widthPixels.coerceAtLeast(MIN_READER_IMAGE_WIDTH)
+        val displayWidth = readerPageDisplayWidth()
         val displayHeight = listReaderPages.height
             .takeIf { it > 0 }
             ?: resources.displayMetrics.heightPixels.coerceAtLeast(MIN_READER_IMAGE_WIDTH)
 
         pageAdapter?.close()
+        readerCoverSinglePageEnabled = AppSettings.isDoublePageCoverSingleEnabled(this)
+        lastReaderPreloadSpreadStart = RecyclerView.NO_POSITION
         val adapter = SubsamplingMangaPageAdapter(
             context = this,
             recyclerView = listReaderPages,
@@ -595,8 +624,10 @@ class MangaReaderActivity : AppCompatActivity() {
             baseDisplayWidth = displayWidth,
             baseDisplayHeight = displayHeight,
             readingDirection = readingDirection,
+            doublePageReading = isDoublePageReading(),
+            coverSinglePage = readerCoverSinglePageEnabled,
             onPageReady = { position ->
-                if (position == pendingRestorePosition) {
+                if (isPendingReaderPosition(position)) {
                     applyPendingReaderPosition()
                 }
             },
@@ -612,9 +643,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
     private fun bindReaderAdapter(entries: List<String>, session: ComicArchive.ImageReaderSession) {
         val readerFile = archiveFile ?: return
-        val displayWidth = listReaderPages.width
-            .takeIf { it > 0 }
-            ?: resources.displayMetrics.widthPixels.coerceAtLeast(MIN_READER_IMAGE_WIDTH)
+        val displayWidth = readerPageDisplayWidth()
         val displayHeight = listReaderPages.height
             .takeIf { it > 0 }
             ?: resources.displayMetrics.heightPixels.coerceAtLeast(MIN_READER_IMAGE_WIDTH)
@@ -630,6 +659,9 @@ class MangaReaderActivity : AppCompatActivity() {
         val previewSession = sharedSession?.acquire()
 
         pageAdapter?.close()
+        readerCoverSinglePageEnabled = !session.isPdfSource() &&
+            AppSettings.isDoublePageCoverSingleEnabled(this)
+        lastReaderPreloadSpreadStart = RecyclerView.NO_POSITION
         val adapter = MangaPageAdapter(
             context = this,
             recyclerView = listReaderPages,
@@ -641,8 +673,10 @@ class MangaReaderActivity : AppCompatActivity() {
             decodeWidth = decodeWidth,
             decodeHeight = decodeHeight,
             readingDirection = readingDirection,
+            doublePageReading = isDoublePageReading(),
+            coverSinglePage = readerCoverSinglePageEnabled,
             onPageReady = { position ->
-                if (position == pendingRestorePosition) {
+                if (isPendingReaderPosition(position)) {
                     applyPendingReaderPosition()
                 }
             },
@@ -684,10 +718,11 @@ class MangaReaderActivity : AppCompatActivity() {
         val startPageIndex = explicitStartPageIndex.takeIf { it in entries.indices }
         when {
             startPageIndex != null -> {
-                readerLayoutManager.scrollToPositionWithOffset(startPageIndex, 0)
-                currentReaderPosition = startPageIndex
+                val layoutPosition = readerSpreadStartPosition(startPageIndex)
+                readerLayoutManager.scrollToPositionWithOffset(layoutPosition, 0)
+                currentReaderPosition = readerSpreadStartSourcePosition(startPageIndex)
                 currentReaderOffset = 0
-                updateReaderProgress(startPageIndex, entries.size)
+                updateReaderProgress(layoutPosition, entries.size)
             }
             shouldStartFromBeginning -> {
                 readerLayoutManager.scrollToPositionWithOffset(0, 0)
@@ -699,9 +734,11 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         }
         listReaderPages.post {
-            pageAdapter?.preloadAround(
-                firstVisiblePosition = readerLayoutManager.findFirstVisibleItemPosition().coerceAtLeast(0),
-                visibleItemCount = visibleReaderItemCount().coerceAtLeast(1)
+            preloadReaderAround(
+                firstVisiblePosition = readerLayoutManager.findFirstVisibleItemPosition()
+                    .coerceAtLeast(0),
+                visibleItemCount = visibleReaderItemCount().coerceAtLeast(1),
+                force = true
             )
             startDebugReaderStressIfNeeded()
         }
@@ -783,11 +820,12 @@ class MangaReaderActivity : AppCompatActivity() {
             }
 
             1 -> {
-                readerLayoutManager.scrollToPositionWithOffset(targetPosition, 0)
-                updateCurrentReaderPosition(targetPosition)
-                updateReaderProgress(targetPosition, totalItemCount)
+                val layoutPosition = readerSpreadStartPosition(targetPosition)
+                readerLayoutManager.scrollToPositionWithOffset(layoutPosition, 0)
+                updateCurrentReaderPosition(layoutPosition)
+                updateReaderProgress(layoutPosition, totalItemCount)
                 adapter.preloadAround(
-                    firstVisiblePosition = targetPosition,
+                    firstVisiblePosition = layoutPosition,
                     visibleItemCount = visibleItemCount,
                     scrollDirection = direction,
                     isFastScroll = true,
@@ -797,14 +835,16 @@ class MangaReaderActivity : AppCompatActivity() {
 
             2 -> {
                 adapter.preloadAround(
-                    firstVisiblePosition = targetPosition,
+                    firstVisiblePosition = readerSpreadStartPosition(targetPosition),
                     visibleItemCount = visibleItemCount,
                     scrollDirection = direction,
                     isFastScroll = true,
                     isIdle = false
                 )
                 adapter.preloadAround(
-                    firstVisiblePosition = (lastIndex - targetPosition).coerceIn(0, lastIndex),
+                    firstVisiblePosition = readerSpreadStartPosition(
+                        (lastIndex - targetPosition).coerceIn(0, lastIndex)
+                    ),
                     visibleItemCount = visibleItemCount,
                     scrollDirection = -direction,
                     isFastScroll = true,
@@ -815,7 +855,7 @@ class MangaReaderActivity : AppCompatActivity() {
             3 -> {
                 applyDebugPageZoom(ReaderPageZoomLayout.MAX_SCALE, listReaderPages.width * 0.35f, 0f)
                 adapter.preloadAround(
-                    firstVisiblePosition = targetPosition,
+                    firstVisiblePosition = readerSpreadStartPosition(targetPosition),
                     visibleItemCount = visibleItemCount,
                     scrollDirection = direction,
                     isFastScroll = false,
@@ -837,7 +877,7 @@ class MangaReaderActivity : AppCompatActivity() {
             6 -> {
                 turnReaderPage(-1)
                 adapter.preloadAround(
-                    firstVisiblePosition = targetPosition,
+                    firstVisiblePosition = readerSpreadStartPosition(targetPosition),
                     visibleItemCount = visibleItemCount,
                     scrollDirection = SCROLL_DIRECTION_BACKWARD,
                     isFastScroll = false,
@@ -848,7 +888,7 @@ class MangaReaderActivity : AppCompatActivity() {
             else -> {
                 adapter.trimMemory(ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)
                 adapter.preloadAround(
-                    firstVisiblePosition = targetPosition,
+                    firstVisiblePosition = readerSpreadStartPosition(targetPosition),
                     visibleItemCount = visibleItemCount,
                     scrollDirection = direction,
                     isFastScroll = false,
@@ -1038,6 +1078,32 @@ class MangaReaderActivity : AppCompatActivity() {
         tvReaderProgress.text = getString(R.string.reader_page_progress, currentPage, totalItemCount)
     }
 
+    private fun preloadReaderAround(
+        firstVisiblePosition: Int,
+        visibleItemCount: Int,
+        scrollDirection: Int = readerScrollDirection,
+        isFastScroll: Boolean = false,
+        isIdle: Boolean = false,
+        isDiscreteJump: Boolean = false,
+        force: Boolean = false
+    ) {
+        val adapter = pageAdapter ?: return
+        val layoutSpreadStart = readerSpreadStartLayoutPosition(firstVisiblePosition)
+        if (!force && layoutSpreadStart == lastReaderPreloadSpreadStart) {
+            return
+        }
+
+        lastReaderPreloadSpreadStart = layoutSpreadStart
+        adapter.preloadAround(
+            firstVisiblePosition = layoutSpreadStart,
+            visibleItemCount = visibleItemCount,
+            scrollDirection = scrollDirection,
+            isFastScroll = isFastScroll,
+            isIdle = isIdle,
+            isDiscreteJump = isDiscreteJump
+        )
+    }
+
     private fun jumpReaderToPage(position: Int) {
         if (imageEntries.isEmpty()) {
             return
@@ -1045,15 +1111,17 @@ class MangaReaderActivity : AppCompatActivity() {
 
         clearPendingReaderPosition()
         val targetPosition = position.coerceIn(0, imageEntries.lastIndex)
-        readerLayoutManager.scrollToPositionWithOffset(targetPosition, 0)
-        currentReaderPosition = targetPosition
+        val layoutPosition = readerSpreadStartPosition(targetPosition)
+        readerLayoutManager.scrollToPositionWithOffset(layoutPosition, 0)
+        currentReaderPosition = readerSpreadStartSourcePosition(targetPosition)
         currentReaderOffset = 0
-        updateReaderProgress(targetPosition, imageEntries.size)
+        updateReaderProgress(layoutPosition, imageEntries.size)
         saveReaderPosition(forceCommit = true)
-        pageAdapter?.preloadAround(
-            firstVisiblePosition = targetPosition,
-            visibleItemCount = 1,
-            isDiscreteJump = true
+        preloadReaderAround(
+            firstVisiblePosition = layoutPosition,
+            visibleItemCount = if (isDoublePageReading()) 2 else 1,
+            isDiscreteJump = true,
+            force = true
         )
     }
 
@@ -1065,10 +1133,17 @@ class MangaReaderActivity : AppCompatActivity() {
         clearPendingReaderPosition()
         val firstVisiblePosition = readerLayoutManager.findFirstVisibleItemPosition()
             .takeIf { it != RecyclerView.NO_POSITION }
-            ?: currentReaderPosition
+            ?: readerSpreadStartPosition(currentReaderPosition)
         val currentPosition = displayedReaderPosition(firstVisiblePosition, imageEntries.size)
-        val targetPosition = (currentPosition + delta).coerceIn(0, imageEntries.lastIndex)
-        if (targetPosition == currentPosition) {
+        val mapper = readerPagePositionMapper(imageEntries.size)
+        val currentLayoutSpreadStart = mapper.spreadStartAdapterPositionForSourcePosition(currentPosition)
+        val layoutStep = if (isDoublePageReading()) 2 else 1
+        val lastLayoutSpreadStart = mapper.spreadStartAdapterPosition(mapper.adapterItemCount - 1)
+        val targetLayoutPosition = (currentLayoutSpreadStart + (delta * layoutStep))
+            .coerceIn(0, lastLayoutSpreadStart)
+        val targetPosition = mapper.sourcePositionForAdapterPosition(targetLayoutPosition)
+            ?: return
+        if (targetLayoutPosition == currentLayoutSpreadStart) {
             return
         }
 
@@ -1145,7 +1220,7 @@ class MangaReaderActivity : AppCompatActivity() {
             readerPrefs.getInt(readerOffsetKey(file), 0)
         }
 
-        currentReaderPosition = position
+        currentReaderPosition = readerSpreadStartSourcePosition(position)
         currentReaderOffset = offset
         pendingRestorePosition = position
         pendingRestoreOffset = offset
@@ -1165,8 +1240,9 @@ class MangaReaderActivity : AppCompatActivity() {
                 return@post
             }
 
-            readerLayoutManager.scrollToPositionWithOffset(position, pendingRestoreOffset)
-            updateReaderProgress(position, imageEntries.size)
+            val layoutPosition = readerSpreadStartPosition(position)
+            readerLayoutManager.scrollToPositionWithOffset(layoutPosition, pendingRestoreOffset)
+            updateReaderProgress(layoutPosition, imageEntries.size)
 
             if (restoreAttemptCount < RESTORE_READER_POSITION_MAX_ATTEMPTS) {
                 restoreAttemptCount++
@@ -1223,7 +1299,10 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         if (isHorizontalReading()) {
-            return firstVisiblePosition.coerceIn(0, totalItemCount - 1)
+            val mapper = readerPagePositionMapper(totalItemCount)
+            val spreadStart = mapper.spreadStartAdapterPosition(firstVisiblePosition)
+            return mapper.sourcePositionForAdapterPosition(spreadStart)
+                ?: firstVisiblePosition.coerceIn(0, totalItemCount - 1)
         }
 
         if (isAtVerticalReaderEnd(totalItemCount)) {
@@ -1286,6 +1365,48 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun isHorizontalReading(): Boolean {
         return readingDirection == AppSettings.READING_DIRECTION_RIGHT_TO_LEFT ||
             readingDirection == AppSettings.READING_DIRECTION_LEFT_TO_RIGHT
+    }
+
+    private fun isDoublePageReading(): Boolean {
+        return isHorizontalReading() &&
+            resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    }
+
+    private fun readerPagePositionMapper(sourceItemCount: Int = imageEntries.size): ReaderPagePositionMapper {
+        return ReaderPagePositionMapper(
+            sourceItemCount = sourceItemCount,
+            doublePageReading = isDoublePageReading(),
+            coverSinglePage = readerCoverSinglePageEnabled
+        )
+    }
+
+    private fun readerPageDisplayWidth(): Int {
+        val viewportWidth = listReaderPages.width
+            .takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels.coerceAtLeast(MIN_READER_IMAGE_WIDTH)
+        return if (isDoublePageReading()) {
+            (viewportWidth / 2).coerceAtLeast(1)
+        } else {
+            viewportWidth
+        }
+    }
+
+    private fun readerSpreadStartPosition(pagePosition: Int): Int {
+        return readerPagePositionMapper().spreadStartAdapterPositionForSourcePosition(pagePosition)
+    }
+
+    private fun readerSpreadStartLayoutPosition(layoutPosition: Int): Int {
+        return readerPagePositionMapper().spreadStartAdapterPosition(layoutPosition)
+    }
+
+    private fun readerSpreadStartSourcePosition(pagePosition: Int): Int {
+        return readerPagePositionMapper()
+            .spreadStartSourcePositionForSourcePosition(pagePosition)
+    }
+
+    private fun isPendingReaderPosition(position: Int): Boolean {
+        val pendingPosition = pendingRestorePosition ?: return false
+        return readerSpreadStartSourcePosition(position) == readerSpreadStartSourcePosition(pendingPosition)
     }
 
     private fun readerPageDecodeScale(): Int {
@@ -1491,6 +1612,8 @@ class MangaReaderActivity : AppCompatActivity() {
         private val baseDisplayWidth: Int,
         private val baseDisplayHeight: Int,
         private val readingDirection: String,
+        private val doublePageReading: Boolean,
+        private val coverSinglePage: Boolean,
         private val onPageReady: (position: Int) -> Unit,
         private val onPageTap: () -> Unit
     ) : RecyclerView.Adapter<SubsamplingMangaPageAdapter.PageViewHolder>(),
@@ -1509,6 +1632,11 @@ class MangaReaderActivity : AppCompatActivity() {
         private val loadingPositions = Collections.synchronizedSet(mutableSetOf<Int>())
         private val failedPositions = Collections.synchronizedSet(mutableSetOf<Int>())
         private val pageBounds = Collections.synchronizedMap(boundsByPosition.toMutableMap())
+        private val positionMapper = ReaderPagePositionMapper(
+            sourceItemCount = entryNames.size,
+            doublePageReading = doublePageReading,
+            coverSinglePage = coverSinglePage
+        )
 
         @Volatile
         private var closed = false
@@ -1525,9 +1653,11 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         }
 
-        override fun getItemCount(): Int = entryNames.size
+        private val adapterItemCount = positionMapper.adapterItemCount
 
-        override fun readerItemCount(): Int = itemCount
+        override fun getItemCount(): Int = adapterItemCount
+
+        override fun readerItemCount(): Int = entryNames.size
 
         override fun getItemId(position: Int): Long {
             return position.toLong()
@@ -1561,25 +1691,29 @@ class MangaReaderActivity : AppCompatActivity() {
             return PageViewHolder(container, imageView, statusText)
         }
 
-        override fun onBindViewHolder(holder: PageViewHolder, position: Int) {
-            if (closed || position !in entryNames.indices || position !in pageFiles.indices) {
+        override fun onBindViewHolder(holder: PageViewHolder, adapterPosition: Int) {
+            val sourcePosition = positionMapper.sourcePositionForAdapterPosition(adapterPosition)
+            if (closed || sourcePosition == null || sourcePosition !in entryNames.indices ||
+                sourcePosition !in pageFiles.indices
+            ) {
                 bindEmptyPage(holder)
                 return
             }
 
-            val file = pageFiles[position]
-            val bounds = pageBounds[position]
+            val file = pageFiles[sourcePosition]
+            val bounds = pageBounds[sourcePosition]
             holder.container.onReaderTap = onPageTap
             applyPageLayout(holder.container, bounds)
+            applyImageLayout(holder.imageView, bounds, adapterPosition)
 
             if (!file.isFile || file.length() <= 0L) {
                 bindEmptyPage(holder)
-                submitExtraction(position, PRIORITY_VISIBLE)
-                onPageReady(position)
+                submitExtraction(sourcePosition, PRIORITY_VISIBLE)
+                onPageReady(sourcePosition)
                 return
             }
 
-            readyPositions.add(position)
+            readyPositions.add(sourcePosition)
             holder.statusText.visibility = View.GONE
             holder.imageView.visibility = View.VISIBLE
             if (holder.boundFilePath != file.absolutePath) {
@@ -1592,7 +1726,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 }
             }
 
-            onPageReady(position)
+            onPageReady(sourcePosition)
         }
 
         private fun bindEmptyPage(holder: PageViewHolder) {
@@ -1620,9 +1754,17 @@ class MangaReaderActivity : AppCompatActivity() {
                 return
             }
 
-            val firstVisible = firstVisiblePosition.coerceIn(0, entryNames.lastIndex)
-            val lastVisible = (firstVisible + visibleItemCount.coerceAtLeast(1) - 1)
-                .coerceIn(firstVisible, entryNames.lastIndex)
+            val firstVisibleAdapterPosition = positionMapper
+                .spreadStartAdapterPosition(firstVisiblePosition)
+            val visiblePositions = positionMapper.sourcePositionsInAdapterRange(
+                firstAdapterPosition = firstVisibleAdapterPosition,
+                visibleItemCount = visibleItemCount.coerceAtLeast(1)
+            )
+            if (visiblePositions.isEmpty()) {
+                return
+            }
+            val firstVisible = visiblePositions.first()
+            val lastVisible = visiblePositions.last()
             val movingForward = scrollDirection >= 0
 
             (firstVisible..lastVisible).forEach { position ->
@@ -1776,6 +1918,53 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         }
 
+        private fun applyImageLayout(
+            imageView: ReaderSubsamplingImageView,
+            bounds: ComicArchive.ImageBounds?,
+            position: Int
+        ) {
+            val layoutParams = imageView.layoutParams as? FrameLayout.LayoutParams
+                ?: FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            val targetWidth: Int
+            val targetHeight: Int
+            val targetGravity: Int
+            if (doublePageReading &&
+                bounds != null &&
+                bounds.width > 0 &&
+                bounds.height > 0 &&
+                baseDisplayWidth > 0 &&
+                baseDisplayHeight > 0
+            ) {
+                val widthScale = baseDisplayWidth.toFloat() / bounds.width.toFloat()
+                val heightScale = baseDisplayHeight.toFloat() / bounds.height.toFloat()
+                val scale = minOf(widthScale, heightScale)
+                targetWidth = (bounds.width * scale).roundToInt().coerceAtLeast(1)
+                targetHeight = (bounds.height * scale).roundToInt().coerceAtLeast(1)
+                targetGravity = readerPageContentGravity(
+                    readingDirection,
+                    position,
+                    doublePageReading = true
+                )
+            } else {
+                targetWidth = FrameLayout.LayoutParams.MATCH_PARENT
+                targetHeight = FrameLayout.LayoutParams.MATCH_PARENT
+                targetGravity = Gravity.CENTER
+            }
+
+            if (layoutParams.width != targetWidth ||
+                layoutParams.height != targetHeight ||
+                layoutParams.gravity != targetGravity
+            ) {
+                layoutParams.width = targetWidth
+                layoutParams.height = targetHeight
+                layoutParams.gravity = targetGravity
+                imageView.layoutParams = layoutParams
+            }
+        }
+
         private fun submitExtraction(position: Int, priority: Int) {
             if (closed ||
                 position !in entryNames.indices ||
@@ -1884,7 +2073,10 @@ class MangaReaderActivity : AppCompatActivity() {
                     return@post
                 }
 
-                notifyItemChanged(position)
+                val adapterPosition = positionMapper.adapterPositionForSourcePosition(position)
+                if (adapterPosition >= 0) {
+                    notifyItemChanged(adapterPosition)
+                }
                 onPageReady(position)
             }
         }
@@ -2050,6 +2242,8 @@ class MangaReaderActivity : AppCompatActivity() {
         private val decodeWidth: Int,
         private val decodeHeight: Int,
         private val readingDirection: String,
+        private val doublePageReading: Boolean,
+        private val coverSinglePage: Boolean,
         private val onPageReady: (position: Int) -> Unit,
         private val onPageTap: () -> Unit
     ) : RecyclerView.Adapter<MangaPageAdapter.PageViewHolder>(), ReaderPageAdapterController {
@@ -2078,13 +2272,20 @@ class MangaReaderActivity : AppCompatActivity() {
         private val pendingRefreshPositions = Collections.synchronizedSet(mutableSetOf<Int>())
         private val pageBounds = Collections.synchronizedMap(mutableMapOf<Int, ComicArchive.ImageBounds>())
         private val isPdfSource = session.isPdfSource()
+        private val positionMapper = ReaderPagePositionMapper(
+            sourceItemCount = entries.size,
+            doublePageReading = doublePageReading,
+            coverSinglePage = coverSinglePage
+        )
         private val cacheLock = Any()
         private val previewBitmapCache = object : LruCache<Int, Bitmap>(previewBitmapCacheSizeKb(isPdfSource)) {
             override fun sizeOf(key: Int, value: Bitmap): Int {
                 return (value.byteCount / 1024).coerceAtLeast(1)
             }
         }
-        private val fullBitmapCache = object : LruCache<Int, Bitmap>(fullBitmapCacheSizeKb(isPdfSource)) {
+        private val fullBitmapCache = object : LruCache<Int, Bitmap>(
+            fullBitmapCacheSizeKb(isPdfSource, doublePageReading)
+        ) {
             override fun sizeOf(key: Int, value: Bitmap): Int {
                 return (value.byteCount / 1024).coerceAtLeast(1)
             }
@@ -2130,9 +2331,11 @@ class MangaReaderActivity : AppCompatActivity() {
             setHasStableIds(true)
         }
 
-        override fun getItemCount(): Int = entries.size
+        private val adapterItemCount = positionMapper.adapterItemCount
 
-        override fun readerItemCount(): Int = itemCount
+        override fun getItemCount(): Int = adapterItemCount
+
+        override fun readerItemCount(): Int = entries.size
 
         override fun getItemId(position: Int): Long = position.toLong()
 
@@ -2174,18 +2377,23 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         }
 
-        override fun onBindViewHolder(holder: PageViewHolder, position: Int) {
+        override fun onBindViewHolder(holder: PageViewHolder, adapterPosition: Int) {
             val previousPosition = holder.boundPosition
             if (previousPosition != RecyclerView.NO_POSITION) {
                 boundPositions.remove(previousPosition)
             }
-            holder.boundPosition = position
-            boundPositions.add(position)
-            if (previousPosition != position) {
+            val sourcePosition = positionMapper.sourcePositionForAdapterPosition(adapterPosition)
+            holder.boundPosition = sourcePosition ?: RecyclerView.NO_POSITION
+            if (previousPosition != holder.boundPosition) {
                 holder.container.resetZoom()
             }
-            bindBestAvailable(holder, position)
-            ensureVisiblePage(position)
+            if (sourcePosition == null || sourcePosition !in entries.indices) {
+                bindBlankPage(holder)
+                return
+            }
+            boundPositions.add(sourcePosition)
+            bindBestAvailable(holder, sourcePosition, adapterPosition)
+            ensureVisiblePage(sourcePosition)
         }
 
         override fun onViewRecycled(holder: PageViewHolder) {
@@ -2211,9 +2419,17 @@ class MangaReaderActivity : AppCompatActivity() {
                 return
             }
 
-            val firstVisible = firstVisiblePosition.coerceIn(0, entries.lastIndex)
-            val lastVisible = (firstVisible + visibleItemCount.coerceAtLeast(1) - 1)
-                .coerceIn(firstVisible, entries.lastIndex)
+            val firstVisibleAdapterPosition = positionMapper
+                .spreadStartAdapterPosition(firstVisiblePosition)
+            val visiblePositions = positionMapper.sourcePositionsInAdapterRange(
+                firstAdapterPosition = firstVisibleAdapterPosition,
+                visibleItemCount = visibleItemCount.coerceAtLeast(1)
+            )
+            if (visiblePositions.isEmpty()) {
+                return
+            }
+            val firstVisible = visiblePositions.first()
+            val lastVisible = visiblePositions.last()
             val generation = preloadGeneration.incrementAndGet()
             val window = PreloadWindow.from(
                 firstVisible = firstVisible,
@@ -2393,31 +2609,52 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         }
 
-        private fun bindBestAvailable(holder: PageViewHolder, position: Int) {
-            val bounds = pageBounds[position]
-            val isTiled = position in tiledPages && bounds != null
+        private fun bindBestAvailable(
+            holder: PageViewHolder,
+            sourcePosition: Int,
+            adapterPosition: Int
+        ) {
+            val bounds = pageBounds[sourcePosition]
+            val isTiled = sourcePosition in tiledPages && bounds != null
             if (isTiled) {
-                bindTiledPage(holder, position, bounds)
+                bindTiledPage(holder, sourcePosition, bounds)
                 return
             }
 
-            val fullBitmap = fullBitmap(position)
+            val fullBitmap = fullBitmap(sourcePosition)
             if (fullBitmap != null) {
-                bindBitmap(holder, fullBitmap)
+                bindBitmap(holder, adapterPosition, fullBitmap)
                 return
             }
 
-            val previewBitmap = previewBitmap(position)
+            val previewBitmap = previewBitmap(sourcePosition)
             if (previewBitmap != null) {
-                bindBitmap(holder, previewBitmap)
+                bindBitmap(holder, adapterPosition, previewBitmap)
                 return
             }
 
-            bindPlaceholder(holder, bounds)
+            bindPlaceholder(holder, adapterPosition, bounds)
+        }
+
+        private fun bindBlankPage(holder: PageViewHolder) {
+            holder.tileContainer.visibility = View.GONE
+            holder.tileContainer.removeAllViews()
+            holder.imageView.visibility = View.VISIBLE
+            holder.imageView.setImageDrawable(null)
+            holder.imageView.setBackgroundColor(Color.BLACK)
+            setContainerSize(holder.container, baseDisplayWidth, ViewGroup.LayoutParams.MATCH_PARENT)
+            setFrameChildSize(
+                holder.imageView,
+                baseDisplayWidth,
+                baseDisplayHeight,
+                Gravity.CENTER
+            )
+            holder.container.refreshContentLayout()
         }
 
         private fun bindPlaceholder(
             holder: PageViewHolder,
+            position: Int,
             bounds: ComicArchive.ImageBounds?
         ) {
             holder.tileContainer.visibility = View.GONE
@@ -2440,7 +2677,12 @@ class MangaReaderActivity : AppCompatActivity() {
                 } else {
                     imageWidth
                 }
-                setFrameChildSize(holder.imageView, centeredWidth, imageHeight, Gravity.CENTER)
+                setFrameChildSize(
+                    holder.imageView,
+                    centeredWidth,
+                    imageHeight,
+                    readerPageContentGravity(readingDirection, position, doublePageReading)
+                )
                 holder.container.refreshContentLayout()
                 return
             }
@@ -2458,7 +2700,7 @@ class MangaReaderActivity : AppCompatActivity() {
             holder.container.refreshContentLayout()
         }
 
-        private fun bindBitmap(holder: PageViewHolder, bitmap: Bitmap) {
+        private fun bindBitmap(holder: PageViewHolder, position: Int, bitmap: Bitmap) {
             holder.tileContainer.visibility = View.GONE
             holder.tileContainer.removeAllViews()
             holder.imageView.visibility = View.VISIBLE
@@ -2467,7 +2709,12 @@ class MangaReaderActivity : AppCompatActivity() {
             if (isHorizontalReading()) {
                 val imageSize = calculateFitInsideSize(bitmap.width, bitmap.height)
                 setContainerSize(holder.container, baseDisplayWidth, ViewGroup.LayoutParams.MATCH_PARENT)
-                setFrameChildSize(holder.imageView, imageSize.width, imageSize.height, Gravity.CENTER)
+                setFrameChildSize(
+                    holder.imageView,
+                    imageSize.width,
+                    imageSize.height,
+                    readerPageContentGravity(readingDirection, position, doublePageReading)
+                )
                 holder.imageView.setImageBitmap(bitmap)
                 holder.container.refreshContentLayout()
                 return
@@ -2483,7 +2730,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
         private fun bindTiledPage(
             holder: PageViewHolder,
-            position: Int,
+            sourcePosition: Int,
             bounds: ComicArchive.ImageBounds
         ) {
             val imageWidth = zoomedDisplayWidth()
@@ -2494,15 +2741,15 @@ class MangaReaderActivity : AppCompatActivity() {
             holder.imageView.visibility = View.VISIBLE
             holder.tileContainer.visibility = View.VISIBLE
             holder.imageView.setBackgroundColor(Color.BLACK)
-            holder.imageView.setImageBitmap(previewBitmap(position))
+            holder.imageView.setImageBitmap(previewBitmap(sourcePosition))
 
             val tileDecodeWidth = tileDecodeWidth(imageWidth, bounds.width)
             val tiles = buildTiles(bounds, imageWidth, tileDecodeWidth)
             holder.tileContainer.removeAllViews()
             holder.container.refreshContentLayout()
             mainHandler.post {
-                if (!closed && holder.boundPosition == position) {
-                    ensureVisibleTiles(holder, position, bounds, imageWidth, tileDecodeWidth, tiles)
+                if (!closed && holder.boundPosition == sourcePosition) {
+                    ensureVisibleTiles(holder, sourcePosition, bounds, imageWidth, tileDecodeWidth, tiles)
                 }
             }
         }
@@ -3154,7 +3401,10 @@ class MangaReaderActivity : AppCompatActivity() {
                 }
 
                 if (canNotifyRecyclerView()) {
-                    notifyItemChanged(position)
+                    val adapterPosition = positionMapper.adapterPositionForSourcePosition(position)
+                    if (adapterPosition >= 0) {
+                        notifyItemChanged(adapterPosition)
+                    }
                 } else {
                     pendingRefreshPositions.add(position)
                 }
@@ -3171,7 +3421,10 @@ class MangaReaderActivity : AppCompatActivity() {
             }
 
             if (canNotifyRecyclerView()) {
-                notifyItemChanged(position)
+                val adapterPosition = positionMapper.adapterPositionForSourcePosition(position)
+                if (adapterPosition >= 0) {
+                    notifyItemChanged(adapterPosition)
+                }
                 return
             }
 
@@ -3193,7 +3446,12 @@ class MangaReaderActivity : AppCompatActivity() {
                 return false
             }
 
-            val holder = recyclerView.findViewHolderForAdapterPosition(position) as? PageViewHolder
+            val adapterPosition = positionMapper.adapterPositionForSourcePosition(position)
+            if (adapterPosition < 0) {
+                return false
+            }
+
+            val holder = recyclerView.findViewHolderForAdapterPosition(adapterPosition) as? PageViewHolder
                 ?: return false
             if (!shouldRefreshBoundReaderPageImmediately(
                     isBoundToPosition = holder.boundPosition == position,
@@ -3203,7 +3461,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 return false
             }
 
-            bindBestAvailable(holder, position)
+            bindBestAvailable(holder, position, adapterPosition)
             return true
         }
 
@@ -3615,7 +3873,11 @@ class MangaReaderActivity : AppCompatActivity() {
                     baseDisplayWidth = baseDisplayWidth,
                     renderScale = PDF_FULL_RENDER_SCALE,
                     maxRenderWidth = PDF_MAX_FULL_RENDER_WIDTH,
-                    maxRenderPixels = PDF_MAX_FULL_RENDER_PIXELS
+                    maxRenderPixels = if (doublePageReading) {
+                        PDF_DOUBLE_PAGE_FULL_RENDER_PIXELS
+                    } else {
+                        PDF_MAX_FULL_RENDER_PIXELS
+                    }
                 )
             }
 
@@ -4020,6 +4282,7 @@ class MangaReaderActivity : AppCompatActivity() {
             private const val PDF_MAX_FULL_RENDER_HEIGHT = 4096
             private const val PDF_MAX_TILE_RENDER_WIDTH = 3072
             private const val PDF_MAX_FULL_RENDER_PIXELS = 4_000_000L
+            private const val PDF_DOUBLE_PAGE_FULL_RENDER_PIXELS = 2_000_000L
             private const val PDF_TILED_RENDER_PIXEL_THRESHOLD = 8_000_000L
             private const val READER_ADAPTER_LOG_TAG = "ComicLabReader"
 
@@ -4035,10 +4298,13 @@ class MangaReaderActivity : AppCompatActivity() {
                     .coerceAtMost(12 * 1024)
             }
 
-            private fun fullBitmapCacheSizeKb(isPdfSource: Boolean): Int {
+            private fun fullBitmapCacheSizeKb(
+                isPdfSource: Boolean,
+                doublePageReading: Boolean
+            ): Int {
                 val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
                 if (isPdfSource) {
-                    return pdfFullBitmapCacheSizeKb(maxMemoryKb)
+                    return pdfFullBitmapCacheSizeKb(maxMemoryKb, doublePageReading)
                 }
                 return (maxMemoryKb / 10)
                     .coerceAtLeast(12 * 1024)
@@ -4261,7 +4527,16 @@ internal fun shouldRefreshBoundReaderPageImmediately(
     return isBoundToPosition && !isComputingLayout
 }
 
-internal fun pdfFullBitmapCacheSizeKb(maxMemoryKb: Int): Int {
+internal fun pdfFullBitmapCacheSizeKb(
+    maxMemoryKb: Int,
+    doublePageReading: Boolean = false
+): Int {
+    if (doublePageReading) {
+        return (maxMemoryKb / 10)
+            .coerceAtLeast(12 * 1024)
+            .coerceAtMost(16 * 1024)
+    }
+
     return (maxMemoryKb / 8)
         .coerceAtLeast(16 * 1024)
         .coerceAtMost(24 * 1024)

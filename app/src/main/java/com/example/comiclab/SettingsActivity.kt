@@ -31,6 +31,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var btnExportCrashLog: Button
     private lateinit var btnRunReaderStressTest: Button
     private lateinit var radioReadingDirection: RadioGroup
+    private lateinit var switchDoublePageCoverSingle: SwitchCompat
     private lateinit var switchDetectMangaCollections: SwitchCompat
     private lateinit var inputStartMarkerErrorTags: EditText
     private lateinit var switchVolumeKeyPageTurn: SwitchCompat
@@ -59,6 +60,7 @@ class SettingsActivity : AppCompatActivity() {
         btnExportCrashLog = findViewById(R.id.btnExportCrashLog)
         btnRunReaderStressTest = findViewById(R.id.btnRunReaderStressTest)
         radioReadingDirection = findViewById(R.id.radioReadingDirection)
+        switchDoublePageCoverSingle = findViewById(R.id.switchDoublePageCoverSingle)
         switchDetectMangaCollections = findViewById(R.id.switchDetectMangaCollections)
         inputStartMarkerErrorTags = findViewById(R.id.inputStartMarkerErrorTags)
         switchVolumeKeyPageTurn = findViewById(R.id.switchVolumeKeyPageTurn)
@@ -72,6 +74,7 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         bindReadingDirection()
+        bindDoublePageCoverSingle()
         bindDetectMangaCollections()
         bindStartMarkerErrorTags()
         bindVolumeKeyPageTurn()
@@ -108,6 +111,14 @@ class SettingsActivity : AppCompatActivity() {
         switchVolumeKeyPageTurn.isChecked = AppSettings.isVolumeKeyPageTurnEnabled(this)
         switchVolumeKeyPageTurn.setOnCheckedChangeListener { _, isChecked ->
             AppSettings.setVolumeKeyPageTurnEnabled(this, isChecked)
+        }
+    }
+
+    private fun bindDoublePageCoverSingle() {
+        switchDoublePageCoverSingle.isChecked =
+            AppSettings.isDoublePageCoverSingleEnabled(this)
+        switchDoublePageCoverSingle.setOnCheckedChangeListener { _, isChecked ->
+            AppSettings.setDoublePageCoverSingleEnabled(this, isChecked)
         }
     }
 

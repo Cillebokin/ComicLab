@@ -7,7 +7,6 @@ import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewConfiguration
-import android.view.Gravity
 import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
@@ -346,12 +345,6 @@ class ReaderPageZoomLayout @JvmOverloads constructor(
                 layoutParams.topMargin = targetTopMargin
                 changed = true
             }
-        }
-        if (view.parent === this && layoutParams is FrameLayout.LayoutParams &&
-            layoutParams.gravity != Gravity.CENTER
-        ) {
-            layoutParams.gravity = Gravity.CENTER
-            changed = true
         }
         if (changed) {
             view.layoutParams = layoutParams

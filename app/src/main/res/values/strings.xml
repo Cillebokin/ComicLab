@@ -163,6 +163,7 @@
     <string name="reading_direction_top_to_bottom">从上到下</string>
     <string name="reading_direction_right_to_left">从右到左</string>
     <string name="reading_direction_left_to_right">从左到右</string>
+    <string name="double_page_cover_single">双页模式封面单页</string>
     <string name="file_browser">文件浏览</string>
     <string name="detect_manga_collections">检测漫画集</string>
     <string name="start_marker_error_tags">起始标记错误标识</string>
