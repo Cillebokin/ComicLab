@@ -70,10 +70,17 @@ class MobiParser {
         }
 
         val mobiFormatVersion = readUnsignedInt(headerRecord, MOBI_FORMAT_VERSION_OFFSET)
-        if (mobiFormatVersion >= KF8_FORMAT_VERSION) {
-            throw MobiParseException(
-                MobiParseError.UNSUPPORTED_FORMAT,
-                "KF8/AZW3 MOBI files are not supported"
+        val kf8HeaderRecordIndex = if (mobiFormatVersion >= KF8_FORMAT_VERSION) {
+            0
+        } else {
+            findKf8HeaderRecord(randomAccessFile, records)
+        }
+        if (kf8HeaderRecordIndex != null) {
+            return parseKf8File(
+                file = file,
+                randomAccessFile = randomAccessFile,
+                records = records,
+                headerRecordIndex = kf8HeaderRecordIndex
             )
         }
 
@@ -125,25 +132,14 @@ class MobiParser {
             )
         }
 
-        val textBytes = ByteArrayOutputStream(
-            min(textLength.toIntOrMax(), MAX_INITIAL_TEXT_CAPACITY)
+        val boundedTextBytes = readTextContent(
+            randomAccessFile = randomAccessFile,
+            records = records,
+            textRecordsStart = textRecordsStart,
+            textRecordCount = textRecordCount,
+            compression = compression,
+            textLength = textLength
         )
-        for (recordIndex in textRecordsStart until textRecordsEnd) {
-            val compressedText = readRecord(randomAccessFile, records[recordIndex])
-            val decodedText = when (compression) {
-                COMPRESSION_NONE -> compressedText
-                COMPRESSION_PALMDOC -> PalmDocDecompressor.decompress(compressedText)
-                else -> error("validated compression type")
-            }
-            textBytes.write(decodedText)
-        }
-
-        val allTextBytes = textBytes.toByteArray()
-        val boundedTextBytes = if (textLength in 1..allTextBytes.size.toLong()) {
-            allTextBytes.copyOf(textLength.toInt())
-        } else {
-            allTextBytes
-        }
         val content = decodeText(boundedTextBytes, charset)
         if (content.isBlank()) {
             throw MobiParseException(MobiParseError.EMPTY_BOOK, "MOBI does not contain readable text")
@@ -169,6 +165,206 @@ class MobiParser {
             resourceRecords = resourcesResult.records,
             sourceFile = file
         )
+    }
+
+    private fun parseKf8File(
+        file: File,
+        randomAccessFile: RandomAccessFile,
+        records: List<Record>,
+        headerRecordIndex: Int
+    ): ParsedMobi {
+        val headerRecord = readRecord(randomAccessFile, records[headerRecordIndex])
+        if (headerRecord.size < KF8_MIN_HEADER_RECORD_SIZE) {
+            throw MobiParseException(
+                MobiParseError.TRUNCATED_FILE,
+                "KF8 header record is too short"
+            )
+        }
+        if (!headerRecord.copyOfRange(MOBI_HEADER_OFFSET, MOBI_HEADER_OFFSET + 4)
+                .contentEquals(MOBI_MAGIC.toByteArray(StandardCharsets.US_ASCII))
+        ) {
+            throw MobiParseException(
+                MobiParseError.INVALID_MOBI_HEADER,
+                "KF8 MOBI magic is missing"
+            )
+        }
+
+        val mobiHeaderLength = readUnsignedInt(headerRecord, MOBI_HEADER_LENGTH_OFFSET)
+        if (mobiHeaderLength < MOBI_MIN_HEADER_LENGTH ||
+            MOBI_HEADER_OFFSET + mobiHeaderLength > headerRecord.size
+        ) {
+            throw MobiParseException(
+                MobiParseError.INVALID_MOBI_HEADER,
+                "KF8 header length is invalid"
+            )
+        }
+
+        val compression = readUnsignedShort(headerRecord, PALMDOC_COMPRESSION_OFFSET)
+        val textLength = readUnsignedInt(headerRecord, PALMDOC_TEXT_LENGTH_OFFSET)
+        val textRecordCount = readUnsignedShort(headerRecord, PALMDOC_RECORD_COUNT_OFFSET)
+        val encryptionType = readUnsignedShort(headerRecord, PALMDOC_ENCRYPTION_OFFSET)
+        val drmOffset = readOptionalUnsignedInt(headerRecord, MOBI_DRM_OFFSET)
+        if (encryptionType != 0 || (drmOffset != null && drmOffset != 0L && drmOffset != UINT32_MAX)) {
+            throw MobiParseException(
+                MobiParseError.DRM_PROTECTED,
+                "DRM protected KF8 files are not supported"
+            )
+        }
+        if (compression != COMPRESSION_NONE && compression != COMPRESSION_PALMDOC) {
+            throw MobiParseException(
+                MobiParseError.UNSUPPORTED_COMPRESSION,
+                "KF8 compression $compression is not supported"
+            )
+        }
+
+        val textRecordsStart = headerRecordIndex + 1
+        val textRecordsEnd = textRecordsStart + textRecordCount
+        if (textRecordsStart !in records.indices || textRecordsEnd > records.size) {
+            throw MobiParseException(
+                MobiParseError.TRUNCATED_FILE,
+                "KF8 text records are incomplete"
+            )
+        }
+
+        val encoding = readUnsignedInt(headerRecord, MOBI_ENCODING_OFFSET)
+        val charset = mobiCharset(encoding)
+        val fullNameOffset = readUnsignedInt(headerRecord, MOBI_FULL_NAME_OFFSET).toInt()
+        val fullNameLength = readUnsignedInt(headerRecord, MOBI_FULL_NAME_LENGTH_OFFSET).toInt()
+        val exth = readExthMetadata(headerRecord, mobiHeaderLength.toInt(), charset)
+        val fallbackTitle = readMetadataString(
+            headerRecord,
+            fullNameOffset,
+            fullNameLength,
+            charset
+        )
+        val title = exth.title?.takeIf { it.isNotBlank() }
+            ?: fallbackTitle?.takeIf { it.isNotBlank() }
+            ?: file.nameWithoutExtension.ifBlank { "未命名电子书" }
+        val author = exth.author?.takeIf { it.isNotBlank() }
+
+        val textBytes = readTextContent(
+            randomAccessFile = randomAccessFile,
+            records = records,
+            textRecordsStart = textRecordsStart,
+            textRecordCount = textRecordCount,
+            compression = compression,
+            textLength = textLength
+        )
+        val kf8Content = Kf8Parser().parse(
+            rawMarkup = textBytes,
+            charset = charset,
+            header = headerRecord,
+            headerRecordIndex = headerRecordIndex,
+            totalRecordCount = records.size,
+            readRecord = { recordIndex -> readRecord(randomAccessFile, records[recordIndex]) }
+        )
+        if (kf8Content.documents.none(String::isNotBlank)) {
+            throw MobiParseException(
+                MobiParseError.EMPTY_BOOK,
+                "KF8 does not contain readable text"
+            )
+        }
+
+        val firstImageRecord = resolveKf8RecordIndex(
+            value = readOptionalUnsignedInt(headerRecord, MOBI_FIRST_IMAGE_OFFSET),
+            headerRecordIndex = headerRecordIndex,
+            recordCount = records.size
+        )
+        val resourcesResult = readResources(
+            randomAccessFile = randomAccessFile,
+            records = records,
+            firstImageRecord = firstImageRecord,
+            coverOffset = exth.coverOffset
+        )
+        val chapters = kf8Content.documents
+            .flatMap { extractChapters(it, title) }
+            .mapIndexed { index, chapter -> chapter.copy(index = index) }
+        if (chapters.isEmpty()) {
+            throw MobiParseException(MobiParseError.EMPTY_BOOK, "KF8 contains no readable chapters")
+        }
+
+        val book = MobiBook(
+            title = title,
+            author = author,
+            chapters = chapters,
+            resources = resourcesResult.resources,
+            coverResourceId = resourcesResult.coverResourceId,
+            stylesheet = kf8Content.stylesheet
+        )
+        return ParsedMobi(
+            book = book,
+            resourceRecords = resourcesResult.records,
+            sourceFile = file
+        )
+    }
+
+    private fun findKf8HeaderRecord(
+        randomAccessFile: RandomAccessFile,
+        records: List<Record>
+    ): Int? {
+        for (recordIndex in 1 until records.size) {
+            val boundary = readRecord(randomAccessFile, records[recordIndex - 1])
+            if (!boundary.contentEquals(KF8_BOUNDARY)) {
+                continue
+            }
+            val candidate = readRecord(randomAccessFile, records[recordIndex])
+            if (candidate.size < MOBI_HEADER_OFFSET + MOBI_MIN_HEADER_LENGTH ||
+                !candidate.copyOfRange(MOBI_HEADER_OFFSET, MOBI_HEADER_OFFSET + 4)
+                    .contentEquals(MOBI_MAGIC.toByteArray(StandardCharsets.US_ASCII))
+            ) {
+                continue
+            }
+            val version = readOptionalUnsignedInt(candidate, MOBI_FORMAT_VERSION_OFFSET)
+            if (version != null && version >= KF8_FORMAT_VERSION) {
+                return recordIndex
+            }
+        }
+        return null
+    }
+
+    private fun resolveKf8RecordIndex(
+        value: Long?,
+        headerRecordIndex: Int,
+        recordCount: Int
+    ): Int? {
+        if (value == null || value == UINT32_MAX || value > Int.MAX_VALUE) {
+            return null
+        }
+        val relativeIndex = headerRecordIndex + value.toInt()
+        if (relativeIndex in 0 until recordCount) {
+            return relativeIndex
+        }
+        return value.toInt().takeIf { it in 0 until recordCount }
+    }
+
+    private fun readTextContent(
+        randomAccessFile: RandomAccessFile,
+        records: List<Record>,
+        textRecordsStart: Int,
+        textRecordCount: Int,
+        compression: Int,
+        textLength: Long
+    ): ByteArray {
+        val textBytes = ByteArrayOutputStream(
+            min(textLength.toIntOrMax(), MAX_INITIAL_TEXT_CAPACITY)
+        )
+        val textRecordsEnd = textRecordsStart + textRecordCount
+        for (recordIndex in textRecordsStart until textRecordsEnd) {
+            val compressedText = readRecord(randomAccessFile, records[recordIndex])
+            val decodedText = when (compression) {
+                COMPRESSION_NONE -> compressedText
+                COMPRESSION_PALMDOC -> PalmDocDecompressor.decompress(compressedText)
+                else -> error("validated compression type")
+            }
+            textBytes.write(decodedText)
+        }
+
+        val allTextBytes = textBytes.toByteArray()
+        return if (textLength in 1..allTextBytes.size.toLong()) {
+            allTextBytes.copyOf(textLength.toInt())
+        } else {
+            allTextBytes
+        }
     }
 
     private fun readRecordTable(randomAccessFile: RandomAccessFile): List<Record> {
@@ -337,7 +533,7 @@ class MobiParser {
                 ?.takeIf(String::isNotEmpty)
             MobiChapter(
                 index = index,
-                title = heading ?: if (sections.size == 1) bookTitle else "第 ${index + 1} 章",
+                title = heading ?: if (sections.size == 1) bookTitle else (index + 1).toString(),
                 html = asHtml(section)
             )
         }
@@ -456,6 +652,7 @@ class MobiParser {
         const val MOBI_FIRST_CONTENT_RECORD_OFFSET = 192
 
         const val MOBI_MIN_HEADER_LENGTH = 228L
+        const val KF8_MIN_HEADER_RECORD_SIZE = 0x100
         const val KF8_FORMAT_VERSION = 8L
         const val EXTH_PRESENT_FLAG = 0x40L
         const val EXTH_HEADER_LENGTH = 12
@@ -467,7 +664,7 @@ class MobiParser {
         const val COMPRESSION_NONE = 1
         const val COMPRESSION_PALMDOC = 2
         const val UINT32_MAX = 0xFFFFFFFFL
-        const val IMAGE_PREFIX_LENGTH = 12
+        const val IMAGE_PREFIX_LENGTH = 256
         const val MAX_INITIAL_TEXT_CAPACITY = 4 * 1024 * 1024
 
         const val MOBI_MAGIC = "MOBI"
@@ -481,6 +678,8 @@ class MobiParser {
         val IMAGE_PREFIX_PNG = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47)
         val IMAGE_PREFIX_GIF = byteArrayOf(0x47, 0x49, 0x46, 0x38)
         val IMAGE_PREFIX_WEBP = byteArrayOf(0x52, 0x49, 0x46, 0x46)
+        val IMAGE_PREFIX_BMP = byteArrayOf(0x42, 0x4D)
+        val KF8_BOUNDARY = "BOUNDARY".toByteArray(StandardCharsets.US_ASCII)
 
         fun imageMimeType(prefix: ByteArray): String? {
             return when {
@@ -490,6 +689,14 @@ class MobiParser {
                 prefix.startsWith(IMAGE_PREFIX_WEBP) && prefix.size >= 12 &&
                     prefix.copyOfRange(8, 12).contentEquals(byteArrayOf(0x57, 0x45, 0x42, 0x50)) ->
                     "image/webp"
+                prefix.startsWith(IMAGE_PREFIX_BMP) -> "image/bmp"
+                String(prefix, StandardCharsets.US_ASCII)
+                    .trimStart('\uFEFF', ' ', '\t', '\r', '\n')
+                    .let { text ->
+                        text.startsWith("<svg", ignoreCase = true) ||
+                            (text.startsWith("<?xml", ignoreCase = true) &&
+                                text.contains("<svg", ignoreCase = true))
+                    } -> "image/svg+xml"
                 else -> null
             }
         }

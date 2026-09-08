@@ -257,7 +257,7 @@ class EpubParser {
             val title = navigationTitles[item.path]
                 ?: extractHeading(source)
                 ?: extractDocumentTitle(source)
-                ?: item.path.substringAfterLast('/').substringBeforeLast('.').ifBlank { "电子书章节" }
+                ?: item.path.substringAfterLast('/').substringBeforeLast('.').ifBlank { "未命名" }
             EbookChapter(
                 index = 0,
                 title = title,

@@ -75,9 +75,6 @@ class MangaReaderActivity : AppCompatActivity() {
     private val readerPrefs by lazy {
         getSharedPreferences(READER_PREFS_NAME, MODE_PRIVATE)
     }
-    private val autoHideControlsRunnable = Runnable {
-        setReaderControlsVisible(false)
-    }
     private val clearSuppressReaderTapRunnable = Runnable {
         suppressReaderTap = false
     }
@@ -95,7 +92,13 @@ class MangaReaderActivity : AppCompatActivity() {
     private var imageEntries: List<String> = emptyList()
     private var pageAdapter: ReaderPageAdapterController? = null
     private var readerPreviewAdapter: ReaderPreviewAdapter? = null
-    private var readerControlsVisible = true
+    private lateinit var readerControlsController: ReaderControlsController
+    private val readerControlsVisible: Boolean
+        get() = if (::readerControlsController.isInitialized) {
+            readerControlsController.isVisible
+        } else {
+            true
+        }
     private var readerPreviewPanelVisible = false
     private var suppressReaderTap = false
     private var isDraggingReaderSlider = false
@@ -169,7 +172,7 @@ class MangaReaderActivity : AppCompatActivity() {
         super.onResume()
         volumeKeyPageTurnEnabled = AppSettings.isVolumeKeyPageTurnEnabled(this)
         autoHideSystemBarsEnabled = AppSettings.isAutoHideSystemBarsEnabled(this)
-        updateSystemBarsVisibilityForReaderControls()
+        readerControlsController.setAutoHideSystemBarsEnabled(autoHideSystemBarsEnabled)
         updateReaderGestureExclusionRects()
         applyReaderBrightnessSetting()
         updateBrightnessControls()
@@ -194,6 +197,7 @@ class MangaReaderActivity : AppCompatActivity() {
         readerLoadExecutor.shutdownNow()
         readerProgressExecutor.shutdown()
         handler.removeCallbacksAndMessages(null)
+        readerControlsController.close()
         CrashLogManager.recordReaderSessionFinished(this, readerSessionMarker)
         readerSessionMarker = null
         pageAdapter?.close()
@@ -217,8 +221,8 @@ class MangaReaderActivity : AppCompatActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus && autoHideSystemBarsEnabled && !readerControlsVisible) {
-            setSystemBarsVisible(false)
+        if (::readerControlsController.isInitialized) {
+            readerControlsController.onWindowFocusChanged(hasFocus)
         }
     }
 
@@ -261,6 +265,15 @@ class MangaReaderActivity : AppCompatActivity() {
         tvReaderTitle = findViewById(R.id.tvReaderTitle)
         tvReaderProgress = findViewById(R.id.tvReaderProgress)
         tvReaderStatus = findViewById(R.id.tvReaderStatus)
+        readerControlsController = ReaderControlsController(
+            window = window,
+            rootView = rootView,
+            toolbar = layoutReaderToolbar,
+            progressPanel = layoutReaderProgress,
+            onControlsShown = { updateBrightnessControls() },
+            onVisibilityChanged = { updateReaderGestureExclusionRects() }
+        )
+        readerControlsController.setAutoHideSystemBarsEnabled(autoHideSystemBarsEnabled)
 
         readerLayoutManager = LinearLayoutManager(
             this,
@@ -399,7 +412,7 @@ class MangaReaderActivity : AppCompatActivity() {
             override fun onStartTrackingTouch(seekBar: SeekBar) {
                 isDraggingReaderSlider = true
                 clearPendingReaderPosition()
-                handler.removeCallbacks(autoHideControlsRunnable)
+                readerControlsController.cancelAutoHide()
             }
 
             override fun onStopTrackingTouch(seekBar: SeekBar) {
@@ -438,7 +451,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
             override fun onStartTrackingTouch(seekBar: SeekBar) {
                 if (customReaderBrightnessEnabled) {
-                    handler.removeCallbacks(autoHideControlsRunnable)
+                    readerControlsController.cancelAutoHide()
                 }
             }
 
@@ -913,7 +926,7 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         readerPreviewPanelVisible = true
-        handler.removeCallbacks(autoHideControlsRunnable)
+        readerControlsController.cancelAutoHide()
         setReaderControlsVisible(true)
         scrollReaderPreviewToCurrentPage()
 
@@ -1304,9 +1317,7 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun showReaderControlsTemporarily() {
-        setReaderControlsVisible(true)
-        handler.removeCallbacks(autoHideControlsRunnable)
-        handler.postDelayed(autoHideControlsRunnable, READER_CONTROLS_AUTO_HIDE_MS)
+        readerControlsController.showTemporarily()
     }
 
     private fun setReaderControlsVisible(visible: Boolean) {
@@ -1314,18 +1325,7 @@ class MangaReaderActivity : AppCompatActivity() {
             return
         }
 
-        readerControlsVisible = visible
-        layoutReaderToolbar.visibility = if (visible) View.VISIBLE else View.GONE
-        layoutReaderProgress.visibility = if (visible) View.VISIBLE else View.GONE
-        if (visible) {
-            updateBrightnessControls()
-        }
-        updateSystemBarsVisibilityForReaderControls()
-        updateReaderGestureExclusionRects()
-    }
-
-    private fun updateSystemBarsVisibilityForReaderControls() {
-        setSystemBarsVisible(!autoHideSystemBarsEnabled || readerControlsVisible)
+        readerControlsController.setVisible(visible)
     }
 
     private fun updateReaderGestureExclusionRects() {
@@ -1353,15 +1353,6 @@ class MangaReaderActivity : AppCompatActivity() {
             emptyList()
         }
         rootView.systemGestureExclusionRects = exclusionRects
-    }
-
-    private fun setSystemBarsVisible(visible: Boolean) {
-        val controller = WindowInsetsControllerCompat(window, rootView)
-        if (visible) {
-            controller.show(WindowInsetsCompat.Type.systemBars())
-        } else {
-            controller.hide(WindowInsetsCompat.Type.systemBars())
-        }
     }
 
     private fun showError(message: String) {
@@ -4061,7 +4052,6 @@ class MangaReaderActivity : AppCompatActivity() {
         private const val MAX_READER_DECODE_WIDTH = 8192
         private const val MAX_READER_DECODE_HEIGHT = 8192
         private const val MAX_READER_TILE_DECODE_WIDTH = 8192
-        private const val READER_CONTROLS_AUTO_HIDE_MS = 2600L
         private const val READER_PREVIEW_PANEL_ANIMATION_MS = 180L
         private const val SUPPRESS_TAP_AFTER_ZOOM_MS = 250L
         private const val RESTORE_READER_POSITION_MAX_ATTEMPTS = 16

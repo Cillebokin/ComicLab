@@ -3,8 +3,6 @@ package com.example.comiclab
 import android.annotation.SuppressLint
 import android.graphics.Color
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.provider.Settings
 import android.view.GestureDetector
 import android.view.MotionEvent
@@ -56,12 +54,10 @@ class EbookReaderActivity : AppCompatActivity() {
     private lateinit var checkboxCustomBrightness: CheckBox
 
     private val loadExecutor = Executors.newSingleThreadExecutor()
-    private val handler = Handler(Looper.getMainLooper())
-    private val autoHideControlsRunnable = Runnable {
-        setReaderControlsVisible(false)
-    }
     private val htmlRenderer = EbookHtmlRenderer()
+    @Volatile
     private var loadGeneration = 0
+    @Volatile
     private var session: EbookSession? = null
     private var bookFile: File? = null
     private val style = EbookStyle()
@@ -72,7 +68,13 @@ class EbookReaderActivity : AppCompatActivity() {
     private var isDraggingReaderProgress = false
     private var isUpdatingBrightnessControls = false
     private var customReaderBrightnessEnabled = false
-    private var readerControlsVisible = true
+    private lateinit var readerControlsController: ReaderControlsController
+    private val readerControlsVisible: Boolean
+        get() = if (::readerControlsController.isInitialized) {
+            readerControlsController.isVisible
+        } else {
+            true
+        }
     private var autoHideSystemBarsEnabled = true
 
     @Volatile
@@ -95,6 +97,15 @@ class EbookReaderActivity : AppCompatActivity() {
         tvReaderProgress = findViewById(R.id.tvEbookReaderProgress)
         sliderScreenBrightness = findViewById(R.id.sliderEbookScreenBrightness)
         checkboxCustomBrightness = findViewById(R.id.checkboxEbookCustomBrightness)
+
+        readerControlsController = ReaderControlsController(
+            window = window,
+            rootView = rootView,
+            toolbar = layoutEbookToolbar,
+            progressPanel = layoutEbookReaderProgress,
+            onControlsShown = { updateBrightnessControls() }
+        )
+        readerControlsController.setAutoHideSystemBarsEnabled(autoHideSystemBarsEnabled)
 
         configureImmersiveSystemBars()
         configureWebView()
@@ -124,7 +135,7 @@ class EbookReaderActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         autoHideSystemBarsEnabled = AppSettings.isAutoHideSystemBarsEnabled(this)
-        updateSystemBarsVisibilityForReaderControls()
+        readerControlsController.setAutoHideSystemBarsEnabled(autoHideSystemBarsEnabled)
         applyReaderBrightnessSetting()
         updateBrightnessControls()
         if (readerControlsVisible) {
@@ -134,13 +145,13 @@ class EbookReaderActivity : AppCompatActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus && autoHideSystemBarsEnabled && !readerControlsVisible) {
-            setSystemBarsVisible(false)
+        if (::readerControlsController.isInitialized) {
+            readerControlsController.onWindowFocusChanged(hasFocus)
         }
     }
 
     override fun onPause() {
-        handler.removeCallbacks(autoHideControlsRunnable)
+        readerControlsController.cancelAutoHide()
         saveCurrentProgress(force = true)
         restoreSystemBrightness()
         super.onPause()
@@ -154,7 +165,7 @@ class EbookReaderActivity : AppCompatActivity() {
     override fun onDestroy() {
         destroyed = true
         loadGeneration++
-        handler.removeCallbacksAndMessages(null)
+        readerControlsController.close()
         webReader.removeJavascriptInterface(JS_BRIDGE_NAME)
         webReader.stopLoading()
         webReader.destroy()
@@ -224,32 +235,11 @@ class EbookReaderActivity : AppCompatActivity() {
     }
 
     private fun showReaderControlsTemporarily() {
-        setReaderControlsVisible(true)
-        handler.removeCallbacks(autoHideControlsRunnable)
-        handler.postDelayed(autoHideControlsRunnable, READER_CONTROLS_AUTO_HIDE_MS)
+        readerControlsController.showTemporarily()
     }
 
     private fun setReaderControlsVisible(visible: Boolean) {
-        readerControlsVisible = visible
-        layoutEbookToolbar.visibility = if (visible) View.VISIBLE else View.GONE
-        layoutEbookReaderProgress.visibility = if (visible) View.VISIBLE else View.GONE
-        if (visible) {
-            updateBrightnessControls()
-        }
-        updateSystemBarsVisibilityForReaderControls()
-    }
-
-    private fun updateSystemBarsVisibilityForReaderControls() {
-        setSystemBarsVisible(!autoHideSystemBarsEnabled || readerControlsVisible)
-    }
-
-    private fun setSystemBarsVisible(visible: Boolean) {
-        val controller = WindowInsetsControllerCompat(window, rootView)
-        if (visible) {
-            controller.show(WindowInsetsCompat.Type.systemBars())
-        } else {
-            controller.hide(WindowInsetsCompat.Type.systemBars())
-        }
+        readerControlsController.setVisible(visible)
     }
 
     private fun configureProgressControls() {
@@ -265,7 +255,7 @@ class EbookReaderActivity : AppCompatActivity() {
 
             override fun onStartTrackingTouch(seekBar: SeekBar) {
                 isDraggingReaderProgress = true
-                handler.removeCallbacks(autoHideControlsRunnable)
+                readerControlsController.cancelAutoHide()
             }
 
             override fun onStopTrackingTouch(seekBar: SeekBar) {
@@ -339,7 +329,7 @@ class EbookReaderActivity : AppCompatActivity() {
 
             override fun onStartTrackingTouch(seekBar: SeekBar) {
                 if (customReaderBrightnessEnabled) {
-                    handler.removeCallbacks(autoHideControlsRunnable)
+                    readerControlsController.cancelAutoHide()
                 }
             }
 
@@ -487,39 +477,51 @@ class EbookReaderActivity : AppCompatActivity() {
 
     private fun loadBook(file: File) {
         val generation = ++loadGeneration
+        pageReady = false
         tvStatus.text = getString(R.string.ebook_loading)
         tvStatus.visibility = android.view.View.VISIBLE
 
         runCatching {
             loadExecutor.execute {
-                val result = runCatching { EbookSessionFactory.open(file) }
+                val result = runCatching {
+                    val loadedSession = EbookSessionFactory.open(file)
+                    try {
+                        PreparedBook(
+                            session = loadedSession,
+                            html = htmlRenderer.render(loadedSession.book, style)
+                        )
+                    } catch (error: Throwable) {
+                        loadedSession.close()
+                        throw error
+                    }
+                }
                 if (destroyed || generation != loadGeneration) {
-                    result.getOrNull()?.close()
+                    result.getOrNull()?.session?.close()
                     return@execute
                 }
 
                 runOnUiThread {
                     if (destroyed || generation != loadGeneration) {
-                        result.getOrNull()?.close()
+                        result.getOrNull()?.session?.close()
                         return@runOnUiThread
                     }
 
-                    result.onSuccess { loadedSession ->
+                    result.onSuccess { preparedBook ->
                         session?.close()
-                        session = loadedSession
+                        session = preparedBook.session
                         ReadingHistoryStore.record(this@EbookReaderActivity, file)
-                        tvTitle.text = loadedSession.book.title
+                        tvTitle.text = preparedBook.session.book.title
                         currentProgress = currentProgress?.let {
                             EbookReaderProgressMapper.clampToBook(
                                 it,
-                                loadedSession.book.chapters.size
+                                preparedBook.session.book.chapters.size
                             )
                         }
                         updateProgressControls(currentProgress)
-                        if (loadedSession.book.chapters.isEmpty()) {
+                        if (preparedBook.session.book.chapters.isEmpty()) {
                             showError(getString(R.string.ebook_empty))
                         } else {
-                            loadHtml()
+                            loadHtml(preparedBook.html)
                         }
                     }.onFailure { error ->
                         showError(errorMessage(error))
@@ -531,9 +533,7 @@ class EbookReaderActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadHtml() {
-        val currentSession = session ?: return
-        val html = htmlRenderer.render(currentSession.book, style)
+    private fun loadHtml(html: String) {
         pageReady = false
         webReader.loadDataWithBaseURL(
             BASE_URL,
@@ -640,11 +640,18 @@ class EbookReaderActivity : AppCompatActivity() {
         @JavascriptInterface
         fun reportProgress(chapterIndex: Int, fraction: Float) {
             if (destroyed) return
-            val book = session?.book ?: return
-            val safeChapterIndex = chapterIndex.coerceIn(0, (book.chapters.size - 1).coerceAtLeast(0))
-            currentProgress = EbookProgress(safeChapterIndex, fraction).normalized()
-            val reportedProgress = currentProgress
+            val generation = loadGeneration
+            val chapterCount = session?.book?.chapters?.size ?: return
+            val reportedProgress = EbookProgress(
+                chapterIndex = chapterIndex.coerceIn(0, (chapterCount - 1).coerceAtLeast(0)),
+                scrollFraction = fraction
+            ).normalized()
             runOnUiThread {
+                if (destroyed || generation != loadGeneration || session == null || !pageReady) {
+                    return@runOnUiThread
+                }
+
+                currentProgress = reportedProgress
                 if (!isDraggingReaderProgress) {
                     updateProgressControls(reportedProgress)
                 }
@@ -660,9 +667,13 @@ class EbookReaderActivity : AppCompatActivity() {
         private const val RESOURCE_SCHEME = "ebook-resource"
         private const val BASE_URL = "https://comiclab.invalid/"
         private const val JS_BRIDGE_NAME = "ComicLabBridge"
-        private const val READER_CONTROLS_AUTO_HIDE_MS = 2600L
         private const val MIN_PROGRESS_SAVE_INTERVAL_MS = 500L
         private const val MIN_WINDOW_BRIGHTNESS = 0.01f
         private const val MAX_WINDOW_BRIGHTNESS = 1f
     }
+
+    private data class PreparedBook(
+        val session: EbookSession,
+        val html: String
+    )
 }

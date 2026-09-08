@@ -18,7 +18,9 @@ object ReaderFileDetector {
         }
 
         return when {
-            file.extension.equals("mobi", ignoreCase = true) -> ReaderFileType.MOBI
+            file.extension.equals("mobi", ignoreCase = true) ||
+                file.extension.equals("azw", ignoreCase = true) ||
+                file.extension.equals("azw3", ignoreCase = true) -> ReaderFileType.MOBI
             file.extension.equals("epub", ignoreCase = true) -> ReaderFileType.EPUB
             ComicArchive.isPdf(file) -> ReaderFileType.PDF
             ComicArchive.isSupportedArchive(file) -> ReaderFileType.IMAGE_ARCHIVE

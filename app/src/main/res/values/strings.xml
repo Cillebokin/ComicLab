@@ -133,12 +133,12 @@
     <string name="delete_pdf_page_unsupported">当前文件为PDF，暂不支持删除页面</string>
     <string name="no_preview_images">文件中没有可预览的图片或页面</string>
     <string name="no_reading_images">文件中没有可阅读的图片或页面</string>
-    <string name="unsupported_archive_format">当前支持 ZIP/CBZ/7Z/CB7/RAR/CBR/PDF、无 DRM MOBI 及无 DRM EPUB 文件</string>
+    <string name="unsupported_archive_format">当前支持 ZIP/CBZ/7Z/CB7/RAR/CBR/PDF、无 DRM MOBI/AZW/AZW3 及无 DRM EPUB 文件</string>
     <string name="ebook_cover">电子书封面</string>
     <string name="ebook_loading">正在加载电子书...</string>
     <string name="ebook_load_failed">电子书加载失败</string>
     <string name="ebook_corrupted">电子书损坏或格式无效</string>
-    <string name="ebook_drm_unsupported">当前 MOBI 受到 DRM 加密，暂不支持</string>
+    <string name="ebook_drm_unsupported">当前 MOBI/AZW/AZW3 受到 DRM 加密，暂不支持</string>
     <string name="ebook_encrypted_unsupported">当前 EPUB 包含加密资源，暂不支持</string>
     <string name="ebook_format_unsupported">当前电子书压缩方式或格式暂不支持</string>
     <string name="ebook_empty">电子书中没有可阅读内容</string>
