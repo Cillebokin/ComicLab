@@ -99,7 +99,7 @@ class Kf8Parser {
 
         val offsets = (0 until fdstSectionCount).map { index ->
             readUnsignedInt(fdst, FDST_OFFSETS_OFFSET + index * 8).toInt()
-        }
+        } + rawMarkup.size
         if (offsets.firstOrNull() != 0 || offsets.zipWithNext().any { (start, end) ->
                 start < 0 || end < start || end > rawMarkup.size
             } || offsets.lastOrNull()?.let { it > rawMarkup.size } == true
@@ -272,7 +272,8 @@ class Kf8Parser {
         indexStart: Int,
         entryCount: Int
     ): List<Int> {
-        if (indexStart < 0 || entryCount <= 0 || entryCount > MAX_ENTRIES_PER_RECORD ||
+        if (indexStart < INDX_HEADER_LENGTH || entryCount <= 0 ||
+            entryCount > MAX_ENTRIES_PER_RECORD ||
             indexStart > record.size - 4 - entryCount * 2
         ) {
             return emptyList()
@@ -283,10 +284,16 @@ class Kf8Parser {
         for (entryIndex in 0 until entryCount) {
             val entryOffset = readUnsignedShort(record, offset)
             offset += 2
-            if (entryOffset < indexStart || entryOffset >= record.size) {
+            // INDX stores the entry offsets in the IDXT table, but the entries
+            // themselves are located before IDXT. Requiring entryOffset >=
+            // indexStart rejects valid KF8 skeleton/fragment indexes.
+            if (entryOffset < INDX_HEADER_LENGTH || entryOffset >= indexStart) {
                 return emptyList()
             }
             positions += entryOffset
+        }
+        if (positions.zipWithNext().any { (start, end) -> start >= end }) {
+            return emptyList()
         }
         return positions
     }
