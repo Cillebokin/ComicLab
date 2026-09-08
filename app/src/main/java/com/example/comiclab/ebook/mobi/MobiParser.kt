@@ -70,6 +70,11 @@ class MobiParser {
         }
 
         val mobiFormatVersion = readUnsignedInt(headerRecord, MOBI_FORMAT_VERSION_OFFSET)
+        val trailingDataFlags = if (mobiHeaderLength >= 0xE4 && mobiFormatVersion >= 5) {
+            readOptionalUnsignedShort(headerRecord, MOBI_TRAILING_DATA_FLAGS_OFFSET) ?: 0
+        } else {
+            0
+        }
         val kf8HeaderRecordIndex = if (mobiFormatVersion >= KF8_FORMAT_VERSION) {
             0
         } else {
@@ -141,7 +146,8 @@ class MobiParser {
             textRecordsStart = textRecordsStart,
             textRecordCount = textRecordCount,
             compression = compression,
-            textLength = textLength
+            textLength = textLength,
+            trailingDataFlags = trailingDataFlags
         )
         val content = decodeText(boundedTextBytes, charset)
         if (content.isBlank()) {
@@ -206,6 +212,12 @@ class MobiParser {
         val textLength = readUnsignedInt(headerRecord, PALMDOC_TEXT_LENGTH_OFFSET)
         val textRecordCount = readUnsignedShort(headerRecord, PALMDOC_RECORD_COUNT_OFFSET)
         val encryptionType = readUnsignedShort(headerRecord, PALMDOC_ENCRYPTION_OFFSET)
+        val mobiFormatVersion = readUnsignedInt(headerRecord, MOBI_FORMAT_VERSION_OFFSET)
+        val trailingDataFlags = if (mobiHeaderLength >= 0xE4 && mobiFormatVersion >= 5) {
+            readOptionalUnsignedShort(headerRecord, MOBI_TRAILING_DATA_FLAGS_OFFSET) ?: 0
+        } else {
+            0
+        }
         val drmOffset = readOptionalUnsignedInt(headerRecord, MOBI_DRM_OFFSET)
         if (encryptionType != 0 || (drmOffset != null && drmOffset != 0L && drmOffset != UINT32_MAX)) {
             throw MobiParseException(
@@ -251,7 +263,8 @@ class MobiParser {
             textRecordsStart = textRecordsStart,
             textRecordCount = textRecordCount,
             compression = compression,
-            textLength = textLength
+            textLength = textLength,
+            trailingDataFlags = trailingDataFlags
         )
         val kf8Content = Kf8Parser().parse(
             rawMarkup = textBytes,
@@ -368,14 +381,18 @@ class MobiParser {
         textRecordsStart: Int,
         textRecordCount: Int,
         compression: Int,
-        textLength: Long
+        textLength: Long,
+        trailingDataFlags: Int
     ): ByteArray {
         val textBytes = ByteArrayOutputStream(
             min(textLength.toIntOrMax(), MAX_INITIAL_TEXT_CAPACITY)
         )
         val textRecordsEnd = textRecordsStart + textRecordCount
         for (recordIndex in textRecordsStart until textRecordsEnd) {
-            val compressedText = readRecord(randomAccessFile, records[recordIndex])
+            val compressedText = trimTrailingData(
+                data = readRecord(randomAccessFile, records[recordIndex]),
+                flags = trailingDataFlags
+            )
             val decodedText = when (compression) {
                 COMPRESSION_NONE -> compressedText
                 COMPRESSION_PALMDOC -> PalmDocDecompressor.decompress(compressedText)
@@ -390,6 +407,53 @@ class MobiParser {
         } else {
             allTextBytes
         }
+    }
+
+    /**
+     * MOBI can append per-record data after the compressed text. The header
+     * flags describe how many variable-width trailer entries are present and
+     * whether a multibyte trailer is present. These bytes must be removed
+     * before PalmDOC decompression; otherwise they become part of the RawML
+     * stream and invalidate KF8 skeleton/fragment offsets.
+     */
+    private fun trimTrailingData(data: ByteArray, flags: Int): ByteArray {
+        if (data.isEmpty() || flags == 0) {
+            return data
+        }
+
+        var trimmed = data
+        val trailerCount = (flags ushr 1).countOneBits()
+        repeat(trailerCount) {
+            val trailerLength = readTrailingDataLength(trimmed) ?: return trimmed
+            if (trailerLength > trimmed.size) {
+                return trimmed
+            }
+            trimmed = trimmed.copyOf(trimmed.size - trailerLength)
+        }
+
+        if (flags and 1 != 0 && trimmed.isNotEmpty()) {
+            val trailerLength = (trimmed.last().toInt() and 0x03) + 1
+            if (trailerLength <= trimmed.size) {
+                trimmed = trimmed.copyOf(trimmed.size - trailerLength)
+            }
+        }
+        return trimmed
+    }
+
+    private fun readTrailingDataLength(data: ByteArray): Int? {
+        if (data.size < 4) {
+            return null
+        }
+
+        var length = 0
+        for (index in data.size - 4 until data.size) {
+            val value = data[index].toInt() and 0xFF
+            if (value and 0x80 != 0) {
+                length = 0
+            }
+            length = (length shl 7) or (value and 0x7F)
+        }
+        return length.takeIf { it > 0 }
     }
 
     private fun readRecordTable(randomAccessFile: RandomAccessFile): List<Record> {
@@ -680,6 +744,7 @@ class MobiParser {
         const val MOBI_EXTH_FLAGS_OFFSET = MOBI_HEADER_OFFSET + 112
         const val MOBI_DRM_OFFSET = MOBI_HEADER_OFFSET + 152
         const val MOBI_FIRST_CONTENT_RECORD_OFFSET = 192
+        const val MOBI_TRAILING_DATA_FLAGS_OFFSET = 0xF2
 
         const val MOBI_MIN_HEADER_LENGTH = 228L
         const val KF8_MIN_HEADER_RECORD_SIZE = 0x100
