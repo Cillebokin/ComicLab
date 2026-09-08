@@ -1,9 +1,36 @@
 package com.example.comiclab
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReaderDiagnosticsPolicyTest {
+
+    @Test
+    fun readerRenderStartPersistenceIsThrottledButFirstAndBoundaryWritesAreDurable() {
+        assertTrue(
+            shouldPersistReaderRenderStart(
+                lastPersistElapsedRealtime = Long.MIN_VALUE,
+                nowElapsedRealtime = 10_000L,
+                minimumIntervalMillis = 1_000L
+            )
+        )
+        assertFalse(
+            shouldPersistReaderRenderStart(
+                lastPersistElapsedRealtime = 10_000L,
+                nowElapsedRealtime = 10_999L,
+                minimumIntervalMillis = 1_000L
+            )
+        )
+        assertTrue(
+            shouldPersistReaderRenderStart(
+                lastPersistElapsedRealtime = 10_000L,
+                nowElapsedRealtime = 11_000L,
+                minimumIntervalMillis = 1_000L
+            )
+        )
+    }
 
     @Test
     fun checkpointSnapshotIncludesFileIdentityAndPosition() {

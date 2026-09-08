@@ -58,6 +58,18 @@ internal class PdfRendererLifecycleGate {
     }
 }
 
+internal fun <T> createPdfRendererOrCloseDescriptor(
+    createRenderer: () -> T,
+    closeDescriptor: () -> Unit
+): T {
+    return try {
+        createRenderer()
+    } catch (throwable: Throwable) {
+        runCatching { closeDescriptor() }
+        throw throwable
+    }
+}
+
 object ComicArchive {
     private const val ZIP_PREVIEW_DECODE_THREAD_COUNT = 2
     private const val PREPARED_READER_MANIFEST_FILE = "reader_manifest.json"
@@ -635,7 +647,10 @@ object ComicArchive {
         private val pdfLifecycleGate = PdfRendererLifecycleGate()
         private val parcelFileDescriptor =
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-        private val pdfRenderer = PdfRenderer(parcelFileDescriptor)
+        private val pdfRenderer = createPdfRendererOrCloseDescriptor(
+            createRenderer = { PdfRenderer(parcelFileDescriptor) },
+            closeDescriptor = { parcelFileDescriptor.close() }
+        )
 
         override fun isPdfSource(): Boolean = true
 

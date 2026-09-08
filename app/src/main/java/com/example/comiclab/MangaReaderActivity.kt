@@ -2807,9 +2807,18 @@ class MangaReaderActivity : AppCompatActivity() {
                     }
 
                     if (shouldUseTiledPage(bounds)) {
+                        if (shouldSkipTiledPdfPreviewDecodeAfterMemoryTrim(
+                                isPdfSource = isPdfSource,
+                                lowMemoryMode = pdfLowMemoryMode,
+                                isPreload = isPreload
+                            )
+                        ) {
+                            return@submitTask
+                        }
+
                         if (previewBitmap(position) == null) {
                             val previewWidth = previewDecodeWidth()
-                            decodeWithRenderDiagnostics(
+                            val previewBitmap = decodeWithRenderDiagnostics(
                                 position = position,
                                 kind = "PREVIEW",
                                 targetWidth = previewWidth,
@@ -2825,7 +2834,19 @@ class MangaReaderActivity : AppCompatActivity() {
                                         targetWidth = previewWidth
                                     )
                                 }.getOrNull()
-                            }?.let { putPreviewBitmap(position, it) }
+                            }
+                            if (previewBitmap != null) {
+                                if (shouldSkipTiledPdfPreviewDecodeAfterMemoryTrim(
+                                        isPdfSource = isPdfSource,
+                                        lowMemoryMode = pdfLowMemoryMode,
+                                        isPreload = isPreload
+                                    )
+                                ) {
+                                    previewBitmap.recycle()
+                                    return@submitTask
+                                }
+                                putPreviewBitmap(position, previewBitmap)
+                            }
                         }
                         if (isPreload && !isUsefulPreload(position, generation)) {
                             return@submitTask
@@ -4182,6 +4203,18 @@ internal fun shouldSkipPdfPreloadAfterMemoryTrim(
     isPreload: Boolean
 ): Boolean {
     return isPdfSource && lowMemoryMode && isPreload
+}
+
+internal fun shouldSkipTiledPdfPreviewDecodeAfterMemoryTrim(
+    isPdfSource: Boolean,
+    lowMemoryMode: Boolean,
+    isPreload: Boolean
+): Boolean {
+    return shouldSkipPdfPreloadAfterMemoryTrim(
+        isPdfSource = isPdfSource,
+        lowMemoryMode = lowMemoryMode,
+        isPreload = isPreload
+    )
 }
 
 internal fun shouldRetryPdfPageAfterFailure(

@@ -2,6 +2,7 @@ package com.example.comiclab
 
 import android.content.Context
 import android.os.Build
+import android.os.SystemClock
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -20,12 +21,16 @@ object CrashLogManager {
     private const val READER_RENDER_KEY = "latest_render"
     private const val READER_RENDER_PHASE_KEY = "latest_render_phase"
     private const val READER_SESSION_KEY = "active_reader_session"
+    private const val READER_RENDER_PERSIST_INTERVAL_MS = 1_000L
     private const val MAX_CRASH_LOG_COUNT = 10
     private val timestampFormatter = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.ROOT)
     private val displayTimeFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.ROOT)
 
     @Volatile
     private var installed = false
+
+    private val readerRenderPersistenceLock = Any()
+    private var lastReaderRenderPersistElapsedRealtime = Long.MIN_VALUE
 
     fun install(context: Context) {
         if (installed) {
@@ -94,6 +99,9 @@ object CrashLogManager {
             fileSize = file.length(),
             fileModified = file.lastModified()
         ) + " token=${UUID.randomUUID()}"
+        synchronized(readerRenderPersistenceLock) {
+            lastReaderRenderPersistElapsedRealtime = Long.MIN_VALUE
+        }
         diagnosticPrefs(context).edit()
             .putString(READER_SESSION_KEY, marker)
             .remove(READER_RENDER_KEY)
@@ -134,10 +142,26 @@ object CrashLogManager {
             usedHeapKb = (runtime.totalMemory() - runtime.freeMemory()) / 1024L,
             maxHeapKb = runtime.maxMemory() / 1024L
         )
-        diagnosticPrefs(context).edit()
+        val nowElapsedRealtime = SystemClock.elapsedRealtime()
+        val persistSynchronously = synchronized(readerRenderPersistenceLock) {
+            val shouldPersist = shouldPersistReaderRenderStart(
+                lastPersistElapsedRealtime = lastReaderRenderPersistElapsedRealtime,
+                nowElapsedRealtime = nowElapsedRealtime,
+                minimumIntervalMillis = READER_RENDER_PERSIST_INTERVAL_MS
+            )
+            if (shouldPersist) {
+                lastReaderRenderPersistElapsedRealtime = nowElapsedRealtime
+            }
+            shouldPersist
+        }
+        val editor = diagnosticPrefs(context).edit()
             .putString(READER_RENDER_KEY, snapshot)
             .putString(READER_RENDER_PHASE_KEY, "started")
-            .commit()
+        if (persistSynchronously) {
+            editor.commit()
+        } else {
+            editor.apply()
+        }
     }
 
     fun recordReaderRenderCompleted(context: Context) {
@@ -302,6 +326,15 @@ internal fun isReaderSessionMarkerActive(marker: String?): Boolean {
 
 internal fun isSameReaderSessionMarker(actual: String?, expected: String?): Boolean {
     return actual != null && expected != null && actual == expected
+}
+
+internal fun shouldPersistReaderRenderStart(
+    lastPersistElapsedRealtime: Long,
+    nowElapsedRealtime: Long,
+    minimumIntervalMillis: Long
+): Boolean {
+    return lastPersistElapsedRealtime == Long.MIN_VALUE ||
+        nowElapsedRealtime - lastPersistElapsedRealtime >= minimumIntervalMillis.coerceAtLeast(0L)
 }
 
 internal fun formatReaderRender(

@@ -60,6 +60,24 @@ class PdfReaderRiskPolicyTest {
     }
 
     @Test
+    fun lowMemoryTiledPdfPreloadDoesNotDecodeItsPreview() {
+        assertTrue(
+            shouldSkipTiledPdfPreviewDecodeAfterMemoryTrim(
+                isPdfSource = true,
+                lowMemoryMode = true,
+                isPreload = true
+            )
+        )
+        assertFalse(
+            shouldSkipTiledPdfPreviewDecodeAfterMemoryTrim(
+                isPdfSource = true,
+                lowMemoryMode = true,
+                isPreload = false
+            )
+        )
+    }
+
+    @Test
     fun pdfFailureAllowsOnlyOneVisibleRetry() {
         assertFalse(
             shouldRetryPdfPageAfterFailure(
@@ -170,6 +188,21 @@ class PdfReaderRiskPolicyTest {
         assertTrue(closeFinished.await(2, TimeUnit.SECONDS))
         assertTrue(closed.get())
         assertTrue(gate.withOpen { true } == null)
+    }
+
+    @Test
+    fun pdfRendererCreationClosesDescriptorWhenConstructorFails() {
+        var descriptorClosed = false
+
+        val result = runCatching<String> {
+            createPdfRendererOrCloseDescriptor(
+                createRenderer = { throw IllegalStateException("renderer failed") },
+                closeDescriptor = { descriptorClosed = true }
+            )
+        }
+
+        assertTrue(result.exceptionOrNull() is IllegalStateException)
+        assertTrue(descriptorClosed)
     }
 
     private class FakeReaderSession : ComicArchive.ImageReaderSession {
