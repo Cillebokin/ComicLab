@@ -184,7 +184,7 @@ class MainActivity : AppCompatActivity() {
             if (file.isDirectory) {
                 setCurrentPath(file.absolutePath)
                 loadCurrentDirectory()
-            } else if (ReaderFileDetector.isMobi(file) || ComicArchive.isArchive(file)) {
+            } else if (ReaderFileDetector.isEbook(file) || ComicArchive.isArchive(file)) {
                 showArchiveMenu(file)
             } else {
                 openFile(file)
@@ -2531,7 +2531,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun openMangaPreview(file: File) {
         when (ReaderFileDetector.typeOf(file)) {
-            ReaderFileType.MOBI -> {
+            ReaderFileType.MOBI,
+            ReaderFileType.EPUB -> {
                 startActivity(
                     Intent(this, EbookPreviewActivity::class.java).apply {
                         putExtra(EbookPreviewActivity.EXTRA_BOOK_PATH, file.absolutePath)

@@ -4,17 +4,18 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FilterInputStream
 import java.io.InputStream
+import com.example.comiclab.ebook.EbookSession
 
 class MobiBookSession private constructor(
-    val book: MobiBook,
+    override val book: MobiBook,
     private val resourceRecords: Map<String, ResourceRecord>,
     private val sourceFile: File
-) : AutoCloseable {
+) : EbookSession {
 
     @Volatile
     private var closed = false
 
-    fun openResource(resourceId: String): InputStream? {
+    override fun openResource(resourceId: String): InputStream? {
         if (closed) {
             return null
         }

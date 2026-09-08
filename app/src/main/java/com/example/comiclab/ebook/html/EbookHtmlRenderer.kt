@@ -1,7 +1,8 @@
 package com.example.comiclab.ebook.html
 
-import com.example.comiclab.ebook.mobi.MobiBook
-import com.example.comiclab.ebook.mobi.MobiChapter
+import android.net.Uri
+import com.example.comiclab.ebook.EbookBook
+import com.example.comiclab.ebook.EbookChapter
 
 data class EbookStyle(
     val fontScale: Float = 1.0f,
@@ -12,12 +13,17 @@ data class EbookStyle(
 
 class EbookHtmlRenderer {
 
-    fun render(book: MobiBook, style: EbookStyle): String {
+    fun render(book: EbookBook, style: EbookStyle): String {
         val safeStyle = style.normalized()
         val output = StringBuilder()
         output.append("<!doctype html><html><head>")
         output.append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
         output.append("<meta charset=\"utf-8\">")
+        book.stylesheet?.takeIf(String::isNotBlank)?.let { stylesheet ->
+            output.append("<style>")
+                .append(sanitizeStylesheet(stylesheet))
+                .append("</style>")
+        }
         output.append("<style>")
         output.append("html,body{margin:0;padding:0;background:")
             .append(safeStyle.backgroundColor)
@@ -58,7 +64,7 @@ class EbookHtmlRenderer {
                 var reportTimer = null;
                 function reportProgress() {
                     var sections = document.querySelectorAll('[data-chapter-index]');
-                    var position = window.scrollY + 40;
+                    var position = window.scrollY;
                     var current = 0;
                     for (var i = 0; i < sections.length; i++) {
                         if (sections[i].offsetTop <= position) current = i;
@@ -93,7 +99,7 @@ class EbookHtmlRenderer {
         return output.toString()
     }
 
-    private fun appendChapter(output: StringBuilder, book: MobiBook, chapter: MobiChapter) {
+    private fun appendChapter(output: StringBuilder, book: EbookBook, chapter: EbookChapter) {
         output.append("<section id=\"chapter-")
             .append(chapter.index)
             .append("\" data-chapter-index=\"")
@@ -101,11 +107,15 @@ class EbookHtmlRenderer {
             .append("\"><h2>")
             .append(escapeHtml(chapter.title))
             .append("</h2>")
-            .append(sanitizeFragment(chapter.html, book))
+            .append(sanitizeFragment(chapter.html, book, chapter.sourcePath))
             .append("</section>")
     }
 
-    private fun sanitizeFragment(fragment: String, book: MobiBook): String {
+    private fun sanitizeFragment(
+        fragment: String,
+        book: EbookBook,
+        sourcePath: String?
+    ): String {
         val withoutUnsafeBlocks = fragment
             .replace(UNSAFE_BLOCK_REGEX, "")
             .replace(COMMENT_REGEX, "")
@@ -118,7 +128,13 @@ class EbookHtmlRenderer {
             val tagName = match.groupValues[2].lowercase()
             val attributes = match.groupValues[3]
             if (tagName in SAFE_TEXT_TAGS) {
-                output.append(if (closing) "</$tagName>" else "<$tagName>")
+                if (closing) {
+                    output.append("</$tagName>")
+                } else {
+                    output.append("<$tagName")
+                        .append(safeAttributes(attributes))
+                        .append(">")
+                }
             } else if (tagName == "a" && !closing) {
                 val href = attribute(attributes, "href")
                     ?.takeIf { it.startsWith("#") }
@@ -131,9 +147,9 @@ class EbookHtmlRenderer {
                 output.append("</a>")
             } else if (tagName == "img" && !closing) {
                 val reference = attribute(attributes, "recindex") ?: attribute(attributes, "src")
-                val resourceId = reference?.let { resolveResourceId(it, book) }
+                val resourceId = reference?.let { resolveResourceId(it, book, sourcePath) }
                 if (resourceId != null) {
-                    output.append("<img src=\"mobi-resource://")
+                    output.append("<img src=\"ebook-resource://")
                         .append(escapeHtmlAttribute(resourceId))
                         .append("\" alt=\"\">")
                 }
@@ -146,17 +162,88 @@ class EbookHtmlRenderer {
         return output.toString()
     }
 
-    private fun resolveResourceId(reference: String, book: MobiBook): String? {
+    private fun resolveResourceId(
+        reference: String,
+        book: EbookBook,
+        sourcePath: String?
+    ): String? {
         val normalized = reference.trim().removeSurrounding("\"").removeSurrounding("'")
         return book.resources.firstOrNull { it.id == normalized }?.id
-            ?: normalized.removePrefix("mobi-resource://")
+            ?: normalized.removePrefix("ebook-resource://")
+                .removePrefix("mobi-resource://")
                 .takeIf { value -> book.resources.any { it.id == value } }
+            ?: normalizeResourcePath(sourcePath, normalized)?.let { resourcePath ->
+                book.resources.firstOrNull { it.path == resourcePath }?.id
+            }
             ?: normalized.toIntOrNull()?.let { recordIndex ->
                 book.resources.firstOrNull { it.recordIndex == recordIndex }?.id
                     ?: book.resources.getOrNull(recordIndex)?.id
             }
             ?: Regex("(\\d+)").find(normalized)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?.let { index -> book.resources.getOrNull(index)?.id }
+    }
+
+    private fun normalizeResourcePath(sourcePath: String?, reference: String): String? {
+        if (reference.startsWith("#") || reference.startsWith("data:", ignoreCase = true)) {
+            return null
+        }
+
+        val decodedReference = Uri.decode(reference)
+            .substringBefore('#')
+            .substringBefore('?')
+            .replace('\\', '/')
+        if (decodedReference.isBlank()) {
+            return null
+        }
+
+        val base = sourcePath?.substringBeforeLast('/', "")?.takeIf(String::isNotEmpty)
+        val combined = if (decodedReference.startsWith('/')) {
+            decodedReference.removePrefix("/")
+        } else if (base == null) {
+            decodedReference
+        } else {
+            "$base/$decodedReference"
+        }
+
+        val parts = ArrayDeque<String>()
+        combined.split('/').forEach { part ->
+            when (part) {
+                "", "." -> Unit
+                ".." -> if (parts.isNotEmpty()) parts.removeLast()
+                else -> parts.addLast(part)
+            }
+        }
+        return parts.joinToString("/").takeIf(String::isNotEmpty)
+    }
+
+    private fun safeAttributes(attributes: String): String {
+        val builder = StringBuilder()
+        attribute(attributes, "class")
+            ?.let(::safeCssTokens)
+            ?.takeIf(String::isNotEmpty)
+            ?.let { builder.append(" class=\"").append(escapeHtmlAttribute(it)).append("\"") }
+        attribute(attributes, "id")
+            ?.let(::safeCssToken)
+            ?.takeIf(String::isNotEmpty)
+            ?.let { builder.append(" id=\"").append(escapeHtmlAttribute(it)).append("\"") }
+        return builder.toString()
+    }
+
+    private fun safeCssTokens(value: String): String {
+        return value.split(Regex("\\s+"))
+            .mapNotNull(::safeCssToken)
+            .joinToString(" ")
+    }
+
+    private fun safeCssToken(value: String): String? {
+        return value.takeIf { it.matches(Regex("[A-Za-z_][A-Za-z0-9_-]*")) }
+    }
+
+    private fun sanitizeStylesheet(stylesheet: String): String {
+        return stylesheet
+            .replace(CSS_IMPORT_REGEX, "")
+            .replace(CSS_UNSAFE_DECLARATION_REGEX, "")
+            .replace(CSS_URL_REGEX, "none")
     }
 
     private fun attribute(attributes: String, name: String): String? {
@@ -195,5 +282,8 @@ class EbookHtmlRenderer {
         val TAG_REGEX = Regex("(?is)<(/?)([a-z][a-z0-9:-]*)([^>]*)>")
         val UNSAFE_BLOCK_REGEX = Regex("(?is)<(script|style|iframe|object|embed)\\b.*?</\\1\\s*>")
         val COMMENT_REGEX = Regex("(?is)<!--.*?-->")
+        val CSS_IMPORT_REGEX = Regex("(?is)@import[^;]*;")
+        val CSS_UNSAFE_DECLARATION_REGEX = Regex("(?is)(?:behavior|binding|expression)\\s*:[^;{}]+;?")
+        val CSS_URL_REGEX = Regex("(?is)url\\s*\\([^)]*\\)")
     }
 }

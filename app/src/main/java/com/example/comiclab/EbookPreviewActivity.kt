@@ -9,8 +9,11 @@ import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import com.example.comiclab.ebook.EbookSession
+import com.example.comiclab.ebook.EbookSessionFactory
 import com.example.comiclab.ebook.EbookProgressStore
-import com.example.comiclab.ebook.mobi.MobiBookSession
+import com.example.comiclab.ebook.epub.EpubParseError
+import com.example.comiclab.ebook.epub.EpubParseException
 import com.example.comiclab.ebook.mobi.MobiParseException
 import com.example.comiclab.ebook.mobi.MobiParseError
 import java.io.File
@@ -29,7 +32,7 @@ class EbookPreviewActivity : AppCompatActivity() {
 
     private val previewExecutor = Executors.newSingleThreadExecutor()
     private var loadGeneration = 0
-    private var session: MobiBookSession? = null
+    private var session: EbookSession? = null
     private var bookFile: File? = null
 
     @Volatile
@@ -92,7 +95,7 @@ class EbookPreviewActivity : AppCompatActivity() {
         runCatching {
             previewExecutor.execute {
                 val result = runCatching {
-                    val loadedSession = MobiBookSession.open(file)
+                    val loadedSession = EbookSessionFactory.open(file)
                     val cover = loadedSession.book.coverResourceId?.let { resourceId ->
                         loadedSession.openResource(resourceId)?.use { input ->
                             BitmapFactory.decodeStream(input)
@@ -173,22 +176,33 @@ class EbookPreviewActivity : AppCompatActivity() {
     }
 
     private fun errorMessage(error: Throwable): String {
-        val reason = (error as? MobiParseException)?.reason
-        return when (reason) {
-            MobiParseError.DRM_PROTECTED -> getString(R.string.ebook_drm_unsupported)
-            MobiParseError.UNSUPPORTED_COMPRESSION,
-            MobiParseError.UNSUPPORTED_FORMAT -> getString(R.string.ebook_format_unsupported)
-            MobiParseError.EMPTY_BOOK -> getString(R.string.ebook_empty)
-            MobiParseError.INVALID_FILE,
-            MobiParseError.TRUNCATED_FILE,
-            MobiParseError.INVALID_MOBI_HEADER,
-            MobiParseError.INVALID_RECORD -> getString(R.string.ebook_corrupted)
-            null -> getString(R.string.ebook_load_failed)
+        return when (error) {
+            is MobiParseException -> when (error.reason) {
+                MobiParseError.DRM_PROTECTED -> getString(R.string.ebook_drm_unsupported)
+                MobiParseError.UNSUPPORTED_COMPRESSION,
+                MobiParseError.UNSUPPORTED_FORMAT -> getString(R.string.ebook_format_unsupported)
+                MobiParseError.EMPTY_BOOK -> getString(R.string.ebook_empty)
+                MobiParseError.INVALID_FILE,
+                MobiParseError.TRUNCATED_FILE,
+                MobiParseError.INVALID_MOBI_HEADER,
+                MobiParseError.INVALID_RECORD -> getString(R.string.ebook_corrupted)
+            }
+            is EpubParseException -> when (error.reason) {
+                EpubParseError.ENCRYPTED -> getString(R.string.ebook_encrypted_unsupported)
+                EpubParseError.EMPTY_BOOK -> getString(R.string.ebook_empty)
+                EpubParseError.UNSUPPORTED_FORMAT -> getString(R.string.ebook_format_unsupported)
+                EpubParseError.INVALID_FILE,
+                EpubParseError.INVALID_ARCHIVE,
+                EpubParseError.MISSING_MIMETYPE,
+                EpubParseError.INVALID_CONTAINER,
+                EpubParseError.INVALID_PACKAGE -> getString(R.string.ebook_corrupted)
+            }
+            else -> getString(R.string.ebook_load_failed)
         }
     }
 
     private data class LoadedBook(
-        val session: MobiBookSession,
+        val session: EbookSession,
         val cover: Bitmap?
     )
 

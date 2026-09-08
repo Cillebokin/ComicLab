@@ -1,160 +1,154 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/main"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/comiclab_file_picker_background"
-    android:orientation="vertical">
+    android:background="@color/black">
 
-    <View
-        android:id="@+id/statusBarBackground"
+    <WebView
+        android:id="@+id/webEbookReader"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:background="@color/comiclab_file_picker_background" />
+        android:layout_height="match_parent"
+        android:background="@color/black"
+        android:overScrollMode="never" />
 
     <LinearLayout
-        android:id="@+id/layoutEbookReader"
+        android:id="@+id/layoutEbookToolbar"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:orientation="vertical">
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:layout_marginStart="12dp"
+        android:layout_marginTop="12dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/bg_reader_control_panel"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="14dp"
+        android:paddingBottom="14dp">
+
+        <TextView
+            android:id="@+id/tvEbookReaderTitle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/white"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnEbookContents"
+            android:layout_width="@dimen/reader_toolbar_preview_button_width"
+            android:layout_height="@dimen/reader_toolbar_preview_button_height"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_preview_action_button"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:paddingStart="6dp"
+            android:paddingTop="0dp"
+            android:paddingEnd="6dp"
+            android:paddingBottom="0dp"
+            android:singleLine="true"
+            android:text="@string/ebook_contents"
+            android:textAllCaps="false"
+            android:textColor="@color/white"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layoutEbookReaderProgress"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="12dp"
+        android:background="@drawable/bg_reader_control_panel"
+        android:gravity="center_vertical"
+        android:orientation="vertical"
+        android:paddingStart="12dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="8dp">
 
         <LinearLayout
-            android:id="@+id/layoutEbookToolbar"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@color/comiclab_file_picker_background"
+            android:layout_height="36dp"
             android:gravity="center_vertical"
-            android:minHeight="52dp"
-            android:orientation="horizontal"
-            android:paddingStart="8dp"
-            android:paddingTop="4dp"
-            android:paddingEnd="8dp"
-            android:paddingBottom="4dp">
+            android:orientation="horizontal">
+
+            <SeekBar
+                android:id="@+id/sliderEbookReaderProgress"
+                android:layout_width="0dp"
+                android:layout_height="36dp"
+                android:layout_weight="1"
+                android:max="1000"
+                android:progress="0"
+                android:progressBackgroundTint="@color/reader_brightness_track_tint"
+                android:progressTint="@color/comiclab_accent"
+                android:thumbTint="@color/white" />
 
             <TextView
-                android:id="@+id/tvEbookReaderTitle"
-                android:layout_width="0dp"
+                android:id="@+id/tvEbookReaderProgress"
+                android:layout_width="132dp"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:textColor="@color/black"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <Button
-                android:id="@+id/btnEbookContents"
-                android:layout_width="@dimen/reader_toolbar_preview_button_width"
-                android:layout_height="@dimen/reader_toolbar_preview_button_height"
                 android:layout_marginStart="8dp"
-                android:background="@drawable/bg_preview_action_button"
-                android:gravity="center"
-                android:includeFontPadding="false"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:paddingStart="6dp"
-                android:paddingTop="0dp"
-                android:paddingEnd="6dp"
-                android:paddingBottom="0dp"
-                android:singleLine="true"
-                android:text="@string/ebook_contents"
-                android:textAllCaps="false"
+                android:gravity="end"
+                android:text="@string/ebook_progress_not_started"
                 android:textColor="@color/white"
                 android:textSize="12sp" />
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/tvEbookReaderStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@color/comiclab_file_picker_background"
-            android:paddingStart="16dp"
-            android:paddingTop="4dp"
-            android:paddingEnd="16dp"
-            android:paddingBottom="4dp"
-            android:textColor="@color/comiclab_text_secondary"
-            android:textSize="12sp"
-            android:visibility="gone" />
-
-        <WebView
-            android:id="@+id/webEbookReader"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:background="@color/comiclab_file_picker_background" />
-
         <LinearLayout
-            android:id="@+id/layoutEbookReaderProgress"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@drawable/bg_reader_control_panel"
+            android:layout_height="36dp"
+            android:layout_marginTop="4dp"
             android:gravity="center_vertical"
-            android:orientation="vertical"
-            android:paddingStart="12dp"
-            android:paddingTop="8dp"
-            android:paddingEnd="12dp"
-            android:paddingBottom="8dp">
+            android:orientation="horizontal">
 
-            <LinearLayout
-                android:layout_width="match_parent"
+            <SeekBar
+                android:id="@+id/sliderEbookScreenBrightness"
+                android:layout_width="0dp"
                 android:layout_height="36dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
+                android:layout_weight="1"
+                android:max="255"
+                android:progress="128"
+                android:progressBackgroundTint="@color/reader_brightness_track_tint"
+                android:progressTint="@color/reader_brightness_progress_tint"
+                android:thumbTint="@color/reader_brightness_thumb_tint" />
 
-                <SeekBar
-                    android:id="@+id/sliderEbookReaderProgress"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
-                    android:layout_weight="1"
-                    android:max="1000"
-                    android:progress="0"
-                    android:progressBackgroundTint="@color/reader_brightness_track_tint"
-                    android:progressTint="@color/comiclab_accent"
-                    android:thumbTint="@color/white" />
-
-                <TextView
-                    android:id="@+id/tvEbookReaderProgress"
-                    android:layout_width="132dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:gravity="end"
-                    android:text="@string/ebook_progress_not_started"
-                    android:textColor="@color/white"
-                    android:textSize="12sp" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="match_parent"
+            <CheckBox
+                android:id="@+id/checkboxEbookCustomBrightness"
+                android:layout_width="wrap_content"
                 android:layout_height="36dp"
-                android:layout_marginTop="4dp"
+                android:layout_marginStart="8dp"
+                android:buttonTint="@color/comiclab_accent"
                 android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <SeekBar
-                    android:id="@+id/sliderEbookScreenBrightness"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
-                    android:layout_weight="1"
-                    android:max="255"
-                    android:progress="128"
-                    android:progressBackgroundTint="@color/reader_brightness_track_tint"
-                    android:progressTint="@color/reader_brightness_progress_tint"
-                    android:thumbTint="@color/reader_brightness_thumb_tint" />
-
-                <CheckBox
-                    android:id="@+id/checkboxEbookCustomBrightness"
-                    android:layout_width="wrap_content"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="8dp"
-                    android:buttonTint="@color/comiclab_accent"
-                    android:gravity="center_vertical"
-                    android:minWidth="0dp"
-                    android:paddingStart="4dp"
-                    android:text="@string/custom_brightness"
-                    android:textColor="@color/white"
-                    android:textSize="13sp" />
-            </LinearLayout>
+                android:minWidth="0dp"
+                android:paddingStart="4dp"
+                android:text="@string/custom_brightness"
+                android:textColor="@color/white"
+                android:textSize="13sp" />
         </LinearLayout>
     </LinearLayout>
-</LinearLayout>
+
+    <TextView
+        android:id="@+id/tvEbookReaderStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginStart="36dp"
+        android:layout_marginEnd="36dp"
+        android:background="@drawable/bg_reader_status_panel"
+        android:gravity="center"
+        android:padding="16dp"
+        android:text="@string/ebook_loading"
+        android:textColor="@color/white"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+</FrameLayout>

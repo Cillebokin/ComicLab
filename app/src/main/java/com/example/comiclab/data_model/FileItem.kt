@@ -94,7 +94,7 @@ class FileListAdapter(
             return view
         }
 
-        if (ComicArchive.isArchive(file) || ReaderFileDetector.isMobi(file)) {
+        if (ComicArchive.isArchive(file) || ReaderFileDetector.isEbook(file)) {
             bindArchiveIcon(file, imgIcon)
         } else {
             imgIcon.tag = null
@@ -200,7 +200,7 @@ class FileListAdapter(
         imgIcon.scaleType = ImageView.ScaleType.CENTER_INSIDE
         imgIcon.setImageResource(R.drawable.png_press_package_icon)
 
-        if (ReaderFileDetector.isMobi(file)) {
+        if (ReaderFileDetector.isEbook(file)) {
             imgIcon.tag = null
             return
         }

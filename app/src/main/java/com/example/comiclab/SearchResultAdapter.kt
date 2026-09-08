@@ -66,7 +66,7 @@ class SearchResultAdapter(
     private fun bindIcon(file: File, imgIcon: ImageView) {
         when {
             file.isDirectory -> bindDirectoryIcon(file, imgIcon)
-            ComicArchive.isArchive(file) || ReaderFileDetector.isMobi(file) -> bindArchiveIcon(file, imgIcon)
+            ComicArchive.isArchive(file) || ReaderFileDetector.isEbook(file) -> bindArchiveIcon(file, imgIcon)
             else -> {
                 imgIcon.tag = null
                 setDefaultIconLayout(imgIcon)
@@ -117,7 +117,7 @@ class SearchResultAdapter(
         imgIcon.scaleType = ImageView.ScaleType.CENTER_INSIDE
         imgIcon.setImageResource(R.drawable.png_press_package_icon)
 
-        if (ReaderFileDetector.isMobi(file)) {
+        if (ReaderFileDetector.isEbook(file)) {
             imgIcon.tag = null
             return
         }

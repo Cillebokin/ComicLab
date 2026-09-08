@@ -295,10 +295,11 @@ class MobiParser {
             val resourceId = "image-${(resources.size + 1).toString().padStart(4, '0')}"
             resources += MobiResource(resourceId, recordIndex, mimeType)
             resourceRecords[resourceId] = ResourceRecord(
+                id = resourceId,
                 recordIndex = recordIndex,
+                mimeType = mimeType,
                 offset = record.offset,
-                length = record.length,
-                mimeType = mimeType
+                length = record.length
             )
             if (coverOffset != null && recordIndex == firstImageRecord + coverOffset) {
                 coverResourceId = resourceId

@@ -1,10 +1,14 @@
 package com.example.comiclab
 
 import android.annotation.SuppressLint
+import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.view.GestureDetector
+import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
@@ -13,16 +17,24 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.CheckBox
+import android.widget.FrameLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.example.comiclab.ebook.EbookProgress
 import com.example.comiclab.ebook.EbookProgressStore
 import com.example.comiclab.ebook.EbookReaderProgressMapper
+import com.example.comiclab.ebook.EbookSession
+import com.example.comiclab.ebook.EbookSessionFactory
 import com.example.comiclab.ebook.html.EbookHtmlRenderer
 import com.example.comiclab.ebook.html.EbookStyle
-import com.example.comiclab.ebook.mobi.MobiBookSession
+import com.example.comiclab.ebook.epub.EpubParseError
+import com.example.comiclab.ebook.epub.EpubParseException
 import com.example.comiclab.ebook.mobi.MobiParseException
 import com.example.comiclab.ebook.mobi.MobiParseError
 import java.io.ByteArrayInputStream
@@ -31,6 +43,9 @@ import java.util.concurrent.Executors
 
 class EbookReaderActivity : AppCompatActivity() {
 
+    private lateinit var rootView: View
+    private lateinit var layoutEbookToolbar: View
+    private lateinit var layoutEbookReaderProgress: View
     private lateinit var tvTitle: TextView
     private lateinit var tvStatus: TextView
     private lateinit var webReader: WebView
@@ -42,9 +57,12 @@ class EbookReaderActivity : AppCompatActivity() {
 
     private val loadExecutor = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
+    private val autoHideControlsRunnable = Runnable {
+        setReaderControlsVisible(false)
+    }
     private val htmlRenderer = EbookHtmlRenderer()
     private var loadGeneration = 0
-    private var session: MobiBookSession? = null
+    private var session: EbookSession? = null
     private var bookFile: File? = null
     private val style = EbookStyle()
     private var currentProgress: EbookProgress? = null
@@ -54,6 +72,8 @@ class EbookReaderActivity : AppCompatActivity() {
     private var isDraggingReaderProgress = false
     private var isUpdatingBrightnessControls = false
     private var customReaderBrightnessEnabled = false
+    private var readerControlsVisible = true
+    private var autoHideSystemBarsEnabled = true
 
     @Volatile
     private var destroyed = false
@@ -62,14 +82,11 @@ class EbookReaderActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_ebook_reader)
-        SystemBars.fitContentBelowSystemBars(
-            this,
-            findViewById(R.id.main),
-            findViewById(R.id.statusBarBackground),
-            statusBarColorResId = R.color.comiclab_file_picker_background,
-            lightStatusBars = true
-        )
+        autoHideSystemBarsEnabled = AppSettings.isAutoHideSystemBarsEnabled(this)
 
+        rootView = findViewById(R.id.main)
+        layoutEbookToolbar = findViewById(R.id.layoutEbookToolbar)
+        layoutEbookReaderProgress = findViewById(R.id.layoutEbookReaderProgress)
         tvTitle = findViewById(R.id.tvEbookReaderTitle)
         tvStatus = findViewById(R.id.tvEbookReaderStatus)
         webReader = findViewById(R.id.webEbookReader)
@@ -79,6 +96,7 @@ class EbookReaderActivity : AppCompatActivity() {
         sliderScreenBrightness = findViewById(R.id.sliderEbookScreenBrightness)
         checkboxCustomBrightness = findViewById(R.id.checkboxEbookCustomBrightness)
 
+        configureImmersiveSystemBars()
         configureWebView()
         configureActions()
         configureProgressControls()
@@ -100,15 +118,29 @@ class EbookReaderActivity : AppCompatActivity() {
         tvTitle.text = file.nameWithoutExtension
         updateProgressControls(currentProgress)
         loadBook(file)
+        showReaderControlsTemporarily()
     }
 
     override fun onResume() {
         super.onResume()
+        autoHideSystemBarsEnabled = AppSettings.isAutoHideSystemBarsEnabled(this)
+        updateSystemBarsVisibilityForReaderControls()
         applyReaderBrightnessSetting()
         updateBrightnessControls()
+        if (readerControlsVisible) {
+            showReaderControlsTemporarily()
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && autoHideSystemBarsEnabled && !readerControlsVisible) {
+            setSystemBarsVisible(false)
+        }
     }
 
     override fun onPause() {
+        handler.removeCallbacks(autoHideControlsRunnable)
         saveCurrentProgress(force = true)
         restoreSystemBrightness()
         super.onPause()
@@ -134,7 +166,90 @@ class EbookReaderActivity : AppCompatActivity() {
     }
 
     private fun configureActions() {
-        btnContents.setOnClickListener { showContents() }
+        val tapDetector = GestureDetector(
+            this,
+            object : GestureDetector.SimpleOnGestureListener() {
+                override fun onDown(e: MotionEvent): Boolean {
+                    return true
+                }
+
+                override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                    handleReaderTap()
+                    return true
+                }
+            }
+        )
+        webReader.setOnTouchListener { _, event ->
+            tapDetector.onTouchEvent(event)
+            false
+        }
+        btnContents.setOnClickListener {
+            showReaderControlsTemporarily()
+            showContents()
+        }
+    }
+
+    private fun configureImmersiveSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+        WindowInsetsControllerCompat(window, rootView).systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+
+        val toolbarInitialMarginTop =
+            (layoutEbookToolbar.layoutParams as FrameLayout.LayoutParams).topMargin
+        val progressInitialMarginBottom =
+            (layoutEbookReaderProgress.layoutParams as FrameLayout.LayoutParams).bottomMargin
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { _, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            (layoutEbookToolbar.layoutParams as FrameLayout.LayoutParams).apply {
+                topMargin = toolbarInitialMarginTop + systemBars.top
+                layoutEbookToolbar.layoutParams = this
+            }
+            (layoutEbookReaderProgress.layoutParams as FrameLayout.LayoutParams).apply {
+                bottomMargin = progressInitialMarginBottom + systemBars.bottom
+                layoutEbookReaderProgress.layoutParams = this
+            }
+            insets
+        }
+        ViewCompat.requestApplyInsets(rootView)
+    }
+
+    private fun handleReaderTap() {
+        if (readerControlsVisible) {
+            setReaderControlsVisible(false)
+        } else {
+            showReaderControlsTemporarily()
+        }
+    }
+
+    private fun showReaderControlsTemporarily() {
+        setReaderControlsVisible(true)
+        handler.removeCallbacks(autoHideControlsRunnable)
+        handler.postDelayed(autoHideControlsRunnable, READER_CONTROLS_AUTO_HIDE_MS)
+    }
+
+    private fun setReaderControlsVisible(visible: Boolean) {
+        readerControlsVisible = visible
+        layoutEbookToolbar.visibility = if (visible) View.VISIBLE else View.GONE
+        layoutEbookReaderProgress.visibility = if (visible) View.VISIBLE else View.GONE
+        if (visible) {
+            updateBrightnessControls()
+        }
+        updateSystemBarsVisibilityForReaderControls()
+    }
+
+    private fun updateSystemBarsVisibilityForReaderControls() {
+        setSystemBarsVisible(!autoHideSystemBarsEnabled || readerControlsVisible)
+    }
+
+    private fun setSystemBarsVisible(visible: Boolean) {
+        val controller = WindowInsetsControllerCompat(window, rootView)
+        if (visible) {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+        } else {
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        }
     }
 
     private fun configureProgressControls() {
@@ -150,6 +265,7 @@ class EbookReaderActivity : AppCompatActivity() {
 
             override fun onStartTrackingTouch(seekBar: SeekBar) {
                 isDraggingReaderProgress = true
+                handler.removeCallbacks(autoHideControlsRunnable)
             }
 
             override fun onStopTrackingTouch(seekBar: SeekBar) {
@@ -165,6 +281,7 @@ class EbookReaderActivity : AppCompatActivity() {
                     )
                 }
                 saveCurrentProgress(force = true)
+                showReaderControlsTemporarily()
             }
         })
         updateProgressControls(currentProgress)
@@ -220,7 +337,11 @@ class EbookReaderActivity : AppCompatActivity() {
                 applyCustomReaderBrightness(brightness)
             }
 
-            override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
+            override fun onStartTrackingTouch(seekBar: SeekBar) {
+                if (customReaderBrightnessEnabled) {
+                    handler.removeCallbacks(autoHideControlsRunnable)
+                }
+            }
 
             override fun onStopTrackingTouch(seekBar: SeekBar) {
                 if (customReaderBrightnessEnabled) {
@@ -230,6 +351,7 @@ class EbookReaderActivity : AppCompatActivity() {
                     )
                     AppSettings.setCustomReaderBrightness(this@EbookReaderActivity, brightness)
                     applyCustomReaderBrightness(brightness)
+                    showReaderControlsTemporarily()
                 }
             }
         })
@@ -252,6 +374,7 @@ class EbookReaderActivity : AppCompatActivity() {
                 restoreSystemBrightness()
             }
             updateBrightnessControls()
+            showReaderControlsTemporarily()
         }
 
         updateBrightnessControls()
@@ -369,7 +492,7 @@ class EbookReaderActivity : AppCompatActivity() {
 
         runCatching {
             loadExecutor.execute {
-                val result = runCatching { MobiBookSession.open(file) }
+                val result = runCatching { EbookSessionFactory.open(file) }
                 if (destroyed || generation != loadGeneration) {
                     result.getOrNull()?.close()
                     return@execute
@@ -448,11 +571,12 @@ class EbookReaderActivity : AppCompatActivity() {
         val titles = book.chapters.mapIndexed { index, chapter ->
             "${index + 1}. ${chapter.title}"
         }.toTypedArray()
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle(R.string.ebook_contents)
             .setItems(titles) { _, which ->
                 currentProgress = EbookProgress(which, 0f)
                 updateProgressControls(currentProgress)
+                saveCurrentProgress(force = true)
                 if (pageReady) {
                     webReader.evaluateJavascript(
                         "javascript:window.jumpToComicLabChapter($which);",
@@ -461,7 +585,13 @@ class EbookReaderActivity : AppCompatActivity() {
                 }
             }
             .setNegativeButton(R.string.cancel, null)
-            .show()
+            .create()
+        dialog.setOnDismissListener {
+            if (!destroyed) {
+                showReaderControlsTemporarily()
+            }
+        }
+        dialog.show()
     }
 
     private fun showError(message: String) {
@@ -470,17 +600,28 @@ class EbookReaderActivity : AppCompatActivity() {
     }
 
     private fun errorMessage(error: Throwable): String {
-        val reason = (error as? MobiParseException)?.reason
-        return when (reason) {
-            MobiParseError.DRM_PROTECTED -> getString(R.string.ebook_drm_unsupported)
-            MobiParseError.UNSUPPORTED_COMPRESSION,
-            MobiParseError.UNSUPPORTED_FORMAT -> getString(R.string.ebook_format_unsupported)
-            MobiParseError.EMPTY_BOOK -> getString(R.string.ebook_empty)
-            MobiParseError.INVALID_FILE,
-            MobiParseError.TRUNCATED_FILE,
-            MobiParseError.INVALID_MOBI_HEADER,
-            MobiParseError.INVALID_RECORD -> getString(R.string.ebook_corrupted)
-            null -> getString(R.string.ebook_load_failed)
+        return when (error) {
+            is MobiParseException -> when (error.reason) {
+                MobiParseError.DRM_PROTECTED -> getString(R.string.ebook_drm_unsupported)
+                MobiParseError.UNSUPPORTED_COMPRESSION,
+                MobiParseError.UNSUPPORTED_FORMAT -> getString(R.string.ebook_format_unsupported)
+                MobiParseError.EMPTY_BOOK -> getString(R.string.ebook_empty)
+                MobiParseError.INVALID_FILE,
+                MobiParseError.TRUNCATED_FILE,
+                MobiParseError.INVALID_MOBI_HEADER,
+                MobiParseError.INVALID_RECORD -> getString(R.string.ebook_corrupted)
+            }
+            is EpubParseException -> when (error.reason) {
+                EpubParseError.ENCRYPTED -> getString(R.string.ebook_encrypted_unsupported)
+                EpubParseError.EMPTY_BOOK -> getString(R.string.ebook_empty)
+                EpubParseError.UNSUPPORTED_FORMAT -> getString(R.string.ebook_format_unsupported)
+                EpubParseError.INVALID_FILE,
+                EpubParseError.INVALID_ARCHIVE,
+                EpubParseError.MISSING_MIMETYPE,
+                EpubParseError.INVALID_CONTAINER,
+                EpubParseError.INVALID_PACKAGE -> getString(R.string.ebook_corrupted)
+            }
+            else -> getString(R.string.ebook_load_failed)
         }
     }
 
@@ -516,9 +657,10 @@ class EbookReaderActivity : AppCompatActivity() {
         const val EXTRA_BOOK_PATH = "archive_path"
         const val EXTRA_START_FROM_BEGINNING = "start_from_beginning"
 
-        private const val RESOURCE_SCHEME = "mobi-resource"
+        private const val RESOURCE_SCHEME = "ebook-resource"
         private const val BASE_URL = "https://comiclab.invalid/"
         private const val JS_BRIDGE_NAME = "ComicLabBridge"
+        private const val READER_CONTROLS_AUTO_HIDE_MS = 2600L
         private const val MIN_PROGRESS_SAVE_INTERVAL_MS = 500L
         private const val MIN_WINDOW_BRIGHTNESS = 0.01f
         private const val MAX_WINDOW_BRIGHTNESS = 1f
