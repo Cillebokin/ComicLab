@@ -29,6 +29,29 @@ class EbookHtmlRendererTest {
     }
 
     @Test
+    fun kindleEmbedReferenceUsesKindleBase32ResourceIndex() {
+        val book = EbookBook(
+            title = "Test",
+            author = null,
+            chapters = listOf(
+                EbookChapter(0, "Chapter", "<p><img src=\"kindle:embed:000A?mime=image/jpg\"></p>")
+            ),
+            resources = listOf(
+                EbookResource(
+                    id = "image-0010",
+                    recordIndex = 19,
+                    mimeType = "image/jpeg",
+                    resourceIndex = 9
+                )
+            )
+        )
+
+        val html = EbookHtmlRenderer().render(book, EbookStyle())
+
+        assertTrue(html.contains("ebook-resource://image-0010"))
+    }
+
+    @Test
     fun mobiRecindexUsesRelativeSlotWhenNonImageRecordsAreSkipped() {
         val book = EbookBook(
             title = "Test",

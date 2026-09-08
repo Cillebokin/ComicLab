@@ -181,12 +181,14 @@ class EbookPreviewActivity : AppCompatActivity() {
                 MobiParseError.DRM_PROTECTED -> getString(R.string.ebook_drm_unsupported)
                 MobiParseError.UNSUPPORTED_COMPRESSION,
                 MobiParseError.UNSUPPORTED_FORMAT -> getString(R.string.ebook_format_unsupported)
+
                 MobiParseError.EMPTY_BOOK -> getString(R.string.ebook_empty)
                 MobiParseError.INVALID_FILE,
                 MobiParseError.TRUNCATED_FILE,
                 MobiParseError.INVALID_MOBI_HEADER,
                 MobiParseError.INVALID_RECORD -> getString(R.string.ebook_corrupted)
             }
+
             is EpubParseException -> when (error.reason) {
                 EpubParseError.ENCRYPTED -> getString(R.string.ebook_encrypted_unsupported)
                 EpubParseError.EMPTY_BOOK -> getString(R.string.ebook_empty)
@@ -197,6 +199,7 @@ class EbookPreviewActivity : AppCompatActivity() {
                 EpubParseError.INVALID_CONTAINER,
                 EpubParseError.INVALID_PACKAGE -> getString(R.string.ebook_corrupted)
             }
+
             else -> getString(R.string.ebook_load_failed)
         }
     }

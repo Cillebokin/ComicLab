@@ -99,8 +99,9 @@ class MobiParser {
             )
         }
 
-        val firstImageRecord = readOptionalUnsignedInt(headerRecord, MOBI_FIRST_IMAGE_OFFSET)
+        val declaredFirstImageRecord = readOptionalUnsignedInt(headerRecord, MOBI_FIRST_IMAGE_OFFSET)
             ?.takeUnless { it == UINT32_MAX }
+            ?.takeIf { it < records.size.toLong() }
             ?.toInt()
         val firstContentRecord = readOptionalUnsignedShort(
             headerRecord,
@@ -131,6 +132,8 @@ class MobiParser {
                 "MOBI text records are incomplete"
             )
         }
+        val firstImageRecord = declaredFirstImageRecord
+            ?: textRecordsEnd.takeIf { it in records.indices }
 
         val boundedTextBytes = readTextContent(
             randomAccessFile = randomAccessFile,
@@ -265,17 +268,39 @@ class MobiParser {
             )
         }
 
-        val firstImageRecord = resolveKf8RecordIndex(
+        val kf8FirstImageRecord = resolveKf8RecordIndex(
             value = readOptionalUnsignedInt(headerRecord, MOBI_FIRST_IMAGE_OFFSET),
             headerRecordIndex = headerRecordIndex,
             recordCount = records.size
         )
-        val resourcesResult = readResources(
+        var resourcesResult = readResources(
             randomAccessFile = randomAccessFile,
             records = records,
-            firstImageRecord = firstImageRecord,
+            firstImageRecord = kf8FirstImageRecord,
             coverOffset = exth.coverOffset
         )
+        if (headerRecordIndex > 0) {
+            // Dual-format MOBI files keep the actual image records in the
+            // legacy resource section before the KF8 boundary. The KF8
+            // first-image field can point to FDST/FLIS/FCIS records instead.
+            val legacyHeaderRecord = readRecord(randomAccessFile, records.first())
+            val legacyFirstImageRecord = readOptionalUnsignedInt(
+                legacyHeaderRecord,
+                MOBI_FIRST_IMAGE_OFFSET
+            )
+                ?.takeUnless { it == UINT32_MAX }
+                ?.takeIf { it < records.size.toLong() }
+                ?.toInt()
+            val legacyResourcesResult = readResources(
+                randomAccessFile = randomAccessFile,
+                records = records,
+                firstImageRecord = legacyFirstImageRecord,
+                coverOffset = exth.coverOffset
+            )
+            if (legacyResourcesResult.resources.size > resourcesResult.resources.size) {
+                resourcesResult = legacyResourcesResult
+            }
+        }
         val chapters = kf8Content.documents
             .flatMap { extractChapters(it, title) }
             .mapIndexed { index, chapter -> chapter.copy(index = index) }

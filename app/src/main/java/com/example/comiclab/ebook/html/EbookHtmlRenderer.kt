@@ -172,8 +172,7 @@ class EbookHtmlRenderer {
             MOBI_RESOURCE_INDEX_REGEX.find(normalized)
                 ?.groupValues
                 ?.getOrNull(1)
-                ?.toIntOrNull()
-                ?.takeIf { it > 0 }
+                ?.let(::decodeMobiResourceIndex)
         } else {
             null
         }
@@ -194,6 +193,21 @@ class EbookHtmlRenderer {
             }
             ?: Regex("(\\d+)").find(normalized)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?.let { index -> book.resources.getOrNull(index)?.id }
+    }
+
+    private fun decodeMobiResourceIndex(value: String): Int? {
+        var decoded = 0L
+        for (character in value.uppercase()) {
+            val digit = MOBI_RESOURCE_ALPHABET.indexOf(character)
+            if (digit < 0) {
+                return null
+            }
+            decoded = decoded * MOBI_RESOURCE_RADIX + digit
+            if (decoded > Int.MAX_VALUE) {
+                return null
+            }
+        }
+        return decoded.toInt().takeIf { it > 0 }
     }
 
     private fun normalizeResourcePath(sourcePath: String?, reference: String): String? {
@@ -298,6 +312,8 @@ class EbookHtmlRenderer {
         val CSS_IMPORT_REGEX = Regex("(?is)@import[^;]*;")
         val CSS_UNSAFE_DECLARATION_REGEX = Regex("(?is)(?:behavior|binding|expression)\\s*:[^;{}]+;?")
         val CSS_URL_REGEX = Regex("(?is)url\\s*\\([^)]*\\)")
-        val MOBI_RESOURCE_INDEX_REGEX = Regex("(?i)^(?:kindle:embed:)?0*(\\d+)(?:\\?.*)?$")
+        val MOBI_RESOURCE_INDEX_REGEX = Regex("(?i)^(?:kindle:embed:)?([0-9A-Z]+)(?:\\?.*)?$")
+        const val MOBI_RESOURCE_RADIX = 32L
+        const val MOBI_RESOURCE_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     }
 }
