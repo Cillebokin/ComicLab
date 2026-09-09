@@ -44,7 +44,8 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         tapDetector.onTouchEvent(event)
-        parent?.requestDisallowInterceptTouchEvent(shouldKeepTouchInPage(event))
+        // SubsamplingScaleImageView 会在放大页面到达边缘时主动释放父级拦截，
+        // 外层不要再次覆盖该状态，否则 RecyclerView 无法接管翻页手势。
         return super.onTouchEvent(event)
     }
 
@@ -54,29 +55,9 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
         return true
     }
 
-    override fun canScrollHorizontally(direction: Int): Boolean {
-        return isZoomedPastMinimum() && super.canScrollHorizontally(direction)
-    }
-
-    override fun canScrollVertically(direction: Int): Boolean {
-        return isZoomedPastMinimum() && super.canScrollVertically(direction)
-    }
-
-    private fun shouldKeepTouchInPage(event: MotionEvent): Boolean {
-        if (event.pointerCount > 1) {
-            return true
-        }
-        return isZoomedPastMinimum()
-    }
-
-    private fun isZoomedPastMinimum(): Boolean {
-        return scale > minScale + MIN_SCALE_EPSILON
-    }
-
     companion object {
         private const val MAX_READER_SCALE = 6f
         private const val DOUBLE_TAP_READER_SCALE = 2.5f
         private const val DOUBLE_TAP_ZOOM_DURATION_MS = 160
-        private const val MIN_SCALE_EPSILON = 0.01f
     }
 }

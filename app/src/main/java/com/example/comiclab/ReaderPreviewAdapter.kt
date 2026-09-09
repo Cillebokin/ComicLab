@@ -4,7 +4,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.util.Log
 import android.util.LruCache
 import android.view.LayoutInflater
@@ -42,6 +41,8 @@ class ReaderPreviewAdapter(
 
     private val sessionLock = Any()
 
+    private var attachedRecyclerView: RecyclerView? = null
+
     @Volatile
     private var readerSession: ComicArchive.ImageReaderSession? = null
 
@@ -55,6 +56,18 @@ class ReaderPreviewAdapter(
 
     init {
         setHasStableIds(true)
+    }
+
+    override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
+        super.onAttachedToRecyclerView(recyclerView)
+        attachedRecyclerView = recyclerView
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        if (attachedRecyclerView === recyclerView) {
+            attachedRecyclerView = null
+        }
+        super.onDetachedFromRecyclerView(recyclerView)
     }
 
     override fun getItemCount(): Int = entries.size
@@ -106,10 +119,14 @@ class ReaderPreviewAdapter(
     }
 
     fun close() {
+        if (closed) {
+            return
+        }
         closed = true
         decodeExecutor.shutdownNow()
         loadingPositions.clear()
         failedPositions.clear()
+        clearVisibleBitmapReferences()
         synchronized(cache) {
             cache.evictAll()
         }
@@ -121,8 +138,19 @@ class ReaderPreviewAdapter(
             return
         }
         lowMemoryMode = true
+        clearVisibleBitmapReferences()
         synchronized(cache) {
             cache.evictAll()
+        }
+    }
+
+    private fun clearVisibleBitmapReferences() {
+        val recyclerView = attachedRecyclerView ?: return
+        for (index in 0 until recyclerView.childCount) {
+            val holder = recyclerView.getChildViewHolder(recyclerView.getChildAt(index))
+                as? PreviewViewHolder
+                ?: continue
+            holder.imgPreview.setImageDrawable(null)
         }
     }
 
@@ -142,28 +170,28 @@ class ReaderPreviewAdapter(
                 }
             },
             "ComicLabReaderPreviewClose"
-        ).start()
+        ).apply { isDaemon = true }.start()
     }
 
     private fun awaitDecoderTermination(): Boolean {
-        val startedAt = SystemClock.elapsedRealtime()
-        var timeoutLogged = false
-        while (true) {
-            try {
-                if (decodeExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
-                    return true
-                }
-                if (!timeoutLogged &&
-                    SystemClock.elapsedRealtime() - startedAt >= PREVIEW_CLOSE_WAIT_LOG_MS
-                ) {
-                    timeoutLogged = true
-                    Log.w(LOG_TAG, "reader preview close is waiting for decoder termination")
-                }
-            } catch (interrupted: InterruptedException) {
-                Thread.currentThread().interrupt()
-                Log.w(LOG_TAG, "reader preview close interrupted", interrupted)
-                return false
+        return try {
+            if (decodeExecutor.awaitTermination(
+                    PREVIEW_CLOSE_WAIT_TIMEOUT_MS,
+                    TimeUnit.MILLISECONDS
+                )
+            ) {
+                true
+            } else {
+                Log.w(
+                    LOG_TAG,
+                    "reader preview close timed out; decoder resources are abandoned"
+                )
+                false
             }
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            Log.w(LOG_TAG, "reader preview close interrupted", interrupted)
+            false
         }
     }
 
@@ -250,7 +278,7 @@ class ReaderPreviewAdapter(
 
     companion object {
         private const val LOG_TAG = "ComicLabReader"
-        private const val PREVIEW_CLOSE_WAIT_LOG_MS = 3_000L
+        private const val PREVIEW_CLOSE_WAIT_TIMEOUT_MS = 8_000L
 
         private fun thumbnailCacheSizeKb(): Int {
             val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
