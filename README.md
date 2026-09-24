@@ -1,3 +1,5 @@
+[简体中文](README.md) | [English](README.en.md)
+
 # ComicLab
 
 ComicLab 是一个面向 Android 的本地漫画和电子书阅读器，主要用于浏览手机存储中的漫画文件与电子书，并阅读 ZIP、CBZ、RAR、CBR、7Z、CB7、PDF、无 DRM MOBI 及无 DRM EPUB 文件。
