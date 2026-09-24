@@ -27,6 +27,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.annotation.StringRes
 import androidx.core.content.FileProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -114,7 +115,18 @@ class MainActivity : AppCompatActivity() {
         btnFavoritePaths = findViewById(R.id.btnFavoritePaths)
         readingHistoryScrim = findViewById(R.id.readingHistoryScrim)
 
-        fileListAdapter = FileListAdapter(this, fileItems)
+        fileListAdapter = FileListAdapter(
+            context = this,
+            items = fileItems,
+            onCollectionCoverClick = { directory ->
+                setCurrentPath(directory.absolutePath)
+                loadCurrentDirectory()
+            },
+            onDirectoryLongClick = { directory ->
+                showDirectoryMenu(directory)
+                clearFileListTouchState()
+            }
+        )
         listView.adapter = fileListAdapter
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -836,18 +848,63 @@ class MainActivity : AppCompatActivity() {
             RoundedPopupMenuItem(getString(R.string.classify_comics)) {
                 confirmClassifyCurrentDirectory()
             },
-            RoundedPopupMenuItem(MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES) {
+            RoundedPopupMenuItem(getString(R.string.comic_migration)) {
+                startComicMigration()
+            },
+            RoundedPopupMenuItem(getString(MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES)) {
                 startFindSimilarDirectoryNames()
             },
-            RoundedPopupMenuItem(MENU_TITLE_MERGE_COMICS_NON_RECURSIVE) {
+            RoundedPopupMenuItem(getString(MENU_TITLE_MERGE_COMICS_NON_RECURSIVE)) {
                 startMergeComicsNonRecursive()
             },
-            RoundedPopupMenuItem(MENU_TITLE_MERGE_FILES_NON_RECURSIVE) {
+            RoundedPopupMenuItem(getString(MENU_TITLE_MERGE_FILES_NON_RECURSIVE)) {
                 startMergeFilesNonRecursive()
             }
         )
 
         showRoundedPopupMenu(btnClassify, items, widthDp = 252)
+    }
+
+    private fun startComicMigration() {
+        if (!Environment.isExternalStorageManager()) {
+            openManageAllFilesAccessSettings()
+            return
+        }
+
+        if (isClassifyingComics) {
+            showMessage(getString(R.string.classify_comics_running))
+            return
+        }
+
+        if (isBuildingDirectorySimilarityReport) {
+            showMessage(MESSAGE_FINDING_SIMILAR_DIRECTORY_NAMES)
+            return
+        }
+
+        if (isMergingComics) {
+            showMessage(MESSAGE_MERGING_COMICS)
+            return
+        }
+
+        if (isMergingFiles) {
+            showMessage(MESSAGE_MERGING_FILES)
+            return
+        }
+
+        val sourceDirectory = File(currentPath)
+        if (!sourceDirectory.isDirectory) {
+            showMessage(getString(R.string.message_invalid_directory))
+            return
+        }
+
+        startActivity(
+            Intent(this, ComicMigrationActivity::class.java).apply {
+                putExtra(
+                    ComicMigrationActivity.EXTRA_SOURCE_DIRECTORY_PATH,
+                    sourceDirectory.absolutePath
+                )
+            }
+        )
     }
 
     private fun showRoundedPopupMenu(
@@ -1069,7 +1126,7 @@ class MainActivity : AppCompatActivity() {
 
         isBuildingDirectorySimilarityReport = true
         progressBar.isIndeterminate = true
-        tvStatus.text = MESSAGE_SCANNING_DIRECTORIES
+        tvStatus.setText(MESSAGE_SCANNING_DIRECTORIES)
         tvCount.text = ""
         progressDialog.show()
 
@@ -1095,7 +1152,11 @@ class MainActivity : AppCompatActivity() {
                     result
                         .onSuccess { report ->
                             showMessage(
-                                "已生成报告：${report.outputFile.name}，相似组合 ${report.pairCount} 组"
+                                getString(
+                                    R.string.language_report_created,
+                                    report.outputFile.name,
+                                    report.pairCount
+                                )
                             )
                             if (File(currentPath).absolutePath == rootPath) {
                                 loadCurrentDirectory(scrollStateToRestore = scrollState)
@@ -1160,7 +1221,7 @@ class MainActivity : AppCompatActivity() {
 
         isMergingComics = true
         progressBar.isIndeterminate = true
-        tvStatus.text = MESSAGE_SCANNING_COMIC_ARCHIVES
+        tvStatus.setText(MESSAGE_SCANNING_COMIC_ARCHIVES)
         tvCount.text = ""
         progressDialog.show()
 
@@ -1249,7 +1310,7 @@ class MainActivity : AppCompatActivity() {
 
         isMergingFiles = true
         progressBar.isIndeterminate = true
-        tvStatus.text = MESSAGE_SCANNING_IMAGE_DIRECTORIES
+        tvStatus.setText(MESSAGE_SCANNING_IMAGE_DIRECTORIES)
         tvCount.text = ""
         progressDialog.show()
 
@@ -1375,8 +1436,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         showMessage(
-            "整合完成：已复制 ${result.copiedCount} / ${result.totalImageCount}，" +
-                "失败 ${result.failedCount}，输出：${outputDirectory.name}"
+            getString(
+                R.string.language_comics_merge_result,
+                result.copiedCount,
+                result.totalImageCount,
+                result.failedCount,
+                outputDirectory.name
+            )
         )
     }
 
@@ -1392,8 +1458,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         showMessage(
-            "文件整合完成：已复制 ${result.copiedCount} / ${result.totalImageCount}，" +
-                "失败 ${result.failedCount}，输出：${outputDirectory.name}"
+            getString(
+                R.string.language_files_merge_result,
+                result.copiedCount,
+                result.totalImageCount,
+                result.failedCount,
+                outputDirectory.name
+            )
         )
     }
 
@@ -1424,11 +1495,11 @@ class MainActivity : AppCompatActivity() {
         rootDirectory: File,
         onProgress: (DirectorySimilarityProgress) -> Unit
     ): DirectorySimilarityReport {
-        onProgress(DirectorySimilarityProgress(MESSAGE_SCANNING_DIRECTORIES))
+        onProgress(DirectorySimilarityProgress(getString(MESSAGE_SCANNING_DIRECTORIES)))
         val directories = scanDirectoriesForSimilarity(rootDirectory)
         onProgress(
             DirectorySimilarityProgress(
-                message = MESSAGE_COMPARING_DIRECTORY_NAMES,
+                message = getString(MESSAGE_COMPARING_DIRECTORY_NAMES),
                 completed = 0,
                 total = directories.size
             )
@@ -1437,7 +1508,7 @@ class MainActivity : AppCompatActivity() {
         val pairs = findSimilarDirectoryNamePairs(directories) { completed, total ->
             onProgress(
                 DirectorySimilarityProgress(
-                    message = MESSAGE_COMPARING_DIRECTORY_NAMES,
+                    message = getString(MESSAGE_COMPARING_DIRECTORY_NAMES),
                     completed = completed,
                     total = total
                 )
@@ -1458,7 +1529,7 @@ class MainActivity : AppCompatActivity() {
         rootDirectory: File,
         onProgress: (ComicMergeProgress) -> Unit
     ): ComicMergeResult {
-        onProgress(ComicMergeProgress(MESSAGE_SCANNING_COMIC_ARCHIVES))
+        onProgress(ComicMergeProgress(getString(MESSAGE_SCANNING_COMIC_ARCHIVES)))
         val archives = comicArchivesInCurrentDirectory(rootDirectory)
         if (archives.isEmpty()) {
             return ComicMergeResult(
@@ -1474,7 +1545,7 @@ class MainActivity : AppCompatActivity() {
         archives.forEachIndexed { index, archive ->
             onProgress(
                 ComicMergeProgress(
-                    message = MESSAGE_READING_COMIC_ARCHIVES,
+                    message = getString(MESSAGE_READING_COMIC_ARCHIVES),
                     completed = index,
                     total = archives.size
                 )
@@ -1486,7 +1557,7 @@ class MainActivity : AppCompatActivity() {
         }
         onProgress(
             ComicMergeProgress(
-                message = MESSAGE_READING_COMIC_ARCHIVES,
+                message = getString(MESSAGE_READING_COMIC_ARCHIVES),
                 completed = archives.size,
                 total = archives.size
             )
@@ -1531,7 +1602,7 @@ class MainActivity : AppCompatActivity() {
 
                 onProgress(
                     ComicMergeProgress(
-                        message = "正在整合：${source.archive.name}",
+                        message = getString(R.string.language_merging_source, source.archive.name),
                         completed = completedCount,
                         total = totalImageCount
                     )
@@ -1552,7 +1623,7 @@ class MainActivity : AppCompatActivity() {
         rootDirectory: File,
         onProgress: (ComicMergeProgress) -> Unit
     ): FileMergeResult {
-        onProgress(ComicMergeProgress(MESSAGE_SCANNING_IMAGE_DIRECTORIES))
+        onProgress(ComicMergeProgress(getString(MESSAGE_SCANNING_IMAGE_DIRECTORIES)))
         val directories = imageSourceDirectoriesInCurrentDirectory(rootDirectory)
         if (directories.isEmpty()) {
             return FileMergeResult(
@@ -1568,7 +1639,7 @@ class MainActivity : AppCompatActivity() {
         directories.forEachIndexed { index, directory ->
             onProgress(
                 ComicMergeProgress(
-                    message = MESSAGE_READING_IMAGE_DIRECTORIES,
+                    message = getString(MESSAGE_READING_IMAGE_DIRECTORIES),
                     completed = index,
                     total = directories.size
                 )
@@ -1580,7 +1651,7 @@ class MainActivity : AppCompatActivity() {
         }
         onProgress(
             ComicMergeProgress(
-                message = MESSAGE_READING_IMAGE_DIRECTORIES,
+                message = getString(MESSAGE_READING_IMAGE_DIRECTORIES),
                 completed = directories.size,
                 total = directories.size
             )
@@ -1625,7 +1696,7 @@ class MainActivity : AppCompatActivity() {
 
                 onProgress(
                     ComicMergeProgress(
-                        message = "正在整合：${source.directory.name}",
+                        message = getString(R.string.language_merging_source, source.directory.name),
                         completed = completedCount,
                         total = totalImageCount
                     )
@@ -1942,28 +2013,36 @@ class MainActivity : AppCompatActivity() {
     ): String {
         val generatedAt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
         return buildString {
-            appendLine("ComicLab 命名接近的文件夹路径报告")
-            appendLine("生成时间：$generatedAt")
-            appendLine("扫描根目录：${rootDirectory.absolutePath}")
+            appendLine(getString(R.string.language_report_title))
+            appendLine(getString(R.string.language_report_generated_at, generatedAt))
+            appendLine(getString(R.string.language_report_root, rootDirectory.absolutePath))
             appendLine(
-                "比较规则：仅使用文件夹名计算归一化 Levenshtein 相似度，阈值 >= " +
+                getString(
+                    R.string.language_report_rule,
                     similarityPercent(DIRECTORY_NAME_SIMILARITY_THRESHOLD)
+                )
             )
-            appendLine("扫描文件夹数：${directories.size}")
-            appendLine("命名接近组合数：${pairs.size}")
+            appendLine(getString(R.string.language_report_folder_count, directories.size))
+            appendLine(getString(R.string.language_report_pair_count, pairs.size))
             appendLine()
 
             if (pairs.isEmpty()) {
-                appendLine("没有找到达到阈值的命名接近文件夹。")
+                appendLine(getString(R.string.language_report_no_pairs))
                 return@buildString
             }
 
             pairs.forEachIndexed { index, pair ->
-                appendLine("[${String.format(Locale.ROOT, "%03d", index + 1)}] 相似度：${similarityPercent(pair.similarity)}")
-                appendLine("名称 A：${pair.left.name}")
-                appendLine("路径 A：${pair.left.path}")
-                appendLine("名称 B：${pair.right.name}")
-                appendLine("路径 B：${pair.right.path}")
+                appendLine(
+                    getString(
+                        R.string.language_report_pair_similarity,
+                        String.format(Locale.ROOT, "%03d", index + 1),
+                        similarityPercent(pair.similarity)
+                    )
+                )
+                appendLine(getString(R.string.language_report_name_a, pair.left.name))
+                appendLine(getString(R.string.language_report_path_a, pair.left.path))
+                appendLine(getString(R.string.language_report_name_b, pair.right.name))
+                appendLine(getString(R.string.language_report_path_b, pair.right.path))
                 appendLine()
             }
         }
@@ -2141,6 +2220,11 @@ class MainActivity : AppCompatActivity() {
         val content = layoutInflater.inflate(R.layout.bottom_sheet_directory_actions, null)
         val tvDirectoryActionTitle = content.findViewById<TextView>(R.id.tvDirectoryActionTitle)
         val btnFavoritePath = content.findViewById<TextView>(R.id.btnFavoritePathAction)
+        val btnBookcaseDirectory = content.findViewById<TextView>(R.id.btnBookcaseDirectoryAction)
+        val btnSetChildDirectoriesAsBookcases =
+            content.findViewById<TextView>(R.id.btnSetChildDirectoriesAsBookcases)
+        val btnCancelChildDirectoriesAsBookcases =
+            content.findViewById<TextView>(R.id.btnCancelChildDirectoriesAsBookcases)
         val btnCopyPathName = content.findViewById<TextView>(R.id.btnCopyPathName)
         val btnRenameDirectoryName = content.findViewById<TextView>(R.id.btnRenameDirectoryName)
         val btnDeleteDirectory = content.findViewById<TextView>(R.id.btnDeleteDirectory)
@@ -2149,6 +2233,9 @@ class MainActivity : AppCompatActivity() {
         tvDirectoryActionTitle.text = directory.name
         sizeBottomSheetActionIcons(
             btnFavoritePath,
+            btnBookcaseDirectory,
+            btnSetChildDirectoriesAsBookcases,
+            btnCancelChildDirectoriesAsBookcases,
             btnCopyPathName,
             btnRenameDirectoryName,
             btnDeleteDirectory
@@ -2156,6 +2243,39 @@ class MainActivity : AppCompatActivity() {
         btnFavoritePath.text = getString(
             if (isFavorite) R.string.cancel_favorite else R.string.favorite_path_action
         )
+        val isBookcase = AppSettings.isBookcaseDirectory(this, directory)
+        btnBookcaseDirectory.text = getString(
+            if (isBookcase) R.string.cancel_bookcase else R.string.set_as_bookcase
+        )
+
+        btnBookcaseDirectory.setOnClickListener {
+            val enableBookcase = !AppSettings.isBookcaseDirectory(this, directory)
+            AppSettings.setBookcaseDirectory(this, directory, enableBookcase)
+            showMessage(
+                getString(
+                    if (enableBookcase) R.string.bookcase_enabled else R.string.bookcase_disabled
+                )
+            )
+            dialog.setOnDismissListener {
+                resetFileListState()
+                listView.post {
+                    if (!isFinishing && !isDestroyed) {
+                        fileListAdapter.notifyDataSetChangedWhenIdle(listView)
+                    }
+                }
+            }
+            dialog.dismiss()
+        }
+
+        btnSetChildDirectoriesAsBookcases.setOnClickListener {
+            dialog.dismiss()
+            updateChildDirectoryBookcases(directory, enabled = true)
+        }
+
+        btnCancelChildDirectoriesAsBookcases.setOnClickListener {
+            dialog.dismiss()
+            updateChildDirectoryBookcases(directory, enabled = false)
+        }
 
         btnFavoritePath.setOnClickListener {
             if (FavoritePathStore.isFavorite(this, directory)) {
@@ -2205,6 +2325,58 @@ class MainActivity : AppCompatActivity() {
         }
 
         dialog.showRoundedContent(content)
+    }
+
+    private fun updateChildDirectoryBookcases(directory: File, enabled: Boolean) {
+        directoryLoadExecutor.execute {
+            val childDirectories = try {
+                if (!directory.isDirectory) {
+                    null
+                } else {
+                    directory.listFiles()
+                        ?.filter { !it.name.startsWith(".") && it.isDirectory }
+                }
+            } catch (_: SecurityException) {
+                null
+            }
+
+            val changedCount = childDirectories?.let {
+                AppSettings.setBookcaseDirectories(this, it, enabled)
+            }
+
+            runOnUiThread {
+                if (isFinishing || isDestroyed) {
+                    return@runOnUiThread
+                }
+
+                when {
+                    childDirectories == null -> {
+                        showMessage(getString(R.string.directory_read_failed))
+                    }
+
+                    childDirectories.isEmpty() -> {
+                        showMessage(getString(R.string.no_visible_child_directories))
+                    }
+
+                    else -> {
+                        val updatedCount = changedCount ?: 0
+                        if (updatedCount > 0) {
+                            fileListAdapter.notifyDataSetChangedWhenIdle(listView)
+                        }
+                        showMessage(
+                            getString(
+                                if (enabled) {
+                                    R.string.child_bookcases_added
+                                } else {
+                                    R.string.child_bookcases_removed
+                                },
+                                updatedCount
+                            )
+                        )
+                    }
+                }
+            }
+        }
     }
 
     private fun showRenameDirectoryDialog(directory: File) {
@@ -2268,6 +2440,7 @@ class MainActivity : AppCompatActivity() {
             FavoritePathStore.remove(this, directory)
             FavoritePathStore.record(this, targetDirectory)
         }
+        AppSettings.renameBookcaseDirectory(this, directory, targetDirectory)
 
         showMessage(getString(R.string.rename_directory_name_success))
         loadCurrentDirectory(targetDirectory.absolutePath)
@@ -2436,6 +2609,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 if (deleted) {
                     FavoritePathStore.remove(this, directory)
+                    AppSettings.removeBookcaseDirectory(this, directory)
                     showMessage(getString(R.string.delete_directory_success))
                     loadCurrentDirectory(scrollStateToRestore = scrollState)
                 } else {
@@ -2609,6 +2783,10 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
+    private fun showMessage(@StringRes messageResId: Int) {
+        showMessage(getString(messageResId))
+    }
+
     private fun setCurrentPath(path: String) {
         currentPath = File(path).absolutePath
         saveCurrentPath()
@@ -2767,25 +2945,25 @@ class MainActivity : AppCompatActivity() {
         private const val MERGED_COMIC_MIN_FILE_NUMBER_WIDTH = 4
         private const val MERGED_COMIC_DEFAULT_IMAGE_EXTENSION = "jpg"
         private const val MERGED_FILE_COPY_BUFFER_SIZE = 1024 * 1024
-        private const val MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES = "查找相似文件夹"
-        private const val MENU_TITLE_MERGE_COMICS_NON_RECURSIVE = "漫画整合（不递归）"
-        private const val MENU_TITLE_MERGE_FILES_NON_RECURSIVE = "文件整合（不递归）"
-        private const val MESSAGE_FINDING_SIMILAR_DIRECTORY_NAMES = "正在查找命名接近的路径"
-        private const val MESSAGE_MERGING_COMICS = "正在整合漫画"
-        private const val MESSAGE_MERGING_FILES = "正在整合文件"
-        private const val MESSAGE_SCANNING_DIRECTORIES = "正在扫描文件夹..."
-        private const val MESSAGE_COMPARING_DIRECTORY_NAMES = "正在比较文件夹名称..."
-        private const val MESSAGE_SCANNING_COMIC_ARCHIVES = "正在扫描当前路径下的漫画压缩包..."
-        private const val MESSAGE_READING_COMIC_ARCHIVES = "正在读取压缩包图片列表..."
-        private const val MESSAGE_SCANNING_IMAGE_DIRECTORIES = "正在扫描当前路径下的图片文件夹..."
-        private const val MESSAGE_READING_IMAGE_DIRECTORIES = "正在读取文件夹图片列表..."
-        private const val MESSAGE_DIRECTORY_SIMILARITY_REPORT_FAILED = "生成命名接近路径报告失败"
-        private const val MESSAGE_MERGE_COMICS_FAILED = "漫画整合失败"
-        private const val MESSAGE_MERGE_COMICS_NO_ARCHIVES = "当前路径下没有找到漫画压缩包"
-        private const val MESSAGE_MERGE_COMICS_NO_IMAGES = "漫画压缩包中没有找到可整合的图片"
-        private const val MESSAGE_MERGE_FILES_FAILED = "文件整合失败"
-        private const val MESSAGE_MERGE_FILES_NO_FOLDERS = "当前路径下没有找到可整合的文件夹"
-        private const val MESSAGE_MERGE_FILES_NO_IMAGES = "文件夹中没有找到可整合的图片"
+        private val MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES = R.string.language_menu_find_similar_directories
+        private val MENU_TITLE_MERGE_COMICS_NON_RECURSIVE = R.string.language_menu_merge_comics
+        private val MENU_TITLE_MERGE_FILES_NON_RECURSIVE = R.string.language_menu_merge_files
+        private val MESSAGE_FINDING_SIMILAR_DIRECTORY_NAMES = R.string.language_finding_similar_directories
+        private val MESSAGE_MERGING_COMICS = R.string.language_merging_comics
+        private val MESSAGE_MERGING_FILES = R.string.language_merging_files
+        private val MESSAGE_SCANNING_DIRECTORIES = R.string.language_scanning_directories
+        private val MESSAGE_COMPARING_DIRECTORY_NAMES = R.string.language_comparing_directory_names
+        private val MESSAGE_SCANNING_COMIC_ARCHIVES = R.string.language_scanning_comic_archives
+        private val MESSAGE_READING_COMIC_ARCHIVES = R.string.language_reading_comic_archives
+        private val MESSAGE_SCANNING_IMAGE_DIRECTORIES = R.string.language_scanning_image_directories
+        private val MESSAGE_READING_IMAGE_DIRECTORIES = R.string.language_reading_image_directories
+        private val MESSAGE_DIRECTORY_SIMILARITY_REPORT_FAILED = R.string.language_similarity_report_failed
+        private val MESSAGE_MERGE_COMICS_FAILED = R.string.language_merge_comics_failed
+        private val MESSAGE_MERGE_COMICS_NO_ARCHIVES = R.string.language_merge_comics_no_archives
+        private val MESSAGE_MERGE_COMICS_NO_IMAGES = R.string.language_merge_comics_no_images
+        private val MESSAGE_MERGE_FILES_FAILED = R.string.language_merge_files_failed
+        private val MESSAGE_MERGE_FILES_NO_FOLDERS = R.string.language_merge_files_no_folders
+        private val MESSAGE_MERGE_FILES_NO_IMAGES = R.string.language_merge_files_no_images
         private val MERGED_COMIC_IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
         private val DIRECTORY_NAME_SIMILARITY_IGNORED_CHARS = setOf(
             '_',

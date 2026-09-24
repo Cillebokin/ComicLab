@@ -3,72 +3,68 @@
     android:layout_width="match_parent"
     android:layout_height="@dimen/file_item_height"
     android:background="@drawable/bg_file_item"
-    android:gravity="center_vertical"
-    android:orientation="horizontal"
-    android:paddingStart="@dimen/space_md"
-    android:paddingEnd="@dimen/space_md">
+    android:orientation="horizontal">
 
-    <ImageView
-        android:id="@+id/imgIcon"
-        android:layout_width="@dimen/file_item_icon_size"
-        android:layout_height="@dimen/file_item_icon_size"
-        android:layout_marginEnd="@dimen/space_md"
-        android:background="@drawable/bg_file_icon_frame"
-        android:contentDescription="@string/file_item"
-        android:padding="4dp" />
+    <FrameLayout
+        android:id="@+id/iconContainer"
+        android:layout_width="64dp"
+        android:layout_height="match_parent"
+        android:clipChildren="true">
+
+        <ImageView
+            android:id="@+id/imgIcon"
+            android:layout_width="@dimen/file_item_regular_icon_size"
+            android:layout_height="@dimen/file_item_regular_icon_size"
+            android:layout_gravity="center"
+            android:contentDescription="@string/file_item"
+            android:padding="4dp" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/collectionCoverList"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:overScrollMode="never"
+            android:scrollbars="none"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <LinearLayout
+        android:id="@+id/itemInfoContainer"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
         android:gravity="center_vertical"
         android:orientation="vertical"
+        android:paddingStart="@dimen/space_sm"
         android:paddingTop="@dimen/space_sm"
-        android:paddingBottom="@dimen/space_sm">
-
-        <TextView
-            android:id="@+id/tvName"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:ellipsize="end"
-            android:gravity="center_vertical"
-            android:includeFontPadding="false"
-            android:maxLines="2"
-            android:textColor="@color/comiclab_text_primary"
-            android:textSize="15sp" />
-
-        <TextView
-            android:id="@+id/tvInfo"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:ellipsize="end"
-            android:includeFontPadding="false"
-            android:maxLines="1"
-            android:textColor="@color/comiclab_text_secondary"
-            android:textSize="@dimen/text_caption" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="86dp"
-        android:layout_height="match_parent"
-        android:layout_marginStart="@dimen/space_md"
-        android:gravity="end"
-        android:orientation="vertical"
-        android:paddingTop="@dimen/space_sm"
+        android:paddingEnd="@dimen/space_md"
         android:paddingBottom="@dimen/space_sm">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:gravity="top|end"
-            android:orientation="horizontal">
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:translationY="-8dp">
+
+            <TextView
+                android:id="@+id/tvName"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:gravity="center_vertical"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:textColor="@color/comiclab_text_primary"
+                android:textSize="15sp" />
 
             <ImageView
                 android:id="@+id/imgFavoriteMarker"
                 android:layout_width="16dp"
                 android:layout_height="16dp"
+                android:layout_marginStart="@dimen/space_sm"
                 android:layout_marginEnd="@dimen/space_xs"
                 android:contentDescription="@string/favorite_marker"
                 android:visibility="gone" />
@@ -77,23 +73,44 @@
                 android:id="@+id/tvTypeMarker"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:gravity="end"
+                android:gravity="end|center_vertical"
                 android:includeFontPadding="false"
                 android:textColor="@color/comiclab_text_secondary"
                 android:textSize="@dimen/text_caption"
                 android:textStyle="bold" />
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/tvDate"
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:ellipsize="end"
-            android:gravity="end"
-            android:includeFontPadding="false"
-            android:maxLines="1"
-            android:textColor="@color/comiclab_text_tertiary"
-            android:textSize="@dimen/text_caption" />
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:translationY="12dp">
+
+            <TextView
+                android:id="@+id/tvInfo"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:gravity="center_vertical"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:textColor="@color/comiclab_text_secondary"
+                android:textSize="@dimen/text_caption" />
+
+            <TextView
+                android:id="@+id/tvDate"
+                android:layout_width="86dp"
+                android:layout_height="match_parent"
+                android:ellipsize="end"
+                android:gravity="end|center_vertical"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:textColor="@color/comiclab_text_tertiary"
+                android:textSize="@dimen/text_caption" />
+        </LinearLayout>
     </LinearLayout>
 
 </LinearLayout>

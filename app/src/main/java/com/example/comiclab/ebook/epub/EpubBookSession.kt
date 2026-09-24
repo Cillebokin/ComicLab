@@ -38,8 +38,8 @@ class EpubBookSession private constructor(
     }
 
     companion object {
-        fun open(file: File): EpubBookSession {
-            val parsed = EpubParser().parse(file)
+        fun open(file: File, untitledChapterTitle: String): EpubBookSession {
+            val parsed = EpubParser().parse(file, untitledChapterTitle)
             val zipFile = try {
                 ZipFile(parsed.sourceFile)
             } catch (error: IOException) {

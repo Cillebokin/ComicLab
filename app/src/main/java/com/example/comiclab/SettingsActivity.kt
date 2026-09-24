@@ -3,6 +3,7 @@ package com.example.comiclab
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.graphics.Paint
 import android.os.Bundle
 import android.os.Environment
 import android.os.SystemClock
@@ -18,11 +19,18 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.FileProvider
+import androidx.core.net.toUri
+import androidx.core.os.LocaleListCompat
 import java.io.File
 import java.util.ArrayDeque
+import java.util.Locale
 import java.util.concurrent.Executors
+
+internal const val COMICLAB_RELEASES_URL =
+    "https://github.com/Cillebokin/ComicLab/releases"
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -30,9 +38,10 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var layoutDebugTools: View
     private lateinit var btnExportCrashLog: Button
     private lateinit var btnRunReaderStressTest: Button
+    private lateinit var tvAppLink: TextView
+    private lateinit var tvLanguageValue: TextView
     private lateinit var radioReadingDirection: RadioGroup
     private lateinit var switchDoublePageCoverSingle: SwitchCompat
-    private lateinit var switchDetectMangaCollections: SwitchCompat
     private lateinit var inputStartMarkerErrorTags: EditText
     private lateinit var switchVolumeKeyPageTurn: SwitchCompat
     private lateinit var switchAutoHideSystemBars: SwitchCompat
@@ -59,9 +68,10 @@ class SettingsActivity : AppCompatActivity() {
         layoutDebugTools = findViewById(R.id.layoutDebugTools)
         btnExportCrashLog = findViewById(R.id.btnExportCrashLog)
         btnRunReaderStressTest = findViewById(R.id.btnRunReaderStressTest)
+        tvAppLink = findViewById(R.id.tvAppLink)
+        tvLanguageValue = findViewById(R.id.tvLanguageValue)
         radioReadingDirection = findViewById(R.id.radioReadingDirection)
         switchDoublePageCoverSingle = findViewById(R.id.switchDoublePageCoverSingle)
-        switchDetectMangaCollections = findViewById(R.id.switchDetectMangaCollections)
         inputStartMarkerErrorTags = findViewById(R.id.inputStartMarkerErrorTags)
         switchVolumeKeyPageTurn = findViewById(R.id.switchVolumeKeyPageTurn)
         switchAutoHideSystemBars = findViewById(R.id.switchAutoHideSystemBars)
@@ -73,14 +83,15 @@ class SettingsActivity : AppCompatActivity() {
             finish()
         }
 
+        bindLanguageSetting()
         bindReadingDirection()
         bindDoublePageCoverSingle()
-        bindDetectMangaCollections()
         bindStartMarkerErrorTags()
         bindVolumeKeyPageTurn()
         bindAutoHideSystemBars()
         bindCustomReaderBrightness()
         bindDebugTools()
+        bindProjectReleaseLink()
     }
 
     override fun onDestroy() {
@@ -114,18 +125,58 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    private fun bindLanguageSetting() {
+        updateLanguageValue()
+        tvLanguageValue.setOnClickListener {
+            val options = arrayOf(
+                getString(R.string.language_simplified_chinese),
+                getString(R.string.language_english)
+            )
+            AlertDialog.Builder(this)
+                .setTitle(R.string.language)
+                .setSingleChoiceItems(options, currentLanguageIndex()) { dialog, selectedIndex ->
+                    dialog.dismiss()
+                    val selectedTag = if (selectedIndex == ENGLISH_LANGUAGE_INDEX) {
+                        ENGLISH_LANGUAGE_TAG
+                    } else {
+                        SIMPLIFIED_CHINESE_LANGUAGE_TAG
+                    }
+                    if (AppCompatDelegate.getApplicationLocales().toLanguageTags()
+                            .equals(selectedTag, ignoreCase = true)
+                    ) {
+                        return@setSingleChoiceItems
+                    }
+                    AppCompatDelegate.setApplicationLocales(
+                        LocaleListCompat.forLanguageTags(selectedTag)
+                    )
+                }
+                .setNegativeButton(R.string.cancel, null)
+                .show()
+        }
+    }
+
+    private fun updateLanguageValue() {
+        tvLanguageValue.setText(
+            if (currentLanguageIndex() == ENGLISH_LANGUAGE_INDEX) {
+                R.string.language_current_english
+            } else {
+                R.string.language_current_chinese
+            }
+        )
+    }
+
+    private fun currentLanguageIndex(): Int {
+        val applicationLocale = AppCompatDelegate.getApplicationLocales().get(0)
+        val language = (applicationLocale ?: resources.configuration.locales.get(0)).language
+            .lowercase(Locale.ROOT)
+        return if (language == ENGLISH_LANGUAGE_TAG) ENGLISH_LANGUAGE_INDEX else CHINESE_LANGUAGE_INDEX
+    }
+
     private fun bindDoublePageCoverSingle() {
         switchDoublePageCoverSingle.isChecked =
             AppSettings.isDoublePageCoverSingleEnabled(this)
         switchDoublePageCoverSingle.setOnCheckedChangeListener { _, isChecked ->
             AppSettings.setDoublePageCoverSingleEnabled(this, isChecked)
-        }
-    }
-
-    private fun bindDetectMangaCollections() {
-        switchDetectMangaCollections.isChecked = AppSettings.isDetectMangaCollectionsEnabled(this)
-        switchDetectMangaCollections.setOnCheckedChangeListener { _, isChecked ->
-            AppSettings.setDetectMangaCollectionsEnabled(this, isChecked)
         }
     }
 
@@ -231,6 +282,24 @@ class SettingsActivity : AppCompatActivity() {
         }
         btnRunReaderStressTest.setOnClickListener {
             runReaderStressTest()
+        }
+    }
+
+    private fun bindProjectReleaseLink() {
+        tvAppLink.text = COMICLAB_RELEASES_URL
+        tvAppLink.setTextColor(getColor(R.color.comiclab_accent))
+        tvAppLink.paintFlags = tvAppLink.paintFlags or Paint.UNDERLINE_TEXT_FLAG
+        tvAppLink.setOnClickListener {
+            try {
+                startActivity(
+                    Intent(
+                        Intent.ACTION_VIEW,
+                        COMICLAB_RELEASES_URL.toUri()
+                    )
+                )
+            } catch (_: ActivityNotFoundException) {
+                showMessage(getString(R.string.app_link_open_failed))
+            }
         }
     }
 
@@ -362,6 +431,10 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val CHINESE_LANGUAGE_INDEX = 0
+        private const val ENGLISH_LANGUAGE_INDEX = 1
+        private const val SIMPLIFIED_CHINESE_LANGUAGE_TAG = "zh-CN"
+        private const val ENGLISH_LANGUAGE_TAG = "en"
         private const val ENABLED_BRIGHTNESS_SLIDER_ALPHA = 1f
         private const val DISABLED_BRIGHTNESS_SLIDER_ALPHA = 0.72f
         private const val BROWSER_PREFS_NAME = "saf_prefs"

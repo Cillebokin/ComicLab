@@ -9,6 +9,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
 import java.util.concurrent.Executors
@@ -50,7 +51,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
             NO_EXPLICIT_START_PAGE
         )
         if (file == null || !file.isFile) {
-            showError("无效文件")
+            showError(R.string.reader_prepare_invalid_file)
             return
         }
 
@@ -100,7 +101,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (!destroyed) {
                         outputDir.deleteRecursively()
-                        showError("没有可阅读的图片")
+                        showError(R.string.reader_prepare_no_images)
                     }
                 }
                 return@execute
@@ -113,7 +114,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (!destroyed) {
                         outputDir.deleteRecursively()
-                        showError("准备阅读失败，可能是缓存空间不足")
+                        showError(R.string.reader_prepare_cache_failure)
                     }
                 }
                 return@execute
@@ -145,7 +146,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
 
                 if (extractedFiles.isEmpty()) {
                     outputDir.deleteRecursively()
-                    showError("准备阅读失败，可能是缓存空间不足")
+                    showError(R.string.reader_prepare_cache_failure)
                     return@runOnUiThread
                 }
 
@@ -232,7 +233,8 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
         finish()
     }
 
-    private fun showError(message: String) {
+    private fun showError(@StringRes messageResId: Int) {
+        val message = getString(messageResId)
         progressPrepareReader.visibility = View.GONE
         tvPrepareStatus.text = message
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()

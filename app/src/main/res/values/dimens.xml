@@ -10,9 +10,11 @@
     <dimen name="text_body">15sp</dimen>
     <dimen name="text_caption">12sp</dimen>
 
-    <dimen name="file_item_height">75dp</dimen>
+    <dimen name="file_item_height">96dp</dimen>
+    <dimen name="file_item_collection_height">152dp</dimen>
     <dimen name="file_item_icon_size">34dp</dimen>
-    <dimen name="file_item_cover_width">56dp</dimen>
+    <dimen name="file_item_regular_icon_size">40dp</dimen>
+    <dimen name="file_item_collection_cover_width">56dp</dimen>
 
     <dimen name="bottom_sheet_header_height">48dp</dimen>
     <dimen name="bottom_sheet_action_height">46dp</dimen>

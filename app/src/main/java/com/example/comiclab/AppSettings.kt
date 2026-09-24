@@ -1,6 +1,7 @@
 package com.example.comiclab
 
 import android.content.Context
+import java.io.File
 
 object AppSettings {
     const val READING_DIRECTION_TOP_TO_BOTTOM = "top_to_bottom"
@@ -12,7 +13,8 @@ object AppSettings {
     private const val KEY_DOUBLE_PAGE_COVER_SINGLE = "double_page_cover_single"
     private const val KEY_VOLUME_KEY_PAGE_TURN = "volume_key_page_turn"
     private const val KEY_AUTO_HIDE_SYSTEM_BARS = "auto_hide_system_bars"
-    private const val KEY_DETECT_MANGA_COLLECTIONS = "detect_manga_collections"
+    private const val KEY_BOOKCASE_DIRECTORIES = "bookcase_directories"
+    private val bookcaseDirectoriesLock = Any()
     private const val KEY_START_MARKER_ERROR_TAGS = "start_marker_error_tags"
     private const val KEY_CUSTOM_READER_BRIGHTNESS_ENABLED = "custom_reader_brightness_enabled"
     private const val KEY_CUSTOM_READER_BRIGHTNESS = "custom_reader_brightness"
@@ -77,16 +79,90 @@ object AppSettings {
             .apply()
     }
 
-    fun isDetectMangaCollectionsEnabled(context: Context): Boolean {
+    fun isBookcaseDirectory(context: Context, directory: File): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean(KEY_DETECT_MANGA_COLLECTIONS, false)
+            .getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
+            .orEmpty()
+            .contains(directory.absolutePath)
     }
 
-    fun setDetectMangaCollectionsEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_DETECT_MANGA_COLLECTIONS, enabled)
-            .apply()
+    fun setBookcaseDirectory(context: Context, directory: File, enabled: Boolean) {
+        synchronized(bookcaseDirectoriesLock) {
+            val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val currentPaths = preferences.getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
+                .orEmpty()
+                .toSet()
+            preferences.edit()
+                .putStringSet(
+                    KEY_BOOKCASE_DIRECTORIES,
+                    BookcaseFolderPaths.withSelection(currentPaths, directory.absolutePath, enabled)
+                )
+                .apply()
+        }
+    }
+
+    fun setBookcaseDirectories(
+        context: Context,
+        directories: Collection<File>,
+        enabled: Boolean
+    ): Int {
+        val selectedPaths = directories.mapTo(mutableSetOf()) { it.absolutePath }
+        if (selectedPaths.isEmpty()) {
+            return 0
+        }
+
+        return synchronized(bookcaseDirectoriesLock) {
+            val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val currentPaths = preferences.getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
+                .orEmpty()
+                .toSet()
+            val changedCount = selectedPaths.count { (it in currentPaths) != enabled }
+            if (changedCount == 0) {
+                return@synchronized 0
+            }
+
+            preferences.edit()
+                .putStringSet(
+                    KEY_BOOKCASE_DIRECTORIES,
+                    BookcaseFolderPaths.withSelections(currentPaths, selectedPaths, enabled)
+                )
+                .apply()
+            changedCount
+        }
+    }
+
+    fun renameBookcaseDirectory(context: Context, oldDirectory: File, newDirectory: File) {
+        synchronized(bookcaseDirectoriesLock) {
+            val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val currentPaths = preferences.getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
+                .orEmpty()
+                .toSet()
+            preferences.edit()
+                .putStringSet(
+                    KEY_BOOKCASE_DIRECTORIES,
+                    BookcaseFolderPaths.afterRename(
+                        currentPaths,
+                        oldDirectory.absolutePath,
+                        newDirectory.absolutePath
+                    )
+                )
+                .apply()
+        }
+    }
+
+    fun removeBookcaseDirectory(context: Context, directory: File) {
+        synchronized(bookcaseDirectoriesLock) {
+            val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val currentPaths = preferences.getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
+                .orEmpty()
+                .toSet()
+            preferences.edit()
+                .putStringSet(
+                    KEY_BOOKCASE_DIRECTORIES,
+                    BookcaseFolderPaths.underDirectory(currentPaths, directory.absolutePath)
+                )
+                .apply()
+        }
     }
 
     fun getStartMarkerErrorTags(context: Context): String {

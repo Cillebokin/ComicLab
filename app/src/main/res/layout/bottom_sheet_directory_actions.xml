@@ -32,6 +32,51 @@
         android:background="@color/comiclab_divider" />
 
     <TextView
+        android:id="@+id/btnBookcaseDirectoryAction"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/bottom_sheet_action_height"
+        android:background="@drawable/bg_bottom_sheet_action_item"
+        android:drawablePadding="@dimen/space_lg"
+        android:gravity="center_vertical"
+        android:includeFontPadding="false"
+        android:paddingStart="@dimen/space_xl"
+        android:paddingEnd="@dimen/space_xl"
+        android:text="@string/set_as_bookcase"
+        android:textColor="@color/comiclab_text_primary"
+        android:textSize="@dimen/text_body"
+        app:drawableStartCompat="@drawable/png_bookcase_icon" />
+
+    <TextView
+        android:id="@+id/btnSetChildDirectoriesAsBookcases"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/bottom_sheet_action_height"
+        android:background="@drawable/bg_bottom_sheet_action_item"
+        android:drawablePadding="@dimen/space_lg"
+        android:gravity="center_vertical"
+        android:includeFontPadding="false"
+        android:paddingStart="@dimen/space_xl"
+        android:paddingEnd="@dimen/space_xl"
+        android:text="@string/set_child_directories_as_bookcases"
+        android:textColor="@color/comiclab_text_primary"
+        android:textSize="@dimen/text_body"
+        app:drawableStartCompat="@drawable/png_bookcase_icon" />
+
+    <TextView
+        android:id="@+id/btnCancelChildDirectoriesAsBookcases"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/bottom_sheet_action_height"
+        android:background="@drawable/bg_bottom_sheet_action_item"
+        android:drawablePadding="@dimen/space_lg"
+        android:gravity="center_vertical"
+        android:includeFontPadding="false"
+        android:paddingStart="@dimen/space_xl"
+        android:paddingEnd="@dimen/space_xl"
+        android:text="@string/cancel_child_directories_as_bookcases"
+        android:textColor="@color/comiclab_text_primary"
+        android:textSize="@dimen/text_body"
+        app:drawableStartCompat="@drawable/png_bookcase_icon" />
+
+    <TextView
         android:id="@+id/btnFavoritePathAction"
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"

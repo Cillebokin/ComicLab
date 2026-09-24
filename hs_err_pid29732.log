@@ -1,0 +1,210 @@
+#
+# A fatal error has been detected by the Java Runtime Environment:
+#
+#  Internal Error (classLoader.cpp:372), pid=29732, tid=15520
+#  guarantee(name != nullptr) failed: jimage file name is null
+#
+# JRE version:  (21.0.10+7) (build )
+# Java VM: OpenJDK 64-Bit Server VM (21.0.10+7-LTS, mixed mode, sharing, tiered, compressed oops, compressed class ptrs, g1 gc, windows-amd64)
+# No core dump will be written. Minidumps are not enabled by default on client versions of Windows
+#
+#
+
+---------------  S U M M A R Y ------------
+
+Command Line: 
+
+Host: AMD Ryzen 7 9700X 8-Core Processor             , 16 cores, 31G,  Windows 11 , 64 bit Build 26100 (10.0.26100.9444)
+Time: Thu Sep 24 08:46:11 2026 elapsed time: 0.006091 seconds (0d 0h 0m 0s)
+
+---------------  T H R E A D  ---------------
+
+Current thread (0x0000013cec6878e0):  JavaThread "Unknown thread" [_thread_in_vm, id=15520, stack(0x0000002fb0700000,0x0000002fb0800000) (1024K)]
+
+Stack: [0x0000002fb0700000,0x0000002fb0800000]
+Native frames: (J=compiled Java code, j=interpreted, Vv=VM code, C=native code)
+V  [jvm.dll+0x6d7a39]
+V  [jvm.dll+0x8b4b26]
+V  [jvm.dll+0x8b70de]
+V  [jvm.dll+0x8b7777]
+V  [jvm.dll+0x2842c7]
+V  [jvm.dll+0x2232a2]
+V  [jvm.dll+0x221160]
+V  [jvm.dll+0x21fe1d]
+V  [jvm.dll+0x3c4a68]
+V  [jvm.dll+0x867d25]
+V  [jvm.dll+0x457b31]
+V  [jvm.dll+0x459721]
+C  [jli.dll+0x52d0]
+C  [ucrtbase.dll+0x2cd30]
+C  [KERNEL32.DLL+0x2cd87]
+C  [ntdll.dll+0xacaec]
+
+
+---------------  P R O C E S S  ---------------
+
+Threads class SMR info:
+_java_thread_list=0x00007ffc443ea1c8, length=0, elements={
+}
+
+Java Threads: ( => current thread )
+Total: 0
+
+Other Threads:
+
+=>0x0000013cec6878e0 (exited) JavaThread "Unknown thread"    [_thread_in_vm, id=15520, stack(0x0000002fb0700000,0x0000002fb0800000) (1024K)]
+Total: 1
+
+Threads with active compile tasks:
+Total: 0
+
+VM state: not at safepoint (not fully initialized)
+
+VM Mutex/Monitor currently owned by a thread: None
+
+Heap address: 0x0000000000000000, size: 0 MB, Compressed Oops mode: 32-bit
+
+CDS archive(s) mapped at: [0x0000000000000000-0x0000000000000000-0x0000000000000000), size 0, SharedBaseAddress: 0x0000000800000000, ArchiveRelocationMode: 1.
+Narrow klass base: 0x0000000000000000, Narrow klass shift: 0, Narrow klass range: 0x0
+
+GC Precious Log:
+<Not initialized>
+
+Dll operation events (1 events):
+Event: 0.005 Loaded shared library \\?\C:\Users\36176\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\app\jre\bin\java.dll
+
+Deoptimization events (0 events):
+No events
+
+Classes loaded (0 events):
+No events
+
+Classes unloaded (0 events):
+No events
+
+Classes redefined (0 events):
+No events
+
+Internal exceptions (0 events):
+No events
+
+ZGC Phase Switch (0 events):
+No events
+
+VM Operations (0 events):
+No events
+
+Memory protections (0 events):
+No events
+
+Nmethod flushes (0 events):
+No events
+
+Events (0 events):
+No events
+
+
+Dynamic libraries:
+0x00007ff7ddcd0000 - 0x00007ff7ddcde000 	\\?\C:\Users\36176\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\app\jre\bin\java.exe
+0x00007ffd0d580000 - 0x00007ffd0d7e7000 	C:\WINDOWS\SYSTEM32\ntdll.dll
+0x00007ffd0d470000 - 0x00007ffd0d53b000 	C:\WINDOWS\System32\KERNEL32.DLL
+0x00007ffd0a780000 - 0x00007ffd0ab82000 	C:\WINDOWS\System32\KERNELBASE.dll
+0x00007ffd066c0000 - 0x00007ffd0675f000 	C:\WINDOWS\SYSTEM32\apphelp.dll
+0x00007ffd0ac50000 - 0x00007ffd0ad9c000 	C:\WINDOWS\System32\ucrtbase.dll
+0x00007ffcc0ff0000 - 0x00007ffcc1008000 	\\?\C:\Users\36176\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\app\jre\bin\jli.dll
+0x00007ffcbef40000 - 0x00007ffcbef5e000 	\\?\C:\Users\36176\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\app\jre\bin\VCRUNTIME140.dll
+0x00007ffd0b8d0000 - 0x00007ffd0ba9f000 	C:\WINDOWS\System32\USER32.dll
+0x00007ffd0b140000 - 0x00007ffd0b167000 	C:\WINDOWS\System32\win32u.dll
+0x00007ffced660000 - 0x00007ffced8f0000 	C:\WINDOWS\WinSxS\amd64_microsoft.windows.common-controls_6595b64144ccf1df_6.0.26100.9278_none_3e0d1ba8e3303201\COMCTL32.dll
+0x00007ffd0c8e0000 - 0x00007ffd0c90b000 	C:\WINDOWS\System32\GDI32.dll
+0x00007ffd0b170000 - 0x00007ffd0b299000 	C:\WINDOWS\System32\gdi32full.dll
+0x00007ffd0b820000 - 0x00007ffd0b8c9000 	C:\WINDOWS\System32\msvcrt.dll
+0x00007ffd0af00000 - 0x00007ffd0afa3000 	C:\WINDOWS\System32\msvcp_win.dll
+0x00007ffd0c560000 - 0x00007ffd0c591000 	C:\WINDOWS\System32\IMM32.DLL
+0x00007ffcee0a0000 - 0x00007ffcee0ac000 	\\?\C:\Users\36176\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\app\jre\bin\vcruntime140_1.dll
+0x00007ffc7f890000 - 0x00007ffc7f91d000 	\\?\C:\Users\36176\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\app\jre\bin\msvcp140.dll
+0x00007ffc437a0000 - 0x00007ffc44541000 	\\?\C:\Users\36176\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\app\jre\bin\server\jvm.dll
+0x00007ffd0c910000 - 0x00007ffd0c9cc000 	C:\WINDOWS\System32\ADVAPI32.dll
+0x00007ffd0c4b0000 - 0x00007ffd0c559000 	C:\WINDOWS\System32\sechost.dll
+0x00007ffd0c630000 - 0x00007ffd0c748000 	C:\WINDOWS\System32\RPCRT4.dll
+0x00007ffd0caa0000 - 0x00007ffd0cb20000 	C:\WINDOWS\System32\WS2_32.dll
+0x00007ffd0a530000 - 0x00007ffd0a58e000 	C:\WINDOWS\SYSTEM32\POWRPROF.dll
+0x00007ffcf7df0000 - 0x00007ffcf7e26000 	C:\WINDOWS\SYSTEM32\WINMM.dll
+0x00007ffd02000000 - 0x00007ffd0200b000 	C:\WINDOWS\SYSTEM32\VERSION.dll
+0x00007ffd0a510000 - 0x00007ffd0a525000 	C:\WINDOWS\SYSTEM32\UMPDC.dll
+0x00007ffd09410000 - 0x00007ffd0942b000 	C:\WINDOWS\SYSTEM32\kernel.appcore.dll
+0x00007ffce9a10000 - 0x00007ffce9a1a000 	\\?\C:\Users\36176\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\app\jre\bin\jimage.dll
+0x00007ffd07b70000 - 0x00007ffd07dbc000 	C:\WINDOWS\SYSTEM32\DBGHELP.DLL
+0x00007ffd0d050000 - 0x00007ffd0d3d5000 	C:\WINDOWS\System32\combase.dll
+0x00007ffd0c800000 - 0x00007ffd0c8d9000 	C:\WINDOWS\System32\OLEAUT32.dll
+0x00007ffcf0000000 - 0x00007ffcf003b000 	C:\WINDOWS\SYSTEM32\dbgcore.DLL
+0x00007ffd0ab90000 - 0x00007ffd0ac3c000 	C:\WINDOWS\System32\bcryptPrimitives.dll
+0x00007ffcbef20000 - 0x00007ffcbef40000 	\\?\C:\Users\36176\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\app\jre\bin\java.dll
+
+JVMTI agents: none
+
+dbghelp: loaded successfully - version: 4.0.5 - missing functions: none
+symbol engine: initialized successfully - sym options: 0x614 - pdb path: .;\\?\C:\Users\36176\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\app\jre\bin;C:\WINDOWS\SYSTEM32;C:\WINDOWS\WinSxS\amd64_microsoft.windows.common-controls_6595b64144ccf1df_6.0.26100.9278_none_3e0d1ba8e3303201;\\?\C:\Users\36176\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\app\jre\bin\server
+
+VM Arguments:
+java_command: <unknown>
+java_class_path (initial): <not set>
+Launcher Type: SUN_STANDARD
+
+[Global flags]
+     uint ConcGCThreads                            = 3                                         {product} {ergonomic}
+     uint G1ConcRefinementThreads                  = 13                                        {product} {ergonomic}
+    uintx GCDrainStackTargetSize                   = 64                                        {product} {ergonomic}
+   size_t InitialHeapSize                          = 521991104                                 {product} {ergonomic}
+   size_t MarkStackSize                            = 4194304                                   {product} {ergonomic}
+   size_t MaxHeapSize                              = 8351857664                                {product} {ergonomic}
+   size_t MinHeapSize                              = 6815736                                   {product} {ergonomic}
+    uintx ReservedCodeCacheSize                    = 251658240                              {pd product} {ergonomic}
+     bool SegmentedCodeCache                       = true                                      {product} {ergonomic}
+     bool UseCompressedOops                        = true                           {product lp64_product} {ergonomic}
+     bool UseG1GC                                  = true                                      {product} {ergonomic}
+     bool UseLargePagesIndividualAllocation        = false                                  {pd product} {ergonomic}
+
+Logging:
+Log output configuration:
+ #0: stdout all=warning uptime,level,tags foldmultilines=false
+ #1: stderr all=off uptime,level,tags foldmultilines=false
+
+Release file:
+<release file has not been read>
+Environment Variables:
+PATH=C:\Users\36176\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell;C:\Users\36176\.codex\tmp\arg0\codex-arg0LZUWCC;C:\Users\36176\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\libheif\libheif\bin;C:\Users\36176\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\jxrlib\jxrlib\bin;C:\Users\36176\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\poppler\Library\bin;C:\Users\36176\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\override;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3\bin\x64;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3\bin;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\NVIDIA Corporation\NVIDIA App\NvDLISR;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\Program Files\dotnet\;D:\MySoftwares\Tools\nodejs\;C:\Program Files\Git\cmd;C:\Program Files\NVIDIA Corporation\Nsight Compute 2026.2.1\;C:\Program Files (x86)\Windows Kits\10\Windows Performance Toolkit\;C:\Program Files\CMake\bin;C:\Program Files\WireGuard\;C:\Program Files\Rust stable MSVC 1.98\bin;C:\Users\36176\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\36176\AppData\Local\Programs\Python\Python312\;C:\Users\36176\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell;C:\Users\36176\AppData\Local\Microsoft\WindowsApps;C:\Program Files\Bandizip\;C:\Users\36176\AppData\Roaming\npm;D:\MySoftwares\Tools\VSCode\bin;D:\MySoftwares\Tools\Huawei\DevEco Studio\bin;C:\Users\36176\AppData\Local\Programs\Ollama;C:\Users\36176\.dotnet\tools;C:\Users\36176\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback;C:\Users\36176\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;C:\Users\36176\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\git\cmd;C:\Users\36176\AppData\Local\OpenAI\Codex\bin\d5b459afd5dcd195;C:\Users\36176\AppData\Local\OpenAI\Codex\bin\80f78947ad880e6e
+USERNAME=36176
+SHELL=C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe
+LANG=C.UTF-8
+LC_ALL=C.UTF-8
+LC_CTYPE=C.UTF-8
+TERM=dumb
+OS=Windows_NT
+PROCESSOR_IDENTIFIER=AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD
+TMP=C:\Users\36176\AppData\Local\Temp
+TEMP=C:\Users\36176\AppData\Local\Temp
+
+
+
+
+Periodic native trim disabled
+
+---------------  S Y S T E M  ---------------
+
+OS:
+ Windows 11 , 64 bit Build 26100 (10.0.26100.9444)
+OS uptime: 1 days 19:21 hours
+
+CPU: total 16 (initial active 16) 
+Processor Information for the first 16 processors :
+  Max Mhz: 3800, Current Mhz: 3800, Mhz Limit: 3800
+
+Memory: 4k page, system-wide physical 31859M (16263M free)
+TotalPageFile size 33907M (AvailPageFile size 14008M)
+current process WorkingSet (physical memory assigned to process): 12M, peak: 12M
+current process commit charge ("private bytes"): 3M, peak: 3M
+
+vm_info: OpenJDK 64-Bit Server VM (21.0.10+7-LTS) for windows-amd64 JRE (21.0.10+7-LTS), built on 2026-01-20T00:00:00Z by "admin" with MS VC++ 17.12 (VS2022)
+
+END.

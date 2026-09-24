@@ -10,14 +10,14 @@ import kotlin.math.min
 
 class MobiParser {
 
-    fun parse(file: File): ParsedMobi {
+    fun parse(file: File, untitledBookTitle: String = "未命名电子书"): ParsedMobi {
         if (!file.isFile || !file.canRead() || file.length() <= 0L) {
             throw MobiParseException(MobiParseError.INVALID_FILE, "MOBI file is not readable")
         }
 
         return try {
             RandomAccessFile(file, "r").use { randomAccessFile ->
-                parseFile(file, randomAccessFile)
+                parseFile(file, randomAccessFile, untitledBookTitle)
             }
         } catch (error: MobiParseException) {
             throw error
@@ -36,7 +36,11 @@ class MobiParser {
         }
     }
 
-    private fun parseFile(file: File, randomAccessFile: RandomAccessFile): ParsedMobi {
+    private fun parseFile(
+        file: File,
+        randomAccessFile: RandomAccessFile,
+        untitledBookTitle: String
+    ): ParsedMobi {
         val records = readRecordTable(randomAccessFile)
         val headerRecord = readRecord(randomAccessFile, records.first())
         if (headerRecord.size < MOBI_HEADER_OFFSET + MOBI_MIN_HEADER_LENGTH) {
@@ -85,7 +89,8 @@ class MobiParser {
                 file = file,
                 randomAccessFile = randomAccessFile,
                 records = records,
-                headerRecordIndex = kf8HeaderRecordIndex
+                headerRecordIndex = kf8HeaderRecordIndex,
+                untitledBookTitle = untitledBookTitle
             )
         }
 
@@ -126,7 +131,7 @@ class MobiParser {
         )
         val title = exth.title?.takeIf { it.isNotBlank() }
             ?: fallbackTitle?.takeIf { it.isNotBlank() }
-            ?: file.nameWithoutExtension.ifBlank { "未命名电子书" }
+            ?: file.nameWithoutExtension.ifBlank { untitledBookTitle }
         val author = exth.author?.takeIf { it.isNotBlank() }
 
         val textRecordsStart = firstContentRecord
@@ -180,7 +185,8 @@ class MobiParser {
         file: File,
         randomAccessFile: RandomAccessFile,
         records: List<Record>,
-        headerRecordIndex: Int
+        headerRecordIndex: Int,
+        untitledBookTitle: String
     ): ParsedMobi {
         val headerRecord = readRecord(randomAccessFile, records[headerRecordIndex])
         if (headerRecord.size < KF8_MIN_HEADER_RECORD_SIZE) {
@@ -254,7 +260,7 @@ class MobiParser {
         )
         val title = exth.title?.takeIf { it.isNotBlank() }
             ?: fallbackTitle?.takeIf { it.isNotBlank() }
-            ?: file.nameWithoutExtension.ifBlank { "未命名电子书" }
+            ?: file.nameWithoutExtension.ifBlank { untitledBookTitle }
         val author = exth.author?.takeIf { it.isNotBlank() }
 
         val textBytes = readTextContent(

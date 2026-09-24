@@ -88,8 +88,8 @@ class MobiBookSession private constructor(
     }
 
     companion object {
-        fun open(file: File): MobiBookSession {
-            val parsed = MobiParser().parse(file)
+        fun open(file: File, untitledBookTitle: String): MobiBookSession {
+            val parsed = MobiParser().parse(file, untitledBookTitle)
             return MobiBookSession(
                 book = parsed.book,
                 resourceRecords = parsed.resourceRecords,

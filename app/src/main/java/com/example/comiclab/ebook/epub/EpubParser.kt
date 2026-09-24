@@ -18,14 +18,14 @@ import org.xmlpull.v1.XmlPullParser
 
 class EpubParser {
 
-    fun parse(file: File): ParsedEpub {
+    fun parse(file: File, untitledChapterTitle: String = "未命名"): ParsedEpub {
         if (!file.isFile || !file.canRead() || file.length() <= 0L) {
             throw EpubParseException(EpubParseError.INVALID_FILE, "EPUB file is not readable")
         }
 
         return try {
             ZipFile(file).use { zipFile ->
-                parseZip(file, zipFile)
+                parseZip(file, zipFile, untitledChapterTitle)
             }
         } catch (error: EpubParseException) {
             throw error
@@ -38,7 +38,11 @@ class EpubParser {
         }
     }
 
-    private fun parseZip(file: File, zipFile: ZipFile): ParsedEpub {
+    private fun parseZip(
+        file: File,
+        zipFile: ZipFile,
+        untitledChapterTitle: String
+    ): ParsedEpub {
         if (zipFile.getEntry(ENCRYPTION_ENTRY) != null) {
             throw EpubParseException(
                 EpubParseError.ENCRYPTED,
@@ -72,7 +76,13 @@ class EpubParser {
 
         val manifestById = resolvedManifest.associateBy { it.id }
         val navigationTitles = parseNavigationTitles(zipFile, packageData, manifestById)
-        val chapters = parseChapters(zipFile, packageData, resolvedManifest, navigationTitles)
+        val chapters = parseChapters(
+            zipFile,
+            packageData,
+            resolvedManifest,
+            navigationTitles,
+            untitledChapterTitle
+        )
         if (chapters.isEmpty()) {
             throw EpubParseException(EpubParseError.EMPTY_BOOK, "EPUB does not contain readable chapters")
         }
@@ -238,7 +248,8 @@ class EpubParser {
         zipFile: ZipFile,
         packageData: PackageData,
         manifest: List<ManifestItem>,
-        navigationTitles: Map<String, String>
+        navigationTitles: Map<String, String>,
+        untitledChapterTitle: String
     ): List<EbookChapter> {
         val manifestById = manifest.associateBy { it.id }
         val spineItems = packageData.spine
@@ -257,7 +268,7 @@ class EpubParser {
             val title = navigationTitles[item.path]
                 ?: extractHeading(source)
                 ?: extractDocumentTitle(source)
-                ?: item.path.substringAfterLast('/').substringBeforeLast('.').ifBlank { "未命名" }
+                ?: item.path.substringAfterLast('/').substringBeforeLast('.').ifBlank { untitledChapterTitle }
             EbookChapter(
                 index = 0,
                 title = title,

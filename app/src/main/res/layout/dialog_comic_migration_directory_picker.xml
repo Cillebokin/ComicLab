@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="4dp"
+    android:paddingTop="4dp"
+    android:paddingEnd="4dp"
+    android:paddingBottom="4dp">
+
+    <TextView
+        android:id="@+id/tvComicMigrationPickerPath"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="3"
+        android:textColor="@color/comiclab_text_secondary"
+        android:textSize="@dimen/text_caption" />
+
+    <Button
+        android:id="@+id/btnComicMigrationPickerUp"
+        android:layout_width="match_parent"
+        android:layout_height="38dp"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/bg_preview_action_button"
+        android:text="@string/comic_migration_picker_up"
+        android:textColor="@color/white"
+        android:textSize="14sp" />
+
+    <ListView
+        android:id="@+id/listComicMigrationPickerDirectories"
+        android:layout_width="match_parent"
+        android:layout_height="280dp"
+        android:layout_marginTop="8dp"
+        android:background="@android:color/transparent"
+        android:clipToPadding="false"
+        android:divider="@drawable/divider_file_picker_item"
+        android:dividerHeight="1dp"
+        android:listSelector="@android:color/transparent" />
+
+    <TextView
+        android:id="@+id/tvComicMigrationPickerEmpty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:padding="20dp"
+        android:text="@string/comic_migration_picker_empty"
+        android:textColor="@color/comiclab_text_secondary"
+        android:textSize="@dimen/text_caption"
+        android:visibility="gone" />
+</LinearLayout>

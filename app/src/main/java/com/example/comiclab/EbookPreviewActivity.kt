@@ -89,13 +89,19 @@ class EbookPreviewActivity : AppCompatActivity() {
 
     private fun loadBook(file: File) {
         val generation = ++loadGeneration
+        val untitledBookTitle = getString(R.string.ebook_untitled_book)
+        val untitledChapterTitle = getString(R.string.ebook_untitled_chapter)
         tvStatus.text = getString(R.string.ebook_loading)
         tvStatus.visibility = View.VISIBLE
 
         runCatching {
             previewExecutor.execute {
                 val result = runCatching {
-                    val loadedSession = EbookSessionFactory.open(file)
+                    val loadedSession = EbookSessionFactory.open(
+                        file,
+                        untitledBookTitle,
+                        untitledChapterTitle
+                    )
                     val cover = loadedSession.book.coverResourceId?.let { resourceId ->
                         loadedSession.openResource(resourceId)?.use { input ->
                             BitmapFactory.decodeStream(input)

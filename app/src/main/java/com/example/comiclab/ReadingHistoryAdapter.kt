@@ -2,6 +2,7 @@ package com.example.comiclab
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.text.format.DateFormat
 import android.util.LruCache
 import android.view.LayoutInflater
 import android.view.View
@@ -13,7 +14,6 @@ import androidx.recyclerview.widget.RecyclerView
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Collections
-import java.util.Locale
 import java.util.concurrent.Executors
 
 class ReadingHistoryAdapter(
@@ -191,11 +191,15 @@ class ReadingHistoryAdapter(
         return when {
             isSameDay(itemCalendar, today) -> context.getString(R.string.today)
             isSameDay(itemCalendar, yesterday) -> context.getString(R.string.yesterday)
-            itemCalendar.get(Calendar.YEAR) == today.get(Calendar.YEAR) ->
-                SimpleDateFormat("M月d日", Locale.getDefault()).format(itemCalendar.time)
-
-            else -> SimpleDateFormat("yyyy年M月d日", Locale.getDefault()).format(itemCalendar.time)
+            itemCalendar.get(Calendar.YEAR) == today.get(Calendar.YEAR) -> formatDate(itemCalendar, "MMMd")
+            else -> formatDate(itemCalendar, "yMMMd")
         }
+    }
+
+    private fun formatDate(calendar: Calendar, skeleton: String): String {
+        val locale = context.resources.configuration.locales.get(0)
+        val pattern = DateFormat.getBestDateTimePattern(locale, skeleton)
+        return SimpleDateFormat(pattern, locale).format(calendar.time)
     }
 
     private fun isSameDay(left: Calendar, right: Calendar): Boolean {

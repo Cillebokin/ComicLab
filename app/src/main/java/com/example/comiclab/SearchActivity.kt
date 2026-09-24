@@ -3,8 +3,6 @@ package com.example.comiclab
 import android.content.Intent
 import android.os.Bundle
 import android.os.Environment
-import android.os.Handler
-import android.os.Looper
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -38,7 +36,6 @@ class SearchActivity : AppCompatActivity() {
     private val searchResults = mutableListOf<File>()
     private val searchExecutor = Executors.newSingleThreadExecutor()
     private val searchGeneration = AtomicInteger(0)
-    private val mainHandler = Handler(Looper.getMainLooper())
 
     @Volatile
     private var destroyed = false
@@ -69,7 +66,9 @@ class SearchActivity : AppCompatActivity() {
             ?.takeIf { it.isNotBlank() }
             ?: Environment.getExternalStorageDirectory().absolutePath
 
-        searchResultAdapter = SearchResultAdapter(this, searchResults)
+        searchResultAdapter = SearchResultAdapter(this, searchResults) { directory ->
+            openResultInFileBrowser(directory)
+        }
         listSearchResults.adapter = searchResultAdapter
 
         tvSearchRoot.text = getString(R.string.search_root, searchRootPath)
@@ -93,20 +92,15 @@ class SearchActivity : AppCompatActivity() {
             }
         }
 
-        listSearchResults.setOnItemClickListener { _, view, position, _ ->
+        listSearchResults.setOnItemClickListener { _, _, position, _ ->
             val result = searchResults.getOrNull(position) ?: return@setOnItemClickListener
-            view.isPressed = true
-            mainHandler.postDelayed({
-                view.isPressed = false
-                openResultInFileBrowser(result)
-            }, SEARCH_CLICK_STATE_DELAY_MS)
+            openResultInFileBrowser(result)
         }
     }
 
     override fun onDestroy() {
         destroyed = true
         searchGeneration.incrementAndGet()
-        mainHandler.removeCallbacksAndMessages(null)
         searchExecutor.shutdownNow()
         searchResultAdapter.close()
         super.onDestroy()
@@ -234,6 +228,5 @@ class SearchActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_SEARCH_ROOT_PATH = "search_root_path"
-        private const val SEARCH_CLICK_STATE_DELAY_MS = 160L
     }
 }

@@ -477,6 +477,8 @@ class EbookReaderActivity : AppCompatActivity() {
 
     private fun loadBook(file: File) {
         val generation = ++loadGeneration
+        val untitledBookTitle = getString(R.string.ebook_untitled_book)
+        val untitledChapterTitle = getString(R.string.ebook_untitled_chapter)
         pageReady = false
         tvStatus.text = getString(R.string.ebook_loading)
         tvStatus.visibility = android.view.View.VISIBLE
@@ -484,7 +486,11 @@ class EbookReaderActivity : AppCompatActivity() {
         runCatching {
             loadExecutor.execute {
                 val result = runCatching {
-                    val loadedSession = EbookSessionFactory.open(file)
+                    val loadedSession = EbookSessionFactory.open(
+                        file,
+                        untitledBookTitle,
+                        untitledChapterTitle
+                    )
                     try {
                         PreparedBook(
                             session = loadedSession,
