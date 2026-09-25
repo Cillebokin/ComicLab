@@ -28,6 +28,7 @@ class SearchActivity : AppCompatActivity() {
     private lateinit var checkSearchDirectories: CheckBox
     private lateinit var checkSearchFiles: CheckBox
     private lateinit var tvSearchRoot: TextView
+    private lateinit var layoutSearchStatus: View
     private lateinit var tvSearchStatus: TextView
     private lateinit var progressSearch: ProgressBar
     private lateinit var listSearchResults: ListView
@@ -58,6 +59,7 @@ class SearchActivity : AppCompatActivity() {
         checkSearchDirectories = findViewById(R.id.checkSearchDirectories)
         checkSearchFiles = findViewById(R.id.checkSearchFiles)
         tvSearchRoot = findViewById(R.id.tvSearchRoot)
+        layoutSearchStatus = findViewById(R.id.layoutSearchStatus)
         tvSearchStatus = findViewById(R.id.tvSearchStatus)
         progressSearch = findViewById(R.id.progressSearch)
         listSearchResults = findViewById(R.id.listSearchResults)
@@ -72,7 +74,6 @@ class SearchActivity : AppCompatActivity() {
         listSearchResults.adapter = searchResultAdapter
 
         tvSearchRoot.text = getString(R.string.search_root, searchRootPath)
-        tvSearchStatus.text = getString(R.string.search_idle)
         progressSearch.visibility = View.GONE
 
         btnBack.setOnClickListener {
@@ -130,6 +131,7 @@ class SearchActivity : AppCompatActivity() {
         val generation = searchGeneration.incrementAndGet()
         searchResults.clear()
         searchResultAdapter.notifyDataSetChanged()
+        layoutSearchStatus.visibility = View.VISIBLE
         tvSearchStatus.text = getString(R.string.searching)
         progressSearch.visibility = View.VISIBLE
 

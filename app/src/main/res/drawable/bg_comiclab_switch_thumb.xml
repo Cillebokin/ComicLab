@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:left="3dp" android:top="3dp" android:right="3dp" android:bottom="3dp">
+        <selector>
+            <item android:state_enabled="false">
+                <shape android:shape="oval">
+                    <size android:width="14dp" android:height="14dp" />
+                    <solid android:color="@color/comiclab_cover_placeholder_border" />
+                </shape>
+            </item>
+            <item>
+                <shape android:shape="oval">
+                    <size android:width="14dp" android:height="14dp" />
+                    <solid android:color="@color/white" />
+                    <stroke android:width="0.5dp" android:color="#240F172A" />
+                </shape>
+            </item>
+        </selector>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <size android:width="20dp" android:height="20dp" />
+            <solid android:color="#00000000" />
+            <padding android:left="3dp" android:right="3dp" />
+        </shape>
+    </item>
+</layer-list>

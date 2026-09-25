@@ -38,7 +38,7 @@
             android:ellipsize="end"
             android:maxLines="1"
             android:textColor="@color/white"
-            android:textSize="14sp" />
+            android:textSize="@dimen/text_value" />
 
         <Button
             android:id="@+id/btnReaderPreview"
@@ -58,7 +58,7 @@
             android:text="@string/reader_preview"
             android:textAllCaps="false"
             android:textColor="@color/white"
-            android:textSize="12sp" />
+            android:textSize="@dimen/text_caption" />
     </LinearLayout>
 
     <View
@@ -118,14 +118,12 @@
 
             <SeekBar
                 android:id="@+id/sliderReaderProgress"
+                style="@style/Widget.ComicLab.SeekBar"
                 android:layout_width="0dp"
                 android:layout_height="36dp"
                 android:layout_weight="1"
                 android:max="0"
-                android:progress="0"
-                android:progressBackgroundTint="@color/reader_brightness_track_tint"
-                android:progressTint="@color/comiclab_accent"
-                android:thumbTint="@color/white" />
+                android:progress="0" />
 
             <TextView
                 android:id="@+id/tvReaderProgress"
@@ -146,27 +144,22 @@
 
             <SeekBar
                 android:id="@+id/sliderScreenBrightness"
+                style="@style/Widget.ComicLab.SeekBar"
                 android:layout_width="0dp"
                 android:layout_height="36dp"
                 android:layout_weight="1"
                 android:max="255"
-                android:progress="128"
-                android:progressBackgroundTint="@color/reader_brightness_track_tint"
-                android:progressTint="@color/reader_brightness_progress_tint"
-                android:thumbTint="@color/reader_brightness_thumb_tint" />
+                android:progress="128" />
 
             <CheckBox
                 android:id="@+id/checkboxCustomBrightness"
+                style="@style/Widget.ComicLab.CheckBox"
                 android:layout_width="wrap_content"
                 android:layout_height="36dp"
                 android:layout_marginStart="8dp"
-                android:buttonTint="@color/comiclab_accent"
                 android:gravity="center_vertical"
-                android:minWidth="0dp"
-                android:paddingStart="4dp"
                 android:text="@string/custom_brightness"
-                android:textColor="@color/white"
-                android:textSize="13sp" />
+                android:textColor="@color/white" />
         </LinearLayout>
     </LinearLayout>
 
@@ -182,6 +175,6 @@
         android:padding="16dp"
         android:text="@string/loading_reading"
         android:textColor="@color/white"
-        android:textSize="14sp" />
+        android:textSize="@dimen/text_value" />
 
 </FrameLayout>

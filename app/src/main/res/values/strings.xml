@@ -117,7 +117,6 @@
     <string name="search">搜索</string>
     <string name="search_keyword_hint">输入文件或文件夹关键字</string>
     <string name="search_root">搜索范围：%1$s</string>
-    <string name="search_idle">请输入关键字后搜索</string>
     <string name="search_empty_keyword">请输入搜索关键字</string>
     <string name="search_directories">搜索文件夹</string>
     <string name="search_files">搜索文件</string>
@@ -240,6 +239,7 @@
     <string name="language_english">English</string>
     <string name="language_current_chinese">简体中文</string>
     <string name="language_current_english">English</string>
+    <string name="language_setting_accessibility_description">语言，当前为%1$s，点击更改</string>
     <string name="language_menu_find_similar_directories">查找相似文件夹</string>
     <string name="language_menu_merge_comics">漫画整合（不递归）</string>
     <string name="language_menu_merge_files">文件整合（不递归）</string>

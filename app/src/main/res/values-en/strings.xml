@@ -118,7 +118,6 @@ Choose a folder</string>
     <string name="search">Search</string>
     <string name="search_keyword_hint">Enter a file or folder name</string>
     <string name="search_root">Search in: %1$s</string>
-    <string name="search_idle">Enter a keyword to search</string>
     <string name="search_empty_keyword">Enter a search keyword</string>
     <string name="search_directories">Search folders</string>
     <string name="search_files">Search files</string>
@@ -242,6 +241,7 @@ Choose a folder</string>
     <string name="language_english">English</string>
     <string name="language_current_chinese">简体中文</string>
     <string name="language_current_english">English</string>
+    <string name="language_setting_accessibility_description">Change language. Current language: %1$s.</string>
     <string name="language_menu_find_similar_directories">Find similar folder names</string>
     <string name="language_menu_merge_comics">Merge comics (non-recursive)</string>
     <string name="language_menu_merge_files">Merge files (non-recursive)</string>

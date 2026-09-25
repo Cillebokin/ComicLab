@@ -9,12 +9,14 @@
         <item name="colorControlActivated">@color/comiclab_accent</item>
         <item name="android:colorAccent">@color/comiclab_accent</item>
         <item name="android:colorControlActivated">@color/comiclab_accent</item>
+        <item name="android:fontFamily">sans-serif</item>
         <item name="android:windowFullscreen">false</item>
-        <item name="android:statusBarColor">@color/comiclab_accent</item>
+        <item name="android:statusBarColor">@color/comiclab_file_picker_background</item>
         <item name="android:navigationBarColor">@color/white</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="materialButtonStyle">@style/Widget.ComicLab.Button</item>
+        <item name="android:editTextStyle">@style/Widget.ComicLab.EditText</item>
     </style>
 
     <style name="Theme.ComicLab" parent="Base.Theme.ComicLab" />

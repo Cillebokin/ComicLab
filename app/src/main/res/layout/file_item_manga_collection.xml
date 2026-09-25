@@ -33,7 +33,7 @@
             android:includeFontPadding="false"
             android:maxLines="1"
             android:textColor="@color/comiclab_text_primary"
-            android:textSize="15sp" />
+            android:textSize="@dimen/text_body" />
 
         <ImageView
             android:id="@+id/imgFavoriteMarker"

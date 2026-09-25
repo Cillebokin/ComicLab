@@ -21,6 +21,7 @@
         android:layout_marginTop="12dp"
         android:layout_marginEnd="12dp"
         android:background="@drawable/bg_file_picker_card"
+        android:elevation="@dimen/card_elevation"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="@dimen/space_lg"
@@ -34,7 +35,7 @@
             android:layout_height="wrap_content"
             android:includeFontPadding="false"
             android:text="@string/search"
-            android:textColor="@color/black"
+            android:textColor="@color/comiclab_text_primary"
             android:textSize="@dimen/text_title"
             android:textStyle="bold" />
 
@@ -63,6 +64,7 @@
         android:layout_marginTop="10dp"
         android:layout_marginEnd="12dp"
         android:background="@drawable/bg_file_picker_card"
+        android:elevation="@dimen/card_elevation"
         android:orientation="vertical"
         android:padding="@dimen/space_md"
         app:layout_constraintEnd_toEndOf="parent"
@@ -81,7 +83,7 @@
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="40dp"
+            android:layout_height="48dp"
             android:layout_marginTop="@dimen/space_sm"
             android:gravity="center_vertical"
             android:orientation="horizontal">
@@ -91,7 +93,6 @@
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
                 android:layout_weight="1"
-                android:backgroundTint="@color/comiclab_accent"
                 android:hint="@string/search_keyword_hint"
                 android:imeOptions="actionSearch"
                 android:importantForAutofill="no"
@@ -124,65 +125,54 @@
 
             <CheckBox
                 android:id="@+id/checkSearchDirectories"
+                style="@style/Widget.ComicLab.CheckBox"
                 android:layout_width="wrap_content"
                 android:layout_height="match_parent"
-                android:button="@drawable/selector_search_checkbox"
                 android:checked="true"
                 android:gravity="center_vertical"
-                android:includeFontPadding="false"
                 android:text="@string/search_directories"
-                android:textColor="@color/comiclab_text_secondary"
-                android:textSize="@dimen/text_caption" />
+                android:textColor="@color/comiclab_text_secondary" />
 
             <CheckBox
                 android:id="@+id/checkSearchFiles"
+                style="@style/Widget.ComicLab.CheckBox"
                 android:layout_width="wrap_content"
                 android:layout_height="match_parent"
                 android:layout_marginStart="@dimen/space_lg"
-                android:button="@drawable/selector_search_checkbox"
                 android:checked="true"
                 android:gravity="center_vertical"
-                android:includeFontPadding="false"
                 android:text="@string/search_files"
+                android:textColor="@color/comiclab_text_secondary" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/layoutSearchStatus"
+            android:layout_width="match_parent"
+            android:layout_height="34dp"
+            android:layout_marginTop="@dimen/space_sm"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <ProgressBar
+                android:id="@+id/progressSearch"
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:indeterminateTint="@color/comiclab_accent" />
+
+            <TextView
+                android:id="@+id/tvSearchStatus"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/space_sm"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:includeFontPadding="false"
+                android:maxLines="1"
                 android:textColor="@color/comiclab_text_secondary"
                 android:textSize="@dimen/text_caption" />
         </LinearLayout>
-    </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/layoutSearchStatus"
-        android:layout_width="0dp"
-        android:layout_height="34dp"
-        android:layout_marginStart="12dp"
-        android:layout_marginTop="10dp"
-        android:layout_marginEnd="12dp"
-        android:background="@drawable/bg_file_picker_card"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingStart="@dimen/space_md"
-        android:paddingEnd="@dimen/space_md"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/layoutSearchInput">
-
-        <ProgressBar
-            android:id="@+id/progressSearch"
-            style="?android:attr/progressBarStyleSmall"
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:indeterminateTint="@color/comiclab_accent" />
-
-        <TextView
-            android:id="@+id/tvSearchStatus"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="@dimen/space_sm"
-            android:layout_weight="1"
-            android:ellipsize="end"
-            android:includeFontPadding="false"
-            android:maxLines="1"
-            android:textColor="@color/comiclab_text_secondary"
-            android:textSize="@dimen/text_caption" />
     </LinearLayout>
 
     <FrameLayout
@@ -195,12 +185,13 @@
         android:layout_marginBottom="12dp"
         android:background="@drawable/bg_file_picker_card"
         android:clipToOutline="true"
+        android:elevation="@dimen/card_elevation"
         android:paddingTop="4dp"
         android:paddingBottom="4dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/layoutSearchStatus">
+        app:layout_constraintTop_toBottomOf="@+id/layoutSearchInput">
 
         <com.example.comiclab.BookcaseAwareListView
             android:id="@+id/listSearchResults"

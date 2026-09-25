@@ -126,8 +126,9 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun bindLanguageSetting() {
-        updateLanguageValue()
-        tvLanguageValue.setOnClickListener {
+        val languageCard = findViewById<View>(R.id.cardLanguage)
+        updateLanguageValue(languageCard)
+        languageCard.setOnClickListener {
             val options = arrayOf(
                 getString(R.string.language_simplified_chinese),
                 getString(R.string.language_english)
@@ -155,13 +156,16 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateLanguageValue() {
-        tvLanguageValue.setText(
-            if (currentLanguageIndex() == ENGLISH_LANGUAGE_INDEX) {
-                R.string.language_current_english
-            } else {
-                R.string.language_current_chinese
-            }
+    private fun updateLanguageValue(languageCard: View) {
+        val currentLanguageString = if (currentLanguageIndex() == ENGLISH_LANGUAGE_INDEX) {
+            R.string.language_current_english
+        } else {
+            R.string.language_current_chinese
+        }
+        tvLanguageValue.setText(currentLanguageString)
+        languageCard.contentDescription = getString(
+            R.string.language_setting_accessibility_description,
+            getString(currentLanguageString)
         )
     }
 

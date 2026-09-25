@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Widget.ComicLab.EditText" parent="@android:style/Widget.Material.EditText">
+        <item name="android:backgroundTint">@color/comiclab_edit_text_tint</item>
+        <item name="android:textColor">@color/comiclab_text_primary</item>
+        <item name="android:textColorHint">@color/comiclab_text_tertiary</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:textSize">@dimen/text_body</item>
+    </style>
+
+    <style name="Widget.ComicLab.CheckBox" parent="@android:style/Widget.Material.CompoundButton.CheckBox">
+        <item name="android:button">@drawable/selector_search_checkbox</item>
+        <item name="buttonTint">@null</item>
+        <item name="android:drawablePadding">6dp</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textSize">@dimen/text_caption</item>
+    </style>
+
+    <style name="Widget.ComicLab.SeekBar" parent="@android:style/Widget.Material.SeekBar">
+        <item name="android:progressDrawable">@drawable/progress_comiclab_seekbar</item>
+        <item name="android:thumb">@drawable/bg_comiclab_seekbar_thumb</item>
+        <item name="android:thumbOffset">8dp</item>
+        <item name="android:splitTrack">false</item>
+        <item name="android:progressTint">@color/reader_brightness_progress_tint</item>
+        <item name="android:progressBackgroundTint">@color/reader_brightness_track_tint</item>
+        <item name="android:thumbTint">@color/reader_brightness_thumb_tint</item>
+    </style>
+
+    <style name="Widget.ComicLab.Switch" parent="Widget.AppCompat.CompoundButton.Switch">
+        <item name="android:thumb">@drawable/bg_comiclab_switch_thumb</item>
+        <item name="track">@drawable/selector_comiclab_switch_track</item>
+        <item name="thumbTint">@null</item>
+        <item name="trackTint">@null</item>
+        <item name="switchMinWidth">36dp</item>
+        <item name="switchPadding">10dp</item>
+        <item name="showText">false</item>
+        <item name="splitTrack">false</item>
+    </style>
+</resources>

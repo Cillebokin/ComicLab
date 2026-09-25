@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="22dp"
+    android:height="22dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M15,8h.01M3,16l5,-5c.928,-.893 2.072,-.893 3,0l5,5m-2,-2 1,-1c.928,-.893 2.072,-.893 3,0l3,3M5,21h14a2,2 0,0 0,2 -2V5a2,2 0,0 0,-2 -2H5a2,2 0,0 0,-2 2v14a2,2 0,0 0,2 2z"
+        android:strokeColor="@color/comiclab_icon_placeholder"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="2" />
+</vector>

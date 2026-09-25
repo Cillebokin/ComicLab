@@ -83,14 +83,12 @@
 
             <SeekBar
                 android:id="@+id/sliderEbookReaderProgress"
+                style="@style/Widget.ComicLab.SeekBar"
                 android:layout_width="0dp"
                 android:layout_height="36dp"
                 android:layout_weight="1"
                 android:max="1000"
-                android:progress="0"
-                android:progressBackgroundTint="@color/reader_brightness_track_tint"
-                android:progressTint="@color/comiclab_accent"
-                android:thumbTint="@color/white" />
+                android:progress="0" />
 
             <TextView
                 android:id="@+id/tvEbookReaderProgress"
@@ -112,27 +110,22 @@
 
             <SeekBar
                 android:id="@+id/sliderEbookScreenBrightness"
+                style="@style/Widget.ComicLab.SeekBar"
                 android:layout_width="0dp"
                 android:layout_height="36dp"
                 android:layout_weight="1"
                 android:max="255"
-                android:progress="128"
-                android:progressBackgroundTint="@color/reader_brightness_track_tint"
-                android:progressTint="@color/reader_brightness_progress_tint"
-                android:thumbTint="@color/reader_brightness_thumb_tint" />
+                android:progress="128" />
 
             <CheckBox
                 android:id="@+id/checkboxEbookCustomBrightness"
+                style="@style/Widget.ComicLab.CheckBox"
                 android:layout_width="wrap_content"
                 android:layout_height="36dp"
                 android:layout_marginStart="8dp"
-                android:buttonTint="@color/comiclab_accent"
                 android:gravity="center_vertical"
-                android:minWidth="0dp"
-                android:paddingStart="4dp"
                 android:text="@string/custom_brightness"
-                android:textColor="@color/white"
-                android:textSize="13sp" />
+                android:textColor="@color/white" />
         </LinearLayout>
     </LinearLayout>
 

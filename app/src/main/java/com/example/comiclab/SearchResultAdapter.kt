@@ -150,7 +150,7 @@ class SearchResultAdapter(
                 resetCollectionCoverContainer(iconContainer, infoContainer, imgIcon, collectionCoverList)
                 setDefaultIconLayout(imgIcon)
                 imgIcon.scaleType = ImageView.ScaleType.CENTER_INSIDE
-                imgIcon.setImageResource(R.drawable.png_file_icon)
+                imgIcon.setImageResource(R.drawable.ic_lucide_file)
             }
         }
     }
@@ -167,7 +167,7 @@ class SearchResultAdapter(
             resetCollectionCoverContainer(iconContainer, infoContainer, imgIcon, collectionCoverList)
             setDefaultIconLayout(imgIcon)
             imgIcon.scaleType = ImageView.ScaleType.CENTER_INSIDE
-            imgIcon.setImageResource(R.drawable.png_directory_icon)
+            imgIcon.setImageResource(R.drawable.ic_lucide_folder)
             return
         }
 
@@ -301,9 +301,9 @@ class SearchResultAdapter(
         collectionCoverList: RecyclerView
     ) {
         resetCollectionCoverContainer(iconContainer, infoContainer, imgIcon, collectionCoverList)
-        setDefaultIconLayout(imgIcon)
+        setArchivePlaceholderLayout(imgIcon)
         imgIcon.scaleType = ImageView.ScaleType.CENTER_INSIDE
-        imgIcon.setImageResource(R.drawable.png_press_package_icon)
+        imgIcon.setImageResource(R.drawable.ic_lucide_image)
 
         if (ReaderFileDetector.isEbook(file)) {
             imgIcon.tag = null
@@ -528,7 +528,17 @@ class SearchResultAdapter(
         updateIconSize(
             imgIcon,
             dpToPx(SEARCH_COVER_WIDTH_DP),
-            ViewGroup.LayoutParams.MATCH_PARENT
+            dpToPx(SEARCH_COVER_HEIGHT_DP)
+        )
+    }
+
+    private fun setArchivePlaceholderLayout(imgIcon: ImageView) {
+        imgIcon.setBackgroundResource(R.drawable.bg_file_cover_placeholder)
+        imgIcon.setPadding(0, 0, 0, 0)
+        updateIconSize(
+            imgIcon,
+            dpToPx(SEARCH_COVER_WIDTH_DP),
+            dpToPx(SEARCH_COVER_HEIGHT_DP)
         )
     }
 
@@ -597,8 +607,9 @@ class SearchResultAdapter(
         private const val SEARCH_COVER_MAX_SIZE = 128
         private const val SEARCH_COVER_THREAD_COUNT = 2
         private const val COLLECTION_REFRESH_RETRY_DELAY_MS = 80L
-        private const val SEARCH_COVER_WIDTH_DP = 56
-        private const val DEFAULT_ICON_SIZE_DP = 40
+        private const val SEARCH_COVER_WIDTH_DP = 50
+        private const val SEARCH_COVER_HEIGHT_DP = 68
+        private const val DEFAULT_ICON_SIZE_DP = 36
         private const val BOOKCASE_ICON_SIZE_DP = 34
         private const val DEFAULT_ICON_PADDING_DP = 4
     }
