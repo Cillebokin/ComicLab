@@ -9,8 +9,6 @@ import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
-import android.os.Handler
-import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.webkit.MimeTypeMap
@@ -61,13 +59,6 @@ class MainActivity : AppCompatActivity() {
     private val classifyExecutor = Executors.newSingleThreadExecutor()
     private val directoryLoadGeneration = AtomicInteger(0)
     private val classifyGeneration = AtomicInteger(0)
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private val showReadingHistoryScrimRunnable = Runnable {
-        showReadingHistoryScrimNow()
-    }
-    private val hideReadingHistoryScrimRunnable = Runnable {
-        hideReadingHistoryScrimNow()
-    }
 
     private var readingHistoryPopupWindow: PopupWindow? = null
     private var readingHistoryAdapter: ReadingHistoryAdapter? = null
@@ -75,6 +66,7 @@ class MainActivity : AppCompatActivity() {
     private var favoriteComicAdapter: FavoriteComicAdapter? = null
     private var favoritePathsPopupWindow: PopupWindow? = null
     private var favoritePathAdapter: FavoritePathAdapter? = null
+    private var isReadingHistoryScrimFadingOut = false
     @Volatile
     private var isClassifyingComics = false
     @Volatile
@@ -269,8 +261,6 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         directoryLoadGeneration.incrementAndGet()
         classifyGeneration.incrementAndGet()
-        mainHandler.removeCallbacks(showReadingHistoryScrimRunnable)
-        mainHandler.removeCallbacks(hideReadingHistoryScrimRunnable)
         directoryLoadExecutor.shutdownNow()
         classifyExecutor.shutdownNow()
         fileListAdapter.close()
@@ -372,7 +362,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         dismissSidePanels()
-        scheduleShowReadingHistoryScrim()
+        showReadingHistoryScrim()
         readingHistoryAdapter = historyAdapter
         readingHistoryPopupWindow = PopupWindow(
             content,
@@ -389,7 +379,7 @@ class MainActivity : AppCompatActivity() {
                 if (readingHistoryAdapter === historyAdapter) {
                     readingHistoryAdapter = null
                     readingHistoryPopupWindow = null
-                    scheduleHideReadingHistoryScrim()
+                    hideReadingHistoryScrim()
                 }
             }
             showAtLocation(rootView, Gravity.END or Gravity.TOP, 0, 0)
@@ -440,7 +430,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         dismissSidePanels()
-        scheduleShowReadingHistoryScrim()
+        showReadingHistoryScrim()
         favoritePathAdapter = adapter
         favoritePathsPopupWindow = PopupWindow(
             content,
@@ -456,7 +446,7 @@ class MainActivity : AppCompatActivity() {
                 if (favoritePathAdapter === adapter) {
                     favoritePathAdapter = null
                     favoritePathsPopupWindow = null
-                    scheduleHideReadingHistoryScrim()
+                    hideReadingHistoryScrim()
                     notifyListChanged()
                 }
             }
@@ -511,7 +501,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         dismissSidePanels()
-        scheduleShowReadingHistoryScrim()
+        showReadingHistoryScrim()
         favoriteComicAdapter = adapter
         favoriteComicsPopupWindow = PopupWindow(
             content,
@@ -528,7 +518,7 @@ class MainActivity : AppCompatActivity() {
                 if (favoriteComicAdapter === adapter) {
                     favoriteComicAdapter = null
                     favoriteComicsPopupWindow = null
-                    scheduleHideReadingHistoryScrim()
+                    hideReadingHistoryScrim()
                     notifyListChanged()
                 }
             }
@@ -547,14 +537,14 @@ class MainActivity : AppCompatActivity() {
         readingHistoryPopupWindow = null
         readingHistoryAdapter?.close()
         readingHistoryAdapter = null
-        scheduleHideReadingHistoryScrim()
+        hideReadingHistoryScrim()
     }
 
     private fun dismissFavoritePathsPanel() {
         favoritePathsPopupWindow?.dismiss()
         favoritePathsPopupWindow = null
         favoritePathAdapter = null
-        scheduleHideReadingHistoryScrim()
+        hideReadingHistoryScrim()
     }
 
     private fun dismissFavoriteComicsPanel() {
@@ -562,33 +552,36 @@ class MainActivity : AppCompatActivity() {
         favoriteComicsPopupWindow = null
         favoriteComicAdapter?.close()
         favoriteComicAdapter = null
-        scheduleHideReadingHistoryScrim()
+        hideReadingHistoryScrim()
     }
 
-    private fun scheduleShowReadingHistoryScrim() {
-        mainHandler.removeCallbacks(hideReadingHistoryScrimRunnable)
-        mainHandler.removeCallbacks(showReadingHistoryScrimRunnable)
-        mainHandler.postDelayed(
-            showReadingHistoryScrimRunnable,
-            READING_HISTORY_PANEL_ENTER_ANIMATION_MS
-        )
+    private fun showReadingHistoryScrim() {
+        readingHistoryScrim.animate().cancel()
+        isReadingHistoryScrimFadingOut = false
+        if (readingHistoryScrim.visibility != View.VISIBLE) {
+            readingHistoryScrim.alpha = 0f
+            readingHistoryScrim.visibility = View.VISIBLE
+        }
+        readingHistoryScrim.animate()
+            .alpha(1f)
+            .setDuration(READING_HISTORY_PANEL_ENTER_ANIMATION_MS)
+            .start()
     }
 
-    private fun scheduleHideReadingHistoryScrim() {
-        mainHandler.removeCallbacks(showReadingHistoryScrimRunnable)
-        mainHandler.removeCallbacks(hideReadingHistoryScrimRunnable)
-        mainHandler.postDelayed(
-            hideReadingHistoryScrimRunnable,
-            READING_HISTORY_PANEL_EXIT_ANIMATION_MS
-        )
-    }
-
-    private fun showReadingHistoryScrimNow() {
-        readingHistoryScrim.visibility = View.VISIBLE
-    }
-
-    private fun hideReadingHistoryScrimNow() {
-        readingHistoryScrim.visibility = View.GONE
+    private fun hideReadingHistoryScrim() {
+        if (readingHistoryScrim.visibility != View.VISIBLE || isReadingHistoryScrimFadingOut) {
+            return
+        }
+        isReadingHistoryScrimFadingOut = true
+        readingHistoryScrim.animate().cancel()
+        readingHistoryScrim.animate()
+            .alpha(0f)
+            .setDuration(READING_HISTORY_PANEL_EXIT_ANIMATION_MS)
+            .withEndAction {
+                readingHistoryScrim.visibility = View.GONE
+                isReadingHistoryScrimFadingOut = false
+            }
+            .start()
     }
 
     private fun showPendingFeature(labelResId: Int) {

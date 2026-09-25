@@ -236,6 +236,7 @@
         android:layout_height="match_parent"
         android:background="#66000000"
         android:clickable="true"
+        android:elevation="4dp"
         android:focusable="true"
         android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent"

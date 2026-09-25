@@ -1,6 +1,7 @@
 package com.example.comiclab
 
 import android.content.Context
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.view.View
@@ -81,6 +82,24 @@ object RoundedPopupMenu {
         }
 
         val popupWidthPx = dpToPx(context, widthDp)
+        content.measure(
+            View.MeasureSpec.makeMeasureSpec(popupWidthPx, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        )
+        val popupHeightPx = content.measuredHeight
+        val visibleFrame = Rect()
+        anchor.getWindowVisibleDisplayFrame(visibleFrame)
+        val anchorLocation = IntArray(2)
+        anchor.getLocationOnScreen(anchorLocation)
+        val verticalOffsetPx = dpToPx(context, MENU_VERTICAL_OFFSET_DP)
+        val belowTop = anchorLocation[1] + anchor.height + verticalOffsetPx
+        val aboveTop = anchorLocation[1] - verticalOffsetPx - popupHeightPx
+        val popupTop = when {
+            belowTop + popupHeightPx <= visibleFrame.bottom -> belowTop
+            aboveTop >= visibleFrame.top -> aboveTop
+            else -> (visibleFrame.bottom - popupHeightPx).coerceAtLeast(visibleFrame.top)
+        }
+
         popupWindow = PopupWindow(
             content,
             popupWidthPx,
@@ -93,7 +112,7 @@ object RoundedPopupMenu {
             showAsDropDown(
                 anchor,
                 anchor.width - popupWidthPx,
-                dpToPx(context, MENU_VERTICAL_OFFSET_DP)
+                popupTop - anchorLocation[1] - anchor.height
             )
         }
     }
