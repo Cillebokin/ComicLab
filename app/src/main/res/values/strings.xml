@@ -21,6 +21,7 @@
     <string name="delete">删除</string>
     <string name="delete_record">删除记录</string>
     <string name="jump">跳转</string>
+    <string name="jump_to_path">跳转至路径</string>
     <string name="history_item_options">历史记录操作</string>
     <string name="yes">是</string>
     <string name="no">否</string>

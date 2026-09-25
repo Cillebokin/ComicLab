@@ -17,6 +17,7 @@ class FavoriteComicAdapter(
     private val context: Context,
     private val items: MutableList<FavoriteComicStore.Item>,
     private val onItemClick: (FavoriteComicStore.Item) -> Unit,
+    private val onJumpToPath: (FavoriteComicStore.Item) -> Unit,
     private val onItemsEmptyChanged: (Boolean) -> Unit
 ) : RecyclerView.Adapter<FavoriteComicAdapter.ComicViewHolder>() {
 
@@ -81,6 +82,9 @@ class FavoriteComicAdapter(
             anchor = anchor,
             widthDp = 148,
             items = listOf(
+                RoundedPopupMenu.Item(context.getString(R.string.jump_to_path)) {
+                    onJumpToPath(item)
+                },
                 RoundedPopupMenu.Item(context.getString(R.string.delete_comic)) {
                     removeItem(item)
                 }

@@ -22,6 +22,7 @@
     <string name="delete">Delete</string>
     <string name="delete_record">Delete record</string>
     <string name="jump">Go to</string>
+    <string name="jump_to_path">Go to path</string>
     <string name="history_item_options">History item options</string>
     <string name="yes">Yes</string>
     <string name="no">No</string>

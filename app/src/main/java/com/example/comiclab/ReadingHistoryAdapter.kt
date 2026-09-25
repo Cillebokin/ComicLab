@@ -20,6 +20,7 @@ class ReadingHistoryAdapter(
     private val context: Context,
     private val items: MutableList<ReadingHistoryStore.Item>,
     private val onItemClick: (ReadingHistoryStore.Item) -> Unit,
+    private val onJumpToPath: (ReadingHistoryStore.Item) -> Unit,
     private val onItemsEmptyChanged: (Boolean) -> Unit
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
@@ -114,6 +115,9 @@ class ReadingHistoryAdapter(
             anchor = anchor,
             widthDp = 148,
             items = listOf(
+                RoundedPopupMenu.Item(context.getString(R.string.jump_to_path)) {
+                    onJumpToPath(item)
+                },
                 RoundedPopupMenu.Item(context.getString(R.string.delete_record)) {
                     removeItem(item)
                 }

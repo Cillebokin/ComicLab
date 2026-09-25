@@ -339,6 +339,10 @@ class MainActivity : AppCompatActivity() {
                 dismissReadingHistoryPanel()
                 openMangaPreview(item.file)
             },
+            onJumpToPath = { item ->
+                dismissReadingHistoryPanel()
+                openDirectoryContainingTarget(item.file.absolutePath)
+            },
             onItemsEmptyChanged = { isEmpty ->
                 listReadingHistory.visibility = if (isEmpty) View.GONE else View.VISIBLE
                 tvReadingHistoryEmpty.visibility = if (isEmpty) View.VISIBLE else View.GONE
@@ -477,6 +481,10 @@ class MainActivity : AppCompatActivity() {
             onItemClick = { item ->
                 dismissFavoriteComicsPanel()
                 openMangaPreview(item.file)
+            },
+            onJumpToPath = { item ->
+                dismissFavoriteComicsPanel()
+                openDirectoryContainingTarget(item.file.absolutePath)
             },
             onItemsEmptyChanged = { isEmpty ->
                 listFavoriteComics.visibility = if (isEmpty) View.GONE else View.VISIBLE
