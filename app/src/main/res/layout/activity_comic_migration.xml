@@ -34,7 +34,7 @@
             android:layout_height="wrap_content"
             android:includeFontPadding="false"
             android:text="@string/comic_migration"
-            android:textColor="@color/black"
+            android:textColor="@color/comiclab_text_primary"
             android:textSize="18sp"
             android:textStyle="bold" />
 
@@ -51,7 +51,7 @@
             android:contentDescription="@string/back"
             android:scaleType="centerInside"
             android:src="@drawable/png_back_icon"
-            app:tint="@color/black" />
+            app:tint="@color/comiclab_icon" />
     </LinearLayout>
 
     <ScrollView
@@ -108,7 +108,7 @@
                     android:layout_marginTop="12dp"
                     android:background="@drawable/bg_preview_action_button"
                     android:text="@string/comic_migration_choose_root"
-                    android:textColor="@color/white"
+                    android:textColor="@color/comiclab_text_on_accent"
                     android:textSize="14sp" />
 
                 <TextView

@@ -4723,6 +4723,33 @@ class MangaReaderActivity : AppCompatActivity() {
         private const val READER_LOG_TAG = "ComicLabReader"
         private const val NO_EXPLICIT_START_PAGE = -1
 
+        fun savedReadingProgress(context: Context, file: File): ComicLabMangaProgress? {
+            val prefs = context.getSharedPreferences(READER_PREFS_NAME, Context.MODE_PRIVATE)
+            val positionKey = readerPositionKeyFor(file)
+            val offsetKey = readerOffsetKeyFor(file)
+            if (!prefs.contains(positionKey) || !prefs.contains(offsetKey)) {
+                return null
+            }
+
+            return ComicLabMangaProgress(
+                path = file.absolutePath,
+                position = prefs.getInt(positionKey, 0).coerceAtLeast(0),
+                offset = prefs.getInt(offsetKey, 0)
+            )
+        }
+
+        fun restoreReadingProgress(
+            context: Context,
+            file: File,
+            progress: ComicLabMangaProgress
+        ) {
+            context.getSharedPreferences(READER_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putInt(readerPositionKeyFor(file), progress.position.coerceAtLeast(0))
+                .putInt(readerOffsetKeyFor(file), progress.offset)
+                .apply()
+        }
+
         fun hasSavedReadingProgress(context: Context, file: File): Boolean {
             val prefs = context.getSharedPreferences(READER_PREFS_NAME, Context.MODE_PRIVATE)
             val position = prefs.getInt(readerPositionKeyFor(file), 0)

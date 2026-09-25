@@ -33,6 +33,7 @@
 
     <TextView
         android:id="@+id/btnReadComic"
+        android:drawableTint="@color/comiclab_icon"
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"
         android:background="@drawable/bg_bottom_sheet_action_item"
@@ -48,6 +49,7 @@
 
     <TextView
         android:id="@+id/btnFavoriteComicAction"
+        android:drawableTint="@color/comiclab_icon"
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"
         android:background="@drawable/bg_bottom_sheet_action_item"
@@ -63,6 +65,7 @@
 
     <TextView
         android:id="@+id/btnCopyFileName"
+        android:drawableTint="@color/comiclab_icon"
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"
         android:background="@drawable/bg_bottom_sheet_action_item"
@@ -78,6 +81,7 @@
 
     <TextView
         android:id="@+id/btnRenameFileName"
+        android:drawableTint="@color/comiclab_icon"
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"
         android:background="@drawable/bg_bottom_sheet_action_item"
@@ -93,6 +97,7 @@
 
     <TextView
         android:id="@+id/btnCopyStartMarker"
+        android:drawableTint="@color/comiclab_icon"
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"
         android:background="@drawable/bg_bottom_sheet_action_item"
@@ -108,6 +113,7 @@
 
     <TextView
         android:id="@+id/btnDeleteFile"
+        android:drawableTint="@color/comiclab_danger"
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"
         android:background="@drawable/bg_bottom_sheet_action_item"

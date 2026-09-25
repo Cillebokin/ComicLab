@@ -49,6 +49,7 @@ dependencies {
     implementation(libs.sevenzipjbinding.android)
     implementation(libs.subsampling.scale.image.view)
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20231013")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 }

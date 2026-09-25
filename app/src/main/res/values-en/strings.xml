@@ -16,6 +16,7 @@
     <string name="directory_item">Folder</string>
     <string name="choose_directory">Storage permission</string>
     <string name="settings">Settings</string>
+    <string name="dark_mode">Dark mode</string>
     <string name="reading_history">Reading history</string>
     <string name="reading_history_empty">No reading history</string>
     <string name="clear">Clear</string>
@@ -226,6 +227,13 @@ Choose a folder</string>
     <string name="crash_log_empty">No crash log available</string>
     <string name="crash_log_share_title">Export ComicLab crash log</string>
     <string name="run_reader_stress_test">Run reader stress test</string>
+    <string name="configuration_management">Configuration management</string>
+    <string name="export_configuration">Export configuration</string>
+    <string name="import_configuration">Load configuration</string>
+    <string name="configuration_exported">Configuration exported</string>
+    <string name="configuration_export_failed">Configuration export failed: %1$s</string>
+    <string name="configuration_imported">Configuration loaded: restored %1$d, skipped %2$d</string>
+    <string name="configuration_import_failed">Configuration load failed: %1$s</string>
     <string name="debug_stress_scanning">Scanning for a large comic file…</string>
     <string name="debug_stress_no_comic_found">No comic file to test was found in the current path</string>
     <string name="debug_stress_reader_unavailable">The built-in stress test is not available in this version</string>

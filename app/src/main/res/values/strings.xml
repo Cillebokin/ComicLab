@@ -15,6 +15,7 @@
     <string name="directory_item">目录</string>
     <string name="choose_directory">存储权限</string>
     <string name="settings">设置</string>
+    <string name="dark_mode">深色模式</string>
     <string name="reading_history">阅读历史</string>
     <string name="reading_history_empty">暂无阅读历史</string>
     <string name="clear">清空</string>
@@ -225,6 +226,13 @@
     <string name="crash_log_empty">暂无崩溃日志</string>
     <string name="crash_log_share_title">导出 ComicLab 崩溃日志</string>
     <string name="run_reader_stress_test">启动阅读器压力测试</string>
+    <string name="configuration_management">配置管理</string>
+    <string name="export_configuration">导出配置</string>
+    <string name="import_configuration">加载配置</string>
+    <string name="configuration_exported">配置已导出</string>
+    <string name="configuration_export_failed">配置导出失败：%1$s</string>
+    <string name="configuration_imported">配置已加载：恢复 %1$d 项，跳过 %2$d 项</string>
+    <string name="configuration_import_failed">配置加载失败：%1$s</string>
     <string name="debug_stress_scanning">正在扫描较大的漫画文件…</string>
     <string name="debug_stress_no_comic_found">当前路径下没有找到可测试的漫画文件</string>
     <string name="debug_stress_reader_unavailable">当前版本不支持内置压力测试入口</string>

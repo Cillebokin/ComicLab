@@ -38,6 +38,44 @@ object ReadingHistoryStore {
         saveStoredItems(context, updatedItems)
     }
 
+    fun merge(context: Context, items: Collection<Item>): Int {
+        val mergedItems = LinkedHashMap<String, StoredItem>()
+        validStoredItems(readStoredItems(context)).forEach { item ->
+            mergedItems[item.path] = item
+        }
+
+        var restoredCount = 0
+        items.forEach { item ->
+            val file = item.file
+            if (!file.isFile || !ReaderFileDetector.isSupported(file)) {
+                return@forEach
+            }
+
+            val path = file.absolutePath
+            val importedItem = StoredItem(
+                path = path,
+                lastReadAt = item.lastReadAt.takeIf { it > 0L } ?: System.currentTimeMillis(),
+                fileSize = item.fileSize.takeIf { it > 0L } ?: file.length(),
+                modifiedAt = item.modifiedAt.takeIf { it > 0L } ?: file.lastModified()
+            )
+            val currentItem = mergedItems[path]
+            if (currentItem == null || importedItem.lastReadAt >= currentItem.lastReadAt) {
+                mergedItems[path] = importedItem
+            }
+            restoredCount++
+        }
+
+        if (mergedItems.isEmpty()) {
+            clear(context)
+        } else {
+            saveStoredItems(
+                context,
+                mergedItems.values.sortedByDescending { it.lastReadAt }
+            )
+        }
+        return restoredCount
+    }
+
     fun items(context: Context): List<Item> {
         val storedItems = readStoredItems(context)
         val validStoredItems = mutableListOf<StoredItem>()
@@ -82,6 +120,13 @@ object ReadingHistoryStore {
             clear(context)
         } else {
             saveStoredItems(context, updatedItems)
+        }
+    }
+
+    private fun validStoredItems(items: List<StoredItem>): List<StoredItem> {
+        return items.filter { item ->
+            val file = File(item.path)
+            file.isFile && ReaderFileDetector.isSupported(file)
         }
     }
 

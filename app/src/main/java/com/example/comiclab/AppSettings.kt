@@ -1,6 +1,8 @@
 package com.example.comiclab
 
 import android.content.Context
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
 import java.io.File
 
 object AppSettings {
@@ -18,11 +20,37 @@ object AppSettings {
     private const val KEY_START_MARKER_ERROR_TAGS = "start_marker_error_tags"
     private const val KEY_CUSTOM_READER_BRIGHTNESS_ENABLED = "custom_reader_brightness_enabled"
     private const val KEY_CUSTOM_READER_BRIGHTNESS = "custom_reader_brightness"
+    private const val KEY_DARK_MODE_ENABLED = "dark_mode_enabled"
     const val DEFAULT_START_MARKER_ERROR_TAGS = "中;汉;漢;翻;译;譯"
     const val DEFAULT_READER_BRIGHTNESS = 128
     const val MIN_READER_BRIGHTNESS = 1
     const val MAX_READER_BRIGHTNESS = 255
     const val DEFAULT_DOUBLE_PAGE_COVER_SINGLE = true
+
+    fun isDarkModeEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_DARK_MODE_ENABLED, false)
+    }
+
+    fun setDarkModeEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_DARK_MODE_ENABLED, enabled)
+            .apply()
+        AppCompatDelegate.setDefaultNightMode(
+            if (enabled) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
+        )
+    }
+
+    fun applyThemeMode(context: Context) {
+        AppCompatDelegate.setDefaultNightMode(
+            if (isDarkModeEnabled(context)) {
+                AppCompatDelegate.MODE_NIGHT_YES
+            } else {
+                AppCompatDelegate.MODE_NIGHT_NO
+            }
+        )
+    }
 
     fun getReadingDirection(context: Context): String {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -129,6 +157,70 @@ object AppSettings {
                 .apply()
             changedCount
         }
+    }
+
+    fun bookcaseDirectoryPaths(context: Context): Set<String> {
+        return synchronized(bookcaseDirectoriesLock) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
+                .orEmpty()
+                .toSet()
+        }
+    }
+
+    fun snapshot(context: Context): ComicLabAppSettings {
+        return ComicLabAppSettings(
+            darkModeEnabled = isDarkModeEnabled(context),
+            languageTag = AppCompatDelegate.getApplicationLocales().toLanguageTags(),
+            readingDirection = getReadingDirection(context),
+            doublePageCoverSingle = isDoublePageCoverSingleEnabled(context),
+            volumeKeyPageTurn = isVolumeKeyPageTurnEnabled(context),
+            autoHideSystemBars = isAutoHideSystemBarsEnabled(context),
+            startMarkerErrorTags = getStartMarkerErrorTags(context),
+            customReaderBrightnessEnabled = isCustomReaderBrightnessEnabled(context),
+            customReaderBrightness = getCustomReaderBrightness(context)
+        )
+    }
+
+    fun applySnapshot(context: Context, settings: ComicLabAppSettings): Int {
+        var appliedCount = 0
+        settings.darkModeEnabled?.let {
+            setDarkModeEnabled(context, it)
+            appliedCount++
+        }
+        settings.languageTag?.let {
+            AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(it))
+            appliedCount++
+        }
+        settings.readingDirection?.let {
+            setReadingDirection(context, it)
+            appliedCount++
+        }
+        settings.doublePageCoverSingle?.let {
+            setDoublePageCoverSingleEnabled(context, it)
+            appliedCount++
+        }
+        settings.volumeKeyPageTurn?.let {
+            setVolumeKeyPageTurnEnabled(context, it)
+            appliedCount++
+        }
+        settings.autoHideSystemBars?.let {
+            setAutoHideSystemBarsEnabled(context, it)
+            appliedCount++
+        }
+        settings.startMarkerErrorTags?.let {
+            setStartMarkerErrorTags(context, it)
+            appliedCount++
+        }
+        settings.customReaderBrightnessEnabled?.let {
+            setCustomReaderBrightnessEnabled(context, it)
+            appliedCount++
+        }
+        settings.customReaderBrightness?.let {
+            setCustomReaderBrightness(context, it)
+            appliedCount++
+        }
+        return appliedCount
     }
 
     fun renameBookcaseDirectory(context: Context, oldDirectory: File, newDirectory: File) {

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="comiclab_accent">#2563EB</color>
+    <color name="comiclab_accent_pressed">#1D4ED8</color>
+    <color name="comiclab_accent_soft">#1E3A5F</color>
+    <color name="comiclab_blue">#2563EB</color>
+    <color name="comiclab_blue_pressed">#1D4ED8</color>
+    <color name="comiclab_blue_soft">#1E3A5F</color>
+    <color name="comiclab_file_picker_background">#0F172A</color>
+    <color name="comiclab_surface">#0F172A</color>
+    <color name="comiclab_surface_card">#1E293B</color>
+    <color name="comiclab_surface_subtle">#263449</color>
+    <color name="comiclab_text_primary">#F1F5F9</color>
+    <color name="comiclab_text_secondary">#94A3B8</color>
+    <color name="comiclab_text_tertiary">#94A3B8</color>
+    <color name="comiclab_text_on_accent">#F8FAFC</color>
+    <color name="comiclab_icon">#CBD5E1</color>
+    <color name="comiclab_icon_placeholder">#94A3B8</color>
+    <color name="comiclab_cover_placeholder">#263449</color>
+    <color name="comiclab_cover_placeholder_border">#475569</color>
+    <color name="comiclab_thumbnail_backdrop">#0F172A</color>
+    <color name="comiclab_control_outline">#64748B</color>
+    <color name="comiclab_control_thumb">#E2E8F0</color>
+    <color name="comiclab_control_disabled">#475569</color>
+    <color name="comiclab_surface_pressed">#334155</color>
+    <color name="comiclab_surface_pressed_overlay">#66334155</color>
+    <color name="comiclab_divider">#334155</color>
+    <color name="comiclab_divider_subtle">#334155</color>
+    <color name="comiclab_danger">#F87171</color>
+</resources>

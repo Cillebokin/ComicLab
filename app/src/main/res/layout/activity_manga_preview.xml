@@ -158,7 +158,8 @@
                     android:contentDescription="@string/full_read"
                     android:padding="8dp"
                     android:scaleType="centerInside"
-                    android:src="@drawable/png_read_icon" />
+                    android:src="@drawable/png_read_icon"
+                    android:tint="@color/comiclab_icon" />
 
                 <ImageButton
                     android:id="@+id/btnExitPreview"
@@ -169,7 +170,8 @@
                     android:contentDescription="@string/exit_preview"
                     android:padding="8dp"
                     android:scaleType="centerInside"
-                    android:src="@drawable/png_back_icon" />
+                    android:src="@drawable/png_back_icon"
+                    android:tint="@color/comiclab_icon" />
             </LinearLayout>
         </LinearLayout>
 
@@ -204,7 +206,7 @@
                 android:backgroundTint="@null"
                 android:minHeight="0dp"
                 android:text="@string/preview_all"
-                android:textColor="@color/white"
+                android:textColor="@color/comiclab_text_on_accent"
                 android:textSize="@dimen/text_caption"
                 android:visibility="gone" />
         </LinearLayout>

@@ -59,6 +59,10 @@ class MangaCollectionCoverAdapter(
         )
         holder.imageView.setBackgroundResource(R.drawable.bg_file_icon_frame)
         holder.imageView.scaleType = ImageView.ScaleType.CENTER_INSIDE
+        holder.imageView.imageTintList = AppCompatResources.getColorStateList(
+            holder.imageView.context,
+            R.color.comiclab_icon
+        )
         holder.imageView.setImageResource(R.drawable.png_press_package_icon)
         bindCover(source, holder.imageView)
     }

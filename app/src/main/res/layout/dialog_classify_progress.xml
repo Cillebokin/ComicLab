@@ -15,7 +15,7 @@
         android:ellipsize="end"
         android:maxLines="2"
         android:text="@string/classify_comics_scanning"
-        android:textColor="#333333"
+        android:textColor="@color/comiclab_text_primary"
         android:textSize="14sp" />
 
     <ProgressBar
@@ -27,7 +27,7 @@
         android:indeterminate="true"
         android:max="100"
         android:progress="0"
-        android:progressBackgroundTint="#DDDDDD"
+        android:progressBackgroundTint="@color/comiclab_divider"
         android:progressTint="@color/comiclab_accent" />
 
     <TextView
@@ -36,6 +36,6 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
         android:gravity="end"
-        android:textColor="#666666"
+        android:textColor="@color/comiclab_text_secondary"
         android:textSize="12sp" />
 </LinearLayout>

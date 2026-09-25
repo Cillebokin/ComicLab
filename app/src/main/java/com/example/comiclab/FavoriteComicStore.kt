@@ -53,6 +53,37 @@ object FavoriteComicStore {
         return RecordResult.ADDED
     }
 
+    fun merge(context: Context, items: Collection<Item>): Int {
+        val mergedItems = LinkedHashMap<String, StoredItem>()
+        validStoredItems(readStoredItems(context)).forEach { item ->
+            mergedItems[item.path] = item
+        }
+
+        var restoredCount = 0
+        items.forEach { item ->
+            val file = item.file
+            if (!file.isFile || !ReaderFileDetector.isSupported(file)) {
+                return@forEach
+            }
+
+            val path = file.absolutePath
+            mergedItems[path] = StoredItem(
+                path = path,
+                addedAt = item.addedAt.takeIf { it > 0L } ?: System.currentTimeMillis(),
+                fileSize = item.fileSize.takeIf { it > 0L } ?: file.length(),
+                modifiedAt = item.modifiedAt.takeIf { it > 0L } ?: file.lastModified()
+            )
+            restoredCount++
+        }
+
+        if (mergedItems.isEmpty()) {
+            clear(context)
+        } else {
+            saveStoredItems(context, mergedItems.values.sortedBy { it.addedAt })
+        }
+        return restoredCount
+    }
+
     fun items(context: Context): List<Item> {
         val storedItems = readStoredItems(context)
         val validStoredItems = mutableListOf<StoredItem>()

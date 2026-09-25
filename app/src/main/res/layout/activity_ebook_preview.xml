@@ -48,7 +48,7 @@
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
                     android:maxLines="4"
-                    android:textColor="@color/black"
+                    android:textColor="@color/comiclab_text_primary"
                     android:textSize="19sp"
                     android:textStyle="bold" />
 

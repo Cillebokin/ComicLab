@@ -65,6 +65,7 @@
                 android:layout_marginStart="@dimen/space_sm"
                 android:layout_marginEnd="@dimen/space_xs"
                 android:contentDescription="@string/favorite_marker"
+                android:tint="@color/comiclab_accent"
                 android:visibility="gone" />
 
             <TextView

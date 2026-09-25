@@ -486,6 +486,7 @@ class SearchResultAdapter(
     }
 
     private fun bindCollectionCoverBitmap(imgIcon: ImageView, bitmap: Bitmap) {
+        imgIcon.imageTintList = null
         imgIcon.setBackgroundColor(android.graphics.Color.BLACK)
         imgIcon.setPadding(0, 0, 0, 0)
         imgIcon.scaleType = ImageView.ScaleType.CENTER_CROP

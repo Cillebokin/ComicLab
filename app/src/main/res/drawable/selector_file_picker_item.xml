@@ -8,7 +8,7 @@
             android:insetTop="4dp">
             <shape android:shape="rectangle">
                 <corners android:radius="8dp" />
-                <solid android:color="#EDEFF2" />
+                <solid android:color="@color/comiclab_surface_pressed" />
             </shape>
         </inset>
     </item>
@@ -21,7 +21,7 @@
             android:insetTop="4dp">
             <shape android:shape="rectangle">
                 <corners android:radius="8dp" />
-                <solid android:color="#EDEFF2" />
+                <solid android:color="@color/comiclab_surface_pressed" />
             </shape>
         </inset>
     </item>

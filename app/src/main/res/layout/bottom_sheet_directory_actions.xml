@@ -33,6 +33,7 @@
 
     <TextView
         android:id="@+id/btnBookcaseDirectoryAction"
+        android:drawableTint="@color/comiclab_icon"
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"
         android:background="@drawable/bg_bottom_sheet_action_item"
@@ -48,6 +49,7 @@
 
     <TextView
         android:id="@+id/btnSetChildDirectoriesAsBookcases"
+        android:drawableTint="@color/comiclab_icon"
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"
         android:background="@drawable/bg_bottom_sheet_action_item"
@@ -63,6 +65,7 @@
 
     <TextView
         android:id="@+id/btnCancelChildDirectoriesAsBookcases"
+        android:drawableTint="@color/comiclab_icon"
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"
         android:background="@drawable/bg_bottom_sheet_action_item"
@@ -78,6 +81,7 @@
 
     <TextView
         android:id="@+id/btnFavoritePathAction"
+        android:drawableTint="@color/comiclab_icon"
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"
         android:background="@drawable/bg_bottom_sheet_action_item"
@@ -93,6 +97,7 @@
 
     <TextView
         android:id="@+id/btnCopyPathName"
+        android:drawableTint="@color/comiclab_icon"
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"
         android:background="@drawable/bg_bottom_sheet_action_item"
@@ -108,6 +113,7 @@
 
     <TextView
         android:id="@+id/btnRenameDirectoryName"
+        android:drawableTint="@color/comiclab_icon"
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"
         android:background="@drawable/bg_bottom_sheet_action_item"
@@ -123,6 +129,7 @@
 
     <TextView
         android:id="@+id/btnDeleteDirectory"
+        android:drawableTint="@color/comiclab_danger"
         android:layout_width="match_parent"
         android:layout_height="@dimen/bottom_sheet_action_height"
         android:background="@drawable/bg_bottom_sheet_action_item"

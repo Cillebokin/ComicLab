@@ -53,7 +53,7 @@
             android:padding="6dp"
             android:scaleType="centerInside"
             android:src="@drawable/png_back_icon"
-            app:tint="@color/black" />
+            app:tint="@color/comiclab_icon" />
     </LinearLayout>
 
     <LinearLayout
@@ -112,7 +112,8 @@
                 android:contentDescription="@string/search"
                 android:padding="7dp"
                 android:scaleType="centerInside"
-                android:src="@drawable/png_search_icon" />
+                android:src="@drawable/png_search_icon"
+                android:tint="@color/comiclab_accent" />
         </LinearLayout>
 
         <LinearLayout

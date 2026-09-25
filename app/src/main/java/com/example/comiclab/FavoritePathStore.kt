@@ -43,6 +43,35 @@ object FavoritePathStore {
         return RecordResult.ADDED
     }
 
+    fun merge(context: Context, items: Collection<Item>): Int {
+        val mergedItems = LinkedHashMap<String, StoredItem>()
+        validStoredItems(readStoredItems(context)).forEach { item ->
+            mergedItems[item.path] = item
+        }
+
+        var restoredCount = 0
+        items.forEach { item ->
+            val directory = item.directory
+            if (!directory.isDirectory) {
+                return@forEach
+            }
+
+            val path = directory.absolutePath
+            mergedItems[path] = StoredItem(
+                path = path,
+                addedAt = item.addedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+            )
+            restoredCount++
+        }
+
+        if (mergedItems.isEmpty()) {
+            clear(context)
+        } else {
+            saveStoredItems(context, mergedItems.values.sortedBy { it.addedAt })
+        }
+        return restoredCount
+    }
+
     fun items(context: Context): List<Item> {
         val storedItems = readStoredItems(context)
         val validStoredItems = mutableListOf<StoredItem>()

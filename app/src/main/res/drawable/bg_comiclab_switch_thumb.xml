@@ -11,7 +11,7 @@
             <item>
                 <shape android:shape="oval">
                     <size android:width="14dp" android:height="14dp" />
-                    <solid android:color="@color/white" />
+                    <solid android:color="@color/comiclab_control_thumb" />
                     <stroke android:width="0.5dp" android:color="#240F172A" />
                 </shape>
             </item>

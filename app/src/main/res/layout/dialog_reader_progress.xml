@@ -15,7 +15,7 @@
         android:layout_height="wrap_content"
         android:includeFontPadding="false"
         android:text="@string/reader_progress_dialog_title"
-        android:textColor="@color/black"
+        android:textColor="@color/comiclab_text_primary"
         android:textSize="18sp"
         android:textStyle="bold" />
 
@@ -62,7 +62,7 @@
             android:paddingStart="14dp"
             android:paddingEnd="14dp"
             android:text="@string/continue_reading"
-            android:textColor="@color/white"
+            android:textColor="@color/comiclab_text_on_accent"
             android:textSize="14sp" />
     </LinearLayout>
 </LinearLayout>

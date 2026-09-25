@@ -24,7 +24,7 @@
             android:paddingStart="14dp"
             android:paddingEnd="14dp"
             android:text="@string/favorite_comics"
-            android:textColor="@color/black"
+            android:textColor="@color/comiclab_text_primary"
             android:textSize="16sp"
             android:textStyle="bold" />
     </FrameLayout>
@@ -52,7 +52,7 @@
             android:paddingStart="12dp"
             android:paddingEnd="12dp"
             android:text="@string/favorite_comics_empty"
-            android:textColor="#777777"
+            android:textColor="@color/comiclab_text_secondary"
             android:textSize="14sp" />
     </FrameLayout>
 
@@ -71,6 +71,7 @@
             android:contentDescription="@string/clear"
             android:padding="8dp"
             android:scaleType="centerInside"
-            android:src="@drawable/png_delete_icon" />
+            android:src="@drawable/png_delete_icon"
+            android:tint="@color/comiclab_danger" />
     </LinearLayout>
 </LinearLayout>

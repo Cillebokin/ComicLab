@@ -3,7 +3,7 @@
     <item android:state_pressed="true">
         <shape android:shape="rectangle">
             <corners android:radius="8dp" />
-            <solid android:color="#F2F3F5" />
+            <solid android:color="@color/comiclab_surface_pressed" />
         </shape>
     </item>
 

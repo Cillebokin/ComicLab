@@ -2,6 +2,7 @@ package com.example.comiclab
 
 import android.app.Activity
 import android.graphics.Color
+import android.content.res.Configuration
 import android.view.View
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
@@ -20,11 +21,14 @@ object SystemBars {
     ) {
         WindowCompat.setDecorFitsSystemWindows(activity.window, false)
         val statusBarColor = ContextCompat.getColor(activity, statusBarColorResId)
+        val isDarkMode = (activity.resources.configuration.uiMode and
+            Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         activity.window.statusBarColor = if (statusBarBackground == null) statusBarColor else Color.TRANSPARENT
-        activity.window.navigationBarColor = ContextCompat.getColor(activity, R.color.white)
+        activity.window.navigationBarColor =
+            ContextCompat.getColor(activity, R.color.comiclab_file_picker_background)
         WindowInsetsControllerCompat(activity.window, rootView).apply {
-            isAppearanceLightStatusBars = lightStatusBars
-            isAppearanceLightNavigationBars = true
+            isAppearanceLightStatusBars = lightStatusBars && !isDarkMode
+            isAppearanceLightNavigationBars = !isDarkMode
         }
 
         val initialLeft = rootView.paddingLeft

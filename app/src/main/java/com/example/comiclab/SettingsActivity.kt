@@ -4,6 +4,7 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.graphics.Paint
+import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.os.SystemClock
@@ -17,6 +18,7 @@ import android.widget.RadioGroup
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatDelegate
@@ -38,8 +40,11 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var layoutDebugTools: View
     private lateinit var btnExportCrashLog: Button
     private lateinit var btnRunReaderStressTest: Button
+    private lateinit var btnExportConfiguration: Button
+    private lateinit var btnImportConfiguration: Button
     private lateinit var tvAppLink: TextView
     private lateinit var tvLanguageValue: TextView
+    private lateinit var switchDarkMode: SwitchCompat
     private lateinit var radioReadingDirection: RadioGroup
     private lateinit var switchDoublePageCoverSingle: SwitchCompat
     private lateinit var inputStartMarkerErrorTags: EditText
@@ -49,12 +54,27 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var sliderSettingsReaderBrightness: SeekBar
     private lateinit var tvSettingsBrightnessValue: TextView
     private val debugToolExecutor = Executors.newSingleThreadExecutor()
+    private val configurationExecutor = Executors.newSingleThreadExecutor()
+    private val exportConfigurationLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        uri?.let(::exportConfiguration)
+    }
+    private val importConfigurationLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let(::importConfiguration)
+    }
     private var isUpdatingBrightnessControls = false
     @Volatile
     private var destroyed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        renderSettingsContent()
+    }
+
+    private fun renderSettingsContent() {
         setContentView(R.layout.activity_settings)
         SystemBars.fitContentBelowSystemBars(
             this,
@@ -68,8 +88,11 @@ class SettingsActivity : AppCompatActivity() {
         layoutDebugTools = findViewById(R.id.layoutDebugTools)
         btnExportCrashLog = findViewById(R.id.btnExportCrashLog)
         btnRunReaderStressTest = findViewById(R.id.btnRunReaderStressTest)
+        btnExportConfiguration = findViewById(R.id.btnExportConfiguration)
+        btnImportConfiguration = findViewById(R.id.btnImportConfiguration)
         tvAppLink = findViewById(R.id.tvAppLink)
         tvLanguageValue = findViewById(R.id.tvLanguageValue)
+        switchDarkMode = findViewById(R.id.switchDarkMode)
         radioReadingDirection = findViewById(R.id.radioReadingDirection)
         switchDoublePageCoverSingle = findViewById(R.id.switchDoublePageCoverSingle)
         inputStartMarkerErrorTags = findViewById(R.id.inputStartMarkerErrorTags)
@@ -84,6 +107,7 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         bindLanguageSetting()
+        bindDarkModeSetting()
         bindReadingDirection()
         bindDoublePageCoverSingle()
         bindStartMarkerErrorTags()
@@ -91,12 +115,14 @@ class SettingsActivity : AppCompatActivity() {
         bindAutoHideSystemBars()
         bindCustomReaderBrightness()
         bindDebugTools()
+        bindConfigurationManagement()
         bindProjectReleaseLink()
     }
 
     override fun onDestroy() {
         destroyed = true
         debugToolExecutor.shutdownNow()
+        configurationExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -153,6 +179,16 @@ class SettingsActivity : AppCompatActivity() {
                 }
                 .setNegativeButton(R.string.cancel, null)
                 .show()
+        }
+    }
+
+    private fun bindDarkModeSetting() {
+        switchDarkMode.isChecked = AppSettings.isDarkModeEnabled(this)
+        switchDarkMode.setOnCheckedChangeListener { _, enabled ->
+            AppSettings.setDarkModeEnabled(this, enabled)
+            window.decorView.post {
+                renderSettingsContent()
+            }
         }
     }
 
@@ -305,6 +341,122 @@ class SettingsActivity : AppCompatActivity() {
                 showMessage(getString(R.string.app_link_open_failed))
             }
         }
+    }
+
+    private fun bindConfigurationManagement() {
+        btnExportConfiguration.setOnClickListener {
+            exportConfigurationLauncher.launch("comiclab_config.json")
+        }
+        btnImportConfiguration.setOnClickListener {
+            importConfigurationLauncher.launch(
+                arrayOf("application/json", "text/plain", "*/*")
+            )
+        }
+    }
+
+    private fun exportConfiguration(uri: Uri) {
+        setConfigurationButtonsEnabled(false)
+        val appContext = applicationContext
+        configurationExecutor.execute {
+            try {
+                val json = ComicLabConfigurationJson.encode(
+                    ComicLabConfigurationStore.export(appContext)
+                )
+                val outputStream = appContext.contentResolver.openOutputStream(uri)
+                    ?: error("无法打开导出文件")
+                outputStream.use { stream ->
+                    stream.writer(Charsets.UTF_8).use { writer ->
+                        writer.write(json)
+                    }
+                }
+                runOnUiThread {
+                    if (destroyed) {
+                        return@runOnUiThread
+                    }
+                    setConfigurationButtonsEnabled(true)
+                    showMessage(getString(R.string.configuration_exported))
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    if (destroyed) {
+                        return@runOnUiThread
+                    }
+                    setConfigurationButtonsEnabled(true)
+                    showMessage(
+                        getString(
+                            R.string.configuration_export_failed,
+                            error.message.orEmpty().ifBlank { error::class.java.simpleName }
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun importConfiguration(uri: Uri) {
+        setConfigurationButtonsEnabled(false)
+        val appContext = applicationContext
+        configurationExecutor.execute {
+            try {
+                val inputStream = appContext.contentResolver.openInputStream(uri)
+                    ?: error("无法打开配置文件")
+                val rawJson = inputStream.use { stream ->
+                    stream.reader(Charsets.UTF_8).use { reader ->
+                        reader.readText()
+                    }
+                }
+                val decoded = ComicLabConfigurationJson.decode(rawJson)
+                val summary = ComicLabConfigurationStore.importAndMerge(
+                    appContext,
+                    decoded.configuration,
+                    decoded.skippedEntries,
+                    applyAppSettings = false
+                )
+                runOnUiThread {
+                    if (destroyed) {
+                        return@runOnUiThread
+                    }
+                    setConfigurationButtonsEnabled(true)
+                    AppSettings.applySnapshot(this, decoded.configuration.appSettings)
+                    refreshSettingsControlsAfterImport()
+                    showMessage(
+                        getString(
+                            R.string.configuration_imported,
+                            summary.restoredEntries,
+                            summary.skippedEntries
+                        )
+                    )
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    if (destroyed) {
+                        return@runOnUiThread
+                    }
+                    setConfigurationButtonsEnabled(true)
+                    showMessage(
+                        getString(
+                            R.string.configuration_import_failed,
+                            error.message.orEmpty().ifBlank { error::class.java.simpleName }
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun setConfigurationButtonsEnabled(enabled: Boolean) {
+        btnExportConfiguration.isEnabled = enabled
+        btnImportConfiguration.isEnabled = enabled
+    }
+
+    private fun refreshSettingsControlsAfterImport() {
+        switchDarkMode.isChecked = AppSettings.isDarkModeEnabled(this)
+        bindReadingDirection()
+        switchDoublePageCoverSingle.isChecked = AppSettings.isDoublePageCoverSingleEnabled(this)
+        inputStartMarkerErrorTags.setText(AppSettings.getStartMarkerErrorTags(this))
+        switchVolumeKeyPageTurn.isChecked = AppSettings.isVolumeKeyPageTurnEnabled(this)
+        switchAutoHideSystemBars.isChecked = AppSettings.isAutoHideSystemBarsEnabled(this)
+        updateBrightnessControls()
     }
 
     private fun exportCrashLog() {

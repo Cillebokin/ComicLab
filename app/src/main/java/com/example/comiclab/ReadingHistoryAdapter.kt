@@ -10,6 +10,7 @@ import android.view.ViewGroup
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.appcompat.content.res.AppCompatResources
 import androidx.recyclerview.widget.RecyclerView
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -214,12 +215,17 @@ class ReadingHistoryAdapter(
     private fun bindCover(item: ReadingHistoryStore.Item, imgCover: ImageView) {
         val file = item.file
         imgCover.scaleType = ImageView.ScaleType.CENTER_INSIDE
+        imgCover.imageTintList = AppCompatResources.getColorStateList(
+            context,
+            R.color.comiclab_icon
+        )
         imgCover.setImageResource(R.drawable.png_press_package_icon)
 
         val cacheKey = "${file.absolutePath}:${file.lastModified()}:${file.length()}"
         imgCover.tag = cacheKey
         val cachedCover = coverCache.get(cacheKey)
         if (cachedCover != null) {
+            imgCover.imageTintList = null
             imgCover.scaleType = ImageView.ScaleType.CENTER_CROP
             imgCover.setImageBitmap(cachedCover)
             return
@@ -250,6 +256,7 @@ class ReadingHistoryAdapter(
                 coverCache.put(cacheKey, cover)
                 imgCover.post {
                     if (!closed && imgCover.tag == cacheKey) {
+                        imgCover.imageTintList = null
                         imgCover.scaleType = ImageView.ScaleType.CENTER_CROP
                         imgCover.setImageBitmap(cover)
                     }

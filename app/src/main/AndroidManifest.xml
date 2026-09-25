@@ -49,6 +49,7 @@
 
         <activity
             android:name="com.example.comiclab.SettingsActivity"
+            android:configChanges="uiMode"
             android:exported="false" />
 
         <activity
