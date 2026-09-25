@@ -242,7 +242,7 @@ Choose a folder</string>
     <string name="preparing_fast_reading_progress">Preparing fast reader %1$d / %2$d  %3$d%%</string>
     <string name="about">About</string>
     <string name="app_author">Author: Cillebokin / swcillebokin@gmail.com</string>
-    <string name="app_version">Version: V1.0.5.0909</string>
+    <string name="app_version">Version: V1.0.6.0925</string>
     <string name="app_link_open_failed">No browser available to open this link</string>
 
     <string name="language">Language</string>
