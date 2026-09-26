@@ -24,17 +24,13 @@ Download:
 
 ## Screenshots
 
-### Local file browser
+![ComicLab screenshots 04](readme_pics/pic04.jpg)
 
-![ComicLab local file browser](readme_pics/pic01.jpg)
+![ComicLab screenshots 05](readme_pics/pic05.jpg)
 
-### Comic details and page previews
+![ComicLab screenshots 06](readme_pics/pic06.jpg)
 
-![ComicLab comic details and page previews](readme_pics/pic02.jpg)
-
-### Reader and preview panel
-
-![ComicLab high-resolution reader](readme_pics/pic03.jpg)
+![ComicLab screenshots 07](readme_pics/pic07.jpg)
 
 ## Supported formats
 
