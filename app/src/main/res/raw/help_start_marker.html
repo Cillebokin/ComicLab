@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root {
+            color-scheme: light dark;
+            --text: #111827;
+            --muted: #4B5563;
+            --accent: #2563EB;
+            --surface: transparent;
+            --soft: #EFF6FF;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --text: #F1F5F9;
+                --muted: #CBD5E1;
+                --accent: #60A5FA;
+                --surface: transparent;
+                --soft: #1E3A5F;
+            }
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: var(--surface);
+        }
+
+        body {
+            color: var(--text);
+            font-family: sans-serif;
+            font-size: 16px;
+            line-height: 1.7;
+            padding: 20px 18px 28px;
+        }
+
+        h1 {
+            color: var(--text);
+            font-size: 24px;
+            margin: 0 0 16px;
+        }
+
+        h2 {
+            color: var(--accent);
+            font-size: 18px;
+            margin: 24px 0 8px;
+        }
+
+        p {
+            color: var(--muted);
+            margin: 8px 0;
+        }
+
+        ul {
+            color: var(--muted);
+            padding-left: 24px;
+        }
+
+        code {
+            background: var(--soft);
+            border-radius: 4px;
+            color: var(--accent);
+            padding: 2px 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>起始标记</h1>
+    <p>起始标记是漫画文件名中第一个符合条件的 <code>[]</code> 内容，可作为漫画分类的依据。</p>
+
+    <h2>识别规则</h2>
+    <ol>
+        <li>使用英文半角方括号 <code>[]</code></li>
+        <li>方括号内容不能为空</li>
+        <li>不包含“起始标记错误标识”</li>
+        <li>不符合条件时，继续查找下一个 <code>[]</code></li>
+    </ol>
+
+    <h2>示例</h2>
+    <p><code>[ABC]作品名称.zip</code><br>起始标记：<code>ABC</code></p>
+    <p><code>[中] [ABC]作品名称.zip</code><br>如果“中”属于错误标识，则继续查找 <code>[ABC]</code></p>
+</body>
+</html>

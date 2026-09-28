@@ -3,6 +3,9 @@ package com.example.comiclab
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -11,20 +14,223 @@ import org.junit.Test
 class ComicMigrationPlannerTest {
 
     @Test
+    fun targetDirectoryChoicesAlwaysAppendDefaultAfterMatches() {
+        withTemporaryDirectory { root ->
+            val firstMatch = File(root, "first")
+            val secondMatch = File(root, "second")
+            val defaultDirectory = File(root, "default")
+            val matches = listOf(
+                ComicMigrationDirectoryMatch(firstMatch, ComicMigrationMatchReason.EXACT_NAME),
+                ComicMigrationDirectoryMatch(secondMatch, ComicMigrationMatchReason.CONTAINS_MARKER)
+            )
+
+            val result = ComicMigrationPlanner { false }
+                .targetDirectoryChoices(matches, defaultDirectory)
+
+            assertEquals(listOf(firstMatch, secondMatch, defaultDirectory), result)
+        }
+    }
+
+    @Test
+    fun targetDirectoryChoicesContainsDefaultWhenThereAreNoMatches() {
+        withTemporaryDirectory { root ->
+            val defaultDirectory = File(root, "default")
+
+            val result = ComicMigrationPlanner { false }
+                .targetDirectoryChoices(emptyList(), defaultDirectory)
+
+            assertEquals(listOf(defaultDirectory), result)
+        }
+    }
+
+    @Test
+    fun prepareTargetPlansBuildsChoicesForEveryComicBeforeSelectionStarts() {
+        withTemporaryDirectory { root ->
+            val source = File(root, "source").apply { mkdirs() }
+            val destinationRoot = File(root, "destination").apply { mkdirs() }
+            val aaaDirectory = File(destinationRoot, "AAA circle").apply { mkdirs() }
+            val otherDirectory = File(destinationRoot, "other").apply { mkdirs() }
+            val bbbDirectory = File(otherDirectory, "BBB circle").apply { mkdirs() }
+            val defaultDirectory = File(root, "default").apply { mkdirs() }
+            val comics = listOf(
+                File(source, "one.zip"),
+                File(source, "two.zip"),
+                File(source, "three.zip")
+            )
+            val markers = mapOf(
+                "one.zip" to "AAA",
+                "two.zip" to "BBB",
+                "three.zip" to ""
+            )
+            val preparationProgress = mutableListOf<Pair<Int, Int>>()
+
+            val plans = ComicMigrationPlanner { false }.prepareTargetPlans(
+                comicFiles = comics,
+                rootDirectory = destinationRoot,
+                defaultDirectory = defaultDirectory,
+                excludedDirectory = source,
+                markerForFile = { markers.getValue(it.name) },
+                onProgress = { completed, total ->
+                    preparationProgress.add(completed to total)
+                }
+            )
+
+            assertEquals(comics, plans.map { it.comicFile })
+            assertEquals(listOf("AAA", "BBB", ""), plans.map { it.startMarker })
+            assertEquals(listOf(aaaDirectory, defaultDirectory), plans[0].directories)
+            assertEquals(listOf(bbbDirectory, defaultDirectory), plans[1].directories)
+            assertEquals(listOf(defaultDirectory), plans[2].directories)
+            assertEquals(listOf(0 to 3, 1 to 3, 2 to 3, 3 to 3), preparationProgress)
+        }
+    }
+
+    @Test
+    fun prepareTargetPlansUsesWorkerPoolAndPreservesComicOrder() {
+        withTemporaryDirectory { root ->
+            val destinationRoot = File(root, "destination").apply { mkdirs() }
+            val matchingDirectory = File(destinationRoot, "AAA circle").apply { mkdirs() }
+            val defaultDirectory = File(root, "default").apply { mkdirs() }
+            val comics = (1..4).map { File(root, "comic-$it.zip") }
+            val executor = Executors.newFixedThreadPool(2)
+            val twoMatchesCompleted = CountDownLatch(2)
+
+            try {
+                val plans = ComicMigrationPlanner { false }.prepareTargetPlans(
+                    comicFiles = comics,
+                    rootDirectory = destinationRoot,
+                    defaultDirectory = defaultDirectory,
+                    markerForFile = { "AAA" },
+                    workerExecutor = executor,
+                    onProgress = { completed, _ ->
+                        if (completed in 1..2) {
+                            twoMatchesCompleted.countDown()
+                            assertTrue(
+                                "Target matching did not run concurrently",
+                                twoMatchesCompleted.await(5, TimeUnit.SECONDS)
+                            )
+                        }
+                    }
+                )
+
+                assertEquals(comics, plans.map { it.comicFile })
+                assertEquals(
+                    List(comics.size) { listOf(matchingDirectory, defaultDirectory) },
+                    plans.map { it.directories }
+                )
+            } finally {
+                executor.shutdownNow()
+            }
+        }
+    }
+
+    @Test
+    fun prepareTargetPlansStopsWhenThePreparationThreadIsInterrupted() {
+        withTemporaryDirectory { root ->
+            val destinationRoot = File(root, "destination").apply { mkdirs() }
+            File(destinationRoot, "AAA circle").mkdirs()
+            val defaultDirectory = File(root, "default").apply { mkdirs() }
+            val comics = listOf(File(root, "one.zip"), File(root, "two.zip"))
+            val wasInterrupted = Thread.interrupted()
+
+            try {
+                val error = runCatching {
+                    ComicMigrationPlanner { false }.prepareTargetPlans(
+                        comicFiles = comics,
+                        rootDirectory = destinationRoot,
+                        defaultDirectory = defaultDirectory,
+                        markerForFile = { "AAA" },
+                        onProgress = { completed, _ ->
+                            if (completed == 1) {
+                                Thread.currentThread().interrupt()
+                            }
+                        }
+                    )
+                }.exceptionOrNull()
+
+                assertTrue(error is InterruptedException)
+            } finally {
+                Thread.interrupted()
+                if (wasInterrupted) {
+                    Thread.currentThread().interrupt()
+                }
+            }
+        }
+    }
+
+    @Test
     fun scanComicFilesRecursivelyFindsSupportedFilesInNestedFolders() {
         withTemporaryDirectory { root ->
             val directComic = File(root, "direct.comic").apply { writeText("direct") }
             File(root, "ignored.txt").writeText("text")
             val childDirectory = File(root, "child").apply { mkdirs() }
             val nestedComic = File(childDirectory, "nested.comic").apply { writeText("nested") }
+            val siblingDirectory = File(root, "sibling").apply { mkdirs() }
+            val siblingComic = File(siblingDirectory, "sibling.comic").apply { writeText("sibling") }
+            val executor = Executors.newFixedThreadPool(2)
 
-            val result = ComicMigrationPlanner { it.extension == "comic" }
-                .scanComicFilesRecursively(root)
+            val result = try {
+                ComicMigrationPlanner { it.extension == "comic" }
+                    .scanComicFilesRecursively(root, workerExecutor = executor)
+            } finally {
+                executor.shutdownNow()
+            }
 
             assertEquals(
-                listOf(directComic, nestedComic).map { it.absolutePath }.sorted(),
+                listOf(directComic, nestedComic, siblingComic).map { it.absolutePath }.sorted(),
                 result.map { it.absolutePath }.sorted()
             )
+        }
+    }
+
+    @Test
+    fun scanComicFilesReadsSiblingDirectoriesConcurrently() {
+        withTemporaryDirectory { root ->
+            val firstDirectory = File(root, "first").apply { mkdirs() }
+            val firstComic = File(firstDirectory, "first.comic").apply { writeText("first") }
+            val secondDirectory = File(root, "second").apply { mkdirs() }
+            val secondComic = File(secondDirectory, "second.comic").apply { writeText("second") }
+            val twoDirectoryReadsStarted = CountDownLatch(2)
+            val scanRoot = object : File(root.path) {
+                override fun listFiles(): Array<File>? = arrayOf(
+                    blockingDirectory(firstDirectory, twoDirectoryReadsStarted),
+                    blockingDirectory(secondDirectory, twoDirectoryReadsStarted)
+                )
+            }
+            val executor = Executors.newFixedThreadPool(2)
+
+            val result = try {
+                ComicMigrationPlanner { it.extension == "comic" }
+                    .scanComicFilesRecursively(scanRoot, workerExecutor = executor)
+            } finally {
+                executor.shutdownNow()
+            }
+
+            assertEquals(
+                setOf(firstComic.absolutePath, secondComic.absolutePath),
+                result.map { it.absolutePath }.toSet()
+            )
+        }
+    }
+
+    @Test
+    fun scanComicFilesChecksFilesConcurrently() {
+        withTemporaryDirectory { root ->
+            val comics = (1..4).map { File(root, "comic-$it.comic").apply { writeText("comic") } }
+            val twoFileChecksStarted = CountDownLatch(2)
+            val executor = Executors.newFixedThreadPool(2)
+
+            val result = try {
+                ComicMigrationPlanner { file ->
+                    check(twoFileChecksStarted.await(5, TimeUnit.SECONDS)) {
+                        "Comic file checks did not run concurrently"
+                    }
+                    file.extension == "comic"
+                }.scanComicFilesRecursively(root, workerExecutor = executor)
+            } finally {
+                executor.shutdownNow()
+            }
+
+            assertEquals(comics.map { it.absolutePath }.toSet(), result.map { it.absolutePath }.toSet())
         }
     }
 
@@ -323,6 +529,18 @@ class ComicMigrationPlannerTest {
             block(directory)
         } finally {
             directory.deleteRecursively()
+        }
+    }
+
+    private fun blockingDirectory(
+        directory: File,
+        twoDirectoryReadsStarted: CountDownLatch
+    ): File = object : File(directory.path) {
+        override fun listFiles(): Array<File>? {
+            check(twoDirectoryReadsStarted.await(5, TimeUnit.SECONDS)) {
+                "Sibling directory reads did not run concurrently"
+            }
+            return super.listFiles()
         }
     }
 }

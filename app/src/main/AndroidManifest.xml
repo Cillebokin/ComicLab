@@ -53,6 +53,14 @@
             android:exported="false" />
 
         <activity
+            android:name="com.example.comiclab.HelpActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.example.comiclab.HelpArticleActivity"
+            android:exported="false" />
+
+        <activity
             android:name="com.example.comiclab.SearchActivity"
             android:exported="false" />
 

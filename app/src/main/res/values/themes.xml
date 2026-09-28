@@ -26,6 +26,11 @@
         <item name="android:windowExitAnimation">@anim/reading_history_panel_exit</item>
     </style>
 
+    <style name="Animation_ComicLab_HelpContentsPanel">
+        <item name="android:windowEnterAnimation">@anim/help_contents_panel_enter</item>
+        <item name="android:windowExitAnimation">@anim/help_contents_panel_exit</item>
+    </style>
+
     <style name="Widget.ComicLab.Button" parent="Widget.Material3.Button">
         <item name="backgroundTint">@color/comiclab_button_tint</item>
         <item name="android:textColor">@color/comiclab_text_on_accent</item>

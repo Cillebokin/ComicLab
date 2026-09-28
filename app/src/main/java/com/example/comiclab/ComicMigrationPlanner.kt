@@ -8,6 +8,11 @@ import java.nio.file.Files
 import java.text.Normalizer
 import java.util.ArrayDeque
 import java.util.Locale
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.atomic.AtomicInteger
 
 enum class ComicMigrationMatchReason {
     EXACT_NAME,
@@ -19,6 +24,12 @@ enum class ComicMigrationMatchReason {
 data class ComicMigrationDirectoryMatch(
     val directory: File,
     val reason: ComicMigrationMatchReason
+)
+
+data class ComicMigrationTargetPlan(
+    val comicFile: File,
+    val startMarker: String,
+    val directories: List<File>
 )
 
 enum class ComicMigrationCopyStatus {
@@ -41,7 +52,11 @@ class ComicMigrationPlanner(
     }
 ) {
 
-    fun scanComicFilesRecursively(rootDirectory: File): List<File> {
+    fun scanComicFilesRecursively(
+        rootDirectory: File,
+        workerExecutor: ExecutorService? = null
+    ): List<File> {
+        ensurePreparationNotInterrupted()
         if (!rootDirectory.isDirectory) {
             throw IOException("Source directory is unavailable")
         }
@@ -53,21 +68,42 @@ class ComicMigrationPlanner(
         pending.add(rootDirectory)
 
         while (pending.isNotEmpty()) {
-            val directory = pending.removeFirst()
-            if (!directory.isDirectory || !visitedDirectories.add(directory.stablePath())) {
-                continue
+            ensurePreparationNotInterrupted()
+            val currentLevel = mutableListOf<File>()
+            while (pending.isNotEmpty()) {
+                val directory = pending.removeFirst()
+                if (directory.isDirectory && visitedDirectories.add(directory.stablePath())) {
+                    currentLevel.add(directory)
+                }
             }
 
-            val children = readChildren(directory).sortedWith(filePathComparator)
+            val childrenByDirectory = mapWithWorkerPool(
+                currentLevel,
+                workerExecutor
+            ) { directory ->
+                ensurePreparationNotInterrupted()
+                readChildren(directory).sortedWith(filePathComparator)
+            }
 
-            children.forEach { child ->
-                when {
-                    child.isDirectory && child.isSameOrDescendantOf(rootDirectory) ->
+            childrenByDirectory.forEach { children ->
+                children.filter { it.isDirectory }.forEach { child ->
+                    ensurePreparationNotInterrupted()
+                    if (child.isSameOrDescendantOf(rootDirectory)) {
                         pending.add(child)
-                    child.isFile && child.isSameOrDescendantOf(rootDirectory) &&
-                        runCatching { isComicFile(child) }.getOrDefault(false) &&
-                        visitedFiles.add(child.stablePath()) ->
-                        comics.add(child)
+                    }
+                }
+
+                val files = children.filter {
+                    it.isFile && it.isSameOrDescendantOf(rootDirectory)
+                }
+                val supportedComicFiles = mapWithWorkerPool(files, workerExecutor) { file ->
+                    ensurePreparationNotInterrupted()
+                    file.takeIf { runCatching { isComicFile(file) }.getOrDefault(false) }
+                }
+                supportedComicFiles.filterNotNull().forEach { file ->
+                    if (visitedFiles.add(file.stablePath())) {
+                        comics.add(file)
+                    }
                 }
             }
         }
@@ -87,39 +123,67 @@ class ComicMigrationPlanner(
             return emptyList()
         }
 
-        val pending = ArrayDeque<File>()
-        val visitedPaths = mutableSetOf<String>()
-        val matches = mutableListOf<ComicMigrationDirectoryMatch>()
-        pending.add(rootDirectory)
-
-        while (pending.isNotEmpty()) {
-            val directory = pending.removeFirst()
-            if (!directory.isDirectory || !visitedPaths.add(directory.stablePath())) {
-                continue
+        return scanDestinationDirectories(rootDirectory, excludedDirectory)
+            .mapNotNull { directory ->
+                findMatchReason(startMarker, directory.name)?.let { reason ->
+                    ComicMigrationDirectoryMatch(directory, reason)
+                }
             }
-
-            val children = readChildren(directory)
-                .filter { it.isDirectory }
-                .sortedWith(filePathComparator)
-
-            children.forEach { child ->
-                if (!child.isSameOrDescendantOf(rootDirectory)) {
-                    return@forEach
-                }
-                if (excludedDirectory != null && child.isSameOrDescendantOf(excludedDirectory)) {
-                    return@forEach
-                }
-
-                findMatchReason(startMarker, child.name)?.let { reason ->
-                    matches.add(ComicMigrationDirectoryMatch(child, reason))
-                }
-                pending.add(child)
-            }
-        }
-
-        return matches.distinctBy { it.directory.stablePath() }
             .sortedWith(compareBy(filePathComparator) { it.directory })
     }
+
+    fun prepareTargetPlans(
+        comicFiles: List<File>,
+        rootDirectory: File,
+        defaultDirectory: File,
+        excludedDirectory: File? = null,
+        markerForFile: (File) -> String,
+        workerExecutor: ExecutorService? = null,
+        onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> }
+    ): List<ComicMigrationTargetPlan> {
+        ensurePreparationNotInterrupted()
+        if (!rootDirectory.isDirectory) {
+            throw IOException("Destination tree is unavailable")
+        }
+
+        val comicsWithMarkers = mapWithWorkerPool(comicFiles, workerExecutor) { file ->
+            ensurePreparationNotInterrupted()
+            file to markerForFile(file)
+        }
+        val candidateDirectories = if (comicsWithMarkers.any { it.second.isNotBlank() }) {
+            scanDestinationDirectories(rootDirectory, excludedDirectory, workerExecutor)
+                .sortedWith(filePathComparator)
+        } else {
+            emptyList()
+        }
+
+        if (comicsWithMarkers.isEmpty()) {
+            return emptyList()
+        }
+
+        onProgress(0, comicsWithMarkers.size)
+        val completed = AtomicInteger()
+        return mapWithWorkerPool(comicsWithMarkers, workerExecutor) { (comicFile, marker) ->
+            val matches = candidateDirectories.mapNotNull { directory ->
+                ensurePreparationNotInterrupted()
+                findMatchReason(marker, directory.name)?.let { reason ->
+                    ComicMigrationDirectoryMatch(directory, reason)
+                }
+            }
+            val plan = ComicMigrationTargetPlan(
+                comicFile = comicFile,
+                startMarker = marker,
+                directories = targetDirectoryChoices(matches, defaultDirectory)
+            )
+            onProgress(completed.incrementAndGet(), comicsWithMarkers.size)
+            plan
+        }
+    }
+
+    fun targetDirectoryChoices(
+        matches: List<ComicMigrationDirectoryMatch>,
+        defaultDirectory: File
+    ): List<File> = matches.map { it.directory } + defaultDirectory
 
     fun copyComicFile(
         sourceFile: File,
@@ -189,6 +253,96 @@ class ComicMigrationPlanner(
     private fun readChildren(directory: File): List<File> {
         return directory.listFiles()?.toList()
             ?: throw IOException("Unable to read directory")
+    }
+
+    private fun <T, R> mapWithWorkerPool(
+        items: List<T>,
+        workerExecutor: ExecutorService?,
+        transform: (T) -> R
+    ): List<R> {
+        if (workerExecutor == null || items.size < 2) {
+            return items.map(transform)
+        }
+
+        val workerCount = (workerExecutor as? ThreadPoolExecutor)
+            ?.maximumPoolSize
+            ?.coerceIn(1, MAX_WORKER_COUNT)
+            ?: Runtime.getRuntime().availableProcessors().coerceIn(1, MAX_WORKER_COUNT)
+        val batchSize = workerCount * TASKS_PER_WORKER
+        val results = ArrayList<R>(items.size)
+
+        items.chunked(batchSize).forEach { batch ->
+            ensurePreparationNotInterrupted()
+            val tasks = batch.map { item -> Callable { transform(item) } }
+            val futures = try {
+                workerExecutor.invokeAll(tasks)
+            } catch (error: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw error
+            }
+
+            futures.forEach { future ->
+                try {
+                    results.add(future.get())
+                } catch (error: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw error
+                } catch (error: ExecutionException) {
+                    throw error.cause ?: error
+                }
+            }
+        }
+        return results
+    }
+
+    private fun ensurePreparationNotInterrupted() {
+        if (Thread.currentThread().isInterrupted) {
+            throw InterruptedException("Comic migration preparation was interrupted")
+        }
+    }
+
+    private fun scanDestinationDirectories(
+        rootDirectory: File,
+        excludedDirectory: File?,
+        workerExecutor: ExecutorService? = null
+    ): List<File> {
+        val pending = ArrayDeque<File>()
+        val visitedPaths = mutableSetOf<String>()
+        val directories = mutableListOf<File>()
+        pending.add(rootDirectory)
+
+        while (pending.isNotEmpty()) {
+            ensurePreparationNotInterrupted()
+            val currentLevel = mutableListOf<File>()
+            while (pending.isNotEmpty()) {
+                val directory = pending.removeFirst()
+                if (directory.isDirectory && visitedPaths.add(directory.stablePath())) {
+                    currentLevel.add(directory)
+                }
+            }
+
+            val childrenByDirectory = mapWithWorkerPool(
+                currentLevel,
+                workerExecutor
+            ) { directory ->
+                ensurePreparationNotInterrupted()
+                readChildren(directory).filter { it.isDirectory }.sortedWith(filePathComparator)
+            }
+            childrenByDirectory.forEach { children ->
+                children.forEach childLoop@ { child ->
+                    ensurePreparationNotInterrupted()
+                    if (!child.isSameOrDescendantOf(rootDirectory) ||
+                        excludedDirectory != null && child.isSameOrDescendantOf(excludedDirectory)
+                    ) {
+                        return@childLoop
+                    }
+                    directories.add(child)
+                    pending.add(child)
+                }
+            }
+        }
+
+        return directories.distinctBy { it.stablePath() }
     }
 
     companion object {
@@ -491,6 +645,8 @@ class ComicMigrationPlanner(
         private const val SYLLABIC_N = 0x30F3
         private const val PROLONGED_SOUND_MARK = 0x30FC
         private const val COPY_BUFFER_SIZE = 128 * 1024
+        private const val MAX_WORKER_COUNT = 8
+        private const val TASKS_PER_WORKER = 2
         private const val APOSTROPHE = 0x27
         private const val GEMINATABLE_CONSONANTS = "bcdfghjklmpqrstvwxyz"
 

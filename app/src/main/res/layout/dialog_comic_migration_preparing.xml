@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="8dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="8dp"
+    android:paddingBottom="8dp">
+
+    <TextView
+        android:id="@+id/tvComicMigrationPreparationProgress"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/comic_migration_debug_preparing_targets"
+        android:textColor="@color/comiclab_text_secondary"
+        android:textSize="@dimen/text_body" />
+
+    <ProgressBar
+        android:id="@+id/progressComicMigrationPreparation"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="8dp"
+        android:layout_marginTop="16dp"
+        android:indeterminate="true"
+        android:indeterminateTint="@color/comiclab_accent"
+        android:max="100"
+        android:progress="0"
+        android:progressBackgroundTint="@color/comiclab_divider"
+        android:progressTint="@color/comiclab_accent" />
+
+</LinearLayout>

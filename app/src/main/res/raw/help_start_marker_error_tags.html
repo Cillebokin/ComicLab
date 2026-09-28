@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root {
+            color-scheme: light dark;
+            --text: #111827;
+            --muted: #4B5563;
+            --accent: #2563EB;
+            --surface: transparent;
+            --soft: #EFF6FF;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --text: #F1F5F9;
+                --muted: #CBD5E1;
+                --accent: #60A5FA;
+                --surface: transparent;
+                --soft: #1E3A5F;
+            }
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: var(--surface);
+        }
+
+        body {
+            color: var(--text);
+            font-family: sans-serif;
+            font-size: 16px;
+            line-height: 1.7;
+            padding: 20px 18px 28px;
+        }
+
+        h1 {
+            color: var(--text);
+            font-size: 24px;
+            margin: 0 0 16px;
+        }
+
+        h2 {
+            color: var(--accent);
+            font-size: 18px;
+            margin: 24px 0 8px;
+        }
+
+        p,
+        ol {
+            color: var(--muted);
+        }
+
+        p {
+            margin: 8px 0;
+        }
+
+        ol {
+            padding-left: 24px;
+        }
+
+        code {
+            background: var(--soft);
+            border-radius: 4px;
+            color: var(--accent);
+            padding: 2px 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>起始标记错误标识</h1>
+    <p>用于排除不适合作为起始标记的内容。</p>
+
+    <h2>设置位置</h2>
+    <p><code>设置 → 文件浏览 → 起始标记错误标识</code></p>
+
+    <h2>填写方式</h2>
+    <p>多个标识使用英文分号 <code>;</code> 分隔，修改后自动保存。</p>
+
+    <h2>默认值</h2>
+    <p><code>中;汉;漢;翻;译;譯</code></p>
+
+    <h2>示例</h2>
+    <p><code>[中] [ABC]作品名称.zip</code><br>如果“中”是错误标识，则继续查找 <code>[ABC]</code></p>
+
+    <p>清空该设置后，不再排除任何错误标识。</p>
+</body>
+</html>

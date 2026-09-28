@@ -44,6 +44,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var listView: ListView
     private lateinit var etPath: EditText
     private lateinit var btnBack: ImageButton
+    private lateinit var btnHelp: ImageButton
     private lateinit var btnOptions: ImageButton
     private lateinit var btnSort: ImageButton
     private lateinit var btnClassify: ImageButton
@@ -98,6 +99,7 @@ class MainActivity : AppCompatActivity() {
         listView = findViewById(R.id.listFiles)
         etPath = findViewById(R.id.etPath)
         btnBack = findViewById(R.id.btnBack)
+        btnHelp = findViewById(R.id.btnHelp)
         btnOptions = findViewById(R.id.btnOptions)
         btnSort = findViewById(R.id.btnSort)
         btnClassify = findViewById(R.id.btnClassify)
@@ -132,6 +134,10 @@ class MainActivity : AppCompatActivity() {
 
         btnOptions.setOnClickListener {
             openSettings()
+        }
+
+        btnHelp.setOnClickListener {
+            openHelp()
         }
 
         btnReadingHistory.setOnClickListener {
@@ -309,6 +315,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun openSettings() {
         startActivity(Intent(this, SettingsActivity::class.java))
+    }
+
+    private fun openHelp() {
+        startActivity(Intent(this, HelpActivity::class.java))
     }
 
     private fun showReadingHistoryPanel() {

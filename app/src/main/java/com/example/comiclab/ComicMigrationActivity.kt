@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import android.app.ActivityManager
 import android.app.AlertDialog
 import android.os.Bundle
 import android.os.Environment
@@ -15,43 +16,42 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicInteger
 
 class ComicMigrationActivity : AppCompatActivity() {
 
     private lateinit var btnBack: ImageButton
-    private lateinit var btnChooseMigrationRoot: Button
     private lateinit var tvSourceDirectory: TextView
     private lateinit var tvMigrationRoot: TextView
     private lateinit var tvDefaultDirectory: TextView
     private lateinit var progressMigration: ProgressBar
     private lateinit var tvMigrationStatus: TextView
     private lateinit var tvMigrationProgress: TextView
-    private lateinit var tvCurrentFile: TextView
-    private lateinit var tvCurrentMarker: TextView
-    private lateinit var tvCurrentDestination: TextView
-    private lateinit var tvMigrationHistory: TextView
+    private lateinit var tvMigrationHistory: LinearLayout
 
     private val migrationExecutor = Executors.newSingleThreadExecutor()
+    private var migrationWorkerExecutor: ExecutorService? = null
     private val migrationGeneration = AtomicInteger(0)
     private val mainHandler = Handler(Looper.getMainLooper())
     // 调试阶段显式关闭真实文件写入；准备启用复制前再单独打开。
     private val planner = ComicMigrationPlanner(allowFileCopy = false)
-    private val historyLines = mutableListOf<String>()
-
     private var sourceDirectory: File? = null
     private var migrationRoot: File? = null
-    private var defaultDirectory: File? = null
-    private var comicFiles: List<File> = emptyList()
+    private var targetPlans: List<ComicMigrationTargetPlan> = emptyList()
     private var currentIndex = 0
     private var isMigrationActive = false
     private var destroyed = false
     private var pickerDirectory: File? = null
     private var directoryPickerDialog: AlertDialog? = null
+    private var preparationProgressDialog: AlertDialog? = null
+    private var preparationProgressBar: ProgressBar? = null
+    private var tvPreparationProgress: TextView? = null
+    private var preparationTask: Future<*>? = null
     private var targetDirectoryDialog: AlertDialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -66,16 +66,12 @@ class ComicMigrationActivity : AppCompatActivity() {
         )
 
         btnBack = findViewById(R.id.btnBack)
-        btnChooseMigrationRoot = findViewById(R.id.btnChooseMigrationRoot)
         tvSourceDirectory = findViewById(R.id.tvComicMigrationSource)
         tvMigrationRoot = findViewById(R.id.tvComicMigrationRoot)
         tvDefaultDirectory = findViewById(R.id.tvComicMigrationDefaultDirectory)
         progressMigration = findViewById(R.id.progressComicMigration)
         tvMigrationStatus = findViewById(R.id.tvComicMigrationStatus)
         tvMigrationProgress = findViewById(R.id.tvComicMigrationProgress)
-        tvCurrentFile = findViewById(R.id.tvComicMigrationFile)
-        tvCurrentMarker = findViewById(R.id.tvComicMigrationMarker)
-        tvCurrentDestination = findViewById(R.id.tvComicMigrationDestination)
         tvMigrationHistory = findViewById(R.id.tvComicMigrationHistory)
 
         val sourcePath = intent.getStringExtra(EXTRA_SOURCE_DIRECTORY_PATH)
@@ -94,25 +90,14 @@ class ComicMigrationActivity : AppCompatActivity() {
 
         sourceDirectory = source
         tvSourceDirectory.text = source.absolutePath
-        tvMigrationRoot.text = getString(R.string.comic_migration_root_not_selected)
-        tvDefaultDirectory.text = getString(R.string.comic_migration_default_not_selected)
+        tvMigrationRoot.text = getString(R.string.comic_migration_path_not_selected)
+        tvDefaultDirectory.text = getString(R.string.comic_migration_path_not_selected)
         tvMigrationStatus.text = getString(R.string.comic_migration_status_title)
-        tvMigrationHistory.text = ""
-        progressMigration.visibility = View.GONE
+        tvMigrationHistory.removeAllViews()
+        updateMigrationProgress(0, 0)
 
         btnBack.setOnClickListener {
             handleBackAction()
-        }
-        btnChooseMigrationRoot.setOnClickListener {
-            if (isMigrationActive) {
-                Toast.makeText(
-                    this,
-                    R.string.comic_migration_running,
-                    Toast.LENGTH_SHORT
-                ).show()
-            } else {
-                showMigrationRootPicker()
-            }
         }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -130,12 +115,16 @@ class ComicMigrationActivity : AppCompatActivity() {
     override fun onDestroy() {
         destroyed = true
         migrationGeneration.incrementAndGet()
+        preparationTask?.cancel(true)
+        preparationTask = null
         mainHandler.removeCallbacksAndMessages(null)
         directoryPickerDialog?.dismiss()
+        dismissPreparationProgressDialog()
         targetDirectoryDialog?.dismiss()
         directoryPickerDialog = null
         targetDirectoryDialog = null
         migrationExecutor.shutdownNow()
+        releaseMigrationWorkerExecutor()
         super.onDestroy()
     }
 
@@ -234,13 +223,9 @@ class ComicMigrationActivity : AppCompatActivity() {
                             return@setPositiveButton
                         }
                         migrationRoot = selectedDirectory
-                        defaultDirectory = null
-                        tvMigrationRoot.text = getString(
-                            R.string.comic_migration_root_value,
-                            selectedDirectory.absolutePath
-                        )
+                        tvMigrationRoot.text = selectedDirectory.absolutePath
                         tvDefaultDirectory.text = getString(
-                            R.string.comic_migration_default_not_selected
+                            R.string.comic_migration_path_not_selected
                         )
                         mainHandler.post { showDefaultDirectoryPicker() }
                     }
@@ -292,33 +277,65 @@ class ComicMigrationActivity : AppCompatActivity() {
         directoryPickerDialog?.dismiss()
         directoryPickerDialog = null
         migrationRoot = rootDirectory
-        defaultDirectory = defaultTargetDirectory
-        comicFiles = emptyList()
+        targetPlans = emptyList()
         currentIndex = 0
-        historyLines.clear()
-        tvMigrationHistory.text = ""
-        tvMigrationRoot.text = getString(
-            R.string.comic_migration_root_value,
-            rootDirectory.absolutePath
-        )
-        tvDefaultDirectory.text = getString(
-            R.string.comic_migration_default_value,
-            defaultTargetDirectory.absolutePath
-        )
-        tvMigrationProgress.text = getString(R.string.comic_migration_current_item)
-        tvCurrentFile.text = getString(R.string.comic_migration_current_file)
-        tvCurrentMarker.text = getString(R.string.comic_migration_current_marker)
-        tvCurrentDestination.text = getString(R.string.comic_migration_current_destination)
-        tvMigrationStatus.text = getString(R.string.comic_migration_debug_scanning_source)
-        progressMigration.visibility = View.VISIBLE
-        btnChooseMigrationRoot.isEnabled = false
+        tvMigrationHistory.removeAllViews()
+        tvMigrationRoot.text = rootDirectory.absolutePath
+        tvDefaultDirectory.text = defaultTargetDirectory.absolutePath
+        updateMigrationProgress(0, 0)
+        tvMigrationStatus.text = getString(R.string.comic_migration_debug_preparing_targets)
         isMigrationActive = true
+        showPreparationProgressDialog()
 
+        val workerExecutor = Executors.newFixedThreadPool(resolveMigrationWorkerCount())
+        migrationWorkerExecutor = workerExecutor
         val generation = migrationGeneration.incrementAndGet()
         runCatching {
-            migrationExecutor.execute {
+            preparationTask = migrationExecutor.submit {
                 val result = runCatching {
-                    planner.scanComicFilesRecursively(source)
+                    val comicFiles = planner.scanComicFilesRecursively(
+                        rootDirectory = source,
+                        workerExecutor = workerExecutor
+                    )
+                    val markerErrorTags = AppSettings.getStartMarkerErrorTags(applicationContext)
+                    planner.prepareTargetPlans(
+                        comicFiles = comicFiles,
+                        rootDirectory = rootDirectory,
+                        defaultDirectory = defaultTargetDirectory,
+                        excludedDirectory = source,
+                        markerForFile = { file ->
+                            CommonFunc.extractStartMarker(file.name, markerErrorTags)
+                        },
+                        workerExecutor = workerExecutor,
+                        onProgress = { completed, total ->
+                            val updateInterval = (total / 100).coerceAtLeast(1)
+                            if (completed == 0 || completed == total ||
+                                completed % updateInterval == 0
+                            ) {
+                                mainHandler.post {
+                                    if (destroyed || generation != migrationGeneration.get() ||
+                                        !isMigrationActive
+                                    ) {
+                                        return@post
+                                    }
+                                    val progressBar = preparationProgressBar
+                                        ?: return@post
+                                    progressBar.isIndeterminate = false
+                                    progressBar.max = total.coerceAtLeast(1)
+                                    val displayedCompleted = maxOf(
+                                        progressBar.progress,
+                                        completed.coerceIn(0, progressBar.max)
+                                    )
+                                    progressBar.progress = displayedCompleted
+                                    tvPreparationProgress?.text = getString(
+                                        R.string.comic_migration_preparation_matching_progress,
+                                        displayedCompleted,
+                                        total
+                                    )
+                                }
+                            }
+                        }
+                    )
                 }
                 runOnUiThread {
                     if (destroyed || generation != migrationGeneration.get()) {
@@ -326,15 +343,20 @@ class ComicMigrationActivity : AppCompatActivity() {
                     }
 
                     result
-                        .onSuccess { files ->
-                            comicFiles = files
-                            if (files.isEmpty()) {
+                        .onSuccess { plans ->
+                            preparationTask = null
+                            releaseMigrationWorkerExecutor()
+                            dismissPreparationProgressDialog()
+                            targetPlans = plans
+                            updateMigrationProgress(0, plans.size)
+                            if (plans.isEmpty()) {
                                 completeWithoutItems()
                             } else {
                                 processCurrentComic()
                             }
                         }
                         .onFailure { error ->
+                            preparationTask = null
                             failMigration(error.localizedMessage)
                         }
                 }
@@ -342,6 +364,42 @@ class ComicMigrationActivity : AppCompatActivity() {
         }.onFailure { error ->
             failMigration(error.localizedMessage)
         }
+    }
+
+    private fun showPreparationProgressDialog() {
+        val content = layoutInflater.inflate(
+            R.layout.dialog_comic_migration_preparing,
+            null
+        )
+        preparationProgressBar = content.findViewById(R.id.progressComicMigrationPreparation)
+        tvPreparationProgress = content.findViewById(R.id.tvComicMigrationPreparationProgress)
+        preparationProgressBar?.isIndeterminate = true
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.comic_migration_preparation_title)
+            .setView(content)
+            .setNegativeButton(R.string.comic_migration_aborted) { _, _ ->
+                abortMigration()
+            }
+            .setCancelable(false)
+            .createRounded()
+        dialog.setOnDismissListener {
+            if (preparationProgressDialog === dialog) {
+                preparationProgressDialog = null
+                preparationProgressBar = null
+                tvPreparationProgress = null
+            }
+        }
+        preparationProgressDialog = dialog
+        dialog.show()
+    }
+
+    private fun dismissPreparationProgressDialog() {
+        val dialog = preparationProgressDialog
+        preparationProgressDialog = null
+        preparationProgressBar = null
+        tvPreparationProgress = null
+        dialog?.dismiss()
     }
 
     private fun processCurrentComic() {
@@ -349,134 +407,42 @@ class ComicMigrationActivity : AppCompatActivity() {
             return
         }
 
-        val rootDirectory = migrationRoot
-        val source = sourceDirectory
-        val defaultTarget = defaultDirectory
-        val currentFile = comicFiles.getOrNull(currentIndex)
-        if (currentFile == null) {
+        val currentPlan = targetPlans.getOrNull(currentIndex)
+        if (currentPlan == null) {
             completeMigration()
             return
         }
-        if (rootDirectory == null || source == null || defaultTarget == null) {
-            failMigration()
-            return
-        }
-
-        val marker = CommonFunc.extractStartMarker(
-            currentFile.name,
-            AppSettings.getStartMarkerErrorTags(this)
+        showTargetDirectoryChoices(
+            currentPlan.comicFile,
+            currentPlan.startMarker,
+            currentPlan.directories
         )
-        tvMigrationProgress.text = getString(
-            R.string.comic_migration_progress_value,
-            currentIndex + 1,
-            comicFiles.size
-        )
-        tvCurrentFile.text = getString(
-            R.string.comic_migration_file_value,
-            currentFile.absolutePath
-        )
-        tvCurrentMarker.text = getString(
-            R.string.comic_migration_marker_value,
-            marker.ifBlank { getString(R.string.comic_migration_marker_not_found) }
-        )
-        tvCurrentDestination.text = getString(R.string.comic_migration_current_destination)
-        tvMigrationStatus.text = getString(R.string.comic_migration_searching_targets)
-
-        val generation = migrationGeneration.get()
-        runCatching {
-            migrationExecutor.execute {
-                val result = runCatching {
-                    planner.findMatchingDirectories(
-                        rootDirectory,
-                        marker,
-                        excludedDirectory = source
-                    )
-                }
-                runOnUiThread {
-                    if (destroyed || generation != migrationGeneration.get() ||
-                        !isMigrationActive
-                    ) {
-                        return@runOnUiThread
-                    }
-
-                    result
-                        .onSuccess { matches ->
-                            if (matches.isEmpty()) {
-                                val status = if (marker.isBlank()) {
-                                    getString(
-                                        R.string.comic_migration_empty_marker,
-                                        defaultTarget.absolutePath
-                                    )
-                                } else {
-                                    getString(
-                                        R.string.comic_migration_no_match,
-                                        defaultTarget.absolutePath
-                                    )
-                                }
-                                recordDebugTarget(currentFile, defaultTarget, status)
-                            } else {
-                                showTargetDirectoryChoices(
-                                    currentFile,
-                                    marker,
-                                    matches
-                                )
-                            }
-                        }
-                        .onFailure { error ->
-                            failMigration(error.localizedMessage)
-                        }
-                }
-            }
-        }.onFailure { error ->
-            failMigration(error.localizedMessage)
-        }
     }
 
     private fun showTargetDirectoryChoices(
         currentFile: File,
         marker: String,
-        matches: List<ComicMigrationDirectoryMatch>
+        directories: List<File>
     ) {
-        val directories = matches.map { it.directory }
-        val matchReasons = matches.associate { match ->
-            match.directory.absolutePath to matchReasonText(match.reason)
-        }
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dpToPx(4), 0, dpToPx(4), 0)
-        }
-        val message = TextView(this).apply {
-            text = getString(
-                R.string.comic_migration_choose_target_message,
-                marker.ifBlank { getString(R.string.comic_migration_marker_not_found) }
-            )
-            setTextColor(getColor(R.color.comiclab_text_secondary))
-            textSize = 13f
-            setPadding(0, dpToPx(4), 0, dpToPx(8))
-        }
-        val listDirectories = ListView(this).apply {
-            divider = ContextCompat.getDrawable(
-                this@ComicMigrationActivity,
-                R.drawable.divider_file_picker_item
-            )
-            dividerHeight = 1
-            adapter = ComicMigrationDirectoryAdapter(
-                this@ComicMigrationActivity,
-                directories,
-                matchReasons
-            )
-        }
-        content.addView(message)
-        content.addView(
-            listDirectories,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dpToPx(360)
-            )
+        val content = layoutInflater.inflate(
+            R.layout.dialog_comic_migration_target_picker,
+            null
         )
+        content.findViewById<TextView>(R.id.tvComicMigrationTargetFileName).text =
+            currentFile.name
+        content.findViewById<TextView>(R.id.tvComicMigrationTargetMarker).text =
+            marker.ifBlank { getString(R.string.comic_migration_marker_not_found) }
+        content.findViewById<TextView>(R.id.tvComicMigrationTargetLabel).text =
+            getString(R.string.comic_migration_current_destination)
+        val listDirectories = content.findViewById<ListView>(
+            R.id.listComicMigrationTargetDirectories
+        )
+        listDirectories.adapter = ComicMigrationDirectoryAdapter(this, directories)
+        listDirectories.layoutParams = listDirectories.layoutParams.apply {
+            height = dpToPx(directories.size.coerceAtMost(4).coerceAtLeast(1) * 72)
+        }
 
         val dialog = AlertDialog.Builder(this)
-            .setTitle(getString(R.string.comic_migration_choose_target, currentFile.name))
             .setView(content)
             .setNegativeButton(R.string.comic_migration_aborted) { _, _ ->
                 abortMigration()
@@ -489,16 +455,7 @@ class ComicMigrationActivity : AppCompatActivity() {
             if (targetDirectoryDialog === dialog) {
                 targetDirectoryDialog = null
             }
-            val reason = matchReasons[targetDirectory.absolutePath].orEmpty()
-            recordDebugTarget(
-                currentFile,
-                targetDirectory,
-                getString(
-                    R.string.comic_migration_selected_target,
-                    targetDirectory.absolutePath,
-                    reason
-                )
-            )
+            recordDebugTarget(currentFile, targetDirectory)
         }
         dialog.setOnDismissListener {
             if (targetDirectoryDialog === dialog) {
@@ -509,25 +466,11 @@ class ComicMigrationActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    private fun matchReasonText(reason: ComicMigrationMatchReason): String {
-        val resource = when (reason) {
-            ComicMigrationMatchReason.EXACT_NAME -> R.string.comic_migration_match_exact
-            ComicMigrationMatchReason.CONTAINS_MARKER -> R.string.comic_migration_match_contains
-            ComicMigrationMatchReason.COMPONENT_ALIAS -> R.string.comic_migration_match_component
-            ComicMigrationMatchReason.KANA_ROMAJI -> R.string.comic_migration_match_kana_romaji
-        }
-        return getString(resource)
-    }
-
-    private fun recordDebugTarget(currentFile: File, targetDirectory: File, context: String) {
+    private fun recordDebugTarget(currentFile: File, targetDirectory: File) {
         if (!isMigrationActive || destroyed) {
             return
         }
 
-        tvCurrentDestination.text = getString(
-            R.string.comic_migration_destination_value,
-            targetDirectory.absolutePath
-        )
         tvMigrationStatus.text = getString(R.string.comic_migration_debug_recording_target)
 
         val generation = migrationGeneration.get()
@@ -542,19 +485,21 @@ class ComicMigrationActivity : AppCompatActivity() {
                     }
 
                     val previewStatus = getString(R.string.comic_migration_debug_not_copied)
-                    val status = "$context\n$previewStatus"
-                    tvMigrationStatus.text = status
-                    historyLines.add(
-                        getString(
-                            R.string.comic_migration_history_item,
-                            currentIndex + 1,
-                            currentFile.absolutePath,
-                            targetDirectory.absolutePath,
-                            previewStatus
-                        )
+                    tvMigrationStatus.text = previewStatus
+                    val historyItem = layoutInflater.inflate(
+                        R.layout.item_comic_migration_history,
+                        tvMigrationHistory,
+                        false
                     )
-                    tvMigrationHistory.text = historyLines.joinToString(separator = "\n")
+                    historyItem.findViewById<TextView>(
+                        R.id.tvComicMigrationHistoryFileName
+                    ).text = currentFile.name
+                    historyItem.findViewById<TextView>(
+                        R.id.tvComicMigrationHistoryDestination
+                    ).text = targetDirectory.absolutePath
+                    tvMigrationHistory.addView(historyItem)
                     currentIndex++
+                    updateMigrationProgress(currentIndex, targetPlans.size)
                     processCurrentComic()
                 }
             }
@@ -563,20 +508,29 @@ class ComicMigrationActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateMigrationProgress(completed: Int, total: Int) {
+        val progressMaximum = total.coerceAtLeast(1)
+        progressMigration.max = progressMaximum
+        progressMigration.progress = completed.coerceIn(0, progressMaximum)
+        tvMigrationProgress.text = getString(
+            R.string.comic_migration_progress_value,
+            completed,
+            total
+        )
+    }
+
     private fun completeWithoutItems() {
         isMigrationActive = false
-        progressMigration.visibility = View.GONE
-        btnChooseMigrationRoot.isEnabled = true
+        releaseMigrationWorkerExecutor()
         tvMigrationStatus.text = getString(R.string.comic_migration_no_files)
     }
 
     private fun completeMigration() {
         isMigrationActive = false
-        progressMigration.visibility = View.GONE
-        btnChooseMigrationRoot.isEnabled = true
+        releaseMigrationWorkerExecutor()
         tvMigrationStatus.text = getString(
             R.string.comic_migration_debug_complete,
-            comicFiles.size
+            targetPlans.size
         )
     }
 
@@ -585,8 +539,10 @@ class ComicMigrationActivity : AppCompatActivity() {
             return
         }
         isMigrationActive = false
-        progressMigration.visibility = View.GONE
-        btnChooseMigrationRoot.isEnabled = true
+        preparationTask?.cancel(true)
+        preparationTask = null
+        releaseMigrationWorkerExecutor()
+        dismissPreparationProgressDialog()
         tvMigrationStatus.text = error
             ?.takeIf { it.isNotBlank() }
             ?.let { getString(R.string.comic_migration_failed_detail, it) }
@@ -596,11 +552,13 @@ class ComicMigrationActivity : AppCompatActivity() {
     private fun abortMigration() {
         migrationGeneration.incrementAndGet()
         isMigrationActive = false
+        preparationTask?.cancel(true)
+        preparationTask = null
+        releaseMigrationWorkerExecutor()
         val dialog = targetDirectoryDialog
         targetDirectoryDialog = null
         dialog?.dismiss()
-        progressMigration.visibility = View.GONE
-        btnChooseMigrationRoot.isEnabled = true
+        dismissPreparationProgressDialog()
         tvMigrationStatus.text = getString(R.string.comic_migration_aborted)
     }
 
@@ -626,6 +584,27 @@ class ComicMigrationActivity : AppCompatActivity() {
         }.getOrDefault(emptyList())
     }
 
+    private fun resolveMigrationWorkerCount(): Int {
+        val cpuLimit = Runtime.getRuntime().availableProcessors()
+            .coerceIn(MIN_MIGRATION_WORKERS, MAX_MIGRATION_WORKERS)
+        val memoryInfo = ActivityManager.MemoryInfo()
+        val lowMemory = runCatching {
+            (getSystemService(ACTIVITY_SERVICE) as ActivityManager)
+                .getMemoryInfo(memoryInfo)
+            memoryInfo.lowMemory
+        }.getOrDefault(false)
+        return if (lowMemory) {
+            MIN_MIGRATION_WORKERS
+        } else {
+            cpuLimit
+        }
+    }
+
+    private fun releaseMigrationWorkerExecutor() {
+        migrationWorkerExecutor?.shutdownNow()
+        migrationWorkerExecutor = null
+    }
+
     private fun File.stablePath(): String {
         return runCatching { canonicalPath }.getOrDefault(absolutePath)
     }
@@ -641,5 +620,7 @@ class ComicMigrationActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_SOURCE_DIRECTORY_PATH = "comic_migration_source_directory_path"
+        private const val MIN_MIGRATION_WORKERS = 2
+        private const val MAX_MIGRATION_WORKERS = 8
     }
 }

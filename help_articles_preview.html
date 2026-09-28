@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ComicLab 帮助页预览</title>
+    <style>
+        :root {
+            color-scheme: light dark;
+            --background: #f8fafc;
+            --surface: #ffffff;
+            --text: #111827;
+            --muted: #4b5563;
+            --tertiary: #6b7280;
+            --border: #e5e7eb;
+            --accent: #2563eb;
+            --accent-soft: #eff6ff;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --background: #0f172a;
+                --surface: #1e293b;
+                --text: #f1f5f9;
+                --muted: #cbd5e1;
+                --tertiary: #94a3b8;
+                --border: #334155;
+                --accent: #60a5fa;
+                --accent-soft: #1e3a5f;
+            }
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            background: var(--background);
+        }
+
+        body {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 20px 18px 36px;
+            color: var(--text);
+            font-family: sans-serif;
+            font-size: 16px;
+            line-height: 1.7;
+        }
+
+        .preview-label {
+            margin: 0 0 8px;
+            color: var(--tertiary);
+            font-size: 12px;
+        }
+
+        .contents {
+            margin-bottom: 28px;
+            padding: 12px 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+
+        .contents-title {
+            margin: 0 0 4px;
+            font-size: 15px;
+            font-weight: 700;
+        }
+
+        .contents ul {
+            margin: 0;
+            padding-left: 20px;
+        }
+
+        .contents a {
+            color: var(--accent);
+        }
+
+        article {
+            padding: 0 0 28px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        article + article {
+            padding-top: 28px;
+        }
+
+        h1 {
+            margin: 0 0 14px;
+            font-size: 24px;
+            line-height: 1.35;
+        }
+
+        h2 {
+            margin: 22px 0 8px;
+            color: var(--accent);
+            font-size: 17px;
+            line-height: 1.4;
+        }
+
+        p,
+        ol,
+        ul {
+            color: var(--muted);
+        }
+
+        p {
+            margin: 8px 0;
+        }
+
+        ol,
+        ul {
+            margin-top: 8px;
+            margin-bottom: 8px;
+            padding-left: 24px;
+        }
+
+        li + li {
+            margin-top: 4px;
+        }
+
+        code {
+            overflow-wrap: anywhere;
+            border-radius: 4px;
+            color: var(--accent);
+            background: var(--accent-soft);
+            padding: 2px 5px;
+            font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+            font-size: 0.92em;
+        }
+
+        .path {
+            display: inline-block;
+            padding: 5px 8px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface);
+        }
+
+        .note {
+            color: var(--tertiary);
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="preview-label">ComicLab · 帮助页面预览</div>
+
+    <nav class="contents" aria-label="说明目录">
+        <div class="contents-title">说明目录</div>
+        <ul>
+            <li><a href="#start-marker">起始标记</a></li>
+            <li><a href="#error-tags">起始标记错误标识</a></li>
+        </ul>
+    </nav>
+
+    <article id="start-marker">
+        <h1>起始标记</h1>
+        <p>起始标记是漫画文件名中第一个符合条件的 <code>[]</code> 内容，可作为漫画分类的依据。</p>
+
+        <h2>识别规则</h2>
+        <ol>
+            <li>使用英文半角方括号 <code>[]</code></li>
+            <li>方括号内容不能为空</li>
+            <li>不包含“起始标记错误标识”</li>
+            <li>不符合条件时，继续查找下一个 <code>[]</code></li>
+        </ol>
+
+        <h2>示例</h2>
+        <p><code>[ABC]作品名称.zip</code><br>起始标记：<code>ABC</code></p>
+        <p><code>[中] [ABC]作品名称.zip</code><br>如果“中”属于错误标识，则继续查找 <code>[ABC]</code></p>
+    </article>
+
+    <article id="error-tags">
+        <h1>起始标记错误标识</h1>
+        <p>用于排除不适合作为起始标记的内容。</p>
+
+        <h2>设置位置</h2>
+        <p class="path">设置 → 文件浏览 → 起始标记错误标识</p>
+
+        <h2>填写方式</h2>
+        <p>多个标识使用英文分号 <code>;</code> 分隔，修改后自动保存。</p>
+
+        <h2>默认值</h2>
+        <p><code>中;汉;漢;翻;译;譯</code></p>
+
+        <h2>示例</h2>
+        <p><code>[中] [ABC]作品名称.zip</code><br>如果“中”是错误标识，则继续查找 <code>[ABC]</code></p>
+
+        <p class="note">清空该设置后，不再排除任何错误标识。</p>
+    </article>
+</body>
+</html>
