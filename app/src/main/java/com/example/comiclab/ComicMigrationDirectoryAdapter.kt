@@ -10,14 +10,17 @@ import java.io.File
 
 class ComicMigrationDirectoryAdapter(
     context: Context,
-    private val directories: List<File>
+    private val directories: List<File>,
+    private val matchReasons: Map<String, String> = emptyMap()
 ) : ArrayAdapter<File>(context, 0, directories) {
 
     override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
         val view = convertView ?: LayoutInflater.from(context)
             .inflate(R.layout.item_comic_migration_directory, parent, false)
         val directory = directories[position]
-        view.findViewById<TextView>(R.id.tvComicMigrationDirectoryName).text = directory.name
+        val reason = matchReasons[directory.absolutePath]
+        view.findViewById<TextView>(R.id.tvComicMigrationDirectoryName).text =
+            if (reason.isNullOrBlank()) directory.name else "${directory.name} · $reason"
         view.findViewById<TextView>(R.id.tvComicMigrationDirectoryPath).text = directory.absolutePath
         return view
     }

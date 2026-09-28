@@ -27,6 +27,7 @@ class ComicMigrationActivity : AppCompatActivity() {
     private lateinit var btnChooseMigrationRoot: Button
     private lateinit var tvSourceDirectory: TextView
     private lateinit var tvMigrationRoot: TextView
+    private lateinit var tvDefaultDirectory: TextView
     private lateinit var progressMigration: ProgressBar
     private lateinit var tvMigrationStatus: TextView
     private lateinit var tvMigrationProgress: TextView
@@ -38,15 +39,15 @@ class ComicMigrationActivity : AppCompatActivity() {
     private val migrationExecutor = Executors.newSingleThreadExecutor()
     private val migrationGeneration = AtomicInteger(0)
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val planner = ComicMigrationPlanner()
+    // 调试阶段显式关闭真实文件写入；准备启用复制前再单独打开。
+    private val planner = ComicMigrationPlanner(allowFileCopy = false)
     private val historyLines = mutableListOf<String>()
 
     private var sourceDirectory: File? = null
     private var migrationRoot: File? = null
-    private var defaultNoMatchDirectory: File? = null
+    private var defaultDirectory: File? = null
     private var comicFiles: List<File> = emptyList()
     private var currentIndex = 0
-    private var plannedCount = 0
     private var isMigrationActive = false
     private var destroyed = false
     private var pickerDirectory: File? = null
@@ -68,6 +69,7 @@ class ComicMigrationActivity : AppCompatActivity() {
         btnChooseMigrationRoot = findViewById(R.id.btnChooseMigrationRoot)
         tvSourceDirectory = findViewById(R.id.tvComicMigrationSource)
         tvMigrationRoot = findViewById(R.id.tvComicMigrationRoot)
+        tvDefaultDirectory = findViewById(R.id.tvComicMigrationDefaultDirectory)
         progressMigration = findViewById(R.id.progressComicMigration)
         tvMigrationStatus = findViewById(R.id.tvComicMigrationStatus)
         tvMigrationProgress = findViewById(R.id.tvComicMigrationProgress)
@@ -93,6 +95,7 @@ class ComicMigrationActivity : AppCompatActivity() {
         sourceDirectory = source
         tvSourceDirectory.text = source.absolutePath
         tvMigrationRoot.text = getString(R.string.comic_migration_root_not_selected)
+        tvDefaultDirectory.text = getString(R.string.comic_migration_default_not_selected)
         tvMigrationStatus.text = getString(R.string.comic_migration_status_title)
         tvMigrationHistory.text = ""
         progressMigration.visibility = View.GONE
@@ -137,14 +140,23 @@ class ComicMigrationActivity : AppCompatActivity() {
     }
 
     private fun showMigrationRootPicker() {
+        showDirectoryPicker(DirectoryPickerPurpose.DESTINATION_TREE)
+    }
+
+    private fun showDefaultDirectoryPicker() {
+        showDirectoryPicker(DirectoryPickerPurpose.DEFAULT_DESTINATION)
+    }
+
+    private fun showDirectoryPicker(purpose: DirectoryPickerPurpose) {
         if (destroyed || isFinishing || isMigrationActive) {
             return
         }
 
         val storageRoot = Environment.getExternalStorageDirectory()
-        pickerDirectory = sourceDirectory
-            ?.takeIf { it.isDirectory }
-            ?: storageRoot
+        pickerDirectory = when (purpose) {
+            DirectoryPickerPurpose.DESTINATION_TREE -> sourceDirectory?.parentFile
+            DirectoryPickerPurpose.DEFAULT_DESTINATION -> migrationRoot
+        }?.takeIf { it.isDirectory } ?: storageRoot
 
         val content = layoutInflater.inflate(
             R.layout.dialog_comic_migration_directory_picker,
@@ -193,10 +205,62 @@ class ComicMigrationActivity : AppCompatActivity() {
         }
 
         val dialog = AlertDialog.Builder(this)
-            .setTitle(R.string.comic_migration_picker_title)
+            .setTitle(
+                if (purpose == DirectoryPickerPurpose.DESTINATION_TREE) {
+                    R.string.comic_migration_picker_title
+                } else {
+                    R.string.comic_migration_default_picker_title
+                }
+            )
             .setView(content)
-            .setPositiveButton(R.string.comic_migration_select_current_directory) { _, _ ->
-                startMigration(pickerDirectory ?: storageRoot)
+            .setPositiveButton(
+                if (purpose == DirectoryPickerPurpose.DESTINATION_TREE) {
+                    R.string.comic_migration_select_current_directory
+                } else {
+                    R.string.comic_migration_select_default_directory
+                }
+            ) { _, _ ->
+                val selectedDirectory = pickerDirectory ?: storageRoot
+                val source = sourceDirectory ?: return@setPositiveButton
+                when (purpose) {
+                    DirectoryPickerPurpose.DESTINATION_TREE -> {
+                        if (!ComicMigrationPlanner.isSafeDestinationDirectory(source, selectedDirectory)) {
+                            Toast.makeText(
+                                this,
+                                R.string.comic_migration_destination_inside_source,
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            mainHandler.post { showMigrationRootPicker() }
+                            return@setPositiveButton
+                        }
+                        migrationRoot = selectedDirectory
+                        defaultDirectory = null
+                        tvMigrationRoot.text = getString(
+                            R.string.comic_migration_root_value,
+                            selectedDirectory.absolutePath
+                        )
+                        tvDefaultDirectory.text = getString(
+                            R.string.comic_migration_default_not_selected
+                        )
+                        mainHandler.post { showDefaultDirectoryPicker() }
+                    }
+
+                    DirectoryPickerPurpose.DEFAULT_DESTINATION -> {
+                        val destinationTree = migrationRoot
+                        if (destinationTree == null ||
+                            !ComicMigrationPlanner.isSafeDestinationDirectory(source, selectedDirectory)
+                        ) {
+                            Toast.makeText(
+                                this,
+                                R.string.comic_migration_destination_inside_source,
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            mainHandler.post { showDefaultDirectoryPicker() }
+                            return@setPositiveButton
+                        }
+                        startMigration(destinationTree, selectedDirectory)
+                    }
+                }
             }
             .setNegativeButton(R.string.cancel) { _, _ ->
                 finish()
@@ -213,12 +277,14 @@ class ComicMigrationActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    private fun startMigration(rootDirectory: File) {
+    private fun startMigration(rootDirectory: File, defaultTargetDirectory: File) {
         if (destroyed || isMigrationActive) {
             return
         }
         val source = sourceDirectory ?: return
-        if (!rootDirectory.isDirectory) {
+        if (!ComicMigrationPlanner.isSafeDestinationDirectory(source, rootDirectory) ||
+            !ComicMigrationPlanner.isSafeDestinationDirectory(source, defaultTargetDirectory)
+        ) {
             Toast.makeText(this, R.string.message_invalid_directory, Toast.LENGTH_SHORT).show()
             return
         }
@@ -226,21 +292,24 @@ class ComicMigrationActivity : AppCompatActivity() {
         directoryPickerDialog?.dismiss()
         directoryPickerDialog = null
         migrationRoot = rootDirectory
-        defaultNoMatchDirectory = null
+        defaultDirectory = defaultTargetDirectory
         comicFiles = emptyList()
         currentIndex = 0
-        plannedCount = 0
         historyLines.clear()
         tvMigrationHistory.text = ""
         tvMigrationRoot.text = getString(
             R.string.comic_migration_root_value,
             rootDirectory.absolutePath
         )
+        tvDefaultDirectory.text = getString(
+            R.string.comic_migration_default_value,
+            defaultTargetDirectory.absolutePath
+        )
         tvMigrationProgress.text = getString(R.string.comic_migration_current_item)
         tvCurrentFile.text = getString(R.string.comic_migration_current_file)
         tvCurrentMarker.text = getString(R.string.comic_migration_current_marker)
         tvCurrentDestination.text = getString(R.string.comic_migration_current_destination)
-        tvMigrationStatus.text = getString(R.string.comic_migration_scanning_source)
+        tvMigrationStatus.text = getString(R.string.comic_migration_debug_scanning_source)
         progressMigration.visibility = View.VISIBLE
         btnChooseMigrationRoot.isEnabled = false
         isMigrationActive = true
@@ -249,9 +318,7 @@ class ComicMigrationActivity : AppCompatActivity() {
         runCatching {
             migrationExecutor.execute {
                 val result = runCatching {
-                    val files = planner.scanDirectComicFiles(source)
-                    val defaultDirectory = planner.nextNoMatchDirectory(rootDirectory)
-                    files to defaultDirectory
+                    planner.scanComicFilesRecursively(source)
                 }
                 runOnUiThread {
                     if (destroyed || generation != migrationGeneration.get()) {
@@ -259,22 +326,21 @@ class ComicMigrationActivity : AppCompatActivity() {
                     }
 
                     result
-                        .onSuccess { (files, defaultDirectory) ->
+                        .onSuccess { files ->
                             comicFiles = files
-                            defaultNoMatchDirectory = defaultDirectory
                             if (files.isEmpty()) {
                                 completeWithoutItems()
                             } else {
                                 processCurrentComic()
                             }
                         }
-                        .onFailure {
-                            failMigration()
+                        .onFailure { error ->
+                            failMigration(error.localizedMessage)
                         }
                 }
             }
-        }.onFailure {
-            failMigration()
+        }.onFailure { error ->
+            failMigration(error.localizedMessage)
         }
     }
 
@@ -284,9 +350,15 @@ class ComicMigrationActivity : AppCompatActivity() {
         }
 
         val rootDirectory = migrationRoot
+        val source = sourceDirectory
+        val defaultTarget = defaultDirectory
         val currentFile = comicFiles.getOrNull(currentIndex)
-        if (rootDirectory == null || currentFile == null) {
+        if (currentFile == null) {
             completeMigration()
+            return
+        }
+        if (rootDirectory == null || source == null || defaultTarget == null) {
+            failMigration()
             return
         }
 
@@ -301,7 +373,7 @@ class ComicMigrationActivity : AppCompatActivity() {
         )
         tvCurrentFile.text = getString(
             R.string.comic_migration_file_value,
-            currentFile.name
+            currentFile.absolutePath
         )
         tvCurrentMarker.text = getString(
             R.string.comic_migration_marker_value,
@@ -313,7 +385,13 @@ class ComicMigrationActivity : AppCompatActivity() {
         val generation = migrationGeneration.get()
         runCatching {
             migrationExecutor.execute {
-                val matches = planner.findMatchingDirectories(rootDirectory, marker)
+                val result = runCatching {
+                    planner.findMatchingDirectories(
+                        rootDirectory,
+                        marker,
+                        excludedDirectory = source
+                    )
+                }
                 runOnUiThread {
                     if (destroyed || generation != migrationGeneration.get() ||
                         !isMigrationActive
@@ -321,49 +399,48 @@ class ComicMigrationActivity : AppCompatActivity() {
                         return@runOnUiThread
                     }
 
-                    val defaultDirectory = defaultNoMatchDirectory
-                    if (defaultDirectory == null) {
-                        failMigration()
-                    } else {
-                        val directories = planner.targetDirectoriesForSelection(
-                            matches,
-                            defaultDirectory
-                        )
-                        val defaultSelectionStatus = if (matches.isEmpty()) {
-                            if (marker.isBlank()) {
-                                getString(
-                                    R.string.comic_migration_empty_marker,
-                                    defaultDirectory.absolutePath
-                                )
+                    result
+                        .onSuccess { matches ->
+                            if (matches.isEmpty()) {
+                                val status = if (marker.isBlank()) {
+                                    getString(
+                                        R.string.comic_migration_empty_marker,
+                                        defaultTarget.absolutePath
+                                    )
+                                } else {
+                                    getString(
+                                        R.string.comic_migration_no_match,
+                                        defaultTarget.absolutePath
+                                    )
+                                }
+                                recordDebugTarget(currentFile, defaultTarget, status)
                             } else {
-                                getString(
-                                    R.string.comic_migration_no_match,
-                                    defaultDirectory.absolutePath
+                                showTargetDirectoryChoices(
+                                    currentFile,
+                                    marker,
+                                    matches
                                 )
                             }
-                        } else {
-                            null
                         }
-                        showTargetDirectoryChoices(
-                            currentFile,
-                            marker,
-                            directories,
-                            defaultSelectionStatus
-                        )
-                    }
+                        .onFailure { error ->
+                            failMigration(error.localizedMessage)
+                        }
                 }
             }
-        }.onFailure {
-            failMigration()
+        }.onFailure { error ->
+            failMigration(error.localizedMessage)
         }
     }
 
     private fun showTargetDirectoryChoices(
         currentFile: File,
         marker: String,
-        directories: List<File>,
-        defaultSelectionStatus: String?
+        matches: List<ComicMigrationDirectoryMatch>
     ) {
+        val directories = matches.map { it.directory }
+        val matchReasons = matches.associate { match ->
+            match.directory.absolutePath to matchReasonText(match.reason)
+        }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dpToPx(4), 0, dpToPx(4), 0)
@@ -385,7 +462,8 @@ class ComicMigrationActivity : AppCompatActivity() {
             dividerHeight = 1
             adapter = ComicMigrationDirectoryAdapter(
                 this@ComicMigrationActivity,
-                directories
+                directories,
+                matchReasons
             )
         }
         content.addView(message)
@@ -411,12 +489,14 @@ class ComicMigrationActivity : AppCompatActivity() {
             if (targetDirectoryDialog === dialog) {
                 targetDirectoryDialog = null
             }
-            previewTarget(
+            val reason = matchReasons[targetDirectory.absolutePath].orEmpty()
+            recordDebugTarget(
                 currentFile,
                 targetDirectory,
-                defaultSelectionStatus ?: getString(
+                getString(
                     R.string.comic_migration_selected_target,
-                    targetDirectory.absolutePath
+                    targetDirectory.absolutePath,
+                    reason
                 )
             )
         }
@@ -429,7 +509,17 @@ class ComicMigrationActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    private fun previewTarget(currentFile: File, targetDirectory: File, status: String) {
+    private fun matchReasonText(reason: ComicMigrationMatchReason): String {
+        val resource = when (reason) {
+            ComicMigrationMatchReason.EXACT_NAME -> R.string.comic_migration_match_exact
+            ComicMigrationMatchReason.CONTAINS_MARKER -> R.string.comic_migration_match_contains
+            ComicMigrationMatchReason.COMPONENT_ALIAS -> R.string.comic_migration_match_component
+            ComicMigrationMatchReason.KANA_ROMAJI -> R.string.comic_migration_match_kana_romaji
+        }
+        return getString(resource)
+    }
+
+    private fun recordDebugTarget(currentFile: File, targetDirectory: File, context: String) {
         if (!isMigrationActive || destroyed) {
             return
         }
@@ -438,23 +528,38 @@ class ComicMigrationActivity : AppCompatActivity() {
             R.string.comic_migration_destination_value,
             targetDirectory.absolutePath
         )
-        tvMigrationStatus.text = status
-        plannedCount++
-        historyLines.add(
-            getString(
-                R.string.comic_migration_history_item,
-                currentIndex + 1,
-                currentFile.name,
-                targetDirectory.absolutePath
-            )
-        )
-        tvMigrationHistory.text = historyLines.joinToString(separator = "\n")
+        tvMigrationStatus.text = getString(R.string.comic_migration_debug_recording_target)
 
-        // 真实复制阶段启用时，在这里调用 copyComicFile(currentFile, targetDirectory)。
-        // 当前只验证逐条扫描、匹配、选择和流程推进，绝不创建目录或复制文件。
-        currentIndex++
-        mainHandler.post {
-            processCurrentComic()
+        val generation = migrationGeneration.get()
+        runCatching {
+            migrationExecutor.execute {
+                // 调试阶段只记录拟用目标，不调用 planner.copyComicFile()。
+                runOnUiThread {
+                    if (destroyed || generation != migrationGeneration.get() ||
+                        !isMigrationActive
+                    ) {
+                        return@runOnUiThread
+                    }
+
+                    val previewStatus = getString(R.string.comic_migration_debug_not_copied)
+                    val status = "$context\n$previewStatus"
+                    tvMigrationStatus.text = status
+                    historyLines.add(
+                        getString(
+                            R.string.comic_migration_history_item,
+                            currentIndex + 1,
+                            currentFile.absolutePath,
+                            targetDirectory.absolutePath,
+                            previewStatus
+                        )
+                    )
+                    tvMigrationHistory.text = historyLines.joinToString(separator = "\n")
+                    currentIndex++
+                    processCurrentComic()
+                }
+            }
+        }.onFailure { error ->
+            failMigration(error.localizedMessage)
         }
     }
 
@@ -470,20 +575,22 @@ class ComicMigrationActivity : AppCompatActivity() {
         progressMigration.visibility = View.GONE
         btnChooseMigrationRoot.isEnabled = true
         tvMigrationStatus.text = getString(
-            R.string.comic_migration_complete,
-            comicFiles.size,
-            plannedCount
+            R.string.comic_migration_debug_complete,
+            comicFiles.size
         )
     }
 
-    private fun failMigration() {
+    private fun failMigration(error: String? = null) {
         if (destroyed) {
             return
         }
         isMigrationActive = false
         progressMigration.visibility = View.GONE
         btnChooseMigrationRoot.isEnabled = true
-        tvMigrationStatus.text = getString(R.string.comic_migration_failed)
+        tvMigrationStatus.text = error
+            ?.takeIf { it.isNotBlank() }
+            ?.let { getString(R.string.comic_migration_failed_detail, it) }
+            ?: getString(R.string.comic_migration_failed)
     }
 
     private fun abortMigration() {
@@ -527,19 +634,9 @@ class ComicMigrationActivity : AppCompatActivity() {
         return (value * resources.displayMetrics.density).toInt()
     }
 
-    @Suppress("UNUSED_PARAMETER")
-    private fun copyComicFile(sourceFile: File, targetFile: File): Boolean {
-        // targetFile.parentFile?.mkdirs()
-        // val tempFile = File(targetFile.parentFile, "${targetFile.name}.part")
-        // tempFile.delete()
-        // sourceFile.copyTo(tempFile, overwrite = true, bufferSize = 1024 * 1024)
-        // if (!tempFile.renameTo(targetFile)) {
-        //     tempFile.delete()
-        //     return false
-        // }
-        // targetFile.setLastModified(sourceFile.lastModified())
-        // return true
-        return false
+    private enum class DirectoryPickerPurpose {
+        DESTINATION_TREE,
+        DEFAULT_DESTINATION
     }
 
     companion object {

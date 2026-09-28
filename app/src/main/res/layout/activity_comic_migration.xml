@@ -121,6 +121,17 @@
                     android:text="@string/comic_migration_root_not_selected"
                     android:textColor="@color/comiclab_text_secondary"
                     android:textSize="@dimen/text_caption" />
+
+                <TextView
+                    android:id="@+id/tvComicMigrationDefaultDirectory"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:ellipsize="end"
+                    android:maxLines="3"
+                    android:text="@string/comic_migration_default_not_selected"
+                    android:textColor="@color/comiclab_text_secondary"
+                    android:textSize="@dimen/text_caption" />
             </LinearLayout>
 
             <LinearLayout
