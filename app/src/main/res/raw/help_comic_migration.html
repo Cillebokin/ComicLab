@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root {
+            color-scheme: light dark;
+            --text: #111827;
+            --muted: #4B5563;
+            --accent: #2563EB;
+            --surface: transparent;
+            --soft: #EFF6FF;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --text: #F1F5F9;
+                --muted: #CBD5E1;
+                --accent: #60A5FA;
+                --surface: transparent;
+                --soft: #1E3A5F;
+            }
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: var(--surface);
+        }
+
+        body {
+            color: var(--text);
+            font-family: sans-serif;
+            font-size: 16px;
+            line-height: 1.7;
+            padding: 20px 18px 28px;
+        }
+
+        h1 {
+            color: var(--text);
+            font-size: 24px;
+            margin: 0 0 16px;
+        }
+
+        h2 {
+            color: var(--accent);
+            font-size: 18px;
+            margin: 24px 0 8px;
+        }
+
+        p,
+        ol {
+            color: var(--muted);
+        }
+
+        p {
+            margin: 8px 0;
+        }
+
+        ol {
+            padding-left: 24px;
+        }
+
+        code {
+            background: var(--soft);
+            border-radius: 4px;
+            color: var(--accent);
+            padding: 2px 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>逐条迁移</h1>
+    <p>程序会一份一份地显示漫画，让你决定每本漫画应该放到哪个文件夹。选好一本后，才会显示下一本。</p>
+    <p>点击一个文件夹后，程序会把这本漫画复制到那里，原文件仍留在源位置。复制完成后才会显示下一本。</p>
+
+    <h2>开始前先选两个位置</h2>
+    <ol>
+        <li><code>目标位置</code>：你想把漫画放进去的那些文件夹所在的位置。程序会从这里往下寻找</li>
+        <li><code>默认存放位置</code>：如果下面列出的文件夹都不合适，就选这个位置。它会出现在列表最后</li>
+    </ol>
+
+    <h2>怎么选择文件夹</h2>
+    <ol>
+        <li>程序会检查源位置和里面子文件夹中的漫画，然后逐本显示</li>
+        <li>窗口上方会显示漫画文件名和“特征标记”。特征标记是程序用来找文件夹的文字；显示 <code>null</code> 表示没有找到</li>
+        <li>下面会列出一些可能合适的文件夹名称和路径。程序只是帮你找，可能会找错，请看清路径后再点击</li>
+        <li>每本漫画都要点选一个位置；复制完成后才会进入下一本</li>
+    </ol>
+    <p>如果目标文件夹里已经有同名文件，程序会跳过这本，不会覆盖已有文件。复制失败时会显示失败状态，然后继续处理下一本。</p>
+    <p>如果特征标记全是日文假名或全是罗马字，程序也会试着寻找另一种写法，例如 <code>あまみ</code> 和 <code>amami</code>。这些结果也要自己确认。</p>
+
+    <h2>注意事项</h2>
+    <p>点击“终止迁移”会停止整个流程，后面的漫画不会继续处理。</p>
+</body>
+</html>

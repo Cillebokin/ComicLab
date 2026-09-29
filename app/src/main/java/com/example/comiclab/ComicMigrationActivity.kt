@@ -38,12 +38,14 @@ class ComicMigrationActivity : AppCompatActivity() {
     private var migrationWorkerExecutor: ExecutorService? = null
     private val migrationGeneration = AtomicInteger(0)
     private val mainHandler = Handler(Looper.getMainLooper())
-    // 调试阶段显式关闭真实文件写入；准备启用复制前再单独打开。
-    private val planner = ComicMigrationPlanner(allowFileCopy = false)
+    private val planner = ComicMigrationPlanner(allowFileCopy = true)
     private var sourceDirectory: File? = null
     private var migrationRoot: File? = null
     private var targetPlans: List<ComicMigrationTargetPlan> = emptyList()
     private var currentIndex = 0
+    private var copiedCount = 0
+    private var skippedCount = 0
+    private var failedCount = 0
     private var isMigrationActive = false
     private var destroyed = false
     private var pickerDirectory: File? = null
@@ -279,11 +281,14 @@ class ComicMigrationActivity : AppCompatActivity() {
         migrationRoot = rootDirectory
         targetPlans = emptyList()
         currentIndex = 0
+        copiedCount = 0
+        skippedCount = 0
+        failedCount = 0
         tvMigrationHistory.removeAllViews()
         tvMigrationRoot.text = rootDirectory.absolutePath
         tvDefaultDirectory.text = defaultTargetDirectory.absolutePath
         updateMigrationProgress(0, 0)
-        tvMigrationStatus.text = getString(R.string.comic_migration_debug_preparing_targets)
+        tvMigrationStatus.text = getString(R.string.comic_migration_preparing_targets)
         isMigrationActive = true
         showPreparationProgressDialog()
 
@@ -451,11 +456,11 @@ class ComicMigrationActivity : AppCompatActivity() {
             .createRounded()
         listDirectories.setOnItemClickListener { _, _, position, _ ->
             val targetDirectory = directories.getOrNull(position) ?: return@setOnItemClickListener
-            dialog.dismiss()
-            if (targetDirectoryDialog === dialog) {
-                targetDirectoryDialog = null
-            }
-            recordDebugTarget(currentFile, targetDirectory)
+            listDirectories.isEnabled = false
+            listDirectories.setOnItemClickListener(null)
+            content.findViewById<TextView>(R.id.tvComicMigrationTargetLabel).text =
+                getString(R.string.comic_migration_copying)
+            copySelectedTarget(currentFile, targetDirectory, dialog)
         }
         dialog.setOnDismissListener {
             if (targetDirectoryDialog === dialog) {
@@ -466,17 +471,23 @@ class ComicMigrationActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    private fun recordDebugTarget(currentFile: File, targetDirectory: File) {
+    private fun copySelectedTarget(
+        currentFile: File,
+        targetDirectory: File,
+        dialog: AlertDialog
+    ) {
         if (!isMigrationActive || destroyed) {
             return
         }
 
-        tvMigrationStatus.text = getString(R.string.comic_migration_debug_recording_target)
+        tvMigrationStatus.text = getString(R.string.comic_migration_copying)
 
         val generation = migrationGeneration.get()
         runCatching {
             migrationExecutor.execute {
-                // 调试阶段只记录拟用目标，不调用 planner.copyComicFile()。
+                val result = planner.copyComicFile(currentFile, targetDirectory) {
+                    destroyed || !isMigrationActive || generation != migrationGeneration.get()
+                }
                 runOnUiThread {
                     if (destroyed || generation != migrationGeneration.get() ||
                         !isMigrationActive
@@ -484,8 +495,44 @@ class ComicMigrationActivity : AppCompatActivity() {
                         return@runOnUiThread
                     }
 
-                    val previewStatus = getString(R.string.comic_migration_debug_not_copied)
-                    tvMigrationStatus.text = previewStatus
+                    val (copyStatus, historyDestination) = when (result.status) {
+                        ComicMigrationCopyStatus.COPIED -> {
+                            copiedCount++
+                            getString(R.string.comic_migration_copied) to getString(
+                                R.string.comic_migration_history_copied,
+                                targetDirectory.absolutePath
+                            )
+                        }
+
+                        ComicMigrationCopyStatus.ALREADY_EXISTS -> {
+                            skippedCount++
+                            getString(R.string.comic_migration_copy_conflict) to getString(
+                                R.string.comic_migration_history_source_kept,
+                                currentFile.parentFile?.absolutePath.orEmpty()
+                            )
+                        }
+
+                        ComicMigrationCopyStatus.FAILED,
+                        ComicMigrationCopyStatus.PREVIEW_ONLY -> {
+                            failedCount++
+                            val status = result.error
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let {
+                                    getString(R.string.comic_migration_copy_failed_detail, it)
+                                }
+                                ?: getString(R.string.comic_migration_copy_failed)
+                            status to getString(
+                                R.string.comic_migration_history_source_kept,
+                                currentFile.parentFile?.absolutePath.orEmpty()
+                            )
+                        }
+
+                        ComicMigrationCopyStatus.CANCELLED -> {
+                            abortMigration()
+                            return@runOnUiThread
+                        }
+                    }
+                    tvMigrationStatus.text = copyStatus
                     val historyItem = layoutInflater.inflate(
                         R.layout.item_comic_migration_history,
                         tvMigrationHistory,
@@ -496,8 +543,9 @@ class ComicMigrationActivity : AppCompatActivity() {
                     ).text = currentFile.name
                     historyItem.findViewById<TextView>(
                         R.id.tvComicMigrationHistoryDestination
-                    ).text = targetDirectory.absolutePath
+                    ).text = historyDestination
                     tvMigrationHistory.addView(historyItem)
+                    dialog.dismiss()
                     currentIndex++
                     updateMigrationProgress(currentIndex, targetPlans.size)
                     processCurrentComic()
@@ -529,8 +577,11 @@ class ComicMigrationActivity : AppCompatActivity() {
         isMigrationActive = false
         releaseMigrationWorkerExecutor()
         tvMigrationStatus.text = getString(
-            R.string.comic_migration_debug_complete,
-            targetPlans.size
+            R.string.comic_migration_complete,
+            targetPlans.size,
+            copiedCount,
+            skippedCount,
+            failedCount
         )
     }
 
@@ -539,6 +590,8 @@ class ComicMigrationActivity : AppCompatActivity() {
             return
         }
         isMigrationActive = false
+        targetDirectoryDialog?.dismiss()
+        targetDirectoryDialog = null
         preparationTask?.cancel(true)
         preparationTask = null
         releaseMigrationWorkerExecutor()

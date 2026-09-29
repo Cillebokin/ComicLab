@@ -7,7 +7,8 @@ enum class ReaderFileType {
     IMAGE_ARCHIVE,
     PDF,
     MOBI,
-    EPUB
+    EPUB,
+    TXT
 }
 
 object ReaderFileDetector {
@@ -22,6 +23,7 @@ object ReaderFileDetector {
                 file.extension.equals("azw", ignoreCase = true) ||
                 file.extension.equals("azw3", ignoreCase = true) -> ReaderFileType.MOBI
             file.extension.equals("epub", ignoreCase = true) -> ReaderFileType.EPUB
+            file.extension.equals("txt", ignoreCase = true) -> ReaderFileType.TXT
             ComicArchive.isPdf(file) -> ReaderFileType.PDF
             ComicArchive.isSupportedArchive(file) -> ReaderFileType.IMAGE_ARCHIVE
             else -> null
@@ -34,10 +36,13 @@ object ReaderFileDetector {
 
     fun isEpub(file: File): Boolean = typeOf(file) == ReaderFileType.EPUB
 
+    fun isTxt(file: File): Boolean = typeOf(file) == ReaderFileType.TXT
+
     fun isEbook(file: File): Boolean {
         return when (typeOf(file)) {
             ReaderFileType.MOBI,
-            ReaderFileType.EPUB -> true
+            ReaderFileType.EPUB,
+            ReaderFileType.TXT -> true
             else -> false
         }
     }

@@ -12,6 +12,7 @@ import androidx.appcompat.app.AppCompatActivity
 import com.example.comiclab.ebook.EbookSession
 import com.example.comiclab.ebook.EbookSessionFactory
 import com.example.comiclab.ebook.EbookProgressStore
+import com.example.comiclab.ebook.ReaderFileDetector
 import com.example.comiclab.ebook.epub.EpubParseError
 import com.example.comiclab.ebook.epub.EpubParseException
 import com.example.comiclab.ebook.mobi.MobiParseException
@@ -66,6 +67,9 @@ class EbookPreviewActivity : AppCompatActivity() {
 
         bookFile = file
         tvTitle.text = file.nameWithoutExtension
+        if (ReaderFileDetector.isTxt(file)) {
+            imgCover.setImageResource(android.R.color.black)
+        }
         btnContinue.setOnClickListener { openReader(startFromBeginning = false) }
         btnReadFromBeginning.setOnClickListener { openReader(startFromBeginning = true) }
         btnContinue.visibility = View.GONE
@@ -124,6 +128,10 @@ class EbookPreviewActivity : AppCompatActivity() {
                     result.onSuccess { loaded ->
                         session?.close()
                         session = loaded.session
+                        if (loaded.session.book.chapters.isEmpty()) {
+                            showError(getString(R.string.ebook_empty))
+                            return@onSuccess
+                        }
                         tvTitle.text = loaded.session.book.title
                         tvAuthor.text = loaded.session.book.author
                             ?.takeIf(String::isNotBlank)

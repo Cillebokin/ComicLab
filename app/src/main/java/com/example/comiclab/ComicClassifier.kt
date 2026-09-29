@@ -57,6 +57,7 @@ object ComicClassifier {
         var copiedCount = 0
         var failedCount = 0
         var noTagCount = 0
+        val markerDirectories = mutableListOf<File>()
 
         comicFiles.forEachIndexed { index, comicFile ->
             onProgress(
@@ -73,7 +74,20 @@ object ComicClassifier {
                 noTagCount++
                 File(outputDirectory, NO_TAG_DIRECTORY_NAME)
             } else {
-                File(outputDirectory, sanitizePathSegment(marker).ifBlank { NO_TAG_DIRECTORY_NAME })
+                markerDirectories.firstOrNull { directory ->
+                    ComicMigrationPlanner.matchStartMarkerToDirectoryName(
+                        marker,
+                        directory.name
+                    ) != null
+                } ?: run {
+                    val directoryName = sanitizePathSegment(marker)
+                        .ifBlank { NO_TAG_DIRECTORY_NAME }
+                    File(outputDirectory, directoryName).also { directory ->
+                        if (directoryName != NO_TAG_DIRECTORY_NAME) {
+                            markerDirectories.add(directory)
+                        }
+                    }
+                }
             }
 
             val copied = runCatching {

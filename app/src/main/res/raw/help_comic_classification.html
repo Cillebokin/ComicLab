@@ -49,16 +49,13 @@
             margin: 24px 0 8px;
         }
 
-        p,
-        ol {
-            color: var(--muted);
-        }
-
         p {
+            color: var(--muted);
             margin: 8px 0;
         }
 
         ol {
+            color: var(--muted);
             padding-left: 24px;
         }
 
@@ -71,21 +68,18 @@
     </style>
 </head>
 <body>
-    <h1>特征标记错误标识</h1>
-    <p>用于排除不适合作为特征标记的内容。</p>
+    <h1>漫画分类</h1>
+    <p>程序会检查当前目录和里面子文件夹中的漫画，根据文件名中的特征标记把它们复制到不同文件夹。原文件会保留。</p>
 
-    <h2>设置位置</h2>
-    <p><code>设置 → 文件浏览 → 特征标记错误标识</code></p>
-
-    <h2>填写方式</h2>
-    <p>多个标识使用英文分号 <code>;</code> 分隔，修改后自动保存。</p>
-
-    <h2>默认值</h2>
-    <p><code>中;汉;漢;翻;译;譯</code></p>
+    <h2>分类后的文件在哪里？</h2>
+    <ol>
+        <li>分类结果会放在当前目录中新建的文件夹里，例如 <code>ClassifyNList000</code>。已有时会使用下一个编号</li>
+        <li>有特征标记的漫画会放进以标记命名的文件夹；没有特征标记的漫画会放进 <code>ClassifyNListNoTag</code></li>
+        <li>如果里面已经有同名漫画，程序会给新副本加编号，不会覆盖原文件</li>
+    </ol>
 
     <h2>示例</h2>
-    <p><code>[中] [ABC]作品名称.zip</code><br>如果“中”是错误标识，则继续查找 <code>[ABC]</code></p>
-
-    <p>清空该设置后，不再排除任何错误标识。</p>
+    <p><code>[ABC]作品名称.zip</code><br>分类到 <code>ClassifyNList000/ABC/[ABC]作品名称.zip</code></p>
+    <p><code>作品名称.zip</code><br>没有特征标记时，分类到 <code>ClassifyNList000/ClassifyNListNoTag/作品名称.zip</code></p>
 </body>
 </html>

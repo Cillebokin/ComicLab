@@ -12,7 +12,7 @@
         android:id="@+id/tvComicMigrationPreparationProgress"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/comic_migration_debug_preparing_targets"
+        android:text="@string/comic_migration_preparing_targets"
         android:textColor="@color/comiclab_text_secondary"
         android:textSize="@dimen/text_body" />
 

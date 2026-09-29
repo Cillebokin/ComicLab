@@ -248,14 +248,11 @@ class ComicMigrationPlannerTest {
     }
 
     @Test
-    fun matchingFoldersUsesOnlyNamesAndListsParentheticalComponentsAndReversedPairs() {
+    fun matchingFoldersUsesTheWholeMarkerInsteadOfParentheticalComponents() {
         withTemporaryDirectory { root ->
-            val expected = listOf(
-                File(root, "AAA").apply { mkdirs() },
-                File(root, "BBB").apply { mkdirs() },
-                File(root, "AAA (CCC)").apply { mkdirs() },
-                File(root, "BBB(AAA)").apply { mkdirs() }
-            )
+            val fullMarkerMatch = File(root, "Shelf AAA(BBB) Collection").apply { mkdirs() }
+            val unrelatedParts = listOf("AAA", "BBB", "AAA (CCC)", "BBB(AAA)")
+                .map { File(root, it).apply { mkdirs() } }
             val ignored = File(root, "Unrelated").apply { mkdirs() }
             File(ignored, "[AAA(BBB)] comic.cbz").writeText("not a folder-name match")
             val nestedMatch = File(File(root, "Branch").apply { mkdirs() }, "AAA Extra")
@@ -265,15 +262,86 @@ class ComicMigrationPlannerTest {
                 .findMatchingDirectories(root, "AAA(BBB)")
 
             assertEquals(
-                (expected + nestedMatch).map { it.absolutePath }.toSet(),
+                setOf(fullMarkerMatch.absolutePath),
                 result.map { it.directory.absolutePath }.toSet()
             )
-            assertTrue(
-                result.first { it.directory == expected[2] }.reason ==
-                    ComicMigrationMatchReason.COMPONENT_ALIAS
-            )
+            assertEquals(ComicMigrationMatchReason.CONTAINS_MARKER, result.single().reason)
+            assertTrue(result.none { it.directory in unrelatedParts || it.directory == nestedMatch })
             assertTrue(result.none { it.directory == root })
             assertTrue(result.none { it.directory == ignored })
+        }
+    }
+
+    @Test
+    fun matchingFoldersDoesNotMatchShortKanaOrRomajiFragmentsFromMixedMarkers() {
+        withTemporaryDirectory { root ->
+            val unrelatedFolderNames = listOf(
+                "2no",
+                "5年目の放課後 (カントク)",
+                "Aino_Chie",
+                "Alkaloid no Baketu",
+                "Kokonoki_Nao",
+                "Yamakon-ya",
+                "きのこのみ (konomi)",
+                "ぐらちゃんとこのほん",
+                "しゅらの工房 (しゅら)",
+                "汁まみれ定食 (汁助)",
+                "とろとろ夢ばなな",
+                "ぶた小屋 (ケミガワ)"
+            ).map { File(root, it).apply { mkdirs() } }
+            val planner = ComicMigrationPlanner { false }
+
+            val markers = listOf(
+                "軒下の猫屋 (アルデヒド)",
+                "MeltdoWN COmet (雪雨こん)",
+                "URAN-FACTORY (URAN)",
+                "Shinsen Gokuraku (Mami)",
+                "ばな奈工房 (青ばなな)",
+                "とらいあんぐる (あまま紗由, 三上ミカ, キチロク, 他)"
+            )
+
+            markers.forEach { marker ->
+                assertTrue(
+                    "Unexpected match for marker: $marker",
+                    planner.findMatchingDirectories(root, marker).none { it.directory in unrelatedFolderNames }
+                )
+            }
+        }
+    }
+
+    @Test
+    fun matchingKanaMarkerRequiresAWholeRomajiNameOrToken() {
+        withTemporaryDirectory { root ->
+            val kanaEquivalent = File(root, "まみ").apply { mkdirs() }
+            val romajiEquivalent = File(root, "mami shelf").apply { mkdirs() }
+            val partialRomaji = File(root, "mamire").apply { mkdirs() }
+
+            val result = ComicMigrationPlanner { false }
+                .findMatchingDirectories(root, "マミ")
+
+            assertEquals(
+                setOf(kanaEquivalent.absolutePath, romajiEquivalent.absolutePath),
+                result.map { it.directory.absolutePath }.toSet()
+            )
+            assertTrue(result.none { it.directory == partialRomaji })
+        }
+    }
+
+    @Test
+    fun matchingRomajiMarkerCanMatchACompleteKanaEquivalent() {
+        withTemporaryDirectory { root ->
+            val literalRomaji = File(root, "airu shelf").apply { mkdirs() }
+            val kanaEquivalent = File(root, "あいる").apply { mkdirs() }
+            val kanaWithExtraSyllable = File(root, "あいるか").apply { mkdirs() }
+
+            val result = ComicMigrationPlanner { false }
+                .findMatchingDirectories(root, "airu")
+
+            assertEquals(
+                setOf(literalRomaji.absolutePath, kanaEquivalent.absolutePath),
+                result.map { it.directory.absolutePath }.toSet()
+            )
+            assertTrue(result.none { it.directory == kanaWithExtraSyllable })
         }
     }
 

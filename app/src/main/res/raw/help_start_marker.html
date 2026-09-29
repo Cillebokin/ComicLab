@@ -68,19 +68,19 @@
     </style>
 </head>
 <body>
-    <h1>起始标记</h1>
-    <p>起始标记是漫画文件名中第一个符合条件的 <code>[]</code> 内容，可作为漫画分类的依据。</p>
+    <h1>特征标记</h1>
+    <p>特征标记是漫画文件名中第一个符合条件的 <code>[]</code> 内容，可作为漫画分类的依据。</p>
 
     <h2>识别规则</h2>
     <ol>
         <li>使用英文半角方括号 <code>[]</code></li>
         <li>方括号内容不能为空</li>
-        <li>不包含“起始标记错误标识”</li>
+        <li>不包含“特征标记错误标识”</li>
         <li>不符合条件时，继续查找下一个 <code>[]</code></li>
     </ol>
 
     <h2>示例</h2>
-    <p><code>[ABC]作品名称.zip</code><br>起始标记：<code>ABC</code></p>
+    <p><code>[ABC]作品名称.zip</code><br>特征标记：<code>ABC</code></p>
     <p><code>[中] [ABC]作品名称.zip</code><br>如果“中”属于错误标识，则继续查找 <code>[ABC]</code></p>
 </body>
 </html>

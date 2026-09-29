@@ -419,7 +419,18 @@ class FileListAdapter(
         resetCollectionCoverContainer(iconContainer, infoContainer, imgIcon, collectionCoverList)
         setArchivePlaceholderLayout(imgIcon)
         imgIcon.scaleType = ImageView.ScaleType.CENTER_INSIDE
-        imgIcon.setImageResource(R.drawable.ic_lucide_image)
+        val isTxt = ReaderFileDetector.isTxt(file)
+        imgIcon.imageTintList = if (isTxt) {
+            imgIcon.context.getColorStateList(R.color.comiclab_icon)
+        } else {
+            null
+        }
+        imgIcon.setImageResource(
+            if (isTxt) R.drawable.file_txt_streamline_core else R.drawable.ic_lucide_image
+        )
+        if (isTxt) {
+            applyHalfSizeIconPadding(imgIcon)
+        }
 
         if (ReaderFileDetector.isEbook(file)) {
             imgIcon.tag = null
@@ -644,6 +655,16 @@ class FileListAdapter(
             dpToPx(ARCHIVE_COVER_WIDTH_DP),
             dpToPx(ARCHIVE_COVER_HEIGHT_DP)
         )
+    }
+
+    private fun applyHalfSizeIconPadding(imgIcon: ImageView) {
+        val drawable = imgIcon.drawable ?: return
+        val params = imgIcon.layoutParams
+        val targetWidth = drawable.intrinsicWidth / 2
+        val targetHeight = drawable.intrinsicHeight / 2
+        val horizontalPadding = ((params.width - targetWidth) / 2).coerceAtLeast(0)
+        val verticalPadding = ((params.height - targetHeight) / 2).coerceAtLeast(0)
+        imgIcon.setPadding(horizontalPadding, verticalPadding, horizontalPadding, verticalPadding)
     }
 
     private fun resetCollectionCoverContainer(

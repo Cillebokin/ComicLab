@@ -17,7 +17,6 @@ import java.util.concurrent.atomic.AtomicInteger
 enum class ComicMigrationMatchReason {
     EXACT_NAME,
     CONTAINS_MARKER,
-    COMPONENT_ALIAS,
     KANA_ROMAJI
 }
 
@@ -125,7 +124,7 @@ class ComicMigrationPlanner(
 
         return scanDestinationDirectories(rootDirectory, excludedDirectory)
             .mapNotNull { directory ->
-                findMatchReason(startMarker, directory.name)?.let { reason ->
+                matchStartMarkerToDirectoryName(startMarker, directory.name)?.let { reason ->
                     ComicMigrationDirectoryMatch(directory, reason)
                 }
             }
@@ -166,7 +165,7 @@ class ComicMigrationPlanner(
         return mapWithWorkerPool(comicsWithMarkers, workerExecutor) { (comicFile, marker) ->
             val matches = candidateDirectories.mapNotNull { directory ->
                 ensurePreparationNotInterrupted()
-                findMatchReason(marker, directory.name)?.let { reason ->
+                matchStartMarkerToDirectoryName(marker, directory.name)?.let { reason ->
                     ComicMigrationDirectoryMatch(directory, reason)
                 }
             }
@@ -421,7 +420,7 @@ class ComicMigrationPlanner(
                 }
             ).toSet()
 
-        private fun findMatchReason(
+        fun matchStartMarkerToDirectoryName(
             startMarker: String,
             directoryName: String
         ): ComicMigrationMatchReason? {
@@ -436,27 +435,54 @@ class ComicMigrationPlanner(
                 return ComicMigrationMatchReason.CONTAINS_MARKER
             }
 
-            val components = startMarker.split(PARENTHESES)
-                .map(String::trim)
-                .filter(String::isNotEmpty)
-            components.forEach { component ->
-                val literalComponent = normalizeName(component)
-                if (literalComponent.isNotEmpty() && literalDirectory.contains(literalComponent)) {
-                    return ComicMigrationMatchReason.COMPONENT_ALIAS
-                }
-            }
-
-            val markerParts = (listOf(startMarker) + components).distinct()
-            val markerEquivalents = markerParts.flatMap(::equivalenceForms)
+            val markerEquivalents = pureKanaRomanizationForms(startMarker) +
+                pureRomajiForms(startMarker)
             val directoryEquivalents = equivalenceForms(directoryName)
-            if (markerEquivalents.any { marker ->
-                    directoryEquivalents.any { directory -> directory.contains(marker) }
-                }
-            ) {
+            if (markerEquivalents.any { it in directoryEquivalents }) {
                 return ComicMigrationMatchReason.KANA_ROMAJI
             }
 
             return null
+        }
+
+        private fun pureKanaRomanizationForms(value: String): Set<String> {
+            val normalizedValue = Normalizer.normalize(value, Normalizer.Form.NFKC)
+            val codePoints = normalizedValue.codePoints().toArray()
+            if (codePoints.none { it.isJapaneseKana() } || codePoints.any { codePoint ->
+                    !codePoint.isJapaneseKana() &&
+                        codePoint != PROLONGED_SOUND_MARK &&
+                        Character.isLetterOrDigit(codePoint)
+                }
+            ) {
+                return emptySet()
+            }
+
+            return romanizeKana(normalizedValue)
+                ?.let(::normalizeName)
+                ?.takeIf(String::isNotEmpty)
+                ?.let { setOf(canonicalizeRomanization(it)) }
+                .orEmpty()
+        }
+
+        private fun pureRomajiForms(value: String): Set<String> {
+            val normalized = normalizeName(value)
+            if (!isCompleteRomaji(normalized)) {
+                return emptySet()
+            }
+
+            val codePoints = Normalizer.normalize(value, Normalizer.Form.NFKC)
+                .codePoints()
+                .toArray()
+            if (codePoints.any { codePoint ->
+                    Character.isLetterOrDigit(codePoint) &&
+                        codePoint !in 'a'.code..'z'.code &&
+                        codePoint !in 'A'.code..'Z'.code
+                }
+            ) {
+                return emptySet()
+            }
+
+            return setOf(canonicalizeRomanization(normalized))
         }
 
         private fun equivalenceForms(value: String): List<String> {
@@ -637,7 +663,6 @@ class ComicMigrationPlanner(
             return runCatching { canonicalPath }.getOrDefault(absolutePath)
         }
 
-        private val PARENTHESES = Regex("[()（）]")
         private val KANA_RUN = Regex("[\\u3041-\\u3096\\u30A1-\\u30FAー]+")
         private val LATIN_RUN = Regex("[A-Za-z\\u00C0-\\u024F'’]+")
         private const val HIRAGANA_TO_KATAKANA_OFFSET = 0x60

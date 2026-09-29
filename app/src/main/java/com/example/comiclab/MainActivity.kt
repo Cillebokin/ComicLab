@@ -862,9 +862,6 @@ class MainActivity : AppCompatActivity() {
             RoundedPopupMenuItem(getString(R.string.comic_migration)) {
                 startComicMigration()
             },
-            RoundedPopupMenuItem(getString(MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES)) {
-                startFindSimilarDirectoryNames()
-            },
             RoundedPopupMenuItem(getString(MENU_TITLE_MERGE_COMICS_NON_RECURSIVE)) {
                 startMergeComicsNonRecursive()
             },
@@ -2717,7 +2714,8 @@ class MainActivity : AppCompatActivity() {
     private fun openMangaPreview(file: File) {
         when (ReaderFileDetector.typeOf(file)) {
             ReaderFileType.MOBI,
-            ReaderFileType.EPUB -> {
+            ReaderFileType.EPUB,
+            ReaderFileType.TXT -> {
                 startActivity(
                     Intent(this, EbookPreviewActivity::class.java).apply {
                         putExtra(EbookPreviewActivity.EXTRA_BOOK_PATH, file.absolutePath)

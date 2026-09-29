@@ -74,6 +74,67 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun classify_groupsPureKanaAndRomajiEquivalentMarkersTogether() {
+        val root = Files.createTempDirectory("comiclab-classify-kana-romaji").toFile()
+        try {
+            File(root, "[airu]romaji.zip").writeText("romaji")
+            File(root, "[アイル]kana.zip").writeText("kana")
+
+            val result = ComicClassifier.classify(root, "") {}
+            val output = result.outputDirectory ?: error("Expected a classification output")
+            val markerDirectories = output.listFiles()
+                .orEmpty()
+                .filter { it.isDirectory && it.name != "ClassifyNListNoTag" }
+
+            assertEquals(2, result.copiedCount)
+            assertEquals(listOf("airu"), markerDirectories.map { it.name })
+            assertTrue(File(output, "airu/[airu]romaji.zip").isFile)
+            assertTrue(File(output, "airu/[アイル]kana.zip").isFile)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun classify_matchesMarkerAgainstExistingCategoryUsingMigrationContainmentDirection() {
+        val root = Files.createTempDirectory("comiclab-classify-marker-contains").toFile()
+        try {
+            File(root, "[ABCD]long.zip").writeText("long")
+            File(root, "[ABC]short.zip").writeText("short")
+
+            val result = ComicClassifier.classify(root, "") {}
+            val output = result.outputDirectory ?: error("Expected a classification output")
+
+            assertEquals(2, result.copiedCount)
+            assertTrue(File(output, "ABCD/[ABCD]long.zip").isFile)
+            assertTrue(File(output, "ABCD/[ABC]short.zip").isFile)
+            assertFalse(File(output, "ABC").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun classifyDoesNotUseKanaRomajiMatchingForMarkersMixedWithChinese() {
+        val root = Files.createTempDirectory("comiclab-classify-mixed-marker").toFile()
+        try {
+            File(root, "[あまみ中文]kana.zip").writeText("kana")
+            File(root, "[amamichinese]romaji.zip").writeText("romaji")
+
+            val result = ComicClassifier.classify(root, "") {}
+            val output = result.outputDirectory ?: error("Expected a classification output")
+            val markerDirectories = output.listFiles()
+                .orEmpty()
+                .filter { it.isDirectory && it.name != "ClassifyNListNoTag" }
+
+            assertEquals(2, result.copiedCount)
+            assertEquals(2, markerDirectories.size)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun deleteEntry_removesSelectedZipEntryAndKeepsOtherEntries() {
         val root = Files.createTempDirectory("comiclab-delete-entry").toFile()
         try {

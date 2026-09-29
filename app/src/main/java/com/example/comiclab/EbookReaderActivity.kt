@@ -244,6 +244,16 @@ class EbookReaderActivity : AppCompatActivity() {
 
     private fun configureProgressControls() {
         sliderReaderProgress.max = EbookReaderProgressMapper.SLIDER_MAX
+        checkboxCustomBrightness.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            val sideControlWidth = checkboxCustomBrightness.width
+            if (sideControlWidth > 0) {
+                val layoutParams = tvReaderProgress.layoutParams
+                if (layoutParams.width != sideControlWidth) {
+                    layoutParams.width = sideControlWidth
+                    tvReaderProgress.layoutParams = layoutParams
+                }
+            }
+        }
         sliderReaderProgress.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
                 if (fromUser && !isUpdatingProgressControls) {

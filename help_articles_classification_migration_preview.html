@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>说明文档预览</title>
+    <style>
+        :root {
+            color-scheme: light dark;
+            --text: #111827;
+            --muted: #4B5563;
+            --accent: #2563EB;
+            --surface: #FFFFFF;
+            --page: #F3F4F6;
+            --line: #E5E7EB;
+            --soft: #EFF6FF;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --text: #F1F5F9;
+                --muted: #CBD5E1;
+                --accent: #60A5FA;
+                --surface: #1F2937;
+                --page: #111827;
+                --line: #374151;
+                --soft: #1E3A5F;
+            }
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            padding: 24px 14px;
+            background: var(--page);
+            color: var(--text);
+            font-family: sans-serif;
+            font-size: 16px;
+            line-height: 1.7;
+        }
+
+        .preview {
+            width: min(100%, 760px);
+            margin: 0 auto;
+        }
+
+        .preview-label {
+            margin: 0 0 10px;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        nav {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        nav button {
+            min-height: 40px;
+            padding: 7px 14px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--text);
+            font: inherit;
+            cursor: pointer;
+        }
+
+        nav button[aria-selected="true"] {
+            border-color: transparent;
+            background: var(--soft);
+            color: var(--accent);
+        }
+
+        main {
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: var(--surface);
+        }
+
+        article[hidden] { display: none; }
+
+        .article-page {
+            padding: 20px 18px 28px;
+            color: var(--text);
+        }
+
+        h1 {
+            margin: 0 0 16px;
+            color: var(--text);
+            font-size: 24px;
+        }
+
+        h2 {
+            margin: 24px 0 8px;
+            color: var(--accent);
+            font-size: 18px;
+        }
+
+        p, ol { color: var(--muted); }
+        p { margin: 8px 0; }
+        ol { padding-left: 24px; }
+
+        code {
+            padding: 2px 5px;
+            border-radius: 4px;
+            background: var(--soft);
+            color: var(--accent);
+            overflow-wrap: anywhere;
+        }
+
+        @media (max-width: 480px) {
+            body { padding: 14px 8px; }
+        }
+    </style>
+</head>
+<body>
+<div class="preview">
+    <p class="preview-label">说明文档预览</p>
+    <nav aria-label="说明条目">
+        <button type="button" data-article="classification" aria-selected="true">漫画分类</button>
+        <button type="button" data-article="migration" aria-selected="false">逐条迁移</button>
+    </nav>
+
+    <main>
+        <article id="classification">
+            <div class="article-page">
+                <h1>漫画分类</h1>
+                <p>根据漫画文件名中的特征标记，将漫画文件复制到分类目录，原文件会保留。</p>
+
+                <h2>分类规则</h2>
+                <ol>
+                    <li>递归扫描当前目录及其子目录中的漫画文件，跳过隐藏目录和已生成的分类目录</li>
+                    <li>在当前目录创建 <code>ClassifyNList000</code>；已存在时使用下一个可用编号</li>
+                    <li>根据特征标记创建子文件夹；没有特征标记的文件放入 <code>ClassifyNList000/ClassifyNListNoTag</code></li>
+                    <li>如果目标位置已有同名文件，副本会自动添加编号，不会覆盖原文件</li>
+                </ol>
+
+                <h2>示例</h2>
+                <p><code>[ABC]作品名称.zip</code><br>分类到 <code>ClassifyNList000/ABC/[ABC]作品名称.zip</code></p>
+                <p><code>作品名称.zip</code><br>没有特征标记时，分类到 <code>ClassifyNList000/ClassifyNListNoTag/作品名称.zip</code></p>
+            </div>
+        </article>
+
+        <article id="migration" hidden>
+            <div class="article-page">
+                <h1>逐条迁移</h1>
+                <p>程序会一份一份地显示漫画，让你决定每本漫画应该放到哪个文件夹。选好一本后，才会显示下一本。</p>
+                <p>点击一个文件夹后，程序会把这本漫画复制到那里，原文件仍留在源位置。复制完成后才会显示下一本。</p>
+
+                <h2>开始前先选两个位置</h2>
+                <ol>
+                    <li><code>目标位置</code>：你想把漫画放进去的那些文件夹所在的位置。程序会从这里往下寻找</li>
+                    <li><code>默认存放位置</code>：如果下面列出的文件夹都不合适，就选这个位置。它会出现在列表最后</li>
+                </ol>
+
+                <h2>怎么选择文件夹</h2>
+                <ol>
+                    <li>程序会检查源位置和里面子文件夹中的漫画，然后逐本显示</li>
+                    <li>每本漫画都会显示文件名和“特征标记”。特征标记是程序从文件名中找来帮助寻找文件夹的文字；显示 <code>null</code> 表示没有找到</li>
+                    <li>下面会列出一些可能合适的文件夹名称和路径。程序只是帮你找，可能会找错，请看清路径后再点击</li>
+                    <li>每本漫画都要点选一个位置；复制完成后才会进入下一本</li>
+                </ol>
+                <p>如果目标文件夹里已经有同名文件，程序会跳过这本，不会覆盖已有文件。复制失败时会显示失败状态，然后继续处理下一本。</p>
+                <p>如果特征标记是纯日文假名或纯罗马字，程序也会尝试寻找对应的另一种写法，例如 <code>あまみ</code> 和 <code>amami</code>。这类结果也请自己确认。</p>
+
+                <h2>注意事项</h2>
+                <p>点击“终止迁移”会停止整个流程，剩下的漫画不会继续处理。</p>
+            </div>
+        </article>
+    </main>
+</div>
+<script>
+    const articleButtons = document.querySelectorAll("nav button[data-article]");
+    const articles = document.querySelectorAll("main article");
+
+    articleButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+            articleButtons.forEach((item) => {
+                item.setAttribute("aria-selected", String(item === button));
+            });
+            articles.forEach((article) => {
+                article.hidden = article.id !== button.dataset.article;
+            });
+        });
+    });
+</script>
+</body>
+</html>
