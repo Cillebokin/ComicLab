@@ -133,6 +133,26 @@ object FavoritePathStore {
         }
     }
 
+    fun moveDirectory(context: Context, oldDirectory: File, newDirectory: File) {
+        val oldPath = oldDirectory.absolutePath
+        val newPath = newDirectory.absolutePath
+        val movedItems = LinkedHashMap<String, StoredItem>()
+        readStoredItems(context).forEach { item ->
+            val movedPath = BookcaseFolderPaths.remapPath(item.path, oldPath, newPath)
+            val movedItem = item.copy(path = movedPath)
+            val current = movedItems[movedPath]
+            if (current == null || movedItem.addedAt < current.addedAt) {
+                movedItems[movedPath] = movedItem
+            }
+        }
+
+        if (movedItems.isEmpty()) {
+            clear(context)
+        } else {
+            saveStoredItems(context, movedItems.values.sortedBy { it.addedAt })
+        }
+    }
+
     private fun readStoredItems(context: Context): List<StoredItem> {
         val rawValue = prefs(context).getString(KEY_FAVORITE_PATHS, null)
             ?: return emptyList()

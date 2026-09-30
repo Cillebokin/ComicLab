@@ -62,12 +62,47 @@ class FileTransferOperationsTest {
         val source = File(temporaryFolder.root, "source.cbz").apply { writeText("comic data") }
         val destination = temporaryFolder.newFolder("destination")
         val target = File(destination, "moved.cbz")
+        val progress = mutableListOf<FileOperationProgress>()
 
-        val result = FileTransferOperations.transfer(source, target, moveSource = true)
+        val result = FileTransferOperations.transfer(
+            source,
+            target,
+            moveSource = true,
+            onProgress = { progress += it }
+        )
 
         assertEquals(FileTransferOperations.Result.SUCCESS, result)
         assertFalse(source.exists())
         assertEquals("comic data", target.readText())
+        assertTrue(progress.any { it.phase == FileOperationProgress.Phase.DELETING_SOURCE })
+        assertEquals(1, progress.last { it.phase == FileOperationProgress.Phase.DELETING_SOURCE }.completedItems)
+    }
+
+    @Test
+    fun copyReportsByteAndItemProgressThroughCompletion() {
+        val sourceContents = "comic data".repeat(1024)
+        val source = File(temporaryFolder.root, "source.cbz").apply { writeText(sourceContents) }
+        val destination = temporaryFolder.newFolder("destination")
+        val target = File(destination, "copy.cbz")
+        val progress = mutableListOf<FileOperationProgress>()
+
+        val result = FileTransferOperations.transfer(
+            source,
+            target,
+            moveSource = false,
+            onProgress = { progress += it }
+        )
+
+        assertEquals(FileTransferOperations.Result.SUCCESS, result)
+        assertEquals(sourceContents, target.readText())
+        assertTrue(progress.any {
+            it.phase == FileOperationProgress.Phase.COPYING &&
+                it.completedBytes == 0L && it.totalBytes == sourceContents.length.toLong()
+        })
+        val completed = progress.last { it.phase == FileOperationProgress.Phase.COPYING }
+        assertEquals(sourceContents.length.toLong(), completed.completedBytes)
+        assertEquals(1, completed.completedItems)
+        assertEquals(1, completed.totalItems)
     }
 
     @Test

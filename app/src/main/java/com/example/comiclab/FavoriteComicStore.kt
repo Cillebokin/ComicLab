@@ -148,6 +148,33 @@ object FavoriteComicStore {
         }
     }
 
+    fun moveDirectory(context: Context, oldDirectory: File, newDirectory: File) {
+        val movedItems = LinkedHashMap<String, StoredItem>()
+        readStoredItems(context).forEach { item ->
+            val movedPath = BookcaseFolderPaths.remapPath(
+                item.path,
+                oldDirectory.absolutePath,
+                newDirectory.absolutePath
+            )
+            val targetFile = if (movedPath != item.path) File(movedPath) else null
+            val movedItem = item.copy(
+                path = movedPath,
+                fileSize = targetFile?.takeIf { it.isFile }?.length() ?: item.fileSize,
+                modifiedAt = targetFile?.takeIf { it.isFile }?.lastModified() ?: item.modifiedAt
+            )
+            val current = movedItems[movedPath]
+            if (current == null || movedItem.addedAt < current.addedAt) {
+                movedItems[movedPath] = movedItem
+            }
+        }
+
+        if (movedItems.isEmpty()) {
+            clear(context)
+        } else {
+            saveStoredItems(context, movedItems.values.sortedBy { it.addedAt })
+        }
+    }
+
     private fun readStoredItems(context: Context): List<StoredItem> {
         val rawValue = prefs(context).getString(KEY_FAVORITE_COMICS, null)
             ?: return emptyList()

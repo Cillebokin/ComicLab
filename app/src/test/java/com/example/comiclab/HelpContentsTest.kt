@@ -1,6 +1,8 @@
 package com.example.comiclab
 
 import java.io.File
+import javax.xml.parsers.DocumentBuilderFactory
+import org.w3c.dom.Element
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -88,6 +90,21 @@ class HelpContentsTest {
     }
 
     @Test
+    fun comicClassificationConfirmationUsesFeatureMarkerTerm() {
+        val stringsFile = File("src/main/res/values/strings.xml")
+        val stringElements = DocumentBuilderFactory.newInstance()
+            .newDocumentBuilder()
+            .parse(stringsFile)
+            .getElementsByTagName("string")
+        val message = (0 until stringElements.length)
+            .map { stringElements.item(it) as Element }
+            .first { it.getAttribute("name") == "classify_comics_confirm_message" }
+            .textContent
+
+        assertTrue(message.contains("特征标记"))
+    }
+
+    @Test
     fun comicMergeAndFileMergeArticlesExplainWhatTheyIncludeAndKeepOriginals() {
         val articleIds = HelpArticles.all.map { it.id }
         assertTrue(articleIds.contains("comic_merge"))
@@ -108,5 +125,34 @@ class HelpContentsTest {
         assertTrue(fileMergeHtml.contains("不会继续进入更深的文件夹"))
         assertTrue(fileMergeHtml.contains("原图片会保留"))
         assertTrue(fileMergeHtml.contains("ComicLab_file_merged_"))
+    }
+
+    @Test
+    fun configurationHelpArticlesAreAvailableFromHelpContents() {
+        assertTrue(HelpArticles.find("export_configuration") != null)
+        assertTrue(HelpArticles.find("load_configuration") != null)
+        assertTrue(File("src/main/res/raw/help_export_configuration.html").isFile)
+        assertTrue(File("src/main/res/raw/help_load_configuration.html").isFile)
+    }
+
+    @Test
+    fun everyHelpArticleHasAnEnglishLocalizedHtmlPage() {
+        val englishPagesDirectory = File("src/main/res/raw-en")
+        assertTrue("English help pages directory should exist", englishPagesDirectory.isDirectory)
+
+        HelpArticles.all.forEach { article ->
+            val htmlFile = File(englishPagesDirectory, "${article.id}.html")
+            assertTrue("English help page should exist for ${article.id}", htmlFile.isFile)
+
+            val html = htmlFile.readText()
+            assertTrue(
+                "English help page should declare its language for ${article.id}",
+                html.contains("<html lang=\"en\">")
+            )
+            assertTrue(
+                "English help page should have a visible title for ${article.id}",
+                Regex("<h1>\\s*[^<]+\\s*</h1>").containsMatchIn(html)
+            )
+        }
     }
 }

@@ -16,6 +16,8 @@ object HelpArticles {
     const val COMIC_MIGRATION_ID = "comic_migration"
     const val COMIC_MERGE_ID = "comic_merge"
     const val FILE_MERGE_ID = "file_merge"
+    const val EXPORT_CONFIGURATION_ID = "export_configuration"
+    const val LOAD_CONFIGURATION_ID = "load_configuration"
 
     val all: List<HelpArticle> = listOf(
         HelpArticle(
@@ -47,6 +49,16 @@ object HelpArticles {
             id = FILE_MERGE_ID,
             titleResId = R.string.help_file_merge,
             htmlResId = R.raw.help_file_merge
+        ),
+        HelpArticle(
+            id = EXPORT_CONFIGURATION_ID,
+            titleResId = R.string.help_export_configuration,
+            htmlResId = R.raw.help_export_configuration
+        ),
+        HelpArticle(
+            id = LOAD_CONFIGURATION_ID,
+            titleResId = R.string.help_load_configuration,
+            htmlResId = R.raw.help_load_configuration
         )
     )
 

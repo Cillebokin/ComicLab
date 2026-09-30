@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root { color-scheme: light dark; --text: #111827; --muted: #4B5563; --accent: #2563EB; --surface: transparent; --soft: #EFF6FF; }
+        @media (prefers-color-scheme: dark) {
+            :root { --text: #F1F5F9; --muted: #CBD5E1; --accent: #60A5FA; --surface: transparent; --soft: #1E3A5F; }
+        }
+        html, body { margin: 0; padding: 0; background: var(--surface); }
+        body { color: var(--text); font-family: sans-serif; font-size: 16px; line-height: 1.7; padding: 20px 18px 28px; }
+        h1 { color: var(--text); font-size: 24px; margin: 0 0 16px; }
+        h2 { color: var(--accent); font-size: 18px; margin: 24px 0 8px; }
+        p, ol { color: var(--muted); }
+        p { margin: 8px 0; }
+        ol { padding-left: 24px; }
+        code { background: var(--soft); border-radius: 4px; color: var(--accent); padding: 2px 5px; }
+    </style>
+</head>
+<body>
+    <h1>Merge Files</h1>
+    <p>Collect images from the subfolders of the current folder into one new folder. The original images are kept.</p>
+
+    <h2>How to use it</h2>
+    <ol>
+        <li>Open the folder that contains the image folders</li>
+        <li>Tap <code>Merge files</code> in the menu</li>
+        <li>The images are copied into a new <code>ComicLab_file_merged_...</code> folder in the current folder and renumbered</li>
+    </ol>
+    <p>Only images directly inside the next-level subfolders are processed; deeper folders are not searched. Supported formats: JPG, JPEG, PNG, WEBP, GIF, and BMP.</p>
+
+    <h2>Example</h2>
+    <p><code>FolderA/1.jpg</code> and <code>FolderB/1.png</code><br>are copied into the new folder and renamed <code>0001.jpg</code> and <code>0002.png</code></p>
+</body>
+</html>

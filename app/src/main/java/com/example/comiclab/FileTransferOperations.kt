@@ -56,7 +56,12 @@ internal object FileTransferOperations {
             name.none { it.code < 32 || it in INVALID_FILE_NAME_CHARS }
     }
 
-    fun transfer(sourceFile: File, targetFile: File, moveSource: Boolean): Result {
+    fun transfer(
+        sourceFile: File,
+        targetFile: File,
+        moveSource: Boolean,
+        onProgress: (FileOperationProgress) -> Unit = {}
+    ): Result {
         if (!sourceFile.isFile) {
             return Result.SOURCE_NOT_FILE
         }
@@ -70,6 +75,16 @@ internal object FileTransferOperations {
 
         var temporaryFile: File? = null
         return try {
+            val totalBytes = sourceFile.length().coerceAtLeast(0)
+            var copiedBytes = 0L
+            onProgress(
+                FileOperationProgress(
+                    phase = FileOperationProgress.Phase.COPYING,
+                    totalBytes = totalBytes,
+                    totalItems = 1,
+                    currentItemName = sourceFile.name
+                )
+            )
             val tempFile = File.createTempFile(
                 ".comiclab-transfer-",
                 ".tmp",
@@ -88,10 +103,31 @@ internal object FileTransferOperations {
                             break
                         }
                         output.write(buffer, 0, count)
+                        copiedBytes += count
+                        onProgress(
+                            FileOperationProgress(
+                                phase = FileOperationProgress.Phase.COPYING,
+                                completedBytes = copiedBytes,
+                                totalBytes = totalBytes,
+                                totalItems = 1,
+                                currentItemName = sourceFile.name
+                            )
+                        )
                     }
                     output.flush()
                 }
             }
+
+            onProgress(
+                FileOperationProgress(
+                    phase = FileOperationProgress.Phase.COPYING,
+                    completedBytes = copiedBytes,
+                    totalBytes = totalBytes,
+                    completedItems = 1,
+                    totalItems = 1,
+                    currentItemName = sourceFile.name
+                )
+            )
 
             try {
                 Files.move(tempFile.toPath(), targetFile.toPath())
@@ -100,11 +136,30 @@ internal object FileTransferOperations {
                 return Result.TARGET_EXISTS
             }
 
+            if (moveSource) {
+                onProgress(
+                    FileOperationProgress(
+                        phase = FileOperationProgress.Phase.DELETING_SOURCE,
+                        totalItems = 1,
+                        currentItemName = sourceFile.name
+                    )
+                )
+            }
             val sourceDeleted = !moveSource ||
                 runCatching { sourceFile.delete() }.getOrDefault(false)
             if (!sourceDeleted) {
                 runCatching { targetFile.delete() }
                 return Result.SOURCE_DELETE_FAILED
+            }
+            if (moveSource) {
+                onProgress(
+                    FileOperationProgress(
+                        phase = FileOperationProgress.Phase.DELETING_SOURCE,
+                        completedItems = 1,
+                        totalItems = 1,
+                        currentItemName = sourceFile.name
+                    )
+                )
             }
             Result.SUCCESS
         } catch (_: InterruptedException) {

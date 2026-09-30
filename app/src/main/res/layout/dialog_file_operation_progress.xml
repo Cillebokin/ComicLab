@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="4dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="4dp"
+    android:paddingBottom="4dp">
+
+    <TextView
+        android:id="@+id/tvFileOperationProgressStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="middle"
+        android:maxLines="2"
+        android:text="@string/file_operation_indeterminate"
+        android:textColor="@color/comiclab_text_primary"
+        android:textSize="14sp" />
+
+    <ProgressBar
+        android:id="@+id/progressFileOperation"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="18dp"
+        android:layout_marginTop="12dp"
+        android:indeterminate="true"
+        android:max="100"
+        android:progress="0"
+        android:progressBackgroundTint="@color/comiclab_divider"
+        android:progressTint="@color/comiclab_accent" />
+
+    <TextView
+        android:id="@+id/tvFileOperationProgressCount"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="end"
+        android:textColor="@color/comiclab_text_secondary"
+        android:textSize="12sp" />
+</LinearLayout>

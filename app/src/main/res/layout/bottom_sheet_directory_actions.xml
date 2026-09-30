@@ -128,6 +128,38 @@
         app:drawableStartCompat="@drawable/png_title_change_icon" />
 
     <TextView
+        android:id="@+id/btnCopyDirectory"
+        android:drawableTint="@color/comiclab_icon"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/bottom_sheet_action_height"
+        android:background="@drawable/bg_bottom_sheet_action_item"
+        android:drawablePadding="@dimen/space_lg"
+        android:gravity="center_vertical"
+        android:includeFontPadding="false"
+        android:paddingStart="@dimen/space_xl"
+        android:paddingEnd="@dimen/space_xl"
+        android:text="@string/copy_folder"
+        android:textColor="@color/comiclab_text_primary"
+        android:textSize="@dimen/text_body"
+        app:drawableStartCompat="@drawable/png_file_copy_icon" />
+
+    <TextView
+        android:id="@+id/btnCutDirectory"
+        android:drawableTint="@color/comiclab_icon"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/bottom_sheet_action_height"
+        android:background="@drawable/bg_bottom_sheet_action_item"
+        android:drawablePadding="@dimen/space_lg"
+        android:gravity="center_vertical"
+        android:includeFontPadding="false"
+        android:paddingStart="@dimen/space_xl"
+        android:paddingEnd="@dimen/space_xl"
+        android:text="@string/cut_folder"
+        android:textColor="@color/comiclab_text_primary"
+        android:textSize="@dimen/text_body"
+        app:drawableStartCompat="@drawable/png_file_cut_icon" />
+
+    <TextView
         android:id="@+id/btnDeleteDirectory"
         android:drawableTint="@color/comiclab_danger"
         android:layout_width="match_parent"

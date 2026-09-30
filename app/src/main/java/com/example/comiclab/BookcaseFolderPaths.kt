@@ -23,10 +23,7 @@ internal object BookcaseFolderPaths {
     }
 
     fun afterRename(paths: Set<String>, oldPath: String, newPath: String): Set<String> {
-        val oldPrefix = directoryPrefix(oldPath)
-        val affectedPaths = paths.filter { path ->
-            path == oldPath || path.startsWith(oldPrefix)
-        }
+        val affectedPaths = paths.filter { path -> remapPath(path, oldPath, newPath) != path }
         if (affectedPaths.isEmpty()) {
             return paths.toSet()
         }
@@ -34,8 +31,17 @@ internal object BookcaseFolderPaths {
         return paths.toMutableSet().apply {
             affectedPaths.forEach { oldSelection ->
                 remove(oldSelection)
-                add(newPath + oldSelection.removePrefix(oldPath))
+                add(remapPath(oldSelection, oldPath, newPath))
             }
+        }
+    }
+
+    fun remapPath(path: String, oldPath: String, newPath: String): String {
+        val oldPrefix = directoryPrefix(oldPath)
+        return if (path == oldPath || path.startsWith(oldPrefix)) {
+            newPath + path.removePrefix(oldPath)
+        } else {
+            path
         }
     }
 

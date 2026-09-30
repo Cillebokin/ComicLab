@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root { color-scheme: light dark; --text: #111827; --muted: #4B5563; --accent: #2563EB; --surface: transparent; --soft: #EFF6FF; }
+        @media (prefers-color-scheme: dark) {
+            :root { --text: #F1F5F9; --muted: #CBD5E1; --accent: #60A5FA; --surface: transparent; --soft: #1E3A5F; }
+        }
+        html, body { margin: 0; padding: 0; background: var(--surface); }
+        body { color: var(--text); font-family: sans-serif; font-size: 16px; line-height: 1.7; padding: 20px 18px 28px; }
+        h1 { color: var(--text); font-size: 24px; margin: 0 0 16px; }
+        h2 { color: var(--accent); font-size: 18px; margin: 24px 0 8px; }
+        p, ol { color: var(--muted); }
+        p { margin: 8px 0; }
+        ol { padding-left: 24px; }
+        code { background: var(--soft); border-radius: 4px; color: var(--accent); padding: 2px 5px; }
+    </style>
+</head>
+<body>
+    <h1>Comic Classification</h1>
+    <p>ComicLab checks comic files in the current folder and its subfolders, then copies them into separate folders based on their feature markers. The original files are kept.</p>
+
+    <h2>Where do the classified files go?</h2>
+    <ol>
+        <li>A new folder is created in the current folder, for example <code>ClassifyNList000</code>. If that name is already in use, ComicLab uses the next number</li>
+        <li>Comics with a feature marker go into a folder named after the marker. Comics without one go into <code>ClassifyNListNoTag</code></li>
+        <li>If a file with the same name already exists, ComicLab adds a number to the copied file's name instead of overwriting it</li>
+    </ol>
+
+    <h2>Examples</h2>
+    <p><code>[ABC]作品名称.zip</code><br>Copied to <code>ClassifyNList000/ABC/[ABC]作品名称.zip</code></p>
+    <p><code>作品名称.zip</code><br>With no feature marker, copied to <code>ClassifyNList000/ClassifyNListNoTag/作品名称.zip</code></p>
+</body>
+</html>

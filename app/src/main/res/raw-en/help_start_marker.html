@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root {
+            color-scheme: light dark;
+            --text: #111827;
+            --muted: #4B5563;
+            --accent: #2563EB;
+            --surface: transparent;
+            --soft: #EFF6FF;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --text: #F1F5F9;
+                --muted: #CBD5E1;
+                --accent: #60A5FA;
+                --surface: transparent;
+                --soft: #1E3A5F;
+            }
+        }
+
+        html, body { margin: 0; padding: 0; background: var(--surface); }
+        body { color: var(--text); font-family: sans-serif; font-size: 16px; line-height: 1.7; padding: 20px 18px 28px; }
+        h1 { color: var(--text); font-size: 24px; margin: 0 0 16px; }
+        h2 { color: var(--accent); font-size: 18px; margin: 24px 0 8px; }
+        p, ol { color: var(--muted); }
+        p { margin: 8px 0; }
+        ol { padding-left: 24px; }
+        code { background: var(--soft); border-radius: 4px; color: var(--accent); padding: 2px 5px; }
+    </style>
+</head>
+<body>
+    <h1>Feature Marker</h1>
+    <p>A feature marker is the first bracketed text in a comic filename that meets the rules below. ComicLab can use it to classify comics.</p>
+
+    <h2>How it is identified</h2>
+    <ol>
+        <li>Use square brackets <code>[]</code></li>
+        <li>The text inside the brackets cannot be empty</li>
+        <li>It must not contain a feature marker error tag</li>
+        <li>If a bracketed text does not meet these rules, ComicLab checks the next pair of <code>[]</code></li>
+    </ol>
+
+    <h2>Examples</h2>
+    <p><code>[ABC]作品名称.zip</code><br>Feature marker: <code>ABC</code></p>
+    <p><code>[中] [ABC]作品名称.zip</code><br>If <code>中</code> is an error tag, ComicLab skips it and checks <code>[ABC]</code></p>
+</body>
+</html>

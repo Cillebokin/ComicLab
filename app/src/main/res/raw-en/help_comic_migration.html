@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root { color-scheme: light dark; --text: #111827; --muted: #4B5563; --accent: #2563EB; --surface: transparent; --soft: #EFF6FF; }
+        @media (prefers-color-scheme: dark) {
+            :root { --text: #F1F5F9; --muted: #CBD5E1; --accent: #60A5FA; --surface: transparent; --soft: #1E3A5F; }
+        }
+        html, body { margin: 0; padding: 0; background: var(--surface); }
+        body { color: var(--text); font-family: sans-serif; font-size: 16px; line-height: 1.7; padding: 20px 18px 28px; }
+        h1 { color: var(--text); font-size: 24px; margin: 0 0 16px; }
+        h2 { color: var(--accent); font-size: 18px; margin: 24px 0 8px; }
+        p, ol { color: var(--muted); }
+        p { margin: 8px 0; }
+        ol { padding-left: 24px; }
+        code { background: var(--soft); border-radius: 4px; color: var(--accent); padding: 2px 5px; }
+    </style>
+</head>
+<body>
+    <h1>Step-by-step migration</h1>
+    <p>ComicLab shows you one comic at a time. Choose a folder for each comic before the next one appears.</p>
+    <p>When you tap a folder, ComicLab copies the comic there and keeps the original in its source location. The next comic appears after the copy finishes.</p>
+
+    <h2>Choose two locations first</h2>
+    <ol>
+        <li><code>Target location</code>: The location containing the folders where you want to put your comics. ComicLab searches from here down</li>
+        <li><code>Default storage location</code>: Choose this if none of the listed folders is suitable. It always appears at the bottom of the list</li>
+    </ol>
+
+    <h2>Choosing a folder</h2>
+    <ol>
+        <li>ComicLab checks for comics in the source folder and its subfolders, then shows them one by one</li>
+        <li>The top of the window shows the filename and its feature marker. The marker is the text ComicLab uses to look for folders; <code>null</code> means no marker was found</li>
+        <li>The list shows possible folder names and paths. ComicLab may suggest the wrong folder, so check the path before tapping it</li>
+        <li>You must choose a location for each comic. The next one appears after the copy finishes</li>
+    </ol>
+    <p>If a file with the same name already exists in the destination, ComicLab skips that comic and does not overwrite the existing file. If a copy fails, it shows a failure status and continues with the next comic.</p>
+    <p>If a feature marker consists only of Japanese kana or only of Roman letters, ComicLab also tries to find the other spelling, for example <code>あまみ</code> and <code>amami</code>. Check these suggestions yourself too.</p>
+
+    <h2>Note</h2>
+    <p>The stop button ends the entire process. The remaining comics will not be processed.</p>
+</body>
+</html>

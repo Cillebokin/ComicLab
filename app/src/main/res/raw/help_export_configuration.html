@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root {
+            color-scheme: light dark;
+            --text: #111827;
+            --muted: #4B5563;
+            --accent: #2563EB;
+            --surface: transparent;
+            --soft: #EFF6FF;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --text: #F1F5F9;
+                --muted: #CBD5E1;
+                --accent: #60A5FA;
+                --surface: transparent;
+                --soft: #1E3A5F;
+            }
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: var(--surface);
+        }
+
+        body {
+            color: var(--text);
+            font-family: sans-serif;
+            font-size: 16px;
+            line-height: 1.7;
+            padding: 20px 18px 28px;
+        }
+
+        h1 {
+            color: var(--text);
+            font-size: 24px;
+            margin: 0 0 16px;
+        }
+
+        h2 {
+            color: var(--accent);
+            font-size: 18px;
+            margin: 24px 0 8px;
+        }
+
+        p,
+        ol {
+            color: var(--muted);
+        }
+
+        p {
+            margin: 8px 0;
+        }
+
+        ol {
+            padding-left: 24px;
+        }
+
+        code {
+            background: var(--soft);
+            border-radius: 4px;
+            color: var(--accent);
+            padding: 2px 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>导出配置</h1>
+    <p>把收藏、阅读历史、书柜、阅读进度和软件设置保存到一个配置文件中。配置文件不包含漫画文件本身。</p>
+
+    <h2>怎么导出</h2>
+    <ol>
+        <li>打开设置页，在下方找到 <code>配置管理</code></li>
+        <li>点击 <code>导出配置</code>，选择保存位置；默认文件名是 <code>comiclab_config.json</code></li>
+    </ol>
+</body>
+</html>

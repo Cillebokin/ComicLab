@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root { color-scheme: light dark; --text: #111827; --muted: #4B5563; --accent: #2563EB; --surface: transparent; --soft: #EFF6FF; }
+        @media (prefers-color-scheme: dark) {
+            :root { --text: #F1F5F9; --muted: #CBD5E1; --accent: #60A5FA; --surface: transparent; --soft: #1E3A5F; }
+        }
+        html, body { margin: 0; padding: 0; background: var(--surface); }
+        body { color: var(--text); font-family: sans-serif; font-size: 16px; line-height: 1.7; padding: 20px 18px 28px; }
+        h1 { color: var(--text); font-size: 24px; margin: 0 0 16px; }
+        h2 { color: var(--accent); font-size: 18px; margin: 24px 0 8px; }
+        p, ol { color: var(--muted); }
+        p { margin: 8px 0; }
+        ol { padding-left: 24px; }
+        code { background: var(--soft); border-radius: 4px; color: var(--accent); padding: 2px 5px; }
+    </style>
+</head>
+<body>
+    <h1>Load Configuration</h1>
+    <p>Choose a configuration file you exported earlier to load its valid records and settings into ComicLab.</p>
+
+    <h2>How to load</h2>
+    <ol>
+        <li>Open Settings and find <code>Configuration management</code> near the bottom</li>
+        <li>Tap <code>Load configuration</code> and choose the configuration file</li>
+    </ol>
+    <p>Your existing valid records are kept and merged with the imported data. Imported app settings are applied to this device.</p>
+    <p>If a comic file or folder cannot be accessed, or a comic file is not supported, its record is skipped while other valid data is restored. When loading is complete, ComicLab shows how many items were restored and skipped.</p>
+</body>
+</html>

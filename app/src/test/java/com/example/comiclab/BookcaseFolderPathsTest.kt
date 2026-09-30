@@ -104,4 +104,24 @@ class BookcaseFolderPathsTest {
 
         assertEquals(setOf("/storage/comics/shelf-extra"), remaining)
     }
+
+    @Test
+    fun remapPath_movesOnlyTheSelectedDirectoryAndItsDescendants() {
+        assertEquals(
+            "/storage/target/shelf/inner",
+            BookcaseFolderPaths.remapPath(
+                "/storage/source/shelf/inner",
+                "/storage/source/shelf",
+                "/storage/target/shelf"
+            )
+        )
+        assertEquals(
+            "/storage/source/shelf-extra",
+            BookcaseFolderPaths.remapPath(
+                "/storage/source/shelf-extra",
+                "/storage/source/shelf",
+                "/storage/target/shelf"
+            )
+        )
+    }
 }
