@@ -52,12 +52,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnReadingHistory: ImageButton
     private lateinit var btnFavoriteComics: ImageButton
     private lateinit var btnFavoritePaths: ImageButton
+    private lateinit var btnPasteFile: ImageButton
+    private lateinit var btnExitFileTransfer: ImageButton
+    private lateinit var btnTransferParent: ImageButton
     private lateinit var readingHistoryScrim: View
     private lateinit var fileListAdapter: FileListAdapter
 
     private val fileItems = mutableListOf<FileItem>()
     private val directoryLoadExecutor = Executors.newSingleThreadExecutor()
     private val classifyExecutor = Executors.newSingleThreadExecutor()
+    private val fileTransferExecutor = Executors.newSingleThreadExecutor()
     private val directoryLoadGeneration = AtomicInteger(0)
     private val classifyGeneration = AtomicInteger(0)
 
@@ -80,6 +84,8 @@ class MainActivity : AppCompatActivity() {
     private var skipNextResumeDirectoryReload = false
     private var pendingCenterTargetPath: String? = null
     private var currentPath = STORAGE_ROOT_PATH
+    private var pendingFileTransfer: PendingFileTransfer? = null
+    private var isFileTransferInProgress = false
 
     private val prefs by lazy {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -107,7 +113,11 @@ class MainActivity : AppCompatActivity() {
         btnReadingHistory = findViewById(R.id.btnReadingHistory)
         btnFavoriteComics = findViewById(R.id.btnFavoriteComics)
         btnFavoritePaths = findViewById(R.id.btnFavoritePaths)
+        btnPasteFile = findViewById(R.id.btnPasteFile)
+        btnExitFileTransfer = findViewById(R.id.btnExitFileTransfer)
+        btnTransferParent = findViewById(R.id.btnTransferParent)
         readingHistoryScrim = findViewById(R.id.readingHistoryScrim)
+        restorePendingFileTransfer(savedInstanceState)
 
         fileListAdapter = FileListAdapter(
             context = this,
@@ -129,7 +139,25 @@ class MainActivity : AppCompatActivity() {
         })
 
         btnBack.setOnClickListener {
-            goStorageRoot()
+            if (pendingFileTransfer == null) {
+                goStorageRoot()
+            } else if (!isFileTransferInProgress) {
+                goParent()
+            }
+        }
+
+        btnPasteFile.setOnClickListener {
+            pastePendingFile()
+        }
+
+        btnExitFileTransfer.setOnClickListener {
+            exitPendingFileTransfer()
+        }
+
+        btnTransferParent.setOnClickListener {
+            if (!isFileTransferInProgress) {
+                goParent()
+            }
         }
 
         btnOptions.setOnClickListener {
@@ -262,6 +290,10 @@ class MainActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         captureFileListScrollState()?.writeTo(outState)
+        pendingFileTransfer?.let { transfer ->
+            outState.putString(KEY_PENDING_FILE_TRANSFER_PATH, transfer.sourcePath)
+            outState.putString(KEY_PENDING_FILE_TRANSFER_MODE, transfer.mode.name)
+        }
     }
 
     override fun onDestroy() {
@@ -269,6 +301,7 @@ class MainActivity : AppCompatActivity() {
         classifyGeneration.incrementAndGet()
         directoryLoadExecutor.shutdownNow()
         classifyExecutor.shutdownNow()
+        fileTransferExecutor.shutdownNow()
         fileListAdapter.close()
         super.onDestroy()
     }
@@ -690,6 +723,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleSystemBack() {
+        if (isFileTransferInProgress) {
+            return
+        }
+        if (pendingFileTransfer != null) {
+            goParent()
+            return
+        }
         if (!Environment.isExternalStorageManager() || isAtStorageRoot()) {
             finish()
             return
@@ -2410,6 +2450,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renameDirectory(directory: File, rawName: String) {
+        if (containsPendingFileTransferSource(directory)) {
+            showMessage(getString(R.string.file_transfer_source_in_use))
+            return
+        }
         val parent = directory.parentFile ?: run {
             showMessage(getString(R.string.rename_directory_name_failed))
             return
@@ -2454,6 +2498,260 @@ class MainActivity : AppCompatActivity() {
         loadCurrentDirectory(targetDirectory.absolutePath)
     }
 
+    private fun isPendingFileTransferSource(file: File): Boolean {
+        return pendingFileTransfer?.sourcePath == file.absolutePath
+    }
+
+    private fun containsPendingFileTransferSource(directory: File): Boolean {
+        val sourcePath = pendingFileTransfer?.sourcePath ?: return false
+        var parent = File(sourcePath).parentFile
+        val directoryPath = directory.absolutePath
+        while (parent != null) {
+            if (parent.absolutePath == directoryPath) {
+                return true
+            }
+            parent = parent.parentFile
+        }
+        return false
+    }
+
+    private fun restorePendingFileTransfer(savedInstanceState: Bundle?) {
+        val sourcePath = savedInstanceState?.getString(KEY_PENDING_FILE_TRANSFER_PATH)
+            ?: return
+        val modeName = savedInstanceState.getString(KEY_PENDING_FILE_TRANSFER_MODE)
+            ?: return
+        val mode = FileTransferMode.values().firstOrNull { it.name == modeName }
+            ?: return
+        if (!File(sourcePath).isFile) {
+            return
+        }
+
+        pendingFileTransfer = PendingFileTransfer(sourcePath, mode)
+        updateFileTransferToolbar()
+    }
+
+    private fun beginFileTransfer(file: File, mode: FileTransferMode) {
+        if (pendingFileTransfer != null || isFileTransferInProgress) {
+            return
+        }
+        if (!file.isFile) {
+            showMessage(getString(R.string.message_invalid_file))
+            return
+        }
+
+        pendingFileTransfer = PendingFileTransfer(file.absolutePath, mode)
+        updateFileTransferToolbar()
+    }
+
+    private fun updateFileTransferToolbar() {
+        val isActive = pendingFileTransfer != null
+        val normalToolbarButtons = arrayOf(
+            btnFavoritePaths,
+            btnFavoriteComics,
+            btnReadingHistory,
+            btnSort,
+            btnClassify,
+            btnSearch,
+            btnBack
+        )
+        normalToolbarButtons.forEach { button ->
+            button.visibility = if (isActive) View.GONE else View.VISIBLE
+        }
+
+        btnHelp.isEnabled = !isActive
+        btnOptions.isEnabled = !isActive
+        btnHelp.alpha = if (isActive) 0.38f else 1f
+        btnOptions.alpha = if (isActive) 0.38f else 1f
+
+        btnPasteFile.visibility = if (isActive) View.VISIBLE else View.GONE
+        btnExitFileTransfer.visibility = if (isActive) View.VISIBLE else View.GONE
+        btnTransferParent.visibility = if (isActive) View.VISIBLE else View.GONE
+        val transfer = pendingFileTransfer
+        if (transfer != null) {
+            btnPasteFile.setImageResource(
+                if (transfer.mode == FileTransferMode.COPY) {
+                    R.drawable.png_file_copy_icon
+                } else {
+                    R.drawable.png_file_cut_icon
+                }
+            )
+        }
+
+        val canInteract = isActive && !isFileTransferInProgress
+        btnPasteFile.isEnabled = canInteract
+        btnExitFileTransfer.isEnabled = canInteract
+        btnTransferParent.isEnabled = canInteract
+        listView.isEnabled = !isFileTransferInProgress
+    }
+
+    private fun pastePendingFile() {
+        if (isFileTransferInProgress) {
+            return
+        }
+        val transfer = pendingFileTransfer ?: return
+        val sourceFile = File(transfer.sourcePath)
+        val destinationDirectory = File(currentPath)
+        if (!sourceFile.isFile) {
+            showMessage(getString(R.string.file_transfer_source_missing))
+            return
+        }
+        if (!destinationDirectory.isDirectory) {
+            showMessage(getString(R.string.file_transfer_failed))
+            return
+        }
+
+        val targetFile = File(destinationDirectory, sourceFile.name)
+        if (targetFile.exists() || targetFile.absoluteFile == sourceFile.absoluteFile) {
+            showPasteFileNameDialog(transfer, destinationDirectory)
+        } else {
+            startFileTransfer(transfer, destinationDirectory, sourceFile.name)
+        }
+    }
+
+    private fun showPasteFileNameDialog(
+        transfer: PendingFileTransfer,
+        destinationDirectory: File
+    ) {
+        if (pendingFileTransfer != transfer || isFileTransferInProgress) {
+            return
+        }
+        val sourceFile = File(transfer.sourcePath)
+        if (!sourceFile.isFile) {
+            showMessage(getString(R.string.file_transfer_source_missing))
+            return
+        }
+
+        val input = EditText(this).apply {
+            setSingleLine(true)
+            setText(FileTransferOperations.suggestedName(sourceFile.name, destinationDirectory))
+            setSelection(text.length)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.paste_file_conflict_title)
+            .setMessage(R.string.paste_file_conflict_message)
+            .setView(input)
+            .setPositiveButton(R.string.confirm, null)
+            .setNegativeButton(android.R.string.cancel, null)
+            .createRounded()
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val targetName = FileTransferOperations.targetFileName(
+                sourceFile.name,
+                input.text?.toString().orEmpty()
+            )
+            if (targetName == null) {
+                val errorMessage = if (input.text.isNullOrBlank()) {
+                    getString(R.string.rename_file_name_empty)
+                } else {
+                    getString(R.string.rename_file_name_invalid)
+                }
+                input.error = errorMessage
+                return@setOnClickListener
+            }
+
+            if (File(destinationDirectory, targetName).exists()) {
+                input.error = getString(R.string.paste_file_name_exists)
+                return@setOnClickListener
+            }
+
+            dialog.dismiss()
+            startFileTransfer(transfer, destinationDirectory, targetName)
+        }
+    }
+
+    private fun startFileTransfer(
+        transfer: PendingFileTransfer,
+        destinationDirectory: File,
+        targetName: String
+    ) {
+        if (pendingFileTransfer != transfer || isFileTransferInProgress) {
+            return
+        }
+        val sourceFile = File(transfer.sourcePath)
+        val targetFile = File(destinationDirectory, targetName)
+        if (targetFile.exists()) {
+            showPasteFileNameDialog(transfer, destinationDirectory)
+            return
+        }
+
+        val scrollState = captureFileListScrollState()
+        val wasFavorite = transfer.mode == FileTransferMode.CUT &&
+            FavoriteComicStore.isFavorite(this, sourceFile)
+        val wasInReadingHistory = transfer.mode == FileTransferMode.CUT &&
+            ReadingHistoryStore.items(this).any { it.file.absolutePath == sourceFile.absolutePath }
+        isFileTransferInProgress = true
+        updateFileTransferToolbar()
+        fileTransferExecutor.execute {
+            val result = FileTransferOperations.transfer(
+                sourceFile = sourceFile,
+                targetFile = targetFile,
+                moveSource = transfer.mode == FileTransferMode.CUT
+            )
+            if (result == FileTransferOperations.Result.SUCCESS &&
+                transfer.mode == FileTransferMode.CUT
+            ) {
+                runCatching {
+                    if (wasFavorite) {
+                        FavoriteComicStore.remove(applicationContext, sourceFile)
+                        FavoriteComicStore.record(applicationContext, targetFile)
+                    }
+                    if (wasInReadingHistory) {
+                        ReadingHistoryStore.remove(applicationContext, sourceFile)
+                        ReadingHistoryStore.record(applicationContext, targetFile)
+                    }
+                }
+            }
+            runOnUiThread {
+                if (isDestroyed || isFinishing) {
+                    return@runOnUiThread
+                }
+                isFileTransferInProgress = false
+                updateFileTransferToolbar()
+                when (result) {
+                    FileTransferOperations.Result.SUCCESS -> {
+                        pendingFileTransfer = null
+                        updateFileTransferToolbar()
+                        showMessage(
+                            getString(
+                                if (transfer.mode == FileTransferMode.COPY) {
+                                    R.string.file_copy_success
+                                } else {
+                                    R.string.file_cut_success
+                                }
+                            )
+                        )
+                        loadCurrentDirectory(scrollStateToRestore = scrollState)
+                    }
+
+                    FileTransferOperations.Result.TARGET_EXISTS -> {
+                        showPasteFileNameDialog(transfer, destinationDirectory)
+                    }
+
+                    FileTransferOperations.Result.SOURCE_NOT_FILE -> {
+                        showMessage(getString(R.string.file_transfer_source_missing))
+                    }
+
+                    FileTransferOperations.Result.SOURCE_DELETE_FAILED -> {
+                        showMessage(getString(R.string.file_cut_source_delete_failed))
+                    }
+
+                    FileTransferOperations.Result.DESTINATION_NOT_DIRECTORY,
+                    FileTransferOperations.Result.FAILED -> {
+                        showMessage(getString(R.string.file_transfer_failed))
+                    }
+                }
+            }
+        }
+    }
+
+    private fun exitPendingFileTransfer() {
+        if (isFileTransferInProgress) {
+            return
+        }
+        pendingFileTransfer = null
+        updateFileTransferToolbar()
+    }
+
     private fun showArchiveMenu(file: File) {
         val dialog = BottomSheetDialog(this)
         val content = layoutInflater.inflate(R.layout.bottom_sheet_archive_actions, null)
@@ -2461,6 +2759,8 @@ class MainActivity : AppCompatActivity() {
         val btnCopyFileName = content.findViewById<TextView>(R.id.btnCopyFileName)
         val btnRenameFileName = content.findViewById<TextView>(R.id.btnRenameFileName)
         val btnCopyStartMarker = content.findViewById<TextView>(R.id.btnCopyStartMarker)
+        val btnCopyFile = content.findViewById<TextView>(R.id.btnCopyFile)
+        val btnCutFile = content.findViewById<TextView>(R.id.btnCutFile)
         val btnFavoriteComic = content.findViewById<TextView>(R.id.btnFavoriteComicAction)
         val btnRead = content.findViewById<TextView>(R.id.btnReadComic)
         val btnDeleteFile = content.findViewById<TextView>(R.id.btnDeleteFile)
@@ -2473,8 +2773,20 @@ class MainActivity : AppCompatActivity() {
             btnCopyFileName,
             btnRenameFileName,
             btnCopyStartMarker,
+            btnCopyFile,
+            btnCutFile,
             btnDeleteFile
         )
+        val canStartTransfer = pendingFileTransfer == null && !isFileTransferInProgress
+        val isPendingSource = pendingFileTransfer?.sourcePath == file.absolutePath
+        btnCopyFile.isEnabled = canStartTransfer
+        btnCutFile.isEnabled = canStartTransfer
+        btnCopyFile.alpha = if (canStartTransfer) 1f else 0.38f
+        btnCutFile.alpha = if (canStartTransfer) 1f else 0.38f
+        btnRenameFileName.isEnabled = !isPendingSource
+        btnDeleteFile.isEnabled = !isPendingSource
+        btnRenameFileName.alpha = if (isPendingSource) 0.38f else 1f
+        btnDeleteFile.alpha = if (isPendingSource) 0.38f else 1f
         btnFavoriteComic.text = getString(
             if (isFavorite) R.string.cancel_favorite else R.string.favorite_comic_action
         )
@@ -2549,6 +2861,16 @@ class MainActivity : AppCompatActivity() {
             openMangaPreview(file)
         }
 
+        btnCopyFile.setOnClickListener {
+            dialog.dismiss()
+            beginFileTransfer(file, FileTransferMode.COPY)
+        }
+
+        btnCutFile.setOnClickListener {
+            dialog.dismiss()
+            beginFileTransfer(file, FileTransferMode.CUT)
+        }
+
         btnDeleteFile.setOnClickListener {
             dialog.dismiss()
             confirmDeleteFile(file)
@@ -2569,6 +2891,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun deleteFileFromBrowser(file: File) {
+        if (isPendingFileTransferSource(file)) {
+            showMessage(getString(R.string.file_transfer_source_in_use))
+            return
+        }
         if (!file.isFile) {
             showMessage(getString(R.string.message_invalid_file))
             loadCurrentDirectory(scrollStateToRestore = captureFileListScrollState())
@@ -2608,6 +2934,10 @@ class MainActivity : AppCompatActivity() {
         ) {
             showMessage(getString(R.string.message_invalid_directory))
             loadCurrentDirectory(scrollStateToRestore = captureFileListScrollState())
+            return
+        }
+        if (containsPendingFileTransferSource(directory)) {
+            showMessage(getString(R.string.file_transfer_source_in_use))
             return
         }
 
@@ -2650,6 +2980,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renameArchiveFile(file: File, rawName: String) {
+        if (isPendingFileTransferSource(file)) {
+            showMessage(getString(R.string.file_transfer_source_in_use))
+            return
+        }
         val parent = file.parentFile ?: run {
             showMessage(getString(R.string.rename_file_name_failed))
             return
@@ -2916,6 +3250,16 @@ class MainActivity : AppCompatActivity() {
         val similarity: Double
     )
 
+    private enum class FileTransferMode {
+        COPY,
+        CUT
+    }
+
+    private data class PendingFileTransfer(
+        val sourcePath: String,
+        val mode: FileTransferMode
+    )
+
     companion object {
         private const val PREFS_NAME = "saf_prefs"
         const val EXTRA_CENTER_TARGET_PATH = "center_target_path"
@@ -2927,6 +3271,8 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_FILE_LIST_SCROLL_TOP = "file_list_scroll_top"
         private const val KEY_FILE_LIST_SCROLL_ANCHOR_PATH = "file_list_scroll_anchor_path"
         private const val KEY_FILE_LIST_SCROLL_ANCHOR_IS_PARENT = "file_list_scroll_anchor_is_parent"
+        private const val KEY_PENDING_FILE_TRANSFER_PATH = "pending_file_transfer_path"
+        private const val KEY_PENDING_FILE_TRANSFER_MODE = "pending_file_transfer_mode"
         private const val CLEAR_CLICK_STATE_DELAY_MS = 240L
         private const val FILE_ITEM_HEIGHT_DP = 75
         private val INVALID_FILE_NAME_CHARS = setOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')

@@ -159,6 +159,7 @@
             android:tint="@color/comiclab_icon" />
 
         <View
+            android:id="@+id/toolbarModeSpacer"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1" />
@@ -210,6 +211,45 @@
             android:scaleType="centerInside"
             android:src="@drawable/png_back_icon"
             android:tint="@color/comiclab_icon" />
+
+        <ImageButton
+            android:id="@+id/btnPasteFile"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginStart="16dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/paste_file"
+            android:padding="4dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/png_file_copy_icon"
+            android:tint="@color/comiclab_icon"
+            android:visibility="gone" />
+
+        <ImageButton
+            android:id="@+id/btnExitFileTransfer"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginStart="16dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/exit_file_transfer"
+            android:padding="4dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/png_file_transfer_exit_icon"
+            android:tint="@color/comiclab_danger"
+            android:visibility="gone" />
+
+        <ImageButton
+            android:id="@+id/btnTransferParent"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginStart="16dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/go_parent_directory"
+            android:padding="4dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/png_back_icon"
+            android:tint="@color/comiclab_icon"
+            android:visibility="gone" />
     </LinearLayout>
 
     <FrameLayout
