@@ -240,7 +240,7 @@ class ReadingHistoryAdapter(
                 val cover = runCatching {
                     val firstImageEntry = ComicArchive.imageEntries(file).firstOrNull()
                         ?: return@runCatching null
-                    ComicArchive.decodeImage(file, firstImageEntry, HISTORY_COVER_MAX_SIZE)
+                    ComicArchive.decodeImage(file, firstImageEntry, HISTORY_COVER_MAX_SIZE, context.cacheDir)
                 }.getOrNull()
 
                 loadingCovers.remove(cacheKey)

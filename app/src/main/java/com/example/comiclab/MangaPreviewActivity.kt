@@ -167,7 +167,7 @@ class MangaPreviewActivity : AppCompatActivity() {
         executePreviewTask {
             val bitmap = runCatching {
                 synchronized(archiveOperationLock) {
-                    ComicArchive.decodeImage(file, entryName, COVER_IMAGE_MAX_SIZE)
+                    ComicArchive.decodeImage(file, entryName, COVER_IMAGE_MAX_SIZE, cacheDir)
                 }
             }.getOrNull()
 
@@ -213,7 +213,7 @@ class MangaPreviewActivity : AppCompatActivity() {
         executePreviewTask {
             runCatching {
                 synchronized(archiveOperationLock) {
-                    ComicArchive.decodeImages(file, entriesToShow, PREVIEW_IMAGE_MAX_SIZE) { entryName, bitmap ->
+                    ComicArchive.decodeImages(file, entriesToShow, PREVIEW_IMAGE_MAX_SIZE, cacheDir) { entryName, bitmap ->
                         if (!isPreviewActive() || generation != gridGeneration) {
                             return@decodeImages false
                         }

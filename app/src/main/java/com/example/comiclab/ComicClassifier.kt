@@ -75,10 +75,12 @@ object ComicClassifier {
                 File(outputDirectory, NO_TAG_DIRECTORY_NAME)
             } else {
                 markerDirectories.firstOrNull { directory ->
-                    ComicMigrationPlanner.matchStartMarkerToDirectoryName(
+                    val matchReason = ComicMigrationPlanner.matchStartMarkerToDirectoryName(
                         marker,
                         directory.name
-                    ) != null
+                    )
+                    matchReason == ComicMigrationMatchReason.EXACT_NAME ||
+                        matchReason == ComicMigrationMatchReason.KANA_ROMAJI
                 } ?: run {
                     val directoryName = sanitizePathSegment(marker)
                         .ifBlank { NO_TAG_DIRECTORY_NAME }

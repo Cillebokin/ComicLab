@@ -8,6 +8,15 @@ import java.nio.file.Files
 
 internal object DirectoryTransferOperations {
 
+    enum class CreateDirectoryResult {
+        SUCCESS,
+        PARENT_NOT_DIRECTORY,
+        EMPTY_NAME,
+        INVALID_NAME,
+        TARGET_EXISTS,
+        FAILED
+    }
+
     enum class Result {
         SUCCESS,
         SOURCE_NOT_DIRECTORY,
@@ -27,6 +36,44 @@ internal object DirectoryTransferOperations {
                 return candidate
             }
             index++
+        }
+    }
+
+    fun suggestedNewFolderName(parentDirectory: File): String {
+        var index = 0
+        while (true) {
+            val candidate = if (index == 0) "New Folder" else "New Folder ($index)"
+            if (!File(parentDirectory, candidate).exists()) {
+                return candidate
+            }
+            index++
+        }
+    }
+
+    fun createDirectory(parentDirectory: File, requestedName: String): CreateDirectoryResult {
+        if (!parentDirectory.isDirectory) {
+            return CreateDirectoryResult.PARENT_NOT_DIRECTORY
+        }
+
+        val name = requestedName.trim()
+        if (name.isEmpty()) {
+            return CreateDirectoryResult.EMPTY_NAME
+        }
+        if (!isValidDirectoryName(name)) {
+            return CreateDirectoryResult.INVALID_NAME
+        }
+
+        val targetDirectory = File(parentDirectory, name)
+        if (targetDirectory.exists()) {
+            return CreateDirectoryResult.TARGET_EXISTS
+        }
+        if (targetDirectory.mkdir()) {
+            return CreateDirectoryResult.SUCCESS
+        }
+        return if (targetDirectory.exists()) {
+            CreateDirectoryResult.TARGET_EXISTS
+        } else {
+            CreateDirectoryResult.FAILED
         }
     }
 

@@ -15,7 +15,8 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.ebook.ReaderFileDetector
 import java.io.File
 import java.util.Collections
-import java.util.concurrent.Executors
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 class SearchResultAdapter(
     context: Context,
@@ -30,13 +31,14 @@ class SearchResultAdapter(
     private val listScrollState = AbsListViewScrollStateTracker()
     private val loadingCovers = Collections.synchronizedSet(mutableSetOf<String>())
     private val failedCovers = Collections.synchronizedSet(mutableSetOf<String>())
-    private val loadingCollectionSources = Collections.synchronizedSet(mutableSetOf<String>())
+    private val collectionSourceRequestIds = ConcurrentHashMap<String, Long>()
+    private val nextCollectionSourceRequestId = AtomicLong()
     private val failedCollectionSources = Collections.synchronizedSet(mutableSetOf<String>())
     private val collectionRefreshLock = Any()
     @Volatile
     private var collectionRefreshScheduled = false
     private val pendingCollectionRefreshKeys = mutableSetOf<String>()
-    private val coverExecutor = Executors.newFixedThreadPool(SEARCH_COVER_THREAD_COUNT)
+    private val coverTasks = BookcaseCoverTaskQueue(SEARCH_COVER_THREAD_COUNT)
     @Volatile
     private var closed = false
 
@@ -89,11 +91,11 @@ class SearchResultAdapter(
 
     fun close() {
         closed = true
-        coverExecutor.shutdownNow()
+        coverTasks.close()
         loadingCovers.clear()
         collectionCoverLoadTracker.clear()
         failedCovers.clear()
-        loadingCollectionSources.clear()
+        collectionSourceRequestIds.clear()
         failedCollectionSources.clear()
         synchronized(collectionRefreshLock) {
             pendingCollectionRefreshKeys.clear()
@@ -163,6 +165,12 @@ class SearchResultAdapter(
         imgIcon: ImageView,
         collectionCoverList: RecyclerView
     ) {
+        val cacheKey = mangaCollectionCacheKey(directory)
+        val previousCacheKey = iconContainer.tag as? String
+        if (previousCacheKey != cacheKey) {
+            cancelCollectionSourceLoad(previousCacheKey)
+        }
+
         if (!AppSettings.isBookcaseDirectory(context, directory)) {
             resetCollectionCoverContainer(iconContainer, infoContainer, imgIcon, collectionCoverList)
             setDefaultIconLayout(imgIcon)
@@ -171,7 +179,6 @@ class SearchResultAdapter(
             return
         }
 
-        val cacheKey = mangaCollectionCacheKey(directory)
         val cachedSources = collectionSourceCache.get(cacheKey)
         if (cachedSources.isNullOrEmpty()) {
             resetCollectionCoverContainer(iconContainer, infoContainer, imgIcon, collectionCoverList)
@@ -185,16 +192,21 @@ class SearchResultAdapter(
             imgIcon.setImageResource(R.drawable.png_bookcase_icon)
             iconContainer.tag = cacheKey
 
-            if (cachedSources != null || cacheKey in failedCollectionSources ||
-                !loadingCollectionSources.add(cacheKey)
-            ) {
+            if (cachedSources != null || cacheKey in failedCollectionSources || closed) {
                 return
             }
 
-            executeCoverTask {
-                val sources = MangaCollectionCoverPlanner.findCoverSourcesWithEntries(directory)
-                loadingCollectionSources.remove(cacheKey)
-                if (closed) {
+            val requestId = nextCollectionSourceRequestId.incrementAndGet()
+            if (collectionSourceRequestIds.putIfAbsent(cacheKey, requestId) != null) return
+
+            executeCoverTask(
+                taskKey = "collection-sources:$cacheKey",
+                onRejected = { collectionSourceRequestIds.remove(cacheKey, requestId) }
+            ) {
+                val sources = runCatching {
+                    MangaCollectionCoverPlanner.findCoverSourcesWithEntries(directory)
+                }.getOrDefault(emptyList())
+                if (closed || !collectionSourceRequestIds.remove(cacheKey, requestId)) {
                     return@executeCoverTask
                 }
 
@@ -250,7 +262,8 @@ class SearchResultAdapter(
                 },
                 onCoverClick = {
                     MangaCollectionCoverClickHandler.dispatch(directory, onCollectionCoverClick)
-                }
+                },
+                onCoverRecycled = ::cancelCollectionCoverLoad
             )
             collectionScrollState.restore(cacheKey, collectionCoverList, sources.size)
             collectionCoverList.tag = cacheKey
@@ -275,9 +288,13 @@ class SearchResultAdapter(
             return
         }
 
-        executeCoverTask {
+        val requestId = collectionCoverLoadTracker.requestId(cacheKey) ?: return
+        executeCoverTask(
+            taskKey = "collection-cover:$cacheKey",
+            onRejected = { collectionCoverLoadTracker.complete(cacheKey, requestId) }
+        ) {
             if (closed) {
-                collectionCoverLoadTracker.complete(cacheKey)
+                collectionCoverLoadTracker.complete(cacheKey, requestId)
                 return@executeCoverTask
             }
 
@@ -289,8 +306,19 @@ class SearchResultAdapter(
                     )
                 }
             }.getOrNull()
-            handleCollectionCoverResult(cacheKey, cover)
+            handleCollectionCoverResult(cacheKey, requestId, cover)
         }
+    }
+
+    private fun cancelCollectionCoverLoad(cacheKey: String, imageView: ImageView) {
+        if (collectionCoverLoadTracker.unregister(cacheKey, imageView) == null) return
+        coverTasks.cancel("collection-cover:$cacheKey")
+    }
+
+    private fun cancelCollectionSourceLoad(cacheKey: String?) {
+        if (cacheKey?.startsWith("collection:") != true) return
+        if (collectionSourceRequestIds.remove(cacheKey) == null) return
+        coverTasks.cancel("collection-sources:$cacheKey")
     }
 
     private fun bindArchiveIcon(
@@ -339,43 +367,42 @@ class SearchResultAdapter(
             return
         }
 
-        executeCoverTask {
+        executeCoverTask(
+            taskKey = "archive-cover:$cacheKey",
+            onRejected = { loadingCovers.remove(cacheKey) }
+        ) {
             val cover = runCatching {
                 val firstImageEntry = ComicArchive.imageEntries(file).firstOrNull()
                 firstImageEntry?.let {
-                    ComicArchive.decodeImage(file, it, SEARCH_COVER_MAX_SIZE)
+                    ComicArchive.decodeImage(file, it, SEARCH_COVER_MAX_SIZE, context.cacheDir)
                 }
             }.getOrNull()
             handleCoverResult(cacheKey, cover, imgIcon)
         }
     }
 
-    private fun executeCoverTask(block: () -> Unit) {
-        if (closed) {
-            return
-        }
-
-        runCatching {
-            coverExecutor.execute {
-                if (!closed) {
-                    block()
-                }
-            }
+    private fun executeCoverTask(
+        taskKey: String,
+        onRejected: () -> Unit = {},
+        block: () -> Unit
+    ) {
+        coverTasks.execute(taskKey, onRejected) {
+            if (!closed) block()
         }
     }
 
     private fun handleCollectionCoverResult(
         cacheKey: String,
+        requestId: Long,
         cover: Bitmap?
     ) {
+        val waitingViews = collectionCoverLoadTracker.complete(cacheKey, requestId) ?: return
         if (cover == null) {
             failedCovers.add(cacheKey)
-            collectionCoverLoadTracker.complete(cacheKey)
             return
         }
 
         coverCache.put(cacheKey, cover)
-        val waitingViews = collectionCoverLoadTracker.complete(cacheKey)
         if (closed) {
             return
         }
@@ -560,6 +587,7 @@ class SearchResultAdapter(
         imgIcon: ImageView,
         collectionCoverList: RecyclerView
     ) {
+        cancelCollectionSourceLoad(iconContainer.tag as? String)
         collectionScrollState.save(iconContainer.tag as? String, collectionCoverList)
         collectionCoverList.clearOnScrollListeners()
         collectionCoverList.tag = null

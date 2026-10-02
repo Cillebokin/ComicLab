@@ -117,4 +117,95 @@ class FileTransferOperationsTest {
         assertTrue(source.isFile)
         assertEquals("target data", target.readText())
     }
+
+    @Test
+    fun targetCreatedDuringCopyIsNotOverwrittenAndTemporaryOutputIsRemoved() {
+        val source = File(temporaryFolder.root, "racing-source.cbz").apply { writeText("source data") }
+        val destination = temporaryFolder.newFolder("racing-destination")
+        val target = File(destination, "copy.cbz")
+        var targetCreated = false
+
+        val result = FileTransferOperations.transfer(source, target, moveSource = false) { progress ->
+            if (!targetCreated && progress.phase == FileOperationProgress.Phase.COPYING &&
+                progress.completedItems == 1
+            ) {
+                target.writeText("concurrent target")
+                targetCreated = true
+            }
+        }
+
+        assertEquals(FileTransferOperations.Result.TARGET_EXISTS, result)
+        assertTrue(source.isFile)
+        assertEquals("concurrent target", target.readText())
+        assertEquals(listOf("copy.cbz"), destination.list()?.toList())
+    }
+
+    @Test
+    fun cutSourceDeletionFailureRemovesPublishedCopyAndPreservesSource() {
+        val sourcePath = File(temporaryFolder.root, "undeletable-source.cbz").apply {
+            writeText("source data")
+        }
+        val source = NonDeletableFile(sourcePath.path)
+        val destination = temporaryFolder.newFolder("undeletable-destination")
+        val target = File(destination, "copy.cbz")
+
+        val result = FileTransferOperations.transfer(source, target, moveSource = true)
+
+        assertEquals(FileTransferOperations.Result.SOURCE_DELETE_FAILED, result)
+        assertTrue(sourcePath.isFile)
+        assertEquals("source data", sourcePath.readText())
+        assertFalse(target.exists())
+        assertTrue(destination.list().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun interruptedCopyKeepsSourceAndRemovesTemporaryOutput() {
+        val source = File(temporaryFolder.root, "source.cbz").apply {
+            writeBytes(ByteArray(1024 * 1024) { (it % 251).toByte() })
+        }
+        val destination = temporaryFolder.newFolder("interrupted-destination")
+        val target = File(destination, "copy.cbz")
+
+        Thread.currentThread().interrupt()
+        val result = try {
+            FileTransferOperations.transfer(source, target, moveSource = true)
+        } finally {
+            Thread.interrupted()
+        }
+
+        assertEquals(FileTransferOperations.Result.FAILED, result)
+        assertTrue(source.isFile)
+        assertFalse(target.exists())
+        assertTrue(destination.list().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun invalidSourceDestinationAndSelfTargetAreRejectedWithoutChangingSource() {
+        val source = File(temporaryFolder.root, "source.cbz").apply { writeText("source data") }
+        val sourceDirectory = temporaryFolder.newFolder("source-directory")
+        val destination = temporaryFolder.newFolder("valid-destination")
+        val destinationFile = File(temporaryFolder.root, "destination-file").apply { writeText("x") }
+
+        assertEquals(
+            FileTransferOperations.Result.SOURCE_NOT_FILE,
+            FileTransferOperations.transfer(sourceDirectory, File(destination, "copy.cbz"), false)
+        )
+        assertEquals(
+            FileTransferOperations.Result.DESTINATION_NOT_DIRECTORY,
+            FileTransferOperations.transfer(source, File(temporaryFolder.root, "missing/copy.cbz"), false)
+        )
+        assertEquals(
+            FileTransferOperations.Result.DESTINATION_NOT_DIRECTORY,
+            FileTransferOperations.transfer(source, File(destinationFile, "copy.cbz"), false)
+        )
+        assertEquals(
+            FileTransferOperations.Result.TARGET_EXISTS,
+            FileTransferOperations.transfer(source, source, moveSource = false)
+        )
+        assertEquals("source data", source.readText())
+    }
+
+    private class NonDeletableFile(path: String) : File(path) {
+        override fun delete(): Boolean = false
+    }
 }

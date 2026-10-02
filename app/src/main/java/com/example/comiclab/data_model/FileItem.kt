@@ -20,7 +20,8 @@ import com.example.comiclab.BookcaseRowViewTypes
 import com.example.comiclab.R
 import java.io.File
 import java.util.Collections
-import java.util.concurrent.Executors
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 data class FileItem(
     val file: File? = null,
@@ -30,9 +31,10 @@ data class FileItem(
 
 class FileListAdapter(
     context: Context,
-    private val items: List<FileItem>,
+    private val items: MutableList<FileItem>,
     private val onCollectionCoverClick: ((File) -> Unit)? = null,
-    private val onDirectoryLongClick: ((File) -> Unit)? = null
+    private val onDirectoryLongClick: ((File) -> Unit)? = null,
+    private val onDirectoryChildCountRequested: ((File) -> Unit)? = null
 ) : ArrayAdapter<FileItem>(context, 0, items) {
 
     private val archiveCoverCache = object : LruCache<String, Bitmap>(ARCHIVE_COVER_CACHE_SIZE) {}
@@ -42,14 +44,15 @@ class FileListAdapter(
     private val listScrollState = AbsListViewScrollStateTracker()
     private val loadingArchiveCovers = Collections.synchronizedSet(mutableSetOf<String>())
     private val failedArchiveCovers = Collections.synchronizedSet(mutableSetOf<String>())
-    private val loadingCollectionSources = Collections.synchronizedSet(mutableSetOf<String>())
+    private val collectionSourceRequestIds = ConcurrentHashMap<String, Long>()
+    private val nextCollectionSourceRequestId = AtomicLong()
     private val failedCollectionSources = Collections.synchronizedSet(mutableSetOf<String>())
     private val collectionRefreshLock = Any()
     @Volatile
     private var collectionRefreshScheduled = false
     private var pendingFullListRefresh = false
     private val pendingCollectionRefreshKeys = mutableSetOf<String>()
-    private val archiveCoverExecutor = Executors.newFixedThreadPool(ARCHIVE_COVER_THREAD_COUNT)
+    private val archiveCoverTasks = BookcaseCoverTaskQueue(ARCHIVE_COVER_THREAD_COUNT)
     private var favoriteComicPaths = FavoriteComicStore.favoriteFilePaths(context)
     private var favoriteDirectoryPaths = FavoritePathStore.favoriteDirectoryPaths(context)
     @Volatile
@@ -142,7 +145,13 @@ class FileListAdapter(
 
         if (file.isDirectory) {
             bindDirectoryIcon(file, view, iconContainer, infoContainer, imgIcon, collectionCoverList)
-            tvInfo.text = context.getString(R.string.item_count, item.childCount ?: 0)
+            val childCount = item.childCount
+            if (childCount == null) {
+                tvInfo.text = context.getString(R.string.item_count_pending)
+                onDirectoryChildCountRequested?.invoke(file)
+            } else {
+                tvInfo.text = context.getString(R.string.item_count, childCount)
+            }
             return view
         }
 
@@ -158,6 +167,21 @@ class FileListAdapter(
         tvInfo.text = CommonFunc.formatFileSize(file.length())
 
         return view
+    }
+
+    fun updateDirectoryChildCount(directory: File, childCount: Int, listView: ListView) {
+        val position = items.indexOfFirst { it.file?.absolutePath == directory.absolutePath }
+        if (position < 0) {
+            return
+        }
+
+        items[position] = items[position].copy(childCount = childCount)
+        val visibleIndex = position - listView.firstVisiblePosition
+        if (visibleIndex in 0 until listView.childCount) {
+            listView.getChildAt(visibleIndex)
+                ?.findViewById<TextView>(R.id.tvInfo)
+                ?.text = context.getString(R.string.item_count, childCount)
+        }
     }
 
     private fun refreshFavoriteMarkerCache() {
@@ -251,6 +275,12 @@ class FileListAdapter(
         imgIcon: ImageView,
         collectionCoverList: RecyclerView
     ) {
+        val cacheKey = mangaCollectionCacheKey(directory)
+        val previousCacheKey = iconContainer.tag as? String
+        if (previousCacheKey != cacheKey) {
+            cancelCollectionSourceLoad(previousCacheKey)
+        }
+
         if (!AppSettings.isBookcaseDirectory(context, directory)) {
             resetCollectionCoverContainer(iconContainer, infoContainer, imgIcon, collectionCoverList)
             setDefaultIconLayout(imgIcon)
@@ -259,7 +289,6 @@ class FileListAdapter(
             return
         }
 
-        val cacheKey = mangaCollectionCacheKey(directory)
         val cachedSources = collectionSourceCache.get(cacheKey)
         if (cachedSources.isNullOrEmpty()) {
             resetCollectionCoverContainer(iconContainer, infoContainer, imgIcon, collectionCoverList)
@@ -273,16 +302,21 @@ class FileListAdapter(
             imgIcon.setImageResource(R.drawable.png_bookcase_icon)
             iconContainer.tag = cacheKey
 
-            if (cachedSources != null || cacheKey in failedCollectionSources ||
-                !loadingCollectionSources.add(cacheKey)
-            ) {
+            if (cachedSources != null || cacheKey in failedCollectionSources || closed) {
                 return
             }
 
-            executeCoverTask {
-                val sources = MangaCollectionCoverPlanner.findCoverSourcesWithEntries(directory)
-                loadingCollectionSources.remove(cacheKey)
-                if (closed) {
+            val requestId = nextCollectionSourceRequestId.incrementAndGet()
+            if (collectionSourceRequestIds.putIfAbsent(cacheKey, requestId) != null) return
+
+            executeCoverTask(
+                taskKey = "collection-sources:$cacheKey",
+                onRejected = { collectionSourceRequestIds.remove(cacheKey, requestId) }
+            ) {
+                val sources = runCatching {
+                    MangaCollectionCoverPlanner.findCoverSourcesWithEntries(directory)
+                }.getOrDefault(emptyList())
+                if (closed || !collectionSourceRequestIds.remove(cacheKey, requestId)) {
                     return@executeCoverTask
                 }
 
@@ -340,7 +374,8 @@ class FileListAdapter(
                 onCoverClick = {
                     MangaCollectionCoverClickHandler.dispatch(directory, onCollectionCoverClick)
                 },
-                onCoverLongClick = dispatchDirectoryLongClick
+                onCoverLongClick = dispatchDirectoryLongClick,
+                onCoverRecycled = ::cancelCollectionCoverLoad
             )
             collectionScrollState.restore(cacheKey, collectionCoverList, sources.size)
             collectionCoverList.tag = cacheKey
@@ -365,9 +400,13 @@ class FileListAdapter(
             return
         }
 
-        executeCoverTask {
+        val requestId = collectionCoverLoadTracker.requestId(cacheKey) ?: return
+        executeCoverTask(
+            taskKey = "collection-cover:$cacheKey",
+            onRejected = { collectionCoverLoadTracker.complete(cacheKey, requestId) }
+        ) {
             if (closed) {
-                collectionCoverLoadTracker.complete(cacheKey)
+                collectionCoverLoadTracker.complete(cacheKey, requestId)
                 return@executeCoverTask
             }
 
@@ -380,22 +419,33 @@ class FileListAdapter(
                 }
             }.getOrNull()
 
-            handleCollectionCoverResult(cacheKey, cover)
+            handleCollectionCoverResult(cacheKey, requestId, cover)
         }
+    }
+
+    private fun cancelCollectionCoverLoad(cacheKey: String, imageView: ImageView) {
+        if (collectionCoverLoadTracker.unregister(cacheKey, imageView) == null) return
+        archiveCoverTasks.cancel("collection-cover:$cacheKey")
+    }
+
+    private fun cancelCollectionSourceLoad(cacheKey: String?) {
+        if (cacheKey?.startsWith("collection:") != true) return
+        if (collectionSourceRequestIds.remove(cacheKey) == null) return
+        archiveCoverTasks.cancel("collection-sources:$cacheKey")
     }
 
     private fun handleCollectionCoverResult(
         cacheKey: String,
+        requestId: Long,
         cover: Bitmap?
     ) {
+        val waitingViews = collectionCoverLoadTracker.complete(cacheKey, requestId) ?: return
         if (cover == null) {
             failedArchiveCovers.add(cacheKey)
-            collectionCoverLoadTracker.complete(cacheKey)
             return
         }
 
         archiveCoverCache.put(cacheKey, cover)
-        val waitingViews = collectionCoverLoadTracker.complete(cacheKey)
         if (closed) {
             return
         }
@@ -455,11 +505,14 @@ class FileListAdapter(
             return
         }
 
-        executeCoverTask {
+        executeCoverTask(
+            taskKey = "archive-cover:$cacheKey",
+            onRejected = { loadingArchiveCovers.remove(cacheKey) }
+        ) {
             val cover = runCatching {
                 val firstImageEntry = ComicArchive.imageEntries(file).firstOrNull()
                 firstImageEntry?.let {
-                    ComicArchive.decodeImage(file, it, ARCHIVE_COVER_MAX_SIZE)
+                    ComicArchive.decodeImage(file, it, ARCHIVE_COVER_MAX_SIZE, context.cacheDir)
                 }
             }.getOrNull()
 
@@ -484,11 +537,11 @@ class FileListAdapter(
 
     fun close() {
         closed = true
-        archiveCoverExecutor.shutdownNow()
+        archiveCoverTasks.close()
         loadingArchiveCovers.clear()
         collectionCoverLoadTracker.clear()
         failedArchiveCovers.clear()
-        loadingCollectionSources.clear()
+        collectionSourceRequestIds.clear()
         failedCollectionSources.clear()
         synchronized(collectionRefreshLock) {
             pendingFullListRefresh = false
@@ -496,17 +549,13 @@ class FileListAdapter(
         }
     }
 
-    private fun executeCoverTask(block: () -> Unit) {
-        if (closed) {
-            return
-        }
-
-        runCatching {
-            archiveCoverExecutor.execute {
-                if (!closed) {
-                    block()
-                }
-            }
+    private fun executeCoverTask(
+        taskKey: String,
+        onRejected: () -> Unit = {},
+        block: () -> Unit
+    ) {
+        archiveCoverTasks.execute(taskKey, onRejected) {
+            if (!closed) block()
         }
     }
 
@@ -673,6 +722,7 @@ class FileListAdapter(
         imgIcon: ImageView,
         collectionCoverList: RecyclerView
     ) {
+        cancelCollectionSourceLoad(iconContainer.tag as? String)
         collectionScrollState.save(iconContainer.tag as? String, collectionCoverList)
         collectionCoverList.clearOnScrollListeners()
         collectionCoverList.tag = null

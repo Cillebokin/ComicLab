@@ -96,19 +96,18 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun classify_matchesMarkerAgainstExistingCategoryUsingMigrationContainmentDirection() {
+    fun classify_keepsPrefixMarkersInSeparateFolders() {
         val root = Files.createTempDirectory("comiclab-classify-marker-contains").toFile()
         try {
-            File(root, "[ABCD]long.zip").writeText("long")
-            File(root, "[ABC]short.zip").writeText("short")
+            File(root, "A[ABCD]long.zip").writeText("long")
+            File(root, "Z[ABC]short.zip").writeText("short")
 
             val result = ComicClassifier.classify(root, "") {}
             val output = result.outputDirectory ?: error("Expected a classification output")
 
             assertEquals(2, result.copiedCount)
-            assertTrue(File(output, "ABCD/[ABCD]long.zip").isFile)
-            assertTrue(File(output, "ABCD/[ABC]short.zip").isFile)
-            assertFalse(File(output, "ABC").exists())
+            assertTrue(File(output, "ABCD/A[ABCD]long.zip").isFile)
+            assertTrue(File(output, "ABC/Z[ABC]short.zip").isFile)
         } finally {
             root.deleteRecursively()
         }

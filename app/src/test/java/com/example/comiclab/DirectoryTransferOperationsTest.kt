@@ -26,6 +26,60 @@ class DirectoryTransferOperationsTest {
     }
 
     @Test
+    fun suggestedNewFolderNameUsesBaseNameThenFirstAvailableNumber() {
+        val parent = temporaryFolder.newFolder("parent")
+
+        assertEquals("New Folder", DirectoryTransferOperations.suggestedNewFolderName(parent))
+
+        File(parent, "New Folder").mkdir()
+        File(parent, "New Folder (1)").writeText("occupied by a file")
+        File(parent, "New Folder (3)").mkdir()
+
+        assertEquals("New Folder (2)", DirectoryTransferOperations.suggestedNewFolderName(parent))
+    }
+
+    @Test
+    fun createDirectoryCreatesTrimmedNameInParent() {
+        val parent = temporaryFolder.newFolder("parent")
+
+        val result = DirectoryTransferOperations.createDirectory(parent, " New Folder ")
+
+        assertEquals(DirectoryTransferOperations.CreateDirectoryResult.SUCCESS, result)
+        assertTrue(File(parent, "New Folder").isDirectory)
+    }
+
+    @Test
+    fun createDirectoryRejectsEmptyName() {
+        val parent = temporaryFolder.newFolder("parent")
+
+        assertEquals(
+            DirectoryTransferOperations.CreateDirectoryResult.EMPTY_NAME,
+            DirectoryTransferOperations.createDirectory(parent, "   ")
+        )
+    }
+
+    @Test
+    fun createDirectoryRejectsInvalidName() {
+        val parent = temporaryFolder.newFolder("parent")
+
+        assertEquals(
+            DirectoryTransferOperations.CreateDirectoryResult.INVALID_NAME,
+            DirectoryTransferOperations.createDirectory(parent, "Bad:name")
+        )
+    }
+
+    @Test
+    fun createDirectoryRejectsExistingPath() {
+        val parent = temporaryFolder.newFolder("parent")
+        File(parent, "Existing").mkdir()
+
+        assertEquals(
+            DirectoryTransferOperations.CreateDirectoryResult.TARGET_EXISTS,
+            DirectoryTransferOperations.createDirectory(parent, "Existing")
+        )
+    }
+
+    @Test
     fun targetDirectoryNameRejectsEmptyOrPathLikeNames() {
         assertEquals(null, DirectoryTransferOperations.targetDirectoryName("  "))
         assertEquals(null, DirectoryTransferOperations.targetDirectoryName("../Other"))
@@ -138,6 +192,59 @@ class DirectoryTransferOperationsTest {
     }
 
     @Test
+    fun targetCreatedDuringCopyIsNotOverwrittenAndStagingDirectoryIsRemoved() {
+        val source = temporaryFolder.newFolder("racing-source").apply {
+            File(this, "chapter.cbz").writeText("source data")
+        }
+        val destination = temporaryFolder.newFolder("racing-destination")
+        val target = File(destination, "Manga")
+        var targetCreated = false
+
+        val result = DirectoryTransferOperations.transfer(
+            sourceDirectory = source,
+            destinationDirectory = destination,
+            targetName = target.name,
+            moveSource = false
+        ) { progress ->
+            if (!targetCreated && progress.phase == FileOperationProgress.Phase.COPYING &&
+                progress.completedItems == progress.totalItems && progress.totalItems > 0
+            ) {
+                target.mkdir()
+                File(target, "sentinel.txt").writeText("concurrent target")
+                targetCreated = true
+            }
+        }
+
+        assertEquals(DirectoryTransferOperations.Result.TARGET_EXISTS, result)
+        assertTrue(File(source, "chapter.cbz").isFile)
+        assertEquals("concurrent target", File(target, "sentinel.txt").readText())
+        assertEquals(listOf("Manga"), destination.list()?.toList())
+    }
+
+    @Test
+    fun cutSourceDeletionFailureKeepsCompleteTargetAndRemainingSourceDirectory() {
+        val sourcePath = temporaryFolder.newFolder("undeletable-source").apply {
+            File(this, "nested").mkdir()
+            File(this, "nested/chapter.cbz").writeText("chapter data")
+        }
+        val source = NonDeletableDirectory(sourcePath.path)
+        val destination = temporaryFolder.newFolder("undeletable-destination")
+        val target = File(destination, "Manga")
+
+        val result = DirectoryTransferOperations.transfer(
+            sourceDirectory = source,
+            destinationDirectory = destination,
+            targetName = target.name,
+            moveSource = true
+        )
+
+        assertEquals(DirectoryTransferOperations.Result.SOURCE_DELETE_FAILED, result)
+        assertTrue(sourcePath.isDirectory)
+        assertTrue(sourcePath.listFiles().orEmpty().isEmpty())
+        assertEquals("chapter data", File(target, "nested/chapter.cbz").readText())
+    }
+
+    @Test
     fun pasteIntoSourceOrItsDescendantIsRejected() {
         val source = temporaryFolder.newFolder("source")
         val destinations = listOf(source, File(source, "nested").apply { mkdir() })
@@ -153,5 +260,31 @@ class DirectoryTransferOperationsTest {
             assertEquals(DirectoryTransferOperations.Result.DESTINATION_INSIDE_SOURCE, result)
             assertFalse(File(destination, "copy").exists())
         }
+    }
+
+    @Test
+    fun interruptedCopyLeavesSourceAndDoesNotPublishPartialTargetOrStagingDirectory() {
+        val source = temporaryFolder.newFolder("interrupted-source").apply {
+            File(this, "nested").mkdirs()
+            File(this, "nested/chapter.cbz").writeBytes(ByteArray(1024 * 1024) { (it % 251).toByte() })
+        }
+        val destination = temporaryFolder.newFolder("interrupted-destination")
+        val target = File(destination, "copy")
+
+        Thread.currentThread().interrupt()
+        val result = try {
+            DirectoryTransferOperations.transfer(source, destination, target.name, moveSource = true)
+        } finally {
+            Thread.interrupted()
+        }
+
+        assertEquals(DirectoryTransferOperations.Result.FAILED, result)
+        assertTrue(File(source, "nested/chapter.cbz").isFile)
+        assertFalse(target.exists())
+        assertTrue(destination.list().orEmpty().isEmpty())
+    }
+
+    private class NonDeletableDirectory(path: String) : File(path) {
+        override fun delete(): Boolean = false
     }
 }

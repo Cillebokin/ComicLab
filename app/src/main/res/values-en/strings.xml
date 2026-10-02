@@ -11,6 +11,7 @@
     <string name="parent_directory">Parent folder</string>
     <string name="unknown_item">Unknown item</string>
     <string name="item_count">%1$d items</string>
+    <string name="item_count_pending">Calculating…</string>
     <string name="file_item">File</string>
     <string name="collection_cover_accessibility">%1$s, cover %2$d of %3$d. Tap to open the bookcase folder</string>
     <string name="directory_item">Folder</string>
@@ -219,6 +220,12 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="rename_directory_name_exists">A folder with this name already exists</string>
     <string name="rename_directory_name_success">Folder renamed</string>
     <string name="rename_directory_name_failed">Could not rename folder</string>
+    <string name="create_directory_name">New folder</string>
+    <string name="create_directory_name_hint">Folder name</string>
+    <string name="create_directory_name_empty">Folder name cannot be empty</string>
+    <string name="create_directory_name_invalid">Folder name contains invalid characters</string>
+    <string name="create_directory_name_exists">A file or folder with this name already exists</string>
+    <string name="create_directory_name_failed">Could not create folder</string>
     <string name="delete_file">Delete file</string>
     <string name="delete_file_title">Delete file</string>
     <string name="delete_file_message">Delete this file?\n(This cannot be undone!)</string>

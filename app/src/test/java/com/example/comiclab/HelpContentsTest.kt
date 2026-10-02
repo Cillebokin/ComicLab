@@ -141,7 +141,7 @@ class HelpContentsTest {
         assertTrue("English help pages directory should exist", englishPagesDirectory.isDirectory)
 
         HelpArticles.all.forEach { article ->
-            val htmlFile = File(englishPagesDirectory, "${article.id}.html")
+            val htmlFile = File(englishPagesDirectory, "help_${article.id}.html")
             assertTrue("English help page should exist for ${article.id}", htmlFile.isFile)
 
             val html = htmlFile.readText()

@@ -56,4 +56,23 @@ class DirectoryFileTreeTest {
         })
         assertEquals(66, progress.last().completedItems)
     }
+
+    @Test
+    fun interruptedRecursiveDeleteLeavesTheTreeUntouched() {
+        val directory = temporaryFolder.newFolder("cancelled-delete").apply {
+            File(this, "nested").mkdir()
+            File(this, "nested/chapter.cbz").writeText("chapter")
+        }
+
+        Thread.currentThread().interrupt()
+        val deleted = try {
+            DirectoryFileTree.deleteRecursively(directory)
+        } finally {
+            Thread.interrupted()
+        }
+
+        assertFalse(deleted)
+        assertTrue(directory.isDirectory)
+        assertTrue(File(directory, "nested/chapter.cbz").isFile)
+    }
 }

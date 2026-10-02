@@ -36,9 +36,13 @@ import com.example.comiclab.ebook.ReaderFileDetector
 import com.example.comiclab.ebook.ReaderFileType
 import java.io.File
 import java.text.SimpleDateFormat
+import java.util.Collections
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.Executors
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 class MainActivity : AppCompatActivity() {
@@ -62,18 +66,29 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnFavoriteComics: ImageButton
     private lateinit var btnFavoritePaths: ImageButton
     private lateinit var btnPasteFile: ImageButton
+    private lateinit var btnCreateTransferDirectory: ImageButton
     private lateinit var btnExitFileTransfer: ImageButton
     private lateinit var btnTransferParent: ImageButton
     private lateinit var readingHistoryScrim: View
     private lateinit var fileListAdapter: FileListAdapter
 
     private val fileItems = mutableListOf<FileItem>()
-    private val directoryLoadExecutor = Executors.newSingleThreadExecutor()
+    private val directoryLoadExecutor = ThreadPoolExecutor(
+        1,
+        1,
+        0L,
+        TimeUnit.MILLISECONDS,
+        LinkedBlockingQueue()
+    )
+    private val latestDirectoryLoadDispatcher = LatestTaskDispatcher(directoryLoadExecutor)
+    private val directoryChildCountExecutor = Executors.newSingleThreadExecutor()
+    private val directoryChildCountCache = DirectoryChildCountCache()
+    private val directoryScrollStateCache = DirectoryScrollStateCache()
+    private val pendingDirectoryChildCountPaths = Collections.synchronizedSet(mutableSetOf<String>())
     private val classifyExecutor = Executors.newSingleThreadExecutor()
     private val fileTransferExecutor = Executors.newSingleThreadExecutor()
     private val directoryLoadGeneration = AtomicInteger(0)
     private val classifyGeneration = AtomicInteger(0)
-
     private var readingHistoryPopupWindow: PopupWindow? = null
     private var readingHistoryAdapter: ReadingHistoryAdapter? = null
     private var favoriteComicsPopupWindow: PopupWindow? = null
@@ -123,6 +138,7 @@ class MainActivity : AppCompatActivity() {
         btnFavoriteComics = findViewById(R.id.btnFavoriteComics)
         btnFavoritePaths = findViewById(R.id.btnFavoritePaths)
         btnPasteFile = findViewById(R.id.btnPasteFile)
+        btnCreateTransferDirectory = findViewById(R.id.btnCreateTransferDirectory)
         btnExitFileTransfer = findViewById(R.id.btnExitFileTransfer)
         btnTransferParent = findViewById(R.id.btnTransferParent)
         readingHistoryScrim = findViewById(R.id.readingHistoryScrim)
@@ -138,7 +154,8 @@ class MainActivity : AppCompatActivity() {
             onDirectoryLongClick = { directory ->
                 showDirectoryMenu(directory)
                 clearFileListTouchState()
-            }
+            },
+            onDirectoryChildCountRequested = ::requestDirectoryChildCount
         )
         listView.adapter = fileListAdapter
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -148,15 +165,19 @@ class MainActivity : AppCompatActivity() {
         })
 
         btnBack.setOnClickListener {
-            if (pendingFileTransfer == null) {
-                goStorageRoot()
-            } else if (!isFileTransferInProgress) {
+            if (!isFileTransferInProgress) {
                 goParent()
             }
         }
 
         btnPasteFile.setOnClickListener {
             pastePendingFile()
+        }
+
+        btnCreateTransferDirectory.setOnClickListener {
+            if (pendingFileTransfer != null && !isFileTransferInProgress) {
+                showCreateDirectoryDialog()
+            }
         }
 
         btnExitFileTransfer.setOnClickListener {
@@ -257,6 +278,9 @@ class MainActivity : AppCompatActivity() {
 
         pendingCenterTargetPath = intent.getStringExtra(EXTRA_CENTER_TARGET_PATH)
         val restoredScrollState = savedInstanceState?.readFileListScrollState()
+        directoryScrollStateCache.restore(
+            savedInstanceState?.readFileListScrollStates().orEmpty()
+        )
         if (!showStoragePermissionNoticeIfNeeded()) {
             initializeBrowserIfPermitted(restoredScrollState)
             skipNextResumeDirectoryReload = true
@@ -298,7 +322,16 @@ class MainActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        captureFileListScrollState()?.writeTo(outState)
+        captureFileListScrollState()?.let { scrollState ->
+            directoryScrollStateCache.save(scrollState)
+            scrollState.writeTo(outState)
+        }
+        outState.putParcelableArrayList(
+            KEY_FILE_LIST_SCROLL_STATES,
+            ArrayList(directoryScrollStateCache.snapshot().map { scrollState ->
+                Bundle().apply { scrollState.writeTo(this) }
+            })
+        )
         pendingFileTransfer?.let { transfer ->
             outState.putString(KEY_PENDING_FILE_TRANSFER_PATH, transfer.sourcePath)
             outState.putString(KEY_PENDING_FILE_TRANSFER_MODE, transfer.mode.name)
@@ -310,6 +343,8 @@ class MainActivity : AppCompatActivity() {
         directoryLoadGeneration.incrementAndGet()
         classifyGeneration.incrementAndGet()
         directoryLoadExecutor.shutdownNow()
+        directoryChildCountExecutor.shutdownNow()
+        pendingDirectoryChildCountPaths.clear()
         classifyExecutor.shutdownNow()
         fileTransferExecutor.shutdownNow()
         fileListAdapter.close()
@@ -718,8 +753,13 @@ class MainActivity : AppCompatActivity() {
 
         val current = File(currentPath)
         val pathToCenter = current.absolutePath
-        setCurrentPath(current.parentFile?.absolutePath ?: STORAGE_ROOT_PATH)
-        loadCurrentDirectory(pathToCenter)
+        val parentPath = current.parentFile?.absolutePath ?: STORAGE_ROOT_PATH
+        val parentScrollState = directoryScrollStateCache.get(parentPath)
+        setCurrentPath(parentPath)
+        loadCurrentDirectory(
+            pathToCenter = if (parentScrollState == null) pathToCenter else null,
+            scrollStateToRestore = parentScrollState
+        )
     }
 
     private fun goStorageRoot() {
@@ -756,6 +796,7 @@ class MainActivity : AppCompatActivity() {
         pathToCenter: String? = null,
         scrollStateToRestore: FileListScrollState? = null
     ) {
+        val generation = directoryLoadGeneration.incrementAndGet()
         if (!Environment.isExternalStorageManager()) {
             etPath.setText(R.string.storage_permission_required)
             fileItems.clear()
@@ -764,20 +805,31 @@ class MainActivity : AppCompatActivity() {
         }
 
         val requestedPath = currentPath
-        val generation = directoryLoadGeneration.incrementAndGet()
-        directoryLoadExecutor.execute {
+        latestDirectoryLoadDispatcher.executeLatest {
+            if (generation != directoryLoadGeneration.get() || isFinishing || isDestroyed) {
+                return@executeLatest
+            }
             val directory = File(requestedPath).takeIf { it.isDirectory } ?: File(STORAGE_ROOT_PATH)
             val resolvedPath = directory.absolutePath
 
-            val files = try {
+            val listedFiles = try {
                 directory.listFiles()
                     ?.filter { !it.name.startsWith(".") }
-                    ?.let { sortFiles(it) }
                     ?: emptyList()
             } catch (_: SecurityException) {
                 emptyList()
             }
-
+            if (generation != directoryLoadGeneration.get() || isFinishing || isDestroyed) {
+                return@executeLatest
+            }
+            val files = try {
+                sortFiles(listedFiles)
+            } catch (_: SecurityException) {
+                emptyList()
+            }
+            if (generation != directoryLoadGeneration.get() || isFinishing || isDestroyed) {
+                return@executeLatest
+            }
             val items = mutableListOf<FileItem>()
             if (directory.absolutePath != File(STORAGE_ROOT_PATH).absolutePath) {
                 items.add(FileItem(isParent = true))
@@ -786,7 +838,11 @@ class MainActivity : AppCompatActivity() {
                 items.add(
                     FileItem(
                         file = file,
-                        childCount = if (file.isDirectory) directoryChildCount(file) else null
+                        childCount = if (file.isDirectory) {
+                            directoryChildCountCache.get(file.absolutePath, file.lastModified())
+                        } else {
+                            null
+                        }
                     )
                 )
             }
@@ -815,12 +871,66 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun directoryChildCount(directory: File): Int {
-        return try {
-            directory.listFiles()?.size ?: 0
-        } catch (_: SecurityException) {
-            0
+    private fun requestDirectoryChildCount(directory: File) {
+        if (isFinishing || isDestroyed) {
+            return
         }
+
+        val directoryPath = directory.absolutePath
+        if (!pendingDirectoryChildCountPaths.add(directoryPath)) {
+            return
+        }
+
+        try {
+            directoryChildCountExecutor.execute {
+                val lastModifiedBefore = directory.lastModified()
+                val lookup = directoryChildCountCache.lookup(directoryPath, lastModifiedBefore)
+                val childCount = lookup.childCount ?: try {
+                    directory.listFiles()?.size
+                } catch (_: SecurityException) {
+                    null
+                }
+                val lastModifiedAfter = directory.lastModified()
+                if (lookup.childCount == null && childCount != null &&
+                    lastModifiedBefore == lastModifiedAfter
+                ) {
+                    directoryChildCountCache.putIfUnchangedSince(
+                        directoryPath,
+                        lastModifiedAfter,
+                        childCount,
+                        lookup.generation
+                    )
+                }
+
+                runOnUiThread {
+                    pendingDirectoryChildCountPaths.remove(directoryPath)
+                    if (isFinishing || isDestroyed ||
+                        directory.parentFile?.absolutePath != currentPath
+                    ) {
+                        return@runOnUiThread
+                    }
+                    if (childCount != null &&
+                        (lastModifiedBefore != lastModifiedAfter ||
+                            directory.lastModified() != lastModifiedAfter ||
+                            directoryChildCountCache.generation() != lookup.generation)
+                    ) {
+                        requestDirectoryChildCount(directory)
+                        return@runOnUiThread
+                    }
+                    fileListAdapter.updateDirectoryChildCount(
+                        directory,
+                        childCount ?: 0,
+                        listView
+                    )
+                }
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            pendingDirectoryChildCountPaths.remove(directoryPath)
+        }
+    }
+
+    private fun invalidateDirectoryChildCount(directory: File?) {
+        directory?.let { directoryChildCountCache.invalidate(it.absolutePath) }
     }
 
     private fun centerFileItemIfPresent(path: String) {
@@ -906,6 +1016,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun showClassifyMenu() {
         val items = listOf(
+            RoundedPopupMenuItem(getString(R.string.create_directory_name)) {
+                showCreateDirectoryDialog()
+            },
             RoundedPopupMenuItem(getString(R.string.classify_comics)) {
                 confirmClassifyCurrentDirectory()
             },
@@ -921,6 +1034,54 @@ class MainActivity : AppCompatActivity() {
         )
 
         showRoundedPopupMenu(btnClassify, items, widthDp = 252)
+    }
+
+    private fun showCreateDirectoryDialog() {
+        val parentDirectory = File(currentPath)
+        if (!parentDirectory.isDirectory) {
+            showMessage(getString(R.string.message_invalid_directory))
+            return
+        }
+
+        val input = EditText(this).apply {
+            setSingleLine(true)
+            hint = getString(R.string.create_directory_name_hint)
+            setText(DirectoryTransferOperations.suggestedNewFolderName(parentDirectory))
+            setSelection(text.length)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.create_directory_name)
+            .setView(input)
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                createDirectory(parentDirectory, input.text?.toString().orEmpty())
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .showRounded()
+    }
+
+    private fun createDirectory(parentDirectory: File, requestedName: String) {
+        when (DirectoryTransferOperations.createDirectory(parentDirectory, requestedName)) {
+            DirectoryTransferOperations.CreateDirectoryResult.SUCCESS -> {
+                invalidateDirectoryChildCount(parentDirectory)
+                loadCurrentDirectory(scrollStateToRestore = captureFileListScrollState())
+            }
+
+            DirectoryTransferOperations.CreateDirectoryResult.PARENT_NOT_DIRECTORY ->
+                showMessage(getString(R.string.message_invalid_directory))
+
+            DirectoryTransferOperations.CreateDirectoryResult.EMPTY_NAME ->
+                showMessage(getString(R.string.create_directory_name_empty))
+
+            DirectoryTransferOperations.CreateDirectoryResult.INVALID_NAME ->
+                showMessage(getString(R.string.create_directory_name_invalid))
+
+            DirectoryTransferOperations.CreateDirectoryResult.TARGET_EXISTS ->
+                showMessage(getString(R.string.create_directory_name_exists))
+
+            DirectoryTransferOperations.CreateDirectoryResult.FAILED ->
+                showMessage(getString(R.string.create_directory_name_failed))
+        }
     }
 
     private fun startComicMigration() {
@@ -2183,48 +2344,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun sortFiles(files: List<File>): List<File> {
-        val mode = currentSortMode()
-        return files.sortedWith(Comparator { left, right ->
-            val typeComparison = left.fileTypeOrder().compareTo(right.fileTypeOrder())
-            if (typeComparison != 0) {
-                return@Comparator typeComparison
-            }
-
-            when (mode) {
-                FileSortMode.NAME_ASC -> compareFileNames(left, right)
-                FileSortMode.NAME_DESC -> compareFileNames(right, left)
-                FileSortMode.MODIFIED_DESC -> compareByModifiedTime(right, left)
-                FileSortMode.MODIFIED_ASC -> compareByModifiedTime(left, right)
-                FileSortMode.SIZE_DESC -> compareBySize(right, left)
-                FileSortMode.SIZE_ASC -> compareBySize(left, right)
-            }
-        })
-    }
-
-    private fun compareFileNames(left: File, right: File): Int {
-        return left.name.lowercase().compareTo(right.name.lowercase())
-            .takeIf { it != 0 }
-            ?: left.name.compareTo(right.name)
-    }
-
-    private fun compareByModifiedTime(left: File, right: File): Int {
-        return left.lastModified().compareTo(right.lastModified())
-            .takeIf { it != 0 }
-            ?: compareFileNames(left, right)
-    }
-
-    private fun compareBySize(left: File, right: File): Int {
-        return left.fileSortSize().compareTo(right.fileSortSize())
-            .takeIf { it != 0 }
-            ?: compareFileNames(left, right)
-    }
-
-    private fun File.fileTypeOrder(): Int {
-        return if (isDirectory) 0 else 1
-    }
-
-    private fun File.fileSortSize(): Long {
-        return if (isFile) length() else 0L
+        val order = when (currentSortMode()) {
+            FileSortMode.NAME_ASC -> DirectorySortOrder.NAME_ASC
+            FileSortMode.NAME_DESC -> DirectorySortOrder.NAME_DESC
+            FileSortMode.MODIFIED_ASC -> DirectorySortOrder.MODIFIED_ASC
+            FileSortMode.MODIFIED_DESC -> DirectorySortOrder.MODIFIED_DESC
+            FileSortMode.SIZE_ASC -> DirectorySortOrder.SIZE_ASC
+            FileSortMode.SIZE_DESC -> DirectorySortOrder.SIZE_DESC
+        }
+        return DirectorySortPolicy.sort(files, order)
     }
 
     private fun currentSortMode(): FileSortMode {
@@ -2529,6 +2657,8 @@ class MainActivity : AppCompatActivity() {
         }
         AppSettings.renameBookcaseDirectory(this, directory, targetDirectory)
 
+        invalidateDirectoryChildCount(parent)
+        invalidateDirectoryChildCount(directory)
         showMessage(getString(R.string.rename_directory_name_success))
         loadCurrentDirectory(targetDirectory.absolutePath)
     }
@@ -2608,6 +2738,7 @@ class MainActivity : AppCompatActivity() {
         btnOptions.alpha = if (isActive) 0.38f else 1f
 
         btnPasteFile.visibility = if (isActive) View.VISIBLE else View.GONE
+        btnCreateTransferDirectory.visibility = if (isActive) View.VISIBLE else View.GONE
         btnExitFileTransfer.visibility = if (isActive) View.VISIBLE else View.GONE
         btnTransferParent.visibility = if (isActive) View.VISIBLE else View.GONE
         val transfer = pendingFileTransfer
@@ -2623,6 +2754,7 @@ class MainActivity : AppCompatActivity() {
 
         val canInteract = isActive && !isFileTransferInProgress
         btnPasteFile.isEnabled = canInteract
+        btnCreateTransferDirectory.isEnabled = canInteract
         btnExitFileTransfer.isEnabled = canInteract
         btnTransferParent.isEnabled = canInteract
         listView.isEnabled = !isFileTransferInProgress
@@ -2933,6 +3065,16 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
+            if (result == FileTransferOperations.Result.SUCCESS ||
+                result == FileTransferOperations.Result.SOURCE_DELETE_FAILED
+            ) {
+                invalidateDirectoryChildCount(destinationDirectory)
+                if (result == FileTransferOperations.Result.SUCCESS &&
+                    transfer.mode == FileTransferMode.CUT
+                ) {
+                    invalidateDirectoryChildCount(sourceFile.parentFile)
+                }
+            }
             runOnUiThread {
                 dismissFileOperationProgress(progressViews)
                 if (isDestroyed || isFinishing) {
@@ -3043,6 +3185,17 @@ class MainActivity : AppCompatActivity() {
                         sourceDirectory,
                         targetDirectory
                     )
+                }
+            }
+            if (result == DirectoryTransferOperations.Result.SUCCESS ||
+                result == DirectoryTransferOperations.Result.SOURCE_DELETE_FAILED
+            ) {
+                invalidateDirectoryChildCount(destinationDirectory)
+                if (transfer.mode == FileTransferMode.CUT) {
+                    invalidateDirectoryChildCount(sourceDirectory.parentFile)
+                    if (result == DirectoryTransferOperations.Result.SOURCE_DELETE_FAILED) {
+                        invalidateDirectoryChildCount(sourceDirectory)
+                    }
                 }
             }
             runOnUiThread {
@@ -3281,6 +3434,7 @@ class MainActivity : AppCompatActivity() {
                 if (deleted) {
                     FavoriteComicStore.remove(this, file)
                     ReadingHistoryStore.remove(this, file)
+                    invalidateDirectoryChildCount(File(currentPath))
                     showMessage(getString(R.string.delete_file_success))
                     loadCurrentDirectory(scrollStateToRestore = scrollState)
                 } else {
@@ -3327,9 +3481,12 @@ class MainActivity : AppCompatActivity() {
                 if (deleted) {
                     FavoritePathStore.remove(this, directory)
                     AppSettings.removeBookcaseDirectory(this, directory)
+                    invalidateDirectoryChildCount(File(currentPath))
+                    invalidateDirectoryChildCount(directory)
                     showMessage(getString(R.string.delete_directory_success))
                     loadCurrentDirectory(scrollStateToRestore = scrollState)
                 } else {
+                    invalidateDirectoryChildCount(directory)
                     showMessage(getString(R.string.delete_directory_failed))
                 }
             }
@@ -3405,6 +3562,7 @@ class MainActivity : AppCompatActivity() {
             FavoriteComicStore.record(this, targetFile)
         }
 
+        invalidateDirectoryChildCount(parent)
         showMessage(getString(R.string.rename_file_name_success))
         loadCurrentDirectory(targetFile.absolutePath)
     }
@@ -3510,6 +3668,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setCurrentPath(path: String) {
+        captureFileListScrollState()?.let(directoryScrollStateCache::save)
         currentPath = File(path).absolutePath
         saveCurrentPath()
     }
@@ -3547,20 +3706,19 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private data class FileListScrollState(
-        val directoryPath: String,
-        val firstVisiblePosition: Int,
-        val firstVisibleTop: Int,
-        val anchorPath: String?,
-        val anchorIsParent: Boolean
-    ) {
-        fun writeTo(outState: Bundle) {
-            outState.putString(KEY_FILE_LIST_SCROLL_DIRECTORY_PATH, directoryPath)
-            outState.putInt(KEY_FILE_LIST_SCROLL_POSITION, firstVisiblePosition)
-            outState.putInt(KEY_FILE_LIST_SCROLL_TOP, firstVisibleTop)
-            outState.putString(KEY_FILE_LIST_SCROLL_ANCHOR_PATH, anchorPath)
-            outState.putBoolean(KEY_FILE_LIST_SCROLL_ANCHOR_IS_PARENT, anchorIsParent)
-        }
+    @Suppress("DEPRECATION")
+    private fun Bundle.readFileListScrollStates(): List<FileListScrollState> {
+        return getParcelableArrayList<Bundle>(KEY_FILE_LIST_SCROLL_STATES)
+            .orEmpty()
+            .mapNotNull { it.readFileListScrollState() }
+    }
+
+    private fun FileListScrollState.writeTo(outState: Bundle) {
+        outState.putString(KEY_FILE_LIST_SCROLL_DIRECTORY_PATH, directoryPath)
+        outState.putInt(KEY_FILE_LIST_SCROLL_POSITION, firstVisiblePosition)
+        outState.putInt(KEY_FILE_LIST_SCROLL_TOP, firstVisibleTop)
+        outState.putString(KEY_FILE_LIST_SCROLL_ANCHOR_PATH, anchorPath)
+        outState.putBoolean(KEY_FILE_LIST_SCROLL_ANCHOR_IS_PARENT, anchorIsParent)
     }
 
     private data class RoundedPopupMenuItem(
@@ -3651,6 +3809,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_FILE_LIST_SCROLL_TOP = "file_list_scroll_top"
         private const val KEY_FILE_LIST_SCROLL_ANCHOR_PATH = "file_list_scroll_anchor_path"
         private const val KEY_FILE_LIST_SCROLL_ANCHOR_IS_PARENT = "file_list_scroll_anchor_is_parent"
+        private const val KEY_FILE_LIST_SCROLL_STATES = "file_list_scroll_states"
         private const val KEY_PENDING_FILE_TRANSFER_PATH = "pending_file_transfer_path"
         private const val KEY_PENDING_FILE_TRANSFER_MODE = "pending_file_transfer_mode"
         private const val KEY_PENDING_FILE_TRANSFER_IS_DIRECTORY = "pending_file_transfer_is_directory"

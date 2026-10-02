@@ -18,6 +18,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Keep test builds separate from a differently signed installed app.
+            applicationIdSuffix = ".e2e"
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -37,6 +41,22 @@ android {
         abortOnError = false
         checkReleaseBuilds = false
     }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.jvmArgs(
+                "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                "--add-opens=java.base/java.util=ALL-UNNAMED",
+                "--add-opens=java.base/java.io=ALL-UNNAMED",
+                "--add-opens=java.base/java.net=ALL-UNNAMED",
+                "--add-opens=java.base/java.security=ALL-UNNAMED",
+                "--add-opens=java.base/java.text=ALL-UNNAMED",
+                "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",
+                "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED",
+                "--add-opens=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED"
+            )
+        }
+    }
 }
 
 dependencies {
@@ -49,6 +69,7 @@ dependencies {
     implementation(libs.sevenzipjbinding.android)
     implementation(libs.subsampling.scale.image.view)
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
     testImplementation("org.json:json:20231013")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

@@ -2,10 +2,29 @@ package com.example.comiclab.ebook.mobi
 
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class MobiParserTest {
+
+    @Test
+    fun parseRejectsMissingEmptyAndTruncatedFilesWithSpecificErrors() {
+        val root = Files.createTempDirectory("comiclab-mobi-invalid-input").toFile()
+        try {
+            val missing = File(root, "missing.mobi")
+            val empty = File(root, "empty.mobi").apply { createNewFile() }
+            val truncated = File(root, "truncated.mobi").apply { writeText("not a complete Palm database") }
+
+            assertParseError(MobiParseError.INVALID_FILE, missing)
+            assertParseError(MobiParseError.INVALID_FILE, empty)
+            assertParseError(MobiParseError.TRUNCATED_FILE, truncated)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 
     @Test
     fun stripsMultibyteTrailingDataBeforePalmDocDecode() {
@@ -34,6 +53,38 @@ class MobiParserTest {
         }
     }
 
+    @Test
+    fun mobiSessionReadsOnlyImageRecordsAndStopsOpeningResourcesAfterClose() {
+        val text = "chapter".toByteArray(StandardCharsets.US_ASCII)
+        val image = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 1, 2, 3)
+        val header = ByteArray(280).apply {
+            putUnsignedShort(0, 1)
+            putUnsignedInt(4, text.size)
+            putUnsignedShort(8, 1)
+            writeAscii(16, "MOBI")
+            putUnsignedInt(20, 264)
+            putUnsignedInt(28, 65001)
+            putUnsignedInt(36, 5)
+            putUnsignedInt(108, 2)
+        }
+        val file = File.createTempFile("comiclab-mobi-session", ".mobi")
+        try {
+            file.writeBytes(buildPalmDb(listOf(header, text, image)))
+
+            val session = MobiBookSession.open(file, "untitled")
+            val resourceId = session.book.resources.single().id
+
+            assertEquals("chapter", session.book.chapters.single().html.removePrefix("<p>").removeSuffix("</p>"))
+            assertEquals(image.toList(), session.openResource(resourceId)?.use { it.readBytes().toList() })
+            assertEquals(null, session.openResource("missing"))
+            session.close()
+            assertTrue(session.isClosed())
+            assertEquals(null, session.openResource(resourceId))
+        } finally {
+            file.delete()
+        }
+    }
+
     private fun buildPalmDb(records: List<ByteArray>): ByteArray {
         val tableEnd = 78 + records.size * 8
         val offsets = records.runningFold(tableEnd) { offset, record ->
@@ -49,6 +100,15 @@ class MobiParserTest {
             offset + record.size
         }
         return output
+    }
+
+    private fun assertParseError(expected: MobiParseError, file: File) {
+        try {
+            MobiParser().parse(file)
+            fail("Expected ${expected.name} for ${file.name}")
+        } catch (error: MobiParseException) {
+            assertEquals(expected, error.reason)
+        }
     }
 
     private fun ByteArray.writeAscii(offset: Int, value: String) {

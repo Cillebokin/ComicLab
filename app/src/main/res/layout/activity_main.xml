@@ -206,11 +206,23 @@
             android:layout_height="28dp"
             android:layout_marginStart="16dp"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/go_storage_root"
+            android:contentDescription="@string/back"
             android:padding="4dp"
             android:scaleType="centerInside"
             android:src="@drawable/png_back_icon"
             android:tint="@color/comiclab_icon" />
+
+        <ImageButton
+            android:id="@+id/btnCreateTransferDirectory"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginStart="16dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/create_directory_name"
+            android:padding="4dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_lucide_folder"
+            android:visibility="gone" />
 
         <ImageButton
             android:id="@+id/btnPasteFile"

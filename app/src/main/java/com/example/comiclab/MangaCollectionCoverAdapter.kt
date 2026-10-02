@@ -18,7 +18,8 @@ class MangaCollectionCoverAdapter(
     private val sources: List<MangaCollectionCoverSource>,
     private val bindCover: (MangaCollectionCoverSource, ImageView) -> Unit,
     private val onCoverClick: (() -> Unit)? = null,
-    private val onCoverLongClick: (() -> Boolean)? = null
+    private val onCoverLongClick: (() -> Boolean)? = null,
+    private val onCoverRecycled: (cacheKey: String, imageView: ImageView) -> Unit = { _, _ -> }
 ) : RecyclerView.Adapter<MangaCollectionCoverAdapter.CoverViewHolder>() {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CoverViewHolder {
@@ -68,6 +69,9 @@ class MangaCollectionCoverAdapter(
     }
 
     override fun onViewRecycled(holder: CoverViewHolder) {
+        (holder.imageView.tag as? String)?.let { cacheKey ->
+            onCoverRecycled(cacheKey, holder.imageView)
+        }
         holder.imageView.tag = null
         holder.imageView.setImageDrawable(null)
         super.onViewRecycled(holder)
@@ -375,25 +379,58 @@ internal object BookcaseRowViewTypes {
 
 internal class MangaCollectionCoverLoadTracker<T : Any> {
 
+    private data class Pending<T : Any>(
+        val requestId: Long,
+        val targets: MutableList<java.lang.ref.WeakReference<T>>
+    )
+
     private val lock = Any()
-    private val waitingTargets = mutableMapOf<String, MutableList<java.lang.ref.WeakReference<T>>>()
+    private val waitingTargets = mutableMapOf<String, Pending<T>>()
+    private var nextRequestId = 0L
 
     fun register(cacheKey: String, target: T): Boolean = synchronized(lock) {
-        val targets = waitingTargets[cacheKey]
-        if (targets == null) {
-            waitingTargets[cacheKey] = mutableListOf(java.lang.ref.WeakReference(target))
+        val pending = waitingTargets[cacheKey]
+        if (pending == null) {
+            waitingTargets[cacheKey] = Pending(
+                requestId = ++nextRequestId,
+                targets = mutableListOf(java.lang.ref.WeakReference(target))
+            )
             return@synchronized true
         }
 
-        targets.removeAll { it.get() == null }
-        if (targets.none { it.get() === target }) {
-            targets.add(java.lang.ref.WeakReference(target))
+        pending.targets.removeAll { it.get() == null }
+        if (pending.targets.none { it.get() === target }) {
+            pending.targets.add(java.lang.ref.WeakReference(target))
         }
         false
     }
 
-    fun complete(cacheKey: String): List<T> = synchronized(lock) {
-        waitingTargets.remove(cacheKey).orEmpty().mapNotNull { it.get() }
+    fun requestId(cacheKey: String): Long? = synchronized(lock) {
+        waitingTargets[cacheKey]?.requestId
+    }
+
+    /** Returns the request id only when removing [target] leaves no live waiters. */
+    fun unregister(cacheKey: String, target: T): Long? = synchronized(lock) {
+        val pending = waitingTargets[cacheKey] ?: return@synchronized null
+        pending.targets.removeAll { reference ->
+            val current = reference.get()
+            current == null || current === target
+        }
+        if (pending.targets.isEmpty()) {
+            waitingTargets.remove(cacheKey)
+            pending.requestId
+        } else {
+            null
+        }
+    }
+
+    fun complete(cacheKey: String, requestId: Long): List<T>? = synchronized(lock) {
+        val pending = waitingTargets[cacheKey]
+        if (pending == null || pending.requestId != requestId) {
+            return@synchronized null
+        }
+        waitingTargets.remove(cacheKey)
+        pending.targets.mapNotNull { it.get() }
     }
 
     fun clear() = synchronized(lock) {

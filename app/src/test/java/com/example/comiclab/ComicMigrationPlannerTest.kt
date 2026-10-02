@@ -221,6 +221,7 @@ class ComicMigrationPlannerTest {
 
             val result = try {
                 ComicMigrationPlanner { file ->
+                    twoFileChecksStarted.countDown()
                     check(twoFileChecksStarted.await(5, TimeUnit.SECONDS)) {
                         "Comic file checks did not run concurrently"
                     }
@@ -605,6 +606,7 @@ class ComicMigrationPlannerTest {
         twoDirectoryReadsStarted: CountDownLatch
     ): File = object : File(directory.path) {
         override fun listFiles(): Array<File>? {
+            twoDirectoryReadsStarted.countDown()
             check(twoDirectoryReadsStarted.await(5, TimeUnit.SECONDS)) {
                 "Sibling directory reads did not run concurrently"
             }
