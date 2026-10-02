@@ -3,20 +3,27 @@ package com.example.comiclab
 import java.io.Closeable
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Callable
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.FutureTask
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
-/** A small bounded queue for cover work with keyed cancellation of queued tasks. */
-internal class BookcaseCoverTaskQueue(
+/** A bounded worker queue with keyed cancellation of queued tasks. */
+internal class BoundedKeyedTaskQueue(
     threadCount: Int,
     queueCapacity: Int = DEFAULT_QUEUE_CAPACITY
 ) : Closeable {
 
+    private class TaskState {
+        val cancelled = AtomicBoolean(false)
+        val started = AtomicBoolean(false)
+        lateinit var task: FutureTask<Unit>
+    }
+
     private val executor: ThreadPoolExecutor
-    private val tasks = ConcurrentHashMap<String, FutureTask<Unit>>()
+    private val tasks = ConcurrentHashMap<String, TaskState>()
 
     @Volatile
     private var closed = false
@@ -38,45 +45,62 @@ internal class BookcaseCoverTaskQueue(
         key: String,
         onRejected: () -> Unit = {},
         block: () -> Unit
+    ): Boolean = executeCancellable(key, onRejected) { block() }
+
+    fun executeCancellable(
+        key: String,
+        onRejected: () -> Unit = {},
+        block: (isActive: () -> Boolean) -> Unit
     ): Boolean {
         if (closed) {
             onRejected()
             return false
         }
 
-        lateinit var task: FutureTask<Unit>
-        task = FutureTask(Callable {
+        val state = TaskState()
+        state.task = FutureTask(Callable {
+            state.started.set(true)
             try {
-                block()
+                block { !state.cancelled.get() && !closed }
             } finally {
-                tasks.remove(key, task)
+                tasks.remove(key, state)
             }
         })
-        if (tasks.putIfAbsent(key, task) != null) {
+        if (tasks.putIfAbsent(key, state) != null) {
             onRejected()
             return false
         }
 
         return try {
-            executor.execute(task)
+            executor.execute(state.task)
             true
         } catch (_: RejectedExecutionException) {
-            tasks.remove(key, task)
+            tasks.remove(key, state)
             onRejected()
             false
         }
     }
 
+    /** Cancels queued work and signals running work to stop at its next safe boundary. */
     fun cancel(key: String): Boolean {
-        val task = tasks.remove(key) ?: return false
-        val cancelled = task.cancel(false)
-        executor.remove(task)
-        return cancelled
+        val state = tasks[key] ?: return false
+        state.cancelled.set(true)
+        val wasQueued = !state.started.get()
+        val cancelledBeforeStart = state.task.cancel(false)
+        if (wasQueued && cancelledBeforeStart) {
+            tasks.remove(key, state)
+            executor.remove(state.task)
+            return true
+        }
+        return false
     }
 
     override fun close() {
         closed = true
-        tasks.values.forEach { it.cancel(false) }
+        tasks.values.forEach { state ->
+            state.cancelled.set(true)
+            state.task.cancel(false)
+        }
         tasks.clear()
         executor.shutdownNow()
     }

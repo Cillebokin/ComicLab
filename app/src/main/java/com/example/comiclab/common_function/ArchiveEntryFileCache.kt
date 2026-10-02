@@ -4,12 +4,8 @@ import java.io.Closeable
 import java.io.File
 import java.util.UUID
 
-/**
- * A session-private, size-bounded cache for files streamed out of 7z/RAR archives.
- * The extracted file is only exposed while [withEntry] holds the cache lock, so
- * eviction and close cannot remove a file while a decoder is using it.
- */
-internal class SevenZipEntryFileCache(
+/** Session-private, size-bounded cache for extracted archive entries. */
+internal class ArchiveEntryFileCache(
     cacheRoot: File,
     private val maxBytes: Long = DEFAULT_MAX_BYTES
 ) : Closeable {
@@ -20,7 +16,7 @@ internal class SevenZipEntryFileCache(
         var lastAccess: Long
     )
 
-    private val sessionDir = File(cacheRoot, "sevenzip_${UUID.randomUUID()}")
+    private val sessionDir = File(cacheRoot, "archive_entries_${UUID.randomUUID()}")
     private val entries = linkedMapOf<String, CachedEntry>()
     private var clock = 0L
     private var closed = false
@@ -37,7 +33,6 @@ internal class SevenZipEntryFileCache(
         use: (File) -> T
     ): T? {
         if (closed || entryName.isBlank()) return null
-
         if (!sessionDir.isDirectory && !sessionDir.mkdirs()) return null
 
         val cached = entries[entryName]?.takeIf { it.file.isFile && it.file.length() == it.length }
@@ -90,7 +85,27 @@ internal class SevenZipEntryFileCache(
         }
     }
 
-    private companion object {
-        const val DEFAULT_MAX_BYTES = 128L * 1024L * 1024L
+    companion object {
+        private const val DEFAULT_MAX_BYTES = 128L * 1024L * 1024L
+        private const val DEFAULT_STALE_SESSION_MAX_AGE_MILLIS = 24L * 60L * 60L * 1000L
+        private val SESSION_PREFIXES = listOf("archive_entries_", "sevenzip_")
+
+        /** Removes only known cache-session folders older than the retention period. */
+        fun cleanupStaleSessions(
+            cacheRoot: File,
+            nowMillis: Long = System.currentTimeMillis(),
+            maxAgeMillis: Long = DEFAULT_STALE_SESSION_MAX_AGE_MILLIS
+        ): Int {
+            require(maxAgeMillis >= 0L) { "maxAgeMillis must not be negative" }
+            if (!cacheRoot.isDirectory) return 0
+
+            val cutoff = if (maxAgeMillis > nowMillis) Long.MIN_VALUE else nowMillis - maxAgeMillis
+            return cacheRoot.listFiles().orEmpty().count { candidate ->
+                candidate.isDirectory &&
+                    SESSION_PREFIXES.any(candidate.name::startsWith) &&
+                    candidate.lastModified() < cutoff &&
+                    candidate.deleteRecursively()
+            }
+        }
     }
 }

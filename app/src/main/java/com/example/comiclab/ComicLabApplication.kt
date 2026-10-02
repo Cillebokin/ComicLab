@@ -1,6 +1,7 @@
 package com.example.comiclab
 
 import android.app.Application
+import com.example.comiclab.common_function.ArchiveEntryFileCache
 
 class ComicLabApplication : Application() {
 
@@ -8,5 +9,12 @@ class ComicLabApplication : Application() {
         super.onCreate()
         AppSettings.applyThemeMode(this)
         CrashLogManager.install(this)
+        Thread(
+            { runCatching { ArchiveEntryFileCache.cleanupStaleSessions(cacheDir) } },
+            "archive-cache-cleanup"
+        ).apply {
+            isDaemon = true
+            start()
+        }
     }
 }

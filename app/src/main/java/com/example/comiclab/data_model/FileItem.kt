@@ -52,7 +52,7 @@ class FileListAdapter(
     private var collectionRefreshScheduled = false
     private var pendingFullListRefresh = false
     private val pendingCollectionRefreshKeys = mutableSetOf<String>()
-    private val archiveCoverTasks = BookcaseCoverTaskQueue(ARCHIVE_COVER_THREAD_COUNT)
+    private val archiveCoverTasks = BoundedKeyedTaskQueue(ARCHIVE_COVER_THREAD_COUNT)
     private var favoriteComicPaths = FavoriteComicStore.favoriteFilePaths(context)
     private var favoriteDirectoryPaths = FavoritePathStore.favoriteDirectoryPaths(context)
     @Volatile

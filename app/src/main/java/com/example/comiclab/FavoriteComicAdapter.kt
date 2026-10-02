@@ -12,7 +12,6 @@ import android.widget.TextView
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.recyclerview.widget.RecyclerView
 import java.util.Collections
-import java.util.concurrent.Executors
 
 class FavoriteComicAdapter(
     private val context: Context,
@@ -25,7 +24,7 @@ class FavoriteComicAdapter(
     private val coverCache = object : LruCache<String, Bitmap>(FAVORITE_COMIC_COVER_CACHE_SIZE) {}
     private val loadingCovers = Collections.synchronizedSet(mutableSetOf<String>())
     private val failedCovers = Collections.synchronizedSet(mutableSetOf<String>())
-    private val coverExecutor = Executors.newFixedThreadPool(FAVORITE_COMIC_COVER_THREAD_COUNT)
+    private val coverTasks = BoundedKeyedTaskQueue(FAVORITE_COMIC_COVER_THREAD_COUNT)
 
     @Volatile
     private var closed = false
@@ -46,6 +45,14 @@ class FavoriteComicAdapter(
     }
 
     override fun getItemCount(): Int = items.size
+
+    override fun onViewRecycled(holder: ComicViewHolder) {
+        val cacheKey = holder.imgCover.tag as? String
+        if (cacheKey != null && coverTasks.cancel(cacheKey)) {
+            loadingCovers.remove(cacheKey)
+        }
+        super.onViewRecycled(holder)
+    }
 
     override fun onBindViewHolder(holder: ComicViewHolder, position: Int) {
         val item = items[position]
@@ -70,7 +77,7 @@ class FavoriteComicAdapter(
 
     fun close() {
         closed = true
-        coverExecutor.shutdownNow()
+        coverTasks.close()
         loadingCovers.clear()
         failedCovers.clear()
     }
@@ -130,36 +137,41 @@ class FavoriteComicAdapter(
             return
         }
 
-        runCatching {
-            coverExecutor.execute {
-                val cover = runCatching {
-                    val firstImageEntry = ComicArchive.imageEntries(file).firstOrNull()
-                        ?: return@runCatching null
-                    ComicArchive.decodeImage(file, firstImageEntry, FAVORITE_COMIC_COVER_MAX_SIZE, context.cacheDir)
-                }.getOrNull()
-
+        coverTasks.executeCancellable(
+            key = cacheKey,
+            onRejected = { loadingCovers.remove(cacheKey) }
+        ) { isActive ->
+            val firstImageEntry = runCatching {
+                ComicArchive.imageEntries(file).firstOrNull()
+            }.getOrNull()
+            if (!isActive()) {
                 loadingCovers.remove(cacheKey)
-                if (closed) {
-                    return@execute
-                }
+                return@executeCancellable
+            }
+            val cover = firstImageEntry?.let { entryName ->
+                runCatching {
+                    ComicArchive.decodeImage(file, entryName, FAVORITE_COMIC_COVER_MAX_SIZE, context.cacheDir)
+                }.getOrNull()
+            }
 
-                if (cover == null) {
-                    failedCovers.add(cacheKey)
-                    return@execute
-                }
+            loadingCovers.remove(cacheKey)
+            if (closed || !isActive()) {
+                return@executeCancellable
+            }
 
-                coverCache.put(cacheKey, cover)
-                imgCover.post {
-                    if (!closed && imgCover.tag == cacheKey) {
-                        imgCover.imageTintList = null
-                        imgCover.scaleType = ImageView.ScaleType.CENTER_CROP
-                        imgCover.setImageBitmap(cover)
-                    }
+            if (cover == null) {
+                failedCovers.add(cacheKey)
+                return@executeCancellable
+            }
+
+            coverCache.put(cacheKey, cover)
+            imgCover.post {
+                if (!closed && imgCover.tag == cacheKey) {
+                    imgCover.imageTintList = null
+                    imgCover.scaleType = ImageView.ScaleType.CENTER_CROP
+                    imgCover.setImageBitmap(cover)
                 }
             }
-        }.onFailure {
-            loadingCovers.remove(cacheKey)
-            failedCovers.add(cacheKey)
         }
     }
 

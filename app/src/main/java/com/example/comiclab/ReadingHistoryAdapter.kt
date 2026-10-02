@@ -15,7 +15,6 @@ import androidx.recyclerview.widget.RecyclerView
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Collections
-import java.util.concurrent.Executors
 
 class ReadingHistoryAdapter(
     private val context: Context,
@@ -28,7 +27,7 @@ class ReadingHistoryAdapter(
     private val coverCache = object : LruCache<String, Bitmap>(HISTORY_COVER_CACHE_SIZE) {}
     private val loadingCovers = Collections.synchronizedSet(mutableSetOf<String>())
     private val failedCovers = Collections.synchronizedSet(mutableSetOf<String>())
-    private val coverExecutor = Executors.newFixedThreadPool(HISTORY_COVER_THREAD_COUNT)
+    private val coverTasks = BoundedKeyedTaskQueue(HISTORY_COVER_THREAD_COUNT)
 
     private var rows = buildRows()
 
@@ -69,6 +68,16 @@ class ReadingHistoryAdapter(
 
     override fun getItemCount(): Int = rows.size
 
+    override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
+        if (holder is HistoryViewHolder) {
+            val cacheKey = holder.imgCover.tag as? String
+            if (cacheKey != null && coverTasks.cancel(cacheKey)) {
+                loadingCovers.remove(cacheKey)
+            }
+        }
+        super.onViewRecycled(holder)
+    }
+
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         when (val row = rows[position]) {
             is HistoryRow.DateHeader -> bindDateHeader(holder as DateViewHolder, row)
@@ -85,7 +94,7 @@ class ReadingHistoryAdapter(
 
     fun close() {
         closed = true
-        coverExecutor.shutdownNow()
+        coverTasks.close()
         loadingCovers.clear()
         failedCovers.clear()
     }
@@ -235,36 +244,41 @@ class ReadingHistoryAdapter(
             return
         }
 
-        runCatching {
-            coverExecutor.execute {
-                val cover = runCatching {
-                    val firstImageEntry = ComicArchive.imageEntries(file).firstOrNull()
-                        ?: return@runCatching null
-                    ComicArchive.decodeImage(file, firstImageEntry, HISTORY_COVER_MAX_SIZE, context.cacheDir)
-                }.getOrNull()
-
+        coverTasks.executeCancellable(
+            key = cacheKey,
+            onRejected = { loadingCovers.remove(cacheKey) }
+        ) { isActive ->
+            val firstImageEntry = runCatching {
+                ComicArchive.imageEntries(file).firstOrNull()
+            }.getOrNull()
+            if (!isActive()) {
                 loadingCovers.remove(cacheKey)
-                if (closed) {
-                    return@execute
-                }
+                return@executeCancellable
+            }
+            val cover = firstImageEntry?.let { entryName ->
+                runCatching {
+                    ComicArchive.decodeImage(file, entryName, HISTORY_COVER_MAX_SIZE, context.cacheDir)
+                }.getOrNull()
+            }
 
-                if (cover == null) {
-                    failedCovers.add(cacheKey)
-                    return@execute
-                }
+            loadingCovers.remove(cacheKey)
+            if (closed || !isActive()) {
+                return@executeCancellable
+            }
 
-                coverCache.put(cacheKey, cover)
-                imgCover.post {
-                    if (!closed && imgCover.tag == cacheKey) {
-                        imgCover.imageTintList = null
-                        imgCover.scaleType = ImageView.ScaleType.CENTER_CROP
-                        imgCover.setImageBitmap(cover)
-                    }
+            if (cover == null) {
+                failedCovers.add(cacheKey)
+                return@executeCancellable
+            }
+
+            coverCache.put(cacheKey, cover)
+            imgCover.post {
+                if (!closed && imgCover.tag == cacheKey) {
+                    imgCover.imageTintList = null
+                    imgCover.scaleType = ImageView.ScaleType.CENTER_CROP
+                    imgCover.setImageBitmap(cover)
                 }
             }
-        }.onFailure {
-            loadingCovers.remove(cacheKey)
-            failedCovers.add(cacheKey)
         }
     }
 

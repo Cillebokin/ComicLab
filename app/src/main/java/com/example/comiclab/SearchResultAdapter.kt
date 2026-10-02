@@ -38,7 +38,7 @@ class SearchResultAdapter(
     @Volatile
     private var collectionRefreshScheduled = false
     private val pendingCollectionRefreshKeys = mutableSetOf<String>()
-    private val coverTasks = BookcaseCoverTaskQueue(SEARCH_COVER_THREAD_COUNT)
+    private val coverTasks = BoundedKeyedTaskQueue(SEARCH_COVER_THREAD_COUNT)
     @Volatile
     private var closed = false
 

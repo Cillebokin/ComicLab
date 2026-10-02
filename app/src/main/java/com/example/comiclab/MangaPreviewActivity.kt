@@ -15,7 +15,8 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
-import java.util.concurrent.Executors
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 class MangaPreviewActivity : AppCompatActivity() {
 
@@ -42,7 +43,13 @@ class MangaPreviewActivity : AppCompatActivity() {
     private var gridGeneration = 0
     @Volatile
     private var destroyed = false
-    private val previewExecutor = Executors.newFixedThreadPool(PREVIEW_THREAD_COUNT)
+    private var deletePreviewInProgress = false
+    private val latestPreviewTaskKeys = ConcurrentHashMap<String, String>()
+    private val previewTaskSequence = AtomicLong(0L)
+    private val previewTasks = BoundedKeyedTaskQueue(
+        threadCount = PREVIEW_THREAD_COUNT,
+        queueCapacity = PREVIEW_TASK_QUEUE_CAPACITY
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -103,21 +110,27 @@ class MangaPreviewActivity : AppCompatActivity() {
         archiveGeneration++
         coverGeneration++
         gridGeneration++
-        previewExecutor.shutdownNow()
+        previewTasks.close()
+        latestPreviewTaskKeys.clear()
         super.onDestroy()
     }
 
     private fun loadArchive(file: File) {
         val generation = ++archiveGeneration
+        cancelLatestPreviewTask(COVER_TASK_KEY)
+        cancelLatestPreviewTask(GRID_TASK_KEY)
         tvStatus.text = getString(R.string.loading_preview)
         tvStatus.visibility = View.VISIBLE
         btnTogglePreview.visibility = View.GONE
 
-        executePreviewTask {
+        executePreviewTask(ARCHIVE_TASK_KEY, replaceQueued = true) { isActive ->
             val result = runCatching {
                 synchronized(archiveOperationLock) {
                     ComicArchive.imageEntries(file)
                 }
+            }
+            if (!isActive()) {
+                return@executePreviewTask
             }
 
             runOnUiThread {
@@ -164,12 +177,15 @@ class MangaPreviewActivity : AppCompatActivity() {
         val file = archiveFile ?: return
         val generation = ++coverGeneration
 
-        executePreviewTask {
+        executePreviewTask(COVER_TASK_KEY, replaceQueued = true) { isActive ->
             val bitmap = runCatching {
                 synchronized(archiveOperationLock) {
                     ComicArchive.decodeImage(file, entryName, COVER_IMAGE_MAX_SIZE, cacheDir)
                 }
             }.getOrNull()
+            if (!isActive()) {
+                return@executePreviewTask
+            }
 
             runOnUiThread {
                 if (isPreviewActive() && generation == coverGeneration && bitmap != null) {
@@ -210,11 +226,15 @@ class MangaPreviewActivity : AppCompatActivity() {
 
         val indexesByEntry = entriesToShow.withIndex().associate { it.value to it.index }
 
-        executePreviewTask {
+        executePreviewTask(
+            taskKey = GRID_TASK_KEY,
+            replaceQueued = true,
+            onRejected = { hidePreviewLoading(generation) }
+        ) { isActive ->
             runCatching {
                 synchronized(archiveOperationLock) {
                     ComicArchive.decodeImages(file, entriesToShow, PREVIEW_IMAGE_MAX_SIZE, cacheDir) { entryName, bitmap ->
-                        if (!isPreviewActive() || generation != gridGeneration) {
+                        if (!isActive() || !isPreviewActive() || generation != gridGeneration) {
                             return@decodeImages false
                         }
 
@@ -313,6 +333,9 @@ class MangaPreviewActivity : AppCompatActivity() {
     }
 
     private fun deletePreviewImage(file: File, entryName: String) {
+        if (deletePreviewInProgress) {
+            return
+        }
         if (ComicArchive.isPdf(file)) {
             Toast.makeText(this, R.string.delete_pdf_page_unsupported, Toast.LENGTH_SHORT).show()
             return
@@ -323,13 +346,31 @@ class MangaPreviewActivity : AppCompatActivity() {
             return
         }
 
+        deletePreviewInProgress = true
         archiveGeneration++
         coverGeneration++
         gridGeneration++
+        cancelLatestPreviewTask(COVER_TASK_KEY)
+        cancelLatestPreviewTask(GRID_TASK_KEY)
         tvStatus.text = getString(R.string.deleting_archive_image)
         tvStatus.visibility = View.VISIBLE
 
-        executePreviewTask {
+        executePreviewTask(
+            taskKey = DELETE_TASK_KEY,
+            onRejected = {
+                runOnUiThread {
+                    if (isPreviewActive()) {
+                        deletePreviewInProgress = false
+                        tvStatus.visibility = View.INVISIBLE
+                        Toast.makeText(
+                            this,
+                            R.string.delete_archive_image_failed,
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }
+        ) { _ ->
             val deleted = runCatching {
                 synchronized(archiveOperationLock) {
                     ComicArchive.deleteEntry(file, entryName)
@@ -340,6 +381,7 @@ class MangaPreviewActivity : AppCompatActivity() {
                 if (!isPreviewActive()) {
                     return@runOnUiThread
                 }
+                deletePreviewInProgress = false
 
                 if (deleted) {
                     Toast.makeText(this, R.string.delete_archive_image_success, Toast.LENGTH_SHORT).show()
@@ -418,18 +460,43 @@ class MangaPreviewActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
-    private fun executePreviewTask(block: () -> Unit) {
+    private fun executePreviewTask(
+        taskKey: String,
+        replaceQueued: Boolean = false,
+        onRejected: () -> Unit = {},
+        block: (isActive: () -> Boolean) -> Unit
+    ) {
         if (destroyed) {
             return
         }
 
-        runCatching {
-            previewExecutor.execute {
-                if (!destroyed) {
-                    block()
+        val executionKey = if (replaceQueued) {
+            "$taskKey:${previewTaskSequence.incrementAndGet()}"
+        } else {
+            taskKey
+        }
+        if (replaceQueued) {
+            latestPreviewTaskKeys.put(taskKey, executionKey)?.let(previewTasks::cancel)
+        }
+
+        val accepted = previewTasks.executeCancellable(executionKey, onRejected) { isActive ->
+            try {
+                if (!destroyed && isActive()) {
+                    block(isActive)
+                }
+            } finally {
+                if (replaceQueued) {
+                    latestPreviewTaskKeys.remove(taskKey, executionKey)
                 }
             }
         }
+        if (!accepted && replaceQueued) {
+            latestPreviewTaskKeys.remove(taskKey, executionKey)
+        }
+    }
+
+    private fun cancelLatestPreviewTask(taskKey: String) {
+        latestPreviewTaskKeys.remove(taskKey)?.let(previewTasks::cancel)
     }
 
     private fun isPreviewActive(): Boolean {
@@ -443,7 +510,12 @@ class MangaPreviewActivity : AppCompatActivity() {
         private const val PREVIEW_COLUMNS = 3
         private const val COVER_IMAGE_MAX_SIZE = 720
         private const val PREVIEW_IMAGE_MAX_SIZE = 360
-        private const val PREVIEW_THREAD_COUNT = 2
+        private const val PREVIEW_THREAD_COUNT = 1
+        private const val PREVIEW_TASK_QUEUE_CAPACITY = 4
+        private const val ARCHIVE_TASK_KEY = "archive"
+        private const val COVER_TASK_KEY = "cover"
+        private const val GRID_TASK_KEY = "grid"
+        private const val DELETE_TASK_KEY = "delete"
         private const val NO_EXPLICIT_START_PAGE = -1
     }
 }

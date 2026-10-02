@@ -17,7 +17,7 @@ import net.sf.sevenzipjbinding.PropID
 import net.sf.sevenzipjbinding.SevenZip
 import net.sf.sevenzipjbinding.impl.RandomAccessFileInStream
 import org.json.JSONArray
-import com.example.comiclab.common_function.SevenZipEntryFileCache
+import com.example.comiclab.common_function.ArchiveEntryFileCache
 import java.io.Closeable
 import java.io.File
 import java.io.InputStream
@@ -268,12 +268,14 @@ object ComicArchive {
         }
         if (extension !in zipArchiveExtensions) return null
 
-        val bytes = zipImageBytes(file, entryName) ?: return null
-        return decodeBitmap(
-            bytes = bytes,
-            preferredConfig = Bitmap.Config.RGB_565,
-            sampleSize = { width, height -> calculateInSampleSize(width, height, maxSize) }
-        )?.scaleToFitMaxSize(maxSize)
+        return ZipFile(file).use { zipFile ->
+            decodeZipBitmap(
+                zipFile = zipFile,
+                entryName = entryName,
+                preferredConfig = Bitmap.Config.RGB_565,
+                sampleSize = { width, height -> calculateInSampleSize(width, height, maxSize) }
+            )?.scaleToFitMaxSize(maxSize)
+        }
     }
 
     fun decodeImageForWidth(file: File, entryName: String, targetWidth: Int, cacheRoot: File): Bitmap? {
@@ -293,12 +295,14 @@ object ComicArchive {
         }
         if (extension !in zipArchiveExtensions) return null
 
-        val bytes = zipImageBytes(file, entryName) ?: return null
-        return decodeBitmap(
-            bytes = bytes,
-            preferredConfig = Bitmap.Config.ARGB_8888,
-            sampleSize = { width, _ -> calculateInSampleSizeForWidth(width, targetWidth) }
-        )?.scaleToWidthIfLarger(targetWidth)
+        return ZipFile(file).use { zipFile ->
+            decodeZipBitmap(
+                zipFile = zipFile,
+                entryName = entryName,
+                preferredConfig = Bitmap.Config.ARGB_8888,
+                sampleSize = { width, _ -> calculateInSampleSizeForWidth(width, targetWidth) }
+            )?.scaleToWidthIfLarger(targetWidth)
+        }
     }
 
     fun decodeImages(
@@ -452,7 +456,7 @@ object ComicArchive {
         private val zipLock = Any()
         private val sevenZipLock = Any()
         private val sevenZipEntryCache = if (extension in sevenZipArchiveExtensions) {
-            SevenZipEntryFileCache(cacheRoot)
+            ArchiveEntryFileCache(cacheRoot)
         } else {
             null
         }
@@ -571,21 +575,7 @@ object ComicArchive {
         ): Bitmap? {
             val zip = zipFile ?: return null
             synchronized(zipLock) {
-                val entry = zip.getEntry(entryName) ?: return null
-                val bounds = BitmapFactory.Options().apply {
-                    inJustDecodeBounds = true
-                }
-                zip.getInputStream(entry).use { stream ->
-                    BitmapFactory.decodeStream(stream, null, bounds)
-                }
-
-                val decodeOptions = BitmapFactory.Options().apply {
-                    inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight)
-                    inPreferredConfig = preferredConfig
-                }
-                return zip.getInputStream(entry).use { stream ->
-                    BitmapFactory.decodeStream(stream, null, decodeOptions)
-                }
+                return decodeZipBitmap(zip, entryName, preferredConfig, sampleSize)
             }
         }
 
@@ -1365,13 +1355,6 @@ object ComicArchive {
         }
     }
 
-    private fun zipImageBytes(file: File, entryName: String): ByteArray? {
-        ZipFile(file).use { zipFile ->
-            val entry = zipFile.getEntry(entryName) ?: return null
-            return zipFile.getInputStream(entry).use { it.readBytes() }
-        }
-    }
-
     private fun extractZipEntryToFile(file: File, entryName: String, targetFile: File): Boolean {
         ZipFile(file).use { zipFile ->
             val entry = zipFile.getEntry(entryName) ?: return false
@@ -1409,9 +1392,14 @@ object ComicArchive {
                         while (keepDecoding.get()) {
                             val entryName = pendingEntries.poll() ?: break
                             val bitmap = runCatching {
-                                val entry = zipFile.getEntry(entryName) ?: return@runCatching null
-                                val bytes = zipFile.getInputStream(entry).use { it.readBytes() }
-                                decodePreviewBitmap(bytes, maxSize)
+                                decodeZipBitmap(
+                                    zipFile = zipFile,
+                                    entryName = entryName,
+                                    preferredConfig = Bitmap.Config.RGB_565,
+                                    sampleSize = { width, height ->
+                                        calculateInSampleSize(width, height, maxSize)
+                                    }
+                                )?.scaleToFitMaxSize(maxSize)
                             }.getOrNull()
 
                             if (keepDecoding.get() && !onDecoded(entryName, bitmap)) {
@@ -1437,7 +1425,7 @@ object ComicArchive {
         cacheRoot: File,
         onDecoded: (entryName: String, bitmap: Bitmap?) -> Boolean
     ) {
-        val cache = SevenZipEntryFileCache(cacheRoot, maxBytes = 0L)
+        val cache = ArchiveEntryFileCache(cacheRoot, maxBytes = 0L)
         try {
             withSevenZipArchive(file) { archive ->
                 val entryIndexesByPath = (0 until archive.numberOfItems)
@@ -1471,6 +1459,42 @@ object ComicArchive {
             }
         } finally {
             cache.close()
+        }
+    }
+
+    private fun decodeZipBitmap(
+        zipFile: ZipFile,
+        entryName: String,
+        preferredConfig: Bitmap.Config,
+        sampleSize: (width: Int, height: Int) -> Int
+    ): Bitmap? {
+        val entry = zipFile.getEntry(entryName) ?: return null
+        return decodeImageFromStreamFactory(
+            openInputStream = { zipFile.getInputStream(entry) },
+            preferredConfig = preferredConfig,
+            sampleSize = sampleSize
+        )
+    }
+
+    internal fun decodeImageFromStreamFactory(
+        openInputStream: () -> InputStream,
+        preferredConfig: Bitmap.Config,
+        sampleSize: (width: Int, height: Int) -> Int
+    ): Bitmap? {
+        val bounds = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        openInputStream().use { input ->
+            BitmapFactory.decodeStream(input, null, bounds)
+        }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        val decodeOptions = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight)
+            inPreferredConfig = preferredConfig
+        }
+        return openInputStream().use { input ->
+            BitmapFactory.decodeStream(input, null, decodeOptions)
         }
     }
 
@@ -1621,32 +1645,6 @@ object ComicArchive {
         return extractResult == ExtractOperationResult.OK
     }
 
-    private fun decodePreviewBitmap(bytes: ByteArray, maxSize: Int): Bitmap? {
-        return decodeBitmap(
-            bytes = bytes,
-            preferredConfig = Bitmap.Config.RGB_565,
-            sampleSize = { width, height -> calculateInSampleSize(width, height, maxSize) }
-        )?.scaleToFitMaxSize(maxSize)
-    }
-
-    private fun decodeBitmap(
-        bytes: ByteArray,
-        preferredConfig: Bitmap.Config,
-        sampleSize: (width: Int, height: Int) -> Int
-    ): Bitmap? {
-        val bounds = BitmapFactory.Options().apply {
-            inJustDecodeBounds = true
-        }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-
-        val decodeOptions = BitmapFactory.Options().apply {
-            inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight)
-            inPreferredConfig = preferredConfig
-        }
-
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
-    }
-
     private fun decodeFileBitmap(
         file: File,
         preferredConfig: Bitmap.Config,
@@ -1699,7 +1697,7 @@ object ComicArchive {
         cacheRoot: File,
         use: (File) -> T?
     ): T? {
-        val cache = SevenZipEntryFileCache(cacheRoot, maxBytes = 0L)
+        val cache = ArchiveEntryFileCache(cacheRoot, maxBytes = 0L)
         return try {
             withSevenZipArchive(file) { archive ->
                 val entryIndex = (0 until archive.numberOfItems).firstOrNull { index ->
