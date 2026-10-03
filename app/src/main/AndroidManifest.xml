@@ -29,47 +29,58 @@
 
         <activity
             android:name="com.example.comiclab.MangaReaderActivity"
+            android:screenOrientation="sensor"
             android:exported="false" />
 
         <activity
             android:name="com.example.comiclab.MangaReaderPrepareActivity"
+            android:screenOrientation="portrait"
             android:exported="false" />
 
         <activity
             android:name="com.example.comiclab.MangaPreviewActivity"
+            android:screenOrientation="portrait"
             android:exported="false" />
 
         <activity
             android:name="com.example.comiclab.EbookPreviewActivity"
+            android:screenOrientation="portrait"
             android:exported="false" />
 
         <activity
             android:name="com.example.comiclab.EbookReaderActivity"
+            android:screenOrientation="sensor"
             android:exported="false" />
 
         <activity
             android:name="com.example.comiclab.SettingsActivity"
+            android:screenOrientation="portrait"
             android:configChanges="uiMode"
             android:exported="false" />
 
         <activity
             android:name="com.example.comiclab.HelpActivity"
+            android:screenOrientation="portrait"
             android:exported="false" />
 
         <activity
             android:name="com.example.comiclab.HelpArticleActivity"
+            android:screenOrientation="portrait"
             android:exported="false" />
 
         <activity
             android:name="com.example.comiclab.SearchActivity"
+            android:screenOrientation="portrait"
             android:exported="false" />
 
         <activity
             android:name="com.example.comiclab.ComicMigrationActivity"
+            android:screenOrientation="portrait"
             android:exported="false" />
 
         <activity
             android:name="com.example.comiclab.MainActivity"
+            android:screenOrientation="portrait"
             android:exported="true"
             android:launchMode="singleTask">
             <intent-filter>

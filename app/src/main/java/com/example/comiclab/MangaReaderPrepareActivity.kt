@@ -312,7 +312,8 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
         ComicLabPerformance.record(
             event = "reader_prepare_stale_cache_cleanup",
             startedAtNanos = cleanupStartedAtNanos,
-            fields = "candidates=${staleDirectories.size} deleted=$deletedDirectories " +
+            fields = "mainThread=${Looper.myLooper() == Looper.getMainLooper()} " +
+                "candidates=${staleDirectories.size} deleted=$deletedDirectories " +
                 "failed=$failedDirectories"
         )
     }

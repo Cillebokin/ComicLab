@@ -21,10 +21,6 @@ android {
     }
 
     buildTypes {
-        debug {
-            // Keep test builds separate from a differently signed installed app.
-            applicationIdSuffix = ".e2e"
-        }
         release {
             isMinifyEnabled = false
             proguardFiles(

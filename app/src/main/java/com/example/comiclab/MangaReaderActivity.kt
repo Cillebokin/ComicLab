@@ -3220,7 +3220,8 @@ class MangaReaderActivity : AppCompatActivity() {
                         return@submitTask
                     }
 
-                    if (shouldUseTiledPage(bounds)) {
+                    val shouldUseTiles = shouldUseTiledPage(bounds)
+                    if (shouldUseTiles) {
                         if (shouldSkipTiledPdfPreviewDecodeAfterMemoryTrim(
                                 isPdfSource = isPdfSource,
                                 lowMemoryMode = pdfLowMemoryMode,
@@ -3262,20 +3263,33 @@ class MangaReaderActivity : AppCompatActivity() {
                                 putPreviewBitmap(position, previewBitmap)
                             }
                         }
-                        if (isPreload && !isUsefulPreload(position, generation)) {
+                        if (previewBitmap(position) != null) {
+                            if (isPreload && !isUsefulPreload(position, generation)) {
+                                return@submitTask
+                            }
+                            tiledPages.add(position)
+                            notifyPageReady(position, immediate = !isPreload)
                             return@submitTask
                         }
-                        tiledPages.add(position)
-                        notifyPageReady(position, immediate = !isPreload)
-                        return@submitTask
+
+                        // 背景预加载不因预览失败而解码整张大图，等页面真正可见时再重试。
+                        if (isPreload) {
+                            return@submitTask
+                        }
                     }
 
-                    val targetWidth = fullPageDecodeWidth(bounds)
+                    // 分块预览失败时退回整页低分辨率解码，避免页面没有任何可显示内容。
+                    val targetWidth = if (shouldUseTiles) {
+                        previewDecodeWidth()
+                    } else {
+                        fullPageDecodeWidth(bounds)
+                    }
                     val targetHeight = fullPageDecodeHeight(bounds)
                     var bitmap = decodeFullPage(
                         position = position,
                         targetWidth = targetWidth,
-                        targetHeight = targetHeight
+                        targetHeight = targetHeight,
+                        fitWithinBounds = shouldUseTiles
                     )
 
                     if (bitmap == null && isPdfSource && shouldRetryFullPageAfterFailure(
@@ -3295,7 +3309,8 @@ class MangaReaderActivity : AppCompatActivity() {
                         bitmap = decodeFullPage(
                             position = position,
                             targetWidth = retryWidth,
-                            targetHeight = retryHeight
+                            targetHeight = retryHeight,
+                            fitWithinBounds = shouldUseTiles
                         )
                     }
 
@@ -3459,7 +3474,8 @@ class MangaReaderActivity : AppCompatActivity() {
             position: Int,
             targetWidth: Int,
             targetHeight: Int,
-            kind: DecodeTaskKind = DecodeTaskKind.FULL
+            kind: DecodeTaskKind = DecodeTaskKind.FULL,
+            fitWithinBounds: Boolean = false
         ): Bitmap? {
             val renderKind = if (kind == DecodeTaskKind.ZOOM_FULL) "ZOOM_FULL" else "FULL"
             return decodeWithRenderDiagnostics(
@@ -3469,7 +3485,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 targetHeight = targetHeight
             ) {
                 runCatching {
-                    if (isHorizontalReading()) {
+                    if (isHorizontalReading() || fitWithinBounds) {
                         session.decodeImageForPage(
                             entryName = entries[position],
                             targetWidth = targetWidth,
@@ -4015,9 +4031,11 @@ class MangaReaderActivity : AppCompatActivity() {
                 )
             }
 
+            // 按整页解码实际采用的宽度估算，避免横屏宽度大于原图时误判为超长页。
+            val targetDecodeWidth = fullPageDecodeWidth(bounds)
             val sourcePixels = bounds.width.toLong() * bounds.height.toLong()
-            val decodedHeight = calculateDisplayHeight(bounds.width, bounds.height, decodeWidth)
-            val sampleSize = calculateSampleSizeForWidth(bounds.width, decodeWidth)
+            val decodedHeight = calculateDisplayHeight(bounds.width, bounds.height, targetDecodeWidth)
+            val sampleSize = calculateSampleSizeForWidth(bounds.width, targetDecodeWidth)
             val decodedPixels = (bounds.width / sampleSize).toLong() *
                 (bounds.height / sampleSize).toLong()
             return bounds.width > MAX_READER_DECODE_WIDTH ||
