@@ -29,9 +29,11 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
     private var launchedReader = false
     private var startFromBeginning = false
     private var explicitStartPageIndex = NO_EXPLICIT_START_PAGE
+    private var readerLoadStartedAtNanos: Long? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        readerLoadStartedAtNanos = ComicLabPerformance.nowNanos()
         setContentView(R.layout.activity_reader_prepare)
 
         tvPrepareTitle = findViewById(R.id.tvPrepareTitle)
@@ -85,17 +87,28 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
             return
         }
 
-        clearOldPreparedReaderCaches()
         val outputDir = createPreparedReaderDirectory(file)
         preparedDirectory = outputDir
         setProgress(0, 0)
 
         prepareExecutor.execute {
-            val entries = runCatching {
-                ComicArchive.imageEntries(file)
-            }.getOrElse {
-                emptyList()
+            clearOldPreparedReaderCaches()
+            if (destroyed || Thread.currentThread().isInterrupted) {
+                return@execute
             }
+
+            val indexStartedAtNanos = ComicLabPerformance.nowNanos()
+            val entriesResult = runCatching {
+                ComicLabPerformance.trace("comiclab.reader.prepare_archive_index") {
+                    ComicArchive.imageEntries(file)
+                }
+            }
+            val entries = entriesResult.getOrElse { emptyList() }
+            ComicLabPerformance.record(
+                event = "reader_prepare_archive_index",
+                startedAtNanos = indexStartedAtNanos,
+                fields = "entries=${entries.size} bytes=${file.length()} success=${entriesResult.isSuccess}"
+            )
 
             if (entries.isEmpty()) {
                 runOnUiThread {
@@ -122,22 +135,31 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
 
             val startPosition = initialReaderPosition(file, entries.size)
             val initialEntries = initialPreparedEntries(entries, startPosition)
+            val extractionStartedAtNanos = ComicLabPerformance.nowNanos()
             val extractedFiles = runCatching {
-                ComicArchive.extractPreparedImagesToDirectory(
-                    file = file,
-                    entries = initialEntries,
-                    outputDir = outputDir,
-                    shouldContinue = { !destroyed }
-                ) { completed, total ->
-                    runOnUiThread {
-                        if (!destroyed) {
-                            setProgress(completed, total)
+                ComicLabPerformance.trace("comiclab.reader.prepare_initial_pages") {
+                    ComicArchive.extractPreparedImagesToDirectory(
+                        file = file,
+                        entries = initialEntries,
+                        outputDir = outputDir,
+                        shouldContinue = { !destroyed }
+                    ) { completed, total ->
+                        runOnUiThread {
+                            if (!destroyed) {
+                                setProgress(completed, total)
+                            }
                         }
                     }
                 }
             }.getOrElse {
                 emptyList()
             }
+            ComicLabPerformance.record(
+                event = "reader_prepare_initial_pages",
+                startedAtNanos = extractionStartedAtNanos,
+                fields = "requested=${initialEntries.size} extracted=${extractedFiles.size} " +
+                    "bytes=${extractedFiles.sumOf { it.length() }}"
+            )
 
             runOnUiThread {
                 if (destroyed) {
@@ -212,11 +234,20 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
 
     private fun openReader(file: File, outputDir: File) {
         launchedReader = true
+        ComicLabPerformance.record(
+            event = "reader_prepare_to_launch",
+            startedAtNanos = readerLoadStartedAtNanos,
+            fields = "prepared=true"
+        )
         val intent = Intent(this, MangaReaderActivity::class.java).apply {
             putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
             putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
             putExtra(MangaReaderActivity.EXTRA_START_PAGE_INDEX, explicitStartPageIndex)
             putExtra(MangaReaderActivity.EXTRA_PREPARED_READER_CACHE_DIR, outputDir.absolutePath)
+            putExtra(
+                MangaReaderActivity.EXTRA_READER_LOAD_STARTED_AT_NANOS,
+                readerLoadStartedAtNanos ?: 0L
+            )
         }
         startActivity(intent)
         finish()
@@ -224,10 +255,19 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
 
     private fun openReaderDirect(file: File) {
         launchedReader = true
+        ComicLabPerformance.record(
+            event = "reader_prepare_to_launch",
+            startedAtNanos = readerLoadStartedAtNanos,
+            fields = "prepared=false"
+        )
         val intent = Intent(this, MangaReaderActivity::class.java).apply {
             putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
             putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
             putExtra(MangaReaderActivity.EXTRA_START_PAGE_INDEX, explicitStartPageIndex)
+            putExtra(
+                MangaReaderActivity.EXTRA_READER_LOAD_STARTED_AT_NANOS,
+                readerLoadStartedAtNanos ?: 0L
+            )
         }
         startActivity(intent)
         finish()
@@ -248,13 +288,33 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
     }
 
     private fun clearOldPreparedReaderCaches() {
+        val cleanupStartedAtNanos = ComicLabPerformance.nowNanos()
         val root = File(cacheDir, PREPARED_READER_CACHE_ROOT)
         val now = System.currentTimeMillis()
-        root.listFiles()
-            ?.asSequence()
-            ?.filter { it.isDirectory }
-            ?.filter { now - it.lastModified() > PREPARED_READER_CACHE_MAX_AGE_MS }
-            ?.forEach { it.deleteRecursively() }
+        val staleDirectoriesResult = runCatching {
+            root.listFiles()
+                ?.asSequence()
+                ?.filter { it.isDirectory }
+                ?.filter { now - it.lastModified() > PREPARED_READER_CACHE_MAX_AGE_MS }
+                ?.toList()
+                .orEmpty()
+        }
+        val staleDirectories = staleDirectoriesResult.getOrDefault(emptyList())
+        var deletedDirectories = 0
+        var failedDirectories = if (staleDirectoriesResult.isFailure) 1 else 0
+        staleDirectories.forEach { directory ->
+            if (runCatching { directory.deleteRecursively() }.getOrDefault(false)) {
+                deletedDirectories++
+            } else {
+                failedDirectories++
+            }
+        }
+        ComicLabPerformance.record(
+            event = "reader_prepare_stale_cache_cleanup",
+            startedAtNanos = cleanupStartedAtNanos,
+            fields = "candidates=${staleDirectories.size} deleted=$deletedDirectories " +
+                "failed=$failedDirectories"
+        )
     }
 
     companion object {

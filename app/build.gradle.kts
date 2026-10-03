@@ -6,6 +6,9 @@ plugins {
 android {
     namespace = "com.example.comiclab"
     compileSdk = 36
+    buildFeatures {
+        buildConfig = true
+    }
 
     defaultConfig {
         applicationId = "com.example.comiclab"

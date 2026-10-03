@@ -313,9 +313,17 @@ class FileListAdapter(
                 taskKey = "collection-sources:$cacheKey",
                 onRejected = { collectionSourceRequestIds.remove(cacheKey, requestId) }
             ) {
-                val sources = runCatching {
-                    MangaCollectionCoverPlanner.findCoverSourcesWithEntries(directory)
-                }.getOrDefault(emptyList())
+                val sourceScanStartedAtNanos = ComicLabPerformance.nowNanos()
+                val sources = ComicLabPerformance.trace("comiclab.bookcase.source_scan") {
+                    runCatching {
+                        MangaCollectionCoverPlanner.findCoverSourcesWithEntries(directory)
+                    }.getOrDefault(emptyList())
+                }
+                ComicLabPerformance.record(
+                    event = "bookcase_source_scan",
+                    startedAtNanos = sourceScanStartedAtNanos,
+                    fields = "archives=${sources.size} bookcaseHash=${directory.absolutePath.hashCode()}"
+                )
                 if (closed || !collectionSourceRequestIds.remove(cacheKey, requestId)) {
                     return@executeCoverTask
                 }
@@ -369,7 +377,7 @@ class FileListAdapter(
             collectionCoverList.adapter = MangaCollectionCoverAdapter(
                 sources = sources,
                 bindCover = { source, imageView ->
-                    bindCollectionCover(source, imageView)
+                    bindCollectionCover(cacheKey, source, imageView)
                 },
                 onCoverClick = {
                     MangaCollectionCoverClickHandler.dispatch(directory, onCollectionCoverClick)
@@ -383,14 +391,24 @@ class FileListAdapter(
         iconContainer.tag = cacheKey
     }
 
-    private fun bindCollectionCover(source: MangaCollectionCoverSource, imageView: ImageView) {
+    private fun bindCollectionCover(
+        bookcaseCacheKey: String,
+        source: MangaCollectionCoverSource,
+        imageView: ImageView
+    ) {
         val file = source.file
         val cacheKey = "${archiveCoverCacheKey(file)}:collection:${source.imageEntry}"
         imageView.tag = cacheKey
+        val coverRequestStartedAtNanos = ComicLabPerformance.nowNanos()
 
         val cachedCover = archiveCoverCache.get(cacheKey)
         if (cachedCover != null) {
             bindCollectionCoverBitmap(imageView, cachedCover)
+            ComicLabPerformance.record(
+                event = "bookcase_cover_ready",
+                startedAtNanos = coverRequestStartedAtNanos,
+                fields = "bookcaseHash=${bookcaseCacheKey.hashCode()} cache=hit"
+            )
             return
         }
 
@@ -410,16 +428,31 @@ class FileListAdapter(
                 return@executeCoverTask
             }
 
-            val cover = runCatching {
-                ComicArchive.openReaderSession(file, context.cacheDir).use { session ->
-                    session.decodePreviewForWidth(
-                        source.imageEntry,
-                        context.resources.getDimensionPixelSize(R.dimen.file_item_collection_cover_width)
-                    )
-                }
-            }.getOrNull()
+            val coverDecodeStartedAtNanos = ComicLabPerformance.nowNanos()
+            val cover = ComicLabPerformance.trace("comiclab.bookcase.decode_cover") {
+                runCatching {
+                    ComicArchive.openReaderSession(file, context.cacheDir).use { session ->
+                        session.decodePreviewForWidth(
+                            source.imageEntry,
+                            context.resources.getDimensionPixelSize(R.dimen.file_item_collection_cover_width)
+                        )
+                    }
+                }.getOrNull()
+            }
 
-            handleCollectionCoverResult(cacheKey, requestId, cover)
+            ComicLabPerformance.record(
+                event = "bookcase_cover_decode",
+                startedAtNanos = coverDecodeStartedAtNanos,
+                fields = "archiveHash=${file.absolutePath.hashCode()} bytes=${cover?.byteCount ?: 0}"
+            )
+            handleCollectionCoverResult(
+                cacheKey = cacheKey,
+                requestId = requestId,
+                bookcaseCacheKey = bookcaseCacheKey,
+                requestStartedAtNanos = coverRequestStartedAtNanos,
+                archiveHash = file.absolutePath.hashCode(),
+                cover = cover
+            )
         }
     }
 
@@ -437,6 +470,9 @@ class FileListAdapter(
     private fun handleCollectionCoverResult(
         cacheKey: String,
         requestId: Long,
+        bookcaseCacheKey: String,
+        requestStartedAtNanos: Long?,
+        archiveHash: Int,
         cover: Bitmap?
     ) {
         val waitingViews = collectionCoverLoadTracker.complete(cacheKey, requestId) ?: return
@@ -454,6 +490,12 @@ class FileListAdapter(
             imageView.post {
                 if (!closed && imageView.tag == cacheKey) {
                     bindCollectionCoverBitmap(imageView, cover)
+                    ComicLabPerformance.record(
+                        event = "bookcase_cover_ready",
+                        startedAtNanos = requestStartedAtNanos,
+                        fields = "bookcaseHash=${bookcaseCacheKey.hashCode()} archiveHash=$archiveHash " +
+                            "bytes=${cover.byteCount} cache=miss"
+                    )
                 }
             }
         }

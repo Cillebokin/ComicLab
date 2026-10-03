@@ -112,6 +112,8 @@ class MangaReaderActivity : AppCompatActivity() {
     private var archiveFile: File? = null
     private var readerSessionMarker: String? = null
     private var imageEntries: List<String> = emptyList()
+    private var readerLoadStartedAtNanos: Long? = null
+    private var firstReaderPageReadyMetricReported = false
     private var pageAdapter: ReaderPageAdapterController? = null
     private var readerPreviewAdapter: ReaderPreviewAdapter? = null
     private lateinit var readerControlsController: ReaderControlsController
@@ -173,6 +175,13 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         archiveFile = file
+        readerLoadStartedAtNanos = ComicLabPerformance.resolveStartedAtNanos(
+            upstreamStartedAtNanos = intent.getLongExtra(
+                EXTRA_READER_LOAD_STARTED_AT_NANOS,
+                0L
+            ),
+            fallbackStartedAtNanos = ComicLabPerformance.nowNanos()
+        )
         tvReaderTitle.text = file.nameWithoutExtension
         readerSessionMarker = CrashLogManager.recordReaderSessionStarted(this, file)
         shouldStartFromBeginning = intent.getBooleanExtra(EXTRA_START_FROM_BEGINNING, false)
@@ -518,13 +527,24 @@ class MangaReaderActivity : AppCompatActivity() {
 
     private fun loadArchive(file: File) {
         val generation = readerLoadGeneration.incrementAndGet()
+        firstReaderPageReadyMetricReported = false
         tvReaderStatus.text = getString(R.string.loading_reading)
         tvReaderStatus.visibility = View.VISIBLE
 
         executeReaderLoadTask {
-            val entries = runCatching {
-                ComicArchive.imageEntries(file)
-            }.getOrElse {
+            val indexStartedAtNanos = ComicLabPerformance.nowNanos()
+            val entriesResult = runCatching {
+                ComicLabPerformance.trace("comiclab.reader.archive_index") {
+                    ComicArchive.imageEntries(file)
+                }
+            }
+            val entries = entriesResult.getOrNull().orEmpty()
+            ComicLabPerformance.record(
+                event = "reader_archive_index",
+                startedAtNanos = indexStartedAtNanos,
+                fields = "entries=${entries.size} bytes=${file.length()} success=${entriesResult.isSuccess}"
+            )
+            if (entriesResult.isFailure) {
                 runOnUiThread {
                     if (isReaderActive() && generation == readerLoadGeneration.get()) {
                         showError(getString(R.string.unsupported_archive_format))
@@ -552,7 +572,14 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun loadPreparedArchive(file: File, preparedCacheDir: File) {
+        firstReaderPageReadyMetricReported = false
+        val preparedEntriesStartedAtNanos = ComicLabPerformance.nowNanos()
         val entries = ComicArchive.preparedImageEntries(preparedCacheDir)
+        ComicLabPerformance.record(
+            event = "reader_prepared_entries",
+            startedAtNanos = preparedEntriesStartedAtNanos,
+            fields = "entries=${entries.size}"
+        )
         if (entries.isEmpty()) {
             preparedCacheDir.deleteRecursively()
             showError(getString(R.string.no_reading_images))
@@ -589,9 +616,18 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun bindArchiveReaderAdapter(file: File, entries: List<String>) {
-        val session = runCatching {
-            ComicArchive.openReaderSession(file, cacheDir)
-        }.getOrElse {
+        val sessionOpenStartedAtNanos = ComicLabPerformance.nowNanos()
+        val sessionResult = runCatching {
+            ComicLabPerformance.trace("comiclab.reader.session_open") {
+                ComicArchive.openReaderSession(file, cacheDir)
+            }
+        }
+        ComicLabPerformance.record(
+            event = "reader_session_open",
+            startedAtNanos = sessionOpenStartedAtNanos,
+            fields = "format=${file.extension.lowercase()} success=${sessionResult.isSuccess}"
+        )
+        val session = sessionResult.getOrElse {
             showError(getString(R.string.unsupported_archive_format))
             return
         }
@@ -627,6 +663,7 @@ class MangaReaderActivity : AppCompatActivity() {
             doublePageReading = isDoublePageReading(),
             coverSinglePage = readerCoverSinglePageEnabled,
             onPageReady = { position ->
+                recordInitialReaderPageReady(position, prepared = true)
                 if (isPendingReaderPosition(position)) {
                     applyPendingReaderPosition()
                 }
@@ -676,6 +713,7 @@ class MangaReaderActivity : AppCompatActivity() {
             doublePageReading = isDoublePageReading(),
             coverSinglePage = readerCoverSinglePageEnabled,
             onPageReady = { position ->
+                recordInitialReaderPageReady(position, prepared = false)
                 if (isPendingReaderPosition(position)) {
                     applyPendingReaderPosition()
                 }
@@ -688,6 +726,19 @@ class MangaReaderActivity : AppCompatActivity() {
         listReaderPages.adapter = adapter
         bindReaderPreviewAdapter(entries, readerFile, previewSession)
         initializeReaderPosition(entries)
+    }
+
+    private fun recordInitialReaderPageReady(position: Int, prepared: Boolean) {
+        if (firstReaderPageReadyMetricReported || position != currentReaderPosition) {
+            return
+        }
+
+        firstReaderPageReadyMetricReported = true
+        ComicLabPerformance.record(
+            event = "reader_initial_page_ready",
+            startedAtNanos = readerLoadStartedAtNanos,
+            fields = "position=$position prepared=$prepared"
+        )
     }
 
     private fun bindReaderPreviewAdapter(
@@ -1781,13 +1832,6 @@ class MangaReaderActivity : AppCompatActivity() {
                 submitExtraction(position, PRIORITY_NEAR)
             }
 
-            orderedBackgroundPositions(
-                firstVisible = firstVisible,
-                lastVisible = lastVisible,
-                movingForward = movingForward
-            ).forEach { position ->
-                submitExtraction(position, PRIORITY_BACKGROUND)
-            }
         }
 
         override fun applyDebugZoomToVisiblePages(
@@ -2109,45 +2153,18 @@ class MangaReaderActivity : AppCompatActivity() {
             movingForward: Boolean,
             isFastScroll: Boolean,
             isIdle: Boolean
-        ): List<Int> {
-            val beforeCount = if (isIdle) IDLE_PREPARE_BEFORE_COUNT else NORMAL_PREPARE_BEFORE_COUNT
-            val afterCount = when {
+        ): List<Int> = preparedReaderNearbyPositions(
+            firstVisible = firstVisible,
+            lastVisible = lastVisible,
+            entryCount = entryNames.size,
+            movingForward = movingForward,
+            beforeCount = if (isIdle) IDLE_PREPARE_BEFORE_COUNT else NORMAL_PREPARE_BEFORE_COUNT,
+            afterCount = when {
                 isFastScroll -> FAST_PREPARE_FORWARD_COUNT
                 isIdle -> IDLE_PREPARE_FORWARD_COUNT
                 else -> NORMAL_PREPARE_FORWARD_COUNT
             }
-            val before = (firstVisible - 1 downTo (firstVisible - beforeCount).coerceAtLeast(0))
-                .filter { it !in firstVisible..lastVisible }
-            val after = ((lastVisible + 1)..(lastVisible + afterCount).coerceAtMost(entryNames.lastIndex))
-                .filter { it !in firstVisible..lastVisible }
-            return if (movingForward) {
-                after + before
-            } else {
-                before + after
-            }
-        }
-
-        private fun orderedBackgroundPositions(
-            firstVisible: Int,
-            lastVisible: Int,
-            movingForward: Boolean
-        ): List<Int> {
-            val after = if (lastVisible + 1 <= entryNames.lastIndex) {
-                (lastVisible + 1..entryNames.lastIndex).toList()
-            } else {
-                emptyList()
-            }
-            val before = if (firstVisible - 1 >= 0) {
-                (firstVisible - 1 downTo 0).toList()
-            } else {
-                emptyList()
-            }
-            return if (movingForward) {
-                after + before
-            } else {
-                before + after
-            }
-        }
+        )
 
         private fun calculateDisplayHeight(width: Int, height: Int, imageWidth: Int): Int {
             if (width <= 0 || height <= 0 || imageWidth <= 0) {
@@ -2231,7 +2248,6 @@ class MangaReaderActivity : AppCompatActivity() {
             private const val MIN_READER_PAGE_HEIGHT = 320
             private const val PRIORITY_VISIBLE = 100
             private const val PRIORITY_NEAR = 60
-            private const val PRIORITY_BACKGROUND = 5
             private const val NORMAL_PREPARE_BEFORE_COUNT = 1
             private const val NORMAL_PREPARE_FORWARD_COUNT = 8
             private const val FAST_PREPARE_FORWARD_COUNT = 14
@@ -4680,6 +4696,7 @@ class MangaReaderActivity : AppCompatActivity() {
         const val EXTRA_START_FROM_BEGINNING = "start_from_beginning"
         const val EXTRA_START_PAGE_INDEX = "start_page_index"
         const val EXTRA_PREPARED_READER_CACHE_DIR = "prepared_reader_cache_dir"
+        const val EXTRA_READER_LOAD_STARTED_AT_NANOS = "reader_load_started_at_nanos"
         const val EXTRA_DEBUG_READER_STRESS = "debug_reader_stress"
         const val EXTRA_DEBUG_READER_STRESS_ITERATIONS = "debug_reader_stress_iterations"
         const val EXTRA_DEBUG_READER_STRESS_DELAY_MS = "debug_reader_stress_delay_ms"
@@ -4885,6 +4902,34 @@ internal fun calculatePdfPreviewWidth(
         .coerceAtMost(Int.MAX_VALUE.toLong())
         .toInt()
     return preferredWidth.coerceIn(safeMinimumWidth, safeMaximumWidth)
+}
+
+internal fun preparedReaderNearbyPositions(
+    firstVisible: Int,
+    lastVisible: Int,
+    entryCount: Int,
+    movingForward: Boolean,
+    beforeCount: Int,
+    afterCount: Int
+): List<Int> {
+    if (entryCount <= 0 || firstVisible < 0 || lastVisible < firstVisible ||
+        lastVisible >= entryCount
+    ) {
+        return emptyList()
+    }
+
+    val before = if (beforeCount <= 0 || firstVisible == 0) {
+        emptyList()
+    } else {
+        (firstVisible - 1 downTo (firstVisible - beforeCount).coerceAtLeast(0)).toList()
+    }
+    val after = if (afterCount <= 0 || lastVisible == entryCount - 1) {
+        emptyList()
+    } else {
+        ((lastVisible + 1)..(lastVisible + afterCount).coerceAtMost(entryCount - 1)).toList()
+    }
+
+    return if (movingForward) after + before else before + after
 }
 
 internal fun shouldPreloadBackgroundFullPagesForReader(

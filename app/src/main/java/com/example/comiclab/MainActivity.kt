@@ -16,6 +16,7 @@ import android.view.Gravity
 import android.webkit.MimeTypeMap
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
@@ -107,6 +108,7 @@ class MainActivity : AppCompatActivity() {
     private var browserInitialized = false
     private var skipNextResumeDirectoryReload = false
     private var pendingCenterTargetPath: String? = null
+    private var pendingDirectoryFirstPreDrawListener: ViewTreeObserver.OnPreDrawListener? = null
     private var currentPath = STORAGE_ROOT_PATH
     private var pendingFileTransfer: PendingFileTransfer? = null
     private var isFileTransferInProgress = false
@@ -341,6 +343,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         directoryLoadGeneration.incrementAndGet()
+        removePendingDirectoryFirstPreDrawListener()
         classifyGeneration.incrementAndGet()
         directoryLoadExecutor.shutdownNow()
         directoryChildCountExecutor.shutdownNow()
@@ -805,6 +808,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         val requestedPath = currentPath
+        removePendingDirectoryFirstPreDrawListener()
+        val loadStartedAtNanos = ComicLabPerformance.nowNanos()
         latestDirectoryLoadDispatcher.executeLatest {
             if (generation != directoryLoadGeneration.get() || isFinishing || isDestroyed) {
                 return@executeLatest
@@ -812,46 +817,72 @@ class MainActivity : AppCompatActivity() {
             val directory = File(requestedPath).takeIf { it.isDirectory } ?: File(STORAGE_ROOT_PATH)
             val resolvedPath = directory.absolutePath
 
-            val listedFiles = try {
-                directory.listFiles()
-                    ?.filter { !it.name.startsWith(".") }
-                    ?: emptyList()
-            } catch (_: SecurityException) {
-                emptyList()
+            val listStartedAtNanos = ComicLabPerformance.nowNanos()
+            val listedFiles = ComicLabPerformance.trace("comiclab.directory.list_files") {
+                try {
+                    directory.listFiles()
+                        ?.filter { !it.name.startsWith(".") }
+                        ?: emptyList()
+                } catch (_: SecurityException) {
+                    emptyList()
+                }
             }
+            ComicLabPerformance.record(
+                event = "directory_list_files",
+                startedAtNanos = listStartedAtNanos,
+                fields = "children=${listedFiles.size} pathHash=${resolvedPath.hashCode()}"
+            )
             if (generation != directoryLoadGeneration.get() || isFinishing || isDestroyed) {
                 return@executeLatest
             }
-            val files = try {
-                sortFiles(listedFiles)
-            } catch (_: SecurityException) {
-                emptyList()
+            val sortStartedAtNanos = ComicLabPerformance.nowNanos()
+            val files = ComicLabPerformance.trace("comiclab.directory.sort") {
+                try {
+                    sortFiles(listedFiles)
+                } catch (_: SecurityException) {
+                    emptyList()
+                }
             }
+            ComicLabPerformance.record(
+                event = "directory_sort",
+                startedAtNanos = sortStartedAtNanos,
+                fields = "children=${files.size} pathHash=${resolvedPath.hashCode()}"
+            )
             if (generation != directoryLoadGeneration.get() || isFinishing || isDestroyed) {
                 return@executeLatest
             }
-            val items = mutableListOf<FileItem>()
-            if (directory.absolutePath != File(STORAGE_ROOT_PATH).absolutePath) {
-                items.add(FileItem(isParent = true))
+            val itemBuildStartedAtNanos = ComicLabPerformance.nowNanos()
+            val items = ComicLabPerformance.trace("comiclab.directory.build_items") {
+                mutableListOf<FileItem>().apply {
+                    if (directory.absolutePath != File(STORAGE_ROOT_PATH).absolutePath) {
+                        add(FileItem(isParent = true))
+                    }
+                    files.forEach { file ->
+                        add(
+                            FileItem(
+                                file = file,
+                                childCount = if (file.isDirectory) {
+                                    directoryChildCountCache.get(file.absolutePath, file.lastModified())
+                                } else {
+                                    null
+                                }
+                            )
+                        )
+                    }
+                }
             }
-            files.forEach { file ->
-                items.add(
-                    FileItem(
-                        file = file,
-                        childCount = if (file.isDirectory) {
-                            directoryChildCountCache.get(file.absolutePath, file.lastModified())
-                        } else {
-                            null
-                        }
-                    )
-                )
-            }
+            ComicLabPerformance.record(
+                event = "directory_build_items",
+                startedAtNanos = itemBuildStartedAtNanos,
+                fields = "rows=${items.size} pathHash=${resolvedPath.hashCode()}"
+            )
 
             runOnUiThread {
                 if (generation != directoryLoadGeneration.get()) {
                     return@runOnUiThread
                 }
 
+                val applyStartedAtNanos = ComicLabPerformance.nowNanos()
                 currentPath = resolvedPath
                 saveCurrentPath()
                 fileItems.clear()
@@ -867,6 +898,56 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     centerFileItemIfPresent(pathToCenter)
                 }
+                ComicLabPerformance.record(
+                    event = "directory_ui_apply",
+                    startedAtNanos = applyStartedAtNanos,
+                    fields = "rows=${items.size} pathHash=${resolvedPath.hashCode()}"
+                )
+                watchDirectoryFirstPreDraw(
+                    startedAtNanos = loadStartedAtNanos,
+                    generation = generation,
+                    pathHash = resolvedPath.hashCode(),
+                    rowCount = items.size
+                )
+            }
+        }
+    }
+
+    private fun watchDirectoryFirstPreDraw(
+        startedAtNanos: Long?,
+        generation: Int,
+        pathHash: Int,
+        rowCount: Int
+    ) {
+        if (startedAtNanos == null) {
+            return
+        }
+
+        removePendingDirectoryFirstPreDrawListener()
+        val listener = object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                removePendingDirectoryFirstPreDrawListener()
+                if (generation == directoryLoadGeneration.get() && !isFinishing && !isDestroyed) {
+                    ComicLabPerformance.record(
+                        event = "directory_first_pre_draw",
+                        startedAtNanos = startedAtNanos,
+                        fields = "rows=$rowCount pathHash=$pathHash"
+                    )
+                }
+                return true
+            }
+        }
+        pendingDirectoryFirstPreDrawListener = listener
+        listView.viewTreeObserver.addOnPreDrawListener(listener)
+    }
+
+    private fun removePendingDirectoryFirstPreDrawListener() {
+        val listener = pendingDirectoryFirstPreDrawListener ?: return
+        pendingDirectoryFirstPreDrawListener = null
+        if (::listView.isInitialized) {
+            val observer = listView.viewTreeObserver
+            if (observer.isAlive) {
+                observer.removeOnPreDrawListener(listener)
             }
         }
     }

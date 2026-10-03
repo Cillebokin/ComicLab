@@ -2,10 +2,13 @@ package com.example.comiclab
 
 import android.content.Context
 import android.content.DialogInterface
+import android.graphics.drawable.BitmapDrawable
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageButton
 import java.io.File
+import androidx.core.content.ContextCompat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -44,8 +47,13 @@ class MainActivityFileTransferToolbarTest {
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
         val activity = controller.get()
         try {
-            val newFolderButton = activity.findViewById<View>(R.id.btnCreateTransferDirectory)
+            val newFolderButton = activity.findViewById<ImageButton>(R.id.btnCreateTransferDirectory)
             val pasteButton = activity.findViewById<View>(R.id.btnPasteFile)
+            assertTrue(newFolderButton.drawable is BitmapDrawable)
+            assertEquals(
+                ContextCompat.getColor(activity, R.color.comiclab_icon),
+                newFolderButton.imageTintList?.defaultColor
+            )
             assertEquals(View.GONE, newFolderButton.visibility)
 
             val modeType = MainActivity::class.java.declaredClasses
