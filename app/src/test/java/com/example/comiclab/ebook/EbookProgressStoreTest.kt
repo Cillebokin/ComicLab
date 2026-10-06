@@ -1,5 +1,6 @@
 package com.example.comiclab.ebook
 
+import com.example.comiclab.core.store.EbookProgressStore
 import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertEquals

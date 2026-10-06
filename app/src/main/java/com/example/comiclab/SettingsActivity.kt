@@ -1,5 +1,8 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.settings.ComicLabConfigurationStore
+import com.example.comiclab.ui.common.SystemBars
+
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ApplicationInfo

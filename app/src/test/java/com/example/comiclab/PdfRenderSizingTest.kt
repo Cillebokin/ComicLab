@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.reader.decode.calculatePdfRenderWidthByPixelBudget
 import org.junit.Assert.assertTrue
 import org.junit.Test
 

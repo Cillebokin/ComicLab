@@ -2,6 +2,14 @@ package com.example.comiclab
 
 import android.graphics.Bitmap
 import android.graphics.Rect
+import com.example.comiclab.core.reader.decode.shouldReleasePreviewAfterFullDecode
+import com.example.comiclab.core.archive.PdfRendererLifecycleGate
+import com.example.comiclab.core.archive.PdfRenderSizePolicy
+import com.example.comiclab.core.archive.createPdfRendererOrCloseDescriptor
+import com.example.comiclab.core.reader.decode.shouldRetryPdfPageAfterFailure
+import com.example.comiclab.core.reader.decode.shouldSkipPdfPreloadAfterMemoryTrim
+import com.example.comiclab.core.reader.decode.shouldSkipReaderPreviewDecodeAfterMemoryTrim
+import com.example.comiclab.core.reader.decode.shouldSkipTiledPdfPreviewDecodeAfterMemoryTrim
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -110,7 +118,7 @@ class PdfReaderRiskPolicyTest {
 
     @Test
     fun pdfPreviewSizeIsBoundedByHeightAndPixelBudget() {
-        val size = calculatePdfPreviewSize(
+        val size = PdfRenderSizePolicy.calculatePreviewSize(
             pageWidth = 100,
             pageHeight = 10_000,
             targetWidth = 1_080,
@@ -127,7 +135,7 @@ class PdfReaderRiskPolicyTest {
 
     @Test
     fun pdfPreviewSizeKeepsNormalPageAtRequestedWidthWhenWithinBudget() {
-        val size = calculatePdfPreviewSize(
+        val size = PdfRenderSizePolicy.calculatePreviewSize(
             pageWidth = 200,
             pageHeight = 288,
             targetWidth = 1_080,
@@ -143,7 +151,7 @@ class PdfReaderRiskPolicyTest {
 
     @Test
     fun pdfPreviewSizeNeverExceedsPixelBudgetAfterMinimumDimensionClamp() {
-        val size = calculatePdfPreviewSize(
+        val size = PdfRenderSizePolicy.calculatePreviewSize(
             pageWidth = 1,
             pageHeight = 1_000,
             targetWidth = 1_080,

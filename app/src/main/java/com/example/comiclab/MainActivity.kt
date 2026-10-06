@@ -1,5 +1,10 @@
 package com.example.comiclab
 
+import com.example.comiclab.ui.browser.panels.FavoriteComicAdapter
+import com.example.comiclab.ui.browser.panels.FavoritePathAdapter
+import com.example.comiclab.ui.browser.panels.ReadingHistoryAdapter
+import com.example.comiclab.ui.common.SystemBars
+
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.ClipData
@@ -13,10 +18,10 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.text.format.Formatter
 import android.view.Gravity
-import android.webkit.MimeTypeMap
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
+import android.webkit.MimeTypeMap
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
@@ -27,21 +32,43 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
-import androidx.appcompat.app.AppCompatActivity
 import androidx.annotation.StringRes
+import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.example.comiclab.core.store.FavoriteComicStore
+import com.example.comiclab.core.store.FavoritePathStore
+import com.example.comiclab.core.store.ReadingHistoryStore
 import com.example.comiclab.ebook.ReaderFileDetector
 import com.example.comiclab.ebook.ReaderFileType
+import com.example.comiclab.ui.browser.FileListAdapter
+import com.example.comiclab.ui.browser.DirectoryBrowserController
+import com.example.comiclab.ui.browser.model.FileItem
+import com.example.comiclab.ui.browser.transfer.FileTransferController
+import com.example.comiclab.ui.browser.transfer.FileTransferMetadataUpdatePolicy
+import com.example.comiclab.ui.browser.transfer.FileTransferMode
+import com.example.comiclab.ui.browser.transfer.PendingFileTransfer
+import com.example.comiclab.core.organize.ComicMergeOperations
+import com.example.comiclab.core.organize.ComicArchiveMergeProgress
+import com.example.comiclab.core.organize.ComicMergeResult
+import com.example.comiclab.core.organize.ComicClassifier
+import com.example.comiclab.core.organize.DirectorySimilarityProgress
+import com.example.comiclab.core.organize.DirectorySimilarityReportMessage
+import com.example.comiclab.core.organize.DirectorySimilarityScanner
+import com.example.comiclab.core.organize.ImageFileMergeOperations
+import com.example.comiclab.core.organize.ImageFileMergeProgress
+import com.example.comiclab.core.organize.ImageFileMergeResult
+import com.example.comiclab.core.transfer.DirectoryTransferOperations
+import com.example.comiclab.core.transfer.FileOperationProgress
+import com.example.comiclab.core.transfer.FileOperationProgressPolicy
+import com.example.comiclab.core.transfer.FileTransferOperations
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import java.io.File
-import java.text.SimpleDateFormat
 import java.util.Collections
-import java.util.Date
 import java.util.Locale
-import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -89,6 +116,15 @@ class MainActivity : AppCompatActivity() {
     private val classifyExecutor = Executors.newSingleThreadExecutor()
     private val fileTransferExecutor = Executors.newSingleThreadExecutor()
     private val directoryLoadGeneration = AtomicInteger(0)
+    private val directoryBrowserController = DirectoryBrowserController(
+        STORAGE_ROOT_PATH,
+        latestDirectoryLoadDispatcher,
+        directoryChildCountExecutor,
+        directoryLoadGeneration,
+        directoryChildCountCache,
+        directoryScrollStateCache,
+        pendingDirectoryChildCountPaths
+    )
     private val classifyGeneration = AtomicInteger(0)
     private var readingHistoryPopupWindow: PopupWindow? = null
     private var readingHistoryAdapter: ReadingHistoryAdapter? = null
@@ -110,8 +146,11 @@ class MainActivity : AppCompatActivity() {
     private var pendingCenterTargetPath: String? = null
     private var pendingDirectoryFirstPreDrawListener: ViewTreeObserver.OnPreDrawListener? = null
     private var currentPath = STORAGE_ROOT_PATH
-    private var pendingFileTransfer: PendingFileTransfer? = null
-    private var isFileTransferInProgress = false
+    private val fileTransferController = FileTransferController()
+    private val pendingFileTransfer: PendingFileTransfer?
+        get() = fileTransferController.pendingTransfer
+    private val isFileTransferInProgress: Boolean
+        get() = fileTransferController.isTransferInProgress
 
     private val prefs by lazy {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -754,14 +793,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val current = File(currentPath)
-        val pathToCenter = current.absolutePath
-        val parentPath = current.parentFile?.absolutePath ?: STORAGE_ROOT_PATH
-        val parentScrollState = directoryScrollStateCache.get(parentPath)
-        setCurrentPath(parentPath)
+        val navigation = directoryBrowserController.parentNavigation(currentPath)
+        setCurrentPath(navigation.path)
         loadCurrentDirectory(
-            pathToCenter = if (parentScrollState == null) pathToCenter else null,
-            scrollStateToRestore = parentScrollState
+            pathToCenter = navigation.pathToCenter,
+            scrollStateToRestore = navigation.scrollState
         )
     }
 
@@ -800,115 +836,57 @@ class MainActivity : AppCompatActivity() {
         scrollStateToRestore: FileListScrollState? = null
     ) {
         val generation = directoryLoadGeneration.incrementAndGet()
-        if (!Environment.isExternalStorageManager()) {
-            etPath.setText(R.string.storage_permission_required)
-            fileItems.clear()
-            notifyListChanged()
-            return
+        val hasPermission = Environment.isExternalStorageManager()
+        if (hasPermission) {
+            removePendingDirectoryFirstPreDrawListener()
         }
-
-        val requestedPath = currentPath
-        removePendingDirectoryFirstPreDrawListener()
-        val loadStartedAtNanos = ComicLabPerformance.nowNanos()
-        latestDirectoryLoadDispatcher.executeLatest {
-            if (generation != directoryLoadGeneration.get() || isFinishing || isDestroyed) {
-                return@executeLatest
-            }
-            val directory = File(requestedPath).takeIf { it.isDirectory } ?: File(STORAGE_ROOT_PATH)
-            val resolvedPath = directory.absolutePath
-
-            val listStartedAtNanos = ComicLabPerformance.nowNanos()
-            val listedFiles = ComicLabPerformance.trace("comiclab.directory.list_files") {
-                try {
-                    directory.listFiles()
-                        ?.filter { !it.name.startsWith(".") }
-                        ?: emptyList()
-                } catch (_: SecurityException) {
-                    emptyList()
+        val loadStartedAtNanos = if (hasPermission) ComicLabPerformance.nowNanos() else null
+        directoryBrowserController.load(
+            generation = generation,
+            requestedPath = currentPath,
+            hasPermission = hasPermission,
+            sortOrder = ::currentDirectorySortOrder,
+            scrollState = scrollStateToRestore,
+            isActive = { !isFinishing && !isDestroyed },
+            postResult = { runOnUiThread(it) }
+        ) { result ->
+            when (result) {
+                DirectoryBrowserController.Result.PermissionRequired -> {
+                    etPath.setText(R.string.storage_permission_required)
+                    fileItems.clear()
+                    notifyListChanged()
                 }
-            }
-            ComicLabPerformance.record(
-                event = "directory_list_files",
-                startedAtNanos = listStartedAtNanos,
-                fields = "children=${listedFiles.size} pathHash=${resolvedPath.hashCode()}"
-            )
-            if (generation != directoryLoadGeneration.get() || isFinishing || isDestroyed) {
-                return@executeLatest
-            }
-            val sortStartedAtNanos = ComicLabPerformance.nowNanos()
-            val files = ComicLabPerformance.trace("comiclab.directory.sort") {
-                try {
-                    sortFiles(listedFiles)
-                } catch (_: SecurityException) {
-                    emptyList()
-                }
-            }
-            ComicLabPerformance.record(
-                event = "directory_sort",
-                startedAtNanos = sortStartedAtNanos,
-                fields = "children=${files.size} pathHash=${resolvedPath.hashCode()}"
-            )
-            if (generation != directoryLoadGeneration.get() || isFinishing || isDestroyed) {
-                return@executeLatest
-            }
-            val itemBuildStartedAtNanos = ComicLabPerformance.nowNanos()
-            val items = ComicLabPerformance.trace("comiclab.directory.build_items") {
-                mutableListOf<FileItem>().apply {
-                    if (directory.absolutePath != File(STORAGE_ROOT_PATH).absolutePath) {
-                        add(FileItem(isParent = true))
-                    }
-                    files.forEach { file ->
-                        add(
-                            FileItem(
-                                file = file,
-                                childCount = if (file.isDirectory) {
-                                    directoryChildCountCache.get(file.absolutePath, file.lastModified())
-                                } else {
-                                    null
-                                }
-                            )
-                        )
-                    }
-                }
-            }
-            ComicLabPerformance.record(
-                event = "directory_build_items",
-                startedAtNanos = itemBuildStartedAtNanos,
-                fields = "rows=${items.size} pathHash=${resolvedPath.hashCode()}"
-            )
-
-            runOnUiThread {
-                if (generation != directoryLoadGeneration.get()) {
-                    return@runOnUiThread
-                }
-
-                val applyStartedAtNanos = ComicLabPerformance.nowNanos()
-                currentPath = resolvedPath
-                saveCurrentPath()
-                fileItems.clear()
-                fileItems.addAll(items)
-                etPath.setText(resolvedPath)
-                notifyListChanged()
-                if (pathToCenter == null) {
-                    if (scrollStateToRestore != null) {
-                        restoreFileListScrollState(scrollStateToRestore, resolvedPath)
+                is DirectoryBrowserController.Result.Loaded -> {
+                    val resolvedPath = result.resolvedPath
+                    val items = result.items
+                    val applyStartedAtNanos = ComicLabPerformance.nowNanos()
+                    currentPath = resolvedPath
+                    saveCurrentPath()
+                    fileItems.clear()
+                    fileItems.addAll(items)
+                    etPath.setText(resolvedPath)
+                    notifyListChanged()
+                    if (pathToCenter == null) {
+                        if (result.scrollState != null) {
+                            restoreFileListScrollState(result.scrollState, resolvedPath)
+                        } else {
+                            scrollFileListToTop()
+                        }
                     } else {
-                        scrollFileListToTop()
+                        centerFileItemIfPresent(pathToCenter)
                     }
-                } else {
-                    centerFileItemIfPresent(pathToCenter)
+                    ComicLabPerformance.record(
+                        event = "directory_ui_apply",
+                        startedAtNanos = applyStartedAtNanos,
+                        fields = "rows=${items.size} pathHash=${resolvedPath.hashCode()}"
+                    )
+                    watchDirectoryFirstPreDraw(
+                        startedAtNanos = loadStartedAtNanos,
+                        generation = generation,
+                        pathHash = resolvedPath.hashCode(),
+                        rowCount = items.size
+                    )
                 }
-                ComicLabPerformance.record(
-                    event = "directory_ui_apply",
-                    startedAtNanos = applyStartedAtNanos,
-                    fields = "rows=${items.size} pathHash=${resolvedPath.hashCode()}"
-                )
-                watchDirectoryFirstPreDraw(
-                    startedAtNanos = loadStartedAtNanos,
-                    generation = generation,
-                    pathHash = resolvedPath.hashCode(),
-                    rowCount = items.size
-                )
             }
         }
     }
@@ -953,60 +931,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestDirectoryChildCount(directory: File) {
-        if (isFinishing || isDestroyed) {
-            return
-        }
-
-        val directoryPath = directory.absolutePath
-        if (!pendingDirectoryChildCountPaths.add(directoryPath)) {
-            return
-        }
-
-        try {
-            directoryChildCountExecutor.execute {
-                val lastModifiedBefore = directory.lastModified()
-                val lookup = directoryChildCountCache.lookup(directoryPath, lastModifiedBefore)
-                val childCount = lookup.childCount ?: try {
-                    directory.listFiles()?.size
-                } catch (_: SecurityException) {
-                    null
-                }
-                val lastModifiedAfter = directory.lastModified()
-                if (lookup.childCount == null && childCount != null &&
-                    lastModifiedBefore == lastModifiedAfter
-                ) {
-                    directoryChildCountCache.putIfUnchangedSince(
-                        directoryPath,
-                        lastModifiedAfter,
-                        childCount,
-                        lookup.generation
-                    )
-                }
-
-                runOnUiThread {
-                    pendingDirectoryChildCountPaths.remove(directoryPath)
-                    if (isFinishing || isDestroyed ||
-                        directory.parentFile?.absolutePath != currentPath
-                    ) {
-                        return@runOnUiThread
-                    }
-                    if (childCount != null &&
-                        (lastModifiedBefore != lastModifiedAfter ||
-                            directory.lastModified() != lastModifiedAfter ||
-                            directoryChildCountCache.generation() != lookup.generation)
-                    ) {
-                        requestDirectoryChildCount(directory)
-                        return@runOnUiThread
-                    }
-                    fileListAdapter.updateDirectoryChildCount(
-                        directory,
-                        childCount ?: 0,
-                        listView
-                    )
-                }
-            }
-        } catch (_: java.util.concurrent.RejectedExecutionException) {
-            pendingDirectoryChildCountPaths.remove(directoryPath)
+        directoryBrowserController.requestChildCount(
+            directory = directory,
+            isActive = { !isFinishing && !isDestroyed },
+            currentPath = { currentPath },
+            postResult = { runOnUiThread(it) }
+        ) { countedDirectory, childCount ->
+            fileListAdapter.updateDirectoryChildCount(countedDirectory, childCount, listView)
         }
     }
 
@@ -1433,7 +1364,10 @@ class MainActivity : AppCompatActivity() {
         runCatching {
             classifyExecutor.execute {
                 val result = runCatching {
-                    buildDirectorySimilarityReport(rootDirectory) { progress ->
+                    DirectorySimilarityScanner.createReport(
+                        rootDirectory = rootDirectory,
+                        formatMessage = ::formatDirectorySimilarityReportMessage
+                    ) { progress ->
                         runOnUiThread {
                             if (generation == classifyGeneration.get() && !isDestroyed) {
                                 updateDirectorySimilarityProgress(progress, progressBar, tvStatus, tvCount)
@@ -1528,10 +1462,10 @@ class MainActivity : AppCompatActivity() {
         runCatching {
             classifyExecutor.execute {
                 val result = runCatching {
-                    mergeComicsNonRecursive(rootDirectory) { progress ->
+                    ComicMergeOperations.merge(rootDirectory) { progress ->
                         runOnUiThread {
                             if (generation == classifyGeneration.get() && !isDestroyed) {
-                                updateComicMergeProgress(progress, progressBar, tvStatus, tvCount)
+                                updateComicArchiveMergeProgress(progress, progressBar, tvStatus, tvCount)
                             }
                         }
                     }
@@ -1546,8 +1480,8 @@ class MainActivity : AppCompatActivity() {
                     progressDialog.dismiss()
                     result
                         .onSuccess { mergeResult ->
-                            handleComicMergeResult(mergeResult)
-                            if (File(currentPath).absolutePath == rootPath) {
+                            val shouldRefresh = handleComicMergeResult(mergeResult)
+                            if (shouldRefresh && File(currentPath).absolutePath == rootPath) {
                                 loadCurrentDirectory(scrollStateToRestore = scrollState)
                             }
                         }
@@ -1617,10 +1551,10 @@ class MainActivity : AppCompatActivity() {
         runCatching {
             classifyExecutor.execute {
                 val result = runCatching {
-                    mergeFilesNonRecursive(rootDirectory) { progress ->
+                    ImageFileMergeOperations.merge(rootDirectory) { progress ->
                         runOnUiThread {
                             if (generation == classifyGeneration.get() && !isDestroyed) {
-                                updateComicMergeProgress(progress, progressBar, tvStatus, tvCount)
+                                updateImageFileMergeProgress(progress, progressBar, tvStatus, tvCount)
                             }
                         }
                     }
@@ -1635,8 +1569,8 @@ class MainActivity : AppCompatActivity() {
                     progressDialog.dismiss()
                     result
                         .onSuccess { mergeResult ->
-                            handleFileMergeResult(mergeResult)
-                            if (File(currentPath).absolutePath == rootPath) {
+                            val shouldRefresh = handleFileMergeResult(mergeResult)
+                            if (shouldRefresh && File(currentPath).absolutePath == rootPath) {
                                 loadCurrentDirectory(scrollStateToRestore = scrollState)
                             }
                         }
@@ -1701,13 +1635,20 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun updateComicMergeProgress(
-        progress: ComicMergeProgress,
+    private fun updateComicArchiveMergeProgress(
+        progress: ComicArchiveMergeProgress,
         progressBar: ProgressBar,
         tvStatus: TextView,
         tvCount: TextView
     ) {
-        tvStatus.text = progress.message
+        tvStatus.text = when (progress.stage) {
+            ComicArchiveMergeProgress.Stage.SCANNING_ARCHIVES -> getString(MESSAGE_SCANNING_COMIC_ARCHIVES)
+            ComicArchiveMergeProgress.Stage.READING_ARCHIVES -> getString(MESSAGE_READING_COMIC_ARCHIVES)
+            ComicArchiveMergeProgress.Stage.MERGING_ARCHIVE_ENTRIES -> getString(
+                R.string.language_merging_source,
+                progress.sourceArchiveName.orEmpty()
+            )
+        }
         if (progress.total <= 0) {
             progressBar.isIndeterminate = true
             tvCount.text = ""
@@ -1724,48 +1665,92 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun handleComicMergeResult(result: ComicMergeResult) {
-        val outputDirectory = result.outputDirectory
-        if (result.archiveCount <= 0) {
-            showMessage(MESSAGE_MERGE_COMICS_NO_ARCHIVES)
-            return
+    private fun handleComicMergeResult(result: ComicMergeResult): Boolean {
+        return when (result) {
+            is ComicMergeResult.Failed -> {
+                showMessage(MESSAGE_MERGE_COMICS_FAILED)
+                false
+            }
+
+            is ComicMergeResult.Completed -> {
+                val outputDirectory = result.outputDirectory
+                if (result.archiveCount <= 0) {
+                    showMessage(MESSAGE_MERGE_COMICS_NO_ARCHIVES)
+                } else if (result.totalImageCount <= 0 || outputDirectory == null) {
+                    showMessage(MESSAGE_MERGE_COMICS_NO_IMAGES)
+                } else {
+                    showMessage(
+                        getString(
+                            R.string.language_comics_merge_result,
+                            result.copiedCount,
+                            result.totalImageCount,
+                            result.failedCount,
+                            outputDirectory.name
+                        )
+                    )
+                }
+                true
+            }
         }
-        if (result.totalImageCount <= 0 || outputDirectory == null) {
-            showMessage(MESSAGE_MERGE_COMICS_NO_IMAGES)
+    }
+
+    private fun updateImageFileMergeProgress(
+        progress: ImageFileMergeProgress,
+        progressBar: ProgressBar,
+        tvStatus: TextView,
+        tvCount: TextView
+    ) {
+        tvStatus.text = when (progress.stage) {
+            ImageFileMergeProgress.Stage.SCANNING_DIRECTORIES -> getString(MESSAGE_SCANNING_IMAGE_DIRECTORIES)
+            ImageFileMergeProgress.Stage.READING_DIRECTORIES -> getString(MESSAGE_READING_IMAGE_DIRECTORIES)
+            ImageFileMergeProgress.Stage.COPYING_IMAGES -> getString(
+                R.string.language_merging_source,
+                progress.sourceDirectoryName.orEmpty()
+            )
+        }
+        if (progress.total <= 0) {
+            progressBar.isIndeterminate = true
+            tvCount.text = ""
             return
         }
 
-        showMessage(
-            getString(
-                R.string.language_comics_merge_result,
-                result.copiedCount,
-                result.totalImageCount,
-                result.failedCount,
-                outputDirectory.name
-            )
+        progressBar.isIndeterminate = false
+        progressBar.max = progress.total
+        progressBar.progress = progress.completed.coerceIn(0, progress.total)
+        tvCount.text = getString(
+            R.string.classify_comics_progress_count,
+            progress.completed,
+            progress.total
         )
     }
 
-    private fun handleFileMergeResult(result: FileMergeResult) {
-        val outputDirectory = result.outputDirectory
-        if (result.folderCount <= 0) {
-            showMessage(MESSAGE_MERGE_FILES_NO_FOLDERS)
-            return
-        }
-        if (result.totalImageCount <= 0 || outputDirectory == null) {
-            showMessage(MESSAGE_MERGE_FILES_NO_IMAGES)
-            return
-        }
+    private fun handleFileMergeResult(result: ImageFileMergeResult): Boolean {
+        return when (result) {
+            is ImageFileMergeResult.Failed -> {
+                showMessage(MESSAGE_MERGE_FILES_FAILED)
+                false
+            }
 
-        showMessage(
-            getString(
-                R.string.language_files_merge_result,
-                result.copiedCount,
-                result.totalImageCount,
-                result.failedCount,
-                outputDirectory.name
-            )
-        )
+            is ImageFileMergeResult.Completed -> {
+                val outputDirectory = result.outputDirectory
+                if (result.folderCount <= 0) {
+                    showMessage(MESSAGE_MERGE_FILES_NO_FOLDERS)
+                } else if (result.totalImageCount <= 0 || outputDirectory == null) {
+                    showMessage(MESSAGE_MERGE_FILES_NO_IMAGES)
+                } else {
+                    showMessage(
+                        getString(
+                            R.string.language_files_merge_result,
+                            result.copiedCount,
+                            result.totalImageCount,
+                            result.failedCount,
+                            outputDirectory.name
+                        )
+                    )
+                }
+                true
+            }
+        }
     }
 
     private fun updateDirectorySimilarityProgress(
@@ -1774,7 +1759,12 @@ class MainActivity : AppCompatActivity() {
         tvStatus: TextView,
         tvCount: TextView
     ) {
-        tvStatus.text = progress.message
+        tvStatus.setText(
+            when (progress.stage) {
+                DirectorySimilarityProgress.Stage.SCANNING_DIRECTORIES -> MESSAGE_SCANNING_DIRECTORIES
+                DirectorySimilarityProgress.Stage.COMPARING_DIRECTORY_NAMES -> MESSAGE_COMPARING_DIRECTORY_NAMES
+            }
+        )
         if (progress.total <= 0) {
             progressBar.isIndeterminate = true
             tvCount.text = ""
@@ -1791,641 +1781,29 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun buildDirectorySimilarityReport(
-        rootDirectory: File,
-        onProgress: (DirectorySimilarityProgress) -> Unit
-    ): DirectorySimilarityReport {
-        onProgress(DirectorySimilarityProgress(getString(MESSAGE_SCANNING_DIRECTORIES)))
-        val directories = scanDirectoriesForSimilarity(rootDirectory)
-        onProgress(
-            DirectorySimilarityProgress(
-                message = getString(MESSAGE_COMPARING_DIRECTORY_NAMES),
-                completed = 0,
-                total = directories.size
-            )
-        )
-
-        val pairs = findSimilarDirectoryNamePairs(directories) { completed, total ->
-            onProgress(
-                DirectorySimilarityProgress(
-                    message = getString(MESSAGE_COMPARING_DIRECTORY_NAMES),
-                    completed = completed,
-                    total = total
-                )
-            )
-        }
-        val outputFile = createDirectorySimilarityReportFile(rootDirectory)
-        outputFile.writeText(
-            buildDirectorySimilarityReportText(rootDirectory, directories, pairs)
-        )
-        return DirectorySimilarityReport(
-            outputFile = outputFile,
-            directoryCount = directories.size,
-            pairCount = pairs.size
-        )
-    }
-
-    private fun mergeComicsNonRecursive(
-        rootDirectory: File,
-        onProgress: (ComicMergeProgress) -> Unit
-    ): ComicMergeResult {
-        onProgress(ComicMergeProgress(getString(MESSAGE_SCANNING_COMIC_ARCHIVES)))
-        val archives = comicArchivesInCurrentDirectory(rootDirectory)
-        if (archives.isEmpty()) {
-            return ComicMergeResult(
-                outputDirectory = null,
-                archiveCount = 0,
-                totalImageCount = 0,
-                copiedCount = 0,
-                failedCount = 0
-            )
-        }
-
-        val sources = mutableListOf<ComicMergeSource>()
-        archives.forEachIndexed { index, archive ->
-            onProgress(
-                ComicMergeProgress(
-                    message = getString(MESSAGE_READING_COMIC_ARCHIVES),
-                    completed = index,
-                    total = archives.size
-                )
-            )
-            val entries = ComicArchive.imageEntries(archive)
-            if (entries.isNotEmpty()) {
-                sources.add(ComicMergeSource(archive, entries))
-            }
-        }
-        onProgress(
-            ComicMergeProgress(
-                message = getString(MESSAGE_READING_COMIC_ARCHIVES),
-                completed = archives.size,
-                total = archives.size
-            )
-        )
-
-        val totalImageCount = sources.sumOf { it.entries.size }
-        if (totalImageCount <= 0) {
-            return ComicMergeResult(
-                outputDirectory = null,
-                archiveCount = archives.size,
-                totalImageCount = 0,
-                copiedCount = 0,
-                failedCount = 0
-            )
-        }
-
-        val outputDirectory = createComicMergeOutputDirectory(rootDirectory)
-        if (!outputDirectory.mkdirs()) {
-            error("Failed to create comic merge output directory: ${outputDirectory.absolutePath}")
-        }
-
-        val numberWidth = maxOf(MERGED_COMIC_MIN_FILE_NUMBER_WIDTH, totalImageCount.toString().length)
-        var completedCount = 0
-        var copiedCount = 0
-        var failedCount = 0
-        var nextOutputIndex = 1
-
-        sources.forEach { source ->
-            source.entries.forEach { entryName ->
-                val outputName = buildMergedComicImageFileName(nextOutputIndex, numberWidth, entryName)
-                val targetFile = File(outputDirectory, outputName)
-                val copied = ComicArchive.extractImageEntryToFile(source.archive, entryName, targetFile)
-                completedCount++
-
-                if (copied) {
-                    copiedCount++
-                    nextOutputIndex++
-                } else {
-                    failedCount++
-                    targetFile.delete()
-                }
-
-                onProgress(
-                    ComicMergeProgress(
-                        message = getString(R.string.language_merging_source, source.archive.name),
-                        completed = completedCount,
-                        total = totalImageCount
-                    )
-                )
-            }
-        }
-
-        return ComicMergeResult(
-            outputDirectory = outputDirectory,
-            archiveCount = archives.size,
-            totalImageCount = totalImageCount,
-            copiedCount = copiedCount,
-            failedCount = failedCount
-        )
-    }
-
-    private fun mergeFilesNonRecursive(
-        rootDirectory: File,
-        onProgress: (ComicMergeProgress) -> Unit
-    ): FileMergeResult {
-        onProgress(ComicMergeProgress(getString(MESSAGE_SCANNING_IMAGE_DIRECTORIES)))
-        val directories = imageSourceDirectoriesInCurrentDirectory(rootDirectory)
-        if (directories.isEmpty()) {
-            return FileMergeResult(
-                outputDirectory = null,
-                folderCount = 0,
-                totalImageCount = 0,
-                copiedCount = 0,
-                failedCount = 0
-            )
-        }
-
-        val sources = mutableListOf<FileMergeSource>()
-        directories.forEachIndexed { index, directory ->
-            onProgress(
-                ComicMergeProgress(
-                    message = getString(MESSAGE_READING_IMAGE_DIRECTORIES),
-                    completed = index,
-                    total = directories.size
-                )
-            )
-            val images = imageFilesInDirectory(directory)
-            if (images.isNotEmpty()) {
-                sources.add(FileMergeSource(directory, images))
-            }
-        }
-        onProgress(
-            ComicMergeProgress(
-                message = getString(MESSAGE_READING_IMAGE_DIRECTORIES),
-                completed = directories.size,
-                total = directories.size
-            )
-        )
-
-        val totalImageCount = sources.sumOf { it.images.size }
-        if (totalImageCount <= 0) {
-            return FileMergeResult(
-                outputDirectory = null,
-                folderCount = directories.size,
-                totalImageCount = 0,
-                copiedCount = 0,
-                failedCount = 0
-            )
-        }
-
-        val outputDirectory = createFileMergeOutputDirectory(rootDirectory)
-        if (!outputDirectory.mkdirs()) {
-            error("Failed to create file merge output directory: ${outputDirectory.absolutePath}")
-        }
-
-        val numberWidth = maxOf(MERGED_COMIC_MIN_FILE_NUMBER_WIDTH, totalImageCount.toString().length)
-        var completedCount = 0
-        var copiedCount = 0
-        var failedCount = 0
-        var nextOutputIndex = 1
-
-        sources.forEach { source ->
-            source.images.forEach { imageFile ->
-                val outputName = buildMergedComicImageFileName(nextOutputIndex, numberWidth, imageFile.name)
-                val targetFile = File(outputDirectory, outputName)
-                val copied = copyImageFileToMergedTarget(imageFile, targetFile)
-                completedCount++
-
-                if (copied) {
-                    copiedCount++
-                    nextOutputIndex++
-                } else {
-                    failedCount++
-                    targetFile.delete()
-                }
-
-                onProgress(
-                    ComicMergeProgress(
-                        message = getString(R.string.language_merging_source, source.directory.name),
-                        completed = completedCount,
-                        total = totalImageCount
-                    )
-                )
-            }
-        }
-
-        return FileMergeResult(
-            outputDirectory = outputDirectory,
-            folderCount = directories.size,
-            totalImageCount = totalImageCount,
-            copiedCount = copiedCount,
-            failedCount = failedCount
-        )
-    }
-
-    private fun comicArchivesInCurrentDirectory(rootDirectory: File): List<File> {
-        return runCatching {
-            rootDirectory.listFiles()
-                ?.filter { file ->
-                    file.isFile &&
-                        ComicArchive.isSupportedArchive(file) &&
-                        !ComicArchive.isPdf(file)
-                }
-                ?.sortedWith { left, right -> compareNaturalNames(left.name, right.name) }
-                .orEmpty()
-        }.getOrDefault(emptyList())
-    }
-
-    private fun imageSourceDirectoriesInCurrentDirectory(rootDirectory: File): List<File> {
-        return runCatching {
-            rootDirectory.listFiles()
-                ?.filter { file ->
-                    file.isDirectory &&
-                        !file.name.startsWith(".") &&
-                        !isGeneratedMergeDirectory(file.name)
-                }
-                ?.sortedWith { left, right -> compareNaturalNames(left.name, right.name) }
-                .orEmpty()
-        }.getOrDefault(emptyList())
-    }
-
-    private fun imageFilesInDirectory(directory: File): List<File> {
-        return runCatching {
-            directory.listFiles()
-                ?.filter { file ->
-                    file.isFile &&
-                        file.extension.lowercase(Locale.ROOT) in MERGED_COMIC_IMAGE_EXTENSIONS
-                }
-                ?.sortedWith { left, right -> compareNaturalNames(left.name, right.name) }
-                .orEmpty()
-        }.getOrDefault(emptyList())
-    }
-
-    private fun isGeneratedMergeDirectory(name: String): Boolean {
-        return name.startsWith(MERGED_COMIC_DIRECTORY_PREFIX) ||
-            name.startsWith(MERGED_FILE_DIRECTORY_PREFIX)
-    }
-
-    private fun createComicMergeOutputDirectory(rootDirectory: File): File {
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
-        var outputDirectory = File(rootDirectory, "$MERGED_COMIC_DIRECTORY_PREFIX$timestamp")
-        var index = 1
-        while (outputDirectory.exists()) {
-            outputDirectory = File(
-                rootDirectory,
-                "$MERGED_COMIC_DIRECTORY_PREFIX${timestamp}_${String.format(Locale.ROOT, "%03d", index)}"
-            )
-            index++
-        }
-        return outputDirectory
-    }
-
-    private fun createFileMergeOutputDirectory(rootDirectory: File): File {
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
-        var outputDirectory = File(rootDirectory, "$MERGED_FILE_DIRECTORY_PREFIX$timestamp")
-        var index = 1
-        while (outputDirectory.exists()) {
-            outputDirectory = File(
-                rootDirectory,
-                "$MERGED_FILE_DIRECTORY_PREFIX${timestamp}_${String.format(Locale.ROOT, "%03d", index)}"
-            )
-            index++
-        }
-        return outputDirectory
-    }
-
-    private fun copyImageFileToMergedTarget(sourceFile: File, targetFile: File): Boolean {
-        if (!sourceFile.isFile || sourceFile.length() <= 0L) {
-            return false
-        }
-
-        targetFile.parentFile?.mkdirs()
-        val tempFile = File(targetFile.parentFile, "${targetFile.name}.part")
-        tempFile.delete()
-        val copied = runCatching {
-            sourceFile.copyTo(tempFile, overwrite = true, bufferSize = MERGED_FILE_COPY_BUFFER_SIZE)
-            tempFile.isFile && tempFile.length() == sourceFile.length()
-        }.getOrDefault(false)
-
-        if (!copied) {
-            tempFile.delete()
-            return false
-        }
-
-        if (targetFile.exists()) {
-            targetFile.delete()
-        }
-
-        if (!tempFile.renameTo(targetFile)) {
-            tempFile.delete()
-            return false
-        }
-
-        targetFile.setLastModified(sourceFile.lastModified())
-        return true
-    }
-
-    private fun buildMergedComicImageFileName(index: Int, numberWidth: Int, entryName: String): String {
-        val extension = entryName.substringAfterLast('.', "")
-            .lowercase(Locale.ROOT)
-            .takeIf { it in MERGED_COMIC_IMAGE_EXTENSIONS }
-            ?: MERGED_COMIC_DEFAULT_IMAGE_EXTENSION
-        return "${index.toString().padStart(numberWidth, '0')}.$extension"
-    }
-
-    private fun compareNaturalNames(left: String, right: String): Int {
-        var leftIndex = 0
-        var rightIndex = 0
-
-        while (leftIndex < left.length && rightIndex < right.length) {
-            val leftChar = left[leftIndex]
-            val rightChar = right[rightIndex]
-
-            if (leftChar.isDigit() && rightChar.isDigit()) {
-                val leftEnd = findNumberRunEnd(left, leftIndex)
-                val rightEnd = findNumberRunEnd(right, rightIndex)
-                val numberComparison = compareNumberRuns(left, leftIndex, leftEnd, right, rightIndex, rightEnd)
-                if (numberComparison != 0) {
-                    return numberComparison
-                }
-                leftIndex = leftEnd
-                rightIndex = rightEnd
-                continue
-            }
-
-            val charComparison = leftChar.lowercaseChar().compareTo(rightChar.lowercaseChar())
-            if (charComparison != 0) {
-                return charComparison
-            }
-
-            leftIndex++
-            rightIndex++
-        }
-
-        if (leftIndex != left.length || rightIndex != right.length) {
-            return (left.length - leftIndex).compareTo(right.length - rightIndex)
-        }
-
-        return left.compareTo(right)
-    }
-
-    private fun findNumberRunEnd(value: String, startIndex: Int): Int {
-        var index = startIndex
-        while (index < value.length && value[index].isDigit()) {
-            index++
-        }
-        return index
-    }
-
-    private fun compareNumberRuns(
-        left: String,
-        leftStart: Int,
-        leftEnd: Int,
-        right: String,
-        rightStart: Int,
-        rightEnd: Int
-    ): Int {
-        val leftSignificantStart = findSignificantNumberStart(left, leftStart, leftEnd)
-        val rightSignificantStart = findSignificantNumberStart(right, rightStart, rightEnd)
-        val leftSignificantLength = leftEnd - leftSignificantStart
-        val rightSignificantLength = rightEnd - rightSignificantStart
-
-        if (leftSignificantLength != rightSignificantLength) {
-            return leftSignificantLength.compareTo(rightSignificantLength)
-        }
-
-        for (offset in 0 until leftSignificantLength) {
-            val digitComparison = left[leftSignificantStart + offset]
-                .compareTo(right[rightSignificantStart + offset])
-            if (digitComparison != 0) {
-                return digitComparison
-            }
-        }
-
-        return 0
-    }
-
-    private fun findSignificantNumberStart(value: String, startIndex: Int, endIndex: Int): Int {
-        var index = startIndex
-        while (index < endIndex - 1 && value[index] == '0') {
-            index++
-        }
-        return index
-    }
-
-    private fun scanDirectoriesForSimilarity(rootDirectory: File): List<SimilarDirectoryInfo> {
-        val result = mutableListOf<SimilarDirectoryInfo>()
-        val pending = ArrayDeque<File>()
-        val visited = mutableSetOf<String>()
-
-        runCatching {
-            rootDirectory.listFiles()
-                ?.filter { it.isDirectory && !it.name.startsWith(".") }
-                ?.sortedByDescending { it.name.lowercase(Locale.ROOT) }
-                ?.forEach { pending.add(it) }
-        }
-
-        while (pending.isNotEmpty()) {
-            val directory = pending.removeLast()
-            if (!directory.isDirectory || directory.name.startsWith(".")) {
-                continue
-            }
-
-            val stablePath = runCatching { directory.canonicalPath }
-                .getOrDefault(directory.absolutePath)
-            if (!visited.add(stablePath)) {
-                continue
-            }
-
-            result.add(
-                SimilarDirectoryInfo(
-                    name = directory.name,
-                    path = directory.absolutePath
-                )
-            )
-
-            val children = runCatching {
-                directory.listFiles()
-                    ?.filter { it.isDirectory && !it.name.startsWith(".") }
-                    ?.sortedByDescending { it.name.lowercase(Locale.ROOT) }
-                    .orEmpty()
-            }.getOrDefault(emptyList())
-            children.forEach { pending.add(it) }
-        }
-
-        return result.sortedBy { it.path.lowercase(Locale.ROOT) }
-    }
-
-    private fun findSimilarDirectoryNamePairs(
-        directories: List<SimilarDirectoryInfo>,
-        onProgress: (completed: Int, total: Int) -> Unit
-    ): List<SimilarDirectoryNamePair> {
-        val candidates = directories
-            .mapNotNull { directory ->
-                normalizeDirectoryNameForSimilarity(directory.name)
-                    .takeIf { it.isNotBlank() }
-                    ?.let { normalizedName ->
-                        SimilarDirectoryNameCandidate(directory, normalizedName)
-                    }
-            }
-
-        if (candidates.size < 2) {
-            onProgress(candidates.size, candidates.size)
-            return emptyList()
-        }
-
-        val pairs = mutableListOf<SimilarDirectoryNamePair>()
-        for (leftIndex in 0 until candidates.lastIndex) {
-            val left = candidates[leftIndex]
-            for (rightIndex in (leftIndex + 1)..candidates.lastIndex) {
-                val right = candidates[rightIndex]
-                val maxLength = maxOf(left.normalizedName.length, right.normalizedName.length)
-                val minLength = minOf(left.normalizedName.length, right.normalizedName.length)
-                if (maxLength <= 0 ||
-                    minLength.toDouble() / maxLength.toDouble() < DIRECTORY_NAME_SIMILARITY_THRESHOLD
-                ) {
-                    continue
-                }
-
-                val similarity = directoryNameSimilarity(left.normalizedName, right.normalizedName)
-                if (similarity >= DIRECTORY_NAME_SIMILARITY_THRESHOLD) {
-                    pairs.add(
-                        SimilarDirectoryNamePair(
-                            left = left.directory,
-                            right = right.directory,
-                            similarity = similarity
-                        )
-                    )
-                }
-            }
-
-            if (leftIndex % DIRECTORY_SIMILARITY_PROGRESS_ROW_INTERVAL == 0 ||
-                leftIndex == candidates.lastIndex - 1
-            ) {
-                onProgress(leftIndex + 1, candidates.size)
-            }
-        }
-        onProgress(candidates.size, candidates.size)
-
-        return pairs.sortedWith(
-            compareByDescending<SimilarDirectoryNamePair> { it.similarity }
-                .thenBy { it.left.name.lowercase(Locale.ROOT) }
-                .thenBy { it.right.name.lowercase(Locale.ROOT) }
-                .thenBy { it.left.path.lowercase(Locale.ROOT) }
-                .thenBy { it.right.path.lowercase(Locale.ROOT) }
-        )
-    }
-
-    private fun buildDirectorySimilarityReportText(
-        rootDirectory: File,
-        directories: List<SimilarDirectoryInfo>,
-        pairs: List<SimilarDirectoryNamePair>
+    private fun formatDirectorySimilarityReportMessage(
+        message: DirectorySimilarityReportMessage,
+        arguments: Array<out Any>
     ): String {
-        val generatedAt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-        return buildString {
-            appendLine(getString(R.string.language_report_title))
-            appendLine(getString(R.string.language_report_generated_at, generatedAt))
-            appendLine(getString(R.string.language_report_root, rootDirectory.absolutePath))
-            appendLine(
-                getString(
-                    R.string.language_report_rule,
-                    similarityPercent(DIRECTORY_NAME_SIMILARITY_THRESHOLD)
-                )
-            )
-            appendLine(getString(R.string.language_report_folder_count, directories.size))
-            appendLine(getString(R.string.language_report_pair_count, pairs.size))
-            appendLine()
-
-            if (pairs.isEmpty()) {
-                appendLine(getString(R.string.language_report_no_pairs))
-                return@buildString
-            }
-
-            pairs.forEachIndexed { index, pair ->
-                appendLine(
-                    getString(
-                        R.string.language_report_pair_similarity,
-                        String.format(Locale.ROOT, "%03d", index + 1),
-                        similarityPercent(pair.similarity)
-                    )
-                )
-                appendLine(getString(R.string.language_report_name_a, pair.left.name))
-                appendLine(getString(R.string.language_report_path_a, pair.left.path))
-                appendLine(getString(R.string.language_report_name_b, pair.right.name))
-                appendLine(getString(R.string.language_report_path_b, pair.right.path))
-                appendLine()
-            }
+        val stringResource = when (message) {
+            DirectorySimilarityReportMessage.TITLE -> R.string.language_report_title
+            DirectorySimilarityReportMessage.GENERATED_AT -> R.string.language_report_generated_at
+            DirectorySimilarityReportMessage.ROOT_DIRECTORY -> R.string.language_report_root
+            DirectorySimilarityReportMessage.SIMILARITY_RULE -> R.string.language_report_rule
+            DirectorySimilarityReportMessage.DIRECTORY_COUNT -> R.string.language_report_folder_count
+            DirectorySimilarityReportMessage.PAIR_COUNT -> R.string.language_report_pair_count
+            DirectorySimilarityReportMessage.NO_PAIRS -> R.string.language_report_no_pairs
+            DirectorySimilarityReportMessage.PAIR_SIMILARITY -> R.string.language_report_pair_similarity
+            DirectorySimilarityReportMessage.NAME_A -> R.string.language_report_name_a
+            DirectorySimilarityReportMessage.PATH_A -> R.string.language_report_path_a
+            DirectorySimilarityReportMessage.NAME_B -> R.string.language_report_name_b
+            DirectorySimilarityReportMessage.PATH_B -> R.string.language_report_path_b
         }
+        return getString(stringResource, *arguments)
     }
 
-    private fun createDirectorySimilarityReportFile(rootDirectory: File): File {
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
-        var outputFile = File(
-            rootDirectory,
-            "$DIRECTORY_SIMILARITY_REPORT_PREFIX$timestamp$DIRECTORY_SIMILARITY_REPORT_EXTENSION"
-        )
-        var index = 1
-        while (outputFile.exists()) {
-            outputFile = File(
-                rootDirectory,
-                "$DIRECTORY_SIMILARITY_REPORT_PREFIX${timestamp}_" +
-                    "${String.format(Locale.ROOT, "%03d", index)}$DIRECTORY_SIMILARITY_REPORT_EXTENSION"
-            )
-            index++
-        }
-        return outputFile
-    }
-
-    private fun normalizeDirectoryNameForSimilarity(value: String): String {
-        return value
-            .trim()
-            .lowercase(Locale.ROOT)
-            .filterNot { char ->
-                char.isWhitespace() || char in DIRECTORY_NAME_SIMILARITY_IGNORED_CHARS
-            }
-    }
-
-    private fun directoryNameSimilarity(left: String, right: String): Double {
-        if (left == right) {
-            return 1.0
-        }
-        val maxLength = maxOf(left.length, right.length)
-        if (maxLength <= 0) {
-            return 0.0
-        }
-        val distance = levenshteinDistance(left, right)
-        return (1.0 - (distance.toDouble() / maxLength.toDouble())).coerceIn(0.0, 1.0)
-    }
-
-    private fun levenshteinDistance(left: String, right: String): Int {
-        if (left == right) {
-            return 0
-        }
-        if (left.isEmpty()) {
-            return right.length
-        }
-        if (right.isEmpty()) {
-            return left.length
-        }
-
-        var previous = IntArray(right.length + 1) { it }
-        var current = IntArray(right.length + 1)
-
-        for (leftIndex in 1..left.length) {
-            current[0] = leftIndex
-            for (rightIndex in 1..right.length) {
-                val cost = if (left[leftIndex - 1] == right[rightIndex - 1]) 0 else 1
-                current[rightIndex] = minOf(
-                    current[rightIndex - 1] + 1,
-                    previous[rightIndex] + 1,
-                    previous[rightIndex - 1] + cost
-                )
-            }
-
-            val swap = previous
-            previous = current
-            current = swap
-        }
-
-        return previous[right.length]
-    }
-
-    private fun similarityPercent(value: Double): String {
-        return String.format(Locale.getDefault(), "%.2f%%", value * 100.0)
-    }
-
-    private fun sortFiles(files: List<File>): List<File> {
-        val order = when (currentSortMode()) {
+    private fun currentDirectorySortOrder(): DirectorySortOrder {
+        return when (currentSortMode()) {
             FileSortMode.NAME_ASC -> DirectorySortOrder.NAME_ASC
             FileSortMode.NAME_DESC -> DirectorySortOrder.NAME_DESC
             FileSortMode.MODIFIED_ASC -> DirectorySortOrder.MODIFIED_ASC
@@ -2433,7 +1811,6 @@ class MainActivity : AppCompatActivity() {
             FileSortMode.SIZE_ASC -> DirectorySortOrder.SIZE_ASC
             FileSortMode.SIZE_DESC -> DirectorySortOrder.SIZE_DESC
         }
-        return DirectorySortPolicy.sort(files, order)
     }
 
     private fun currentSortMode(): FileSortMode {
@@ -2781,8 +2158,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        pendingFileTransfer = PendingFileTransfer(sourcePath, mode, isDirectory)
-        updateFileTransferToolbar()
+        val transfer = PendingFileTransfer(sourcePath, mode, isDirectory)
+        if (fileTransferController.restore(transfer, sourceExists)) {
+            updateFileTransferToolbar()
+        }
     }
 
     private fun beginFileTransfer(file: File, mode: FileTransferMode) {
@@ -2794,8 +2173,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        pendingFileTransfer = PendingFileTransfer(file.absolutePath, mode, file.isDirectory)
-        updateFileTransferToolbar()
+        val transfer = PendingFileTransfer(file.absolutePath, mode, file.isDirectory)
+        if (fileTransferController.begin(transfer)) {
+            updateFileTransferToolbar()
+        }
     }
 
     private fun updateFileTransferToolbar() {
@@ -3121,7 +2502,9 @@ class MainActivity : AppCompatActivity() {
             FavoriteComicStore.isFavorite(this, sourceFile)
         val wasInReadingHistory = transfer.mode == FileTransferMode.CUT &&
             ReadingHistoryStore.items(this).any { it.file.absolutePath == sourceFile.absolutePath }
-        isFileTransferInProgress = true
+        if (!fileTransferController.startPaste(transfer)) {
+            return
+        }
         updateFileTransferToolbar()
         val progressViews = showFileOperationProgress()
         val reportProgress = createFileOperationProgressReporter(progressViews)
@@ -3135,16 +2518,20 @@ class MainActivity : AppCompatActivity() {
             if (result == FileTransferOperations.Result.SUCCESS &&
                 transfer.mode == FileTransferMode.CUT
             ) {
-                runCatching {
-                    if (wasFavorite) {
-                        FavoriteComicStore.remove(applicationContext, sourceFile)
-                        FavoriteComicStore.record(applicationContext, targetFile)
+                FileTransferMetadataUpdatePolicy.applyFileCut(
+                    updateFavorites = {
+                        if (wasFavorite) {
+                            FavoriteComicStore.remove(applicationContext, sourceFile)
+                            FavoriteComicStore.record(applicationContext, targetFile)
+                        }
+                    },
+                    updateReadingHistory = {
+                        if (wasInReadingHistory) {
+                            ReadingHistoryStore.remove(applicationContext, sourceFile)
+                            ReadingHistoryStore.record(applicationContext, targetFile)
+                        }
                     }
-                    if (wasInReadingHistory) {
-                        ReadingHistoryStore.remove(applicationContext, sourceFile)
-                        ReadingHistoryStore.record(applicationContext, targetFile)
-                    }
-                }
+                )
             }
             if (result == FileTransferOperations.Result.SUCCESS ||
                 result == FileTransferOperations.Result.SOURCE_DELETE_FAILED
@@ -3161,12 +2548,13 @@ class MainActivity : AppCompatActivity() {
                 if (isDestroyed || isFinishing) {
                     return@runOnUiThread
                 }
-                isFileTransferInProgress = false
+                fileTransferController.finishPaste(
+                    transfer,
+                    result = result
+                )
                 updateFileTransferToolbar()
                 when (result) {
                     FileTransferOperations.Result.SUCCESS -> {
-                        pendingFileTransfer = null
-                        updateFileTransferToolbar()
                         showMessage(
                             getString(
                                 if (transfer.mode == FileTransferMode.COPY) {
@@ -3224,7 +2612,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         val scrollState = captureFileListScrollState()
-        isFileTransferInProgress = true
+        if (!fileTransferController.startPaste(transfer)) {
+            return
+        }
         updateFileTransferToolbar()
         val progressViews = showFileOperationProgress()
         val reportProgress = createFileOperationProgressReporter(progressViews)
@@ -3239,34 +2629,36 @@ class MainActivity : AppCompatActivity() {
             if (result == DirectoryTransferOperations.Result.SUCCESS &&
                 transfer.mode == FileTransferMode.CUT
             ) {
-                runCatching {
-                    FavoritePathStore.moveDirectory(
-                        applicationContext,
-                        sourceDirectory,
-                        targetDirectory
-                    )
-                }
-                runCatching {
-                    FavoriteComicStore.moveDirectory(
-                        applicationContext,
-                        sourceDirectory,
-                        targetDirectory
-                    )
-                }
-                runCatching {
-                    ReadingHistoryStore.moveDirectory(
-                        applicationContext,
-                        sourceDirectory,
-                        targetDirectory
-                    )
-                }
-                runCatching {
-                    AppSettings.renameBookcaseDirectory(
-                        applicationContext,
-                        sourceDirectory,
-                        targetDirectory
-                    )
-                }
+                FileTransferMetadataUpdatePolicy.applyDirectoryCut(
+                    updateFavoritePaths = {
+                        FavoritePathStore.moveDirectory(
+                            applicationContext,
+                            sourceDirectory,
+                            targetDirectory
+                        )
+                    },
+                    updateFavoriteComics = {
+                        FavoriteComicStore.moveDirectory(
+                            applicationContext,
+                            sourceDirectory,
+                            targetDirectory
+                        )
+                    },
+                    updateReadingHistory = {
+                        ReadingHistoryStore.moveDirectory(
+                            applicationContext,
+                            sourceDirectory,
+                            targetDirectory
+                        )
+                    },
+                    updateBookcasePaths = {
+                        AppSettings.renameBookcaseDirectory(
+                            applicationContext,
+                            sourceDirectory,
+                            targetDirectory
+                        )
+                    }
+                )
             }
             if (result == DirectoryTransferOperations.Result.SUCCESS ||
                 result == DirectoryTransferOperations.Result.SOURCE_DELETE_FAILED
@@ -3280,61 +2672,71 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             runOnUiThread {
-                dismissFileOperationProgress(progressViews)
-                if (isDestroyed || isFinishing) {
-                    return@runOnUiThread
-                }
-                isFileTransferInProgress = false
-                updateFileTransferToolbar()
-                when (result) {
-                    DirectoryTransferOperations.Result.SUCCESS -> {
-                        pendingFileTransfer = null
-                        updateFileTransferToolbar()
-                        showMessage(
-                            getString(
-                                if (transfer.mode == FileTransferMode.COPY) {
-                                    R.string.folder_copy_success
-                                } else {
-                                    R.string.folder_cut_success
-                                }
-                            )
-                        )
-                        loadCurrentDirectory(scrollStateToRestore = scrollState)
-                    }
+                handleDirectoryTransferResult(
+                    transfer = transfer,
+                    result = result,
+                    destinationDirectory = destinationDirectory,
+                    scrollState = scrollState,
+                    progressViews = progressViews
+                )
+            }
+        }
+    }
 
-                    DirectoryTransferOperations.Result.TARGET_EXISTS -> {
-                        showPasteDirectoryNameDialog(transfer, destinationDirectory)
-                    }
+    private fun handleDirectoryTransferResult(
+        transfer: PendingFileTransfer,
+        result: DirectoryTransferOperations.Result,
+        destinationDirectory: File,
+        scrollState: FileListScrollState?,
+        progressViews: FileOperationProgressViews
+    ) {
+        dismissFileOperationProgress(progressViews)
+        if (isDestroyed || isFinishing) {
+            return
+        }
+        fileTransferController.finishPaste(transfer, result)
+        updateFileTransferToolbar()
+        when (result) {
+            DirectoryTransferOperations.Result.SUCCESS -> {
+                showMessage(
+                    getString(
+                        if (transfer.mode == FileTransferMode.COPY) {
+                            R.string.folder_copy_success
+                        } else {
+                            R.string.folder_cut_success
+                        }
+                    )
+                )
+                loadCurrentDirectory(scrollStateToRestore = scrollState)
+            }
 
-                    DirectoryTransferOperations.Result.SOURCE_NOT_DIRECTORY -> {
-                        showMessage(getString(R.string.file_transfer_source_missing))
-                    }
+            DirectoryTransferOperations.Result.TARGET_EXISTS -> {
+                showPasteDirectoryNameDialog(transfer, destinationDirectory)
+            }
 
-                    DirectoryTransferOperations.Result.DESTINATION_INSIDE_SOURCE -> {
-                        showMessage(getString(R.string.folder_paste_into_source))
-                    }
+            DirectoryTransferOperations.Result.SOURCE_NOT_DIRECTORY -> {
+                showMessage(getString(R.string.file_transfer_source_missing))
+            }
 
-                    DirectoryTransferOperations.Result.SOURCE_DELETE_FAILED -> {
-                        showMessage(getString(R.string.folder_cut_source_delete_failed))
-                        loadCurrentDirectory(scrollStateToRestore = scrollState)
-                    }
+            DirectoryTransferOperations.Result.DESTINATION_INSIDE_SOURCE -> {
+                showMessage(getString(R.string.folder_paste_into_source))
+            }
 
-                    DirectoryTransferOperations.Result.DESTINATION_NOT_DIRECTORY,
-                    DirectoryTransferOperations.Result.INVALID_TARGET_NAME,
-                    DirectoryTransferOperations.Result.FAILED -> {
-                        showMessage(getString(R.string.file_transfer_failed))
-                    }
-                }
+            DirectoryTransferOperations.Result.SOURCE_DELETE_FAILED -> {
+                showMessage(getString(R.string.folder_cut_source_delete_failed))
+                loadCurrentDirectory(scrollStateToRestore = scrollState)
+            }
+
+            DirectoryTransferOperations.Result.DESTINATION_NOT_DIRECTORY,
+            DirectoryTransferOperations.Result.INVALID_TARGET_NAME,
+            DirectoryTransferOperations.Result.FAILED -> {
+                showMessage(getString(R.string.file_transfer_failed))
             }
         }
     }
 
     private fun exitPendingFileTransfer() {
-        if (isFileTransferInProgress) {
-            return
-        }
-        pendingFileTransfer = null
-        updateFileTransferToolbar()
+        if (fileTransferController.exit()) updateFileTransferToolbar()
     }
 
     private fun showArchiveMenu(file: File) {
@@ -3808,77 +3210,6 @@ class MainActivity : AppCompatActivity() {
         val onClick: () -> Unit
     )
 
-    private data class DirectorySimilarityProgress(
-        val message: String,
-        val completed: Int = 0,
-        val total: Int = 0
-    )
-
-    private data class DirectorySimilarityReport(
-        val outputFile: File,
-        val directoryCount: Int,
-        val pairCount: Int
-    )
-
-    private data class ComicMergeProgress(
-        val message: String,
-        val completed: Int = 0,
-        val total: Int = 0
-    )
-
-    private data class ComicMergeResult(
-        val outputDirectory: File?,
-        val archiveCount: Int,
-        val totalImageCount: Int,
-        val copiedCount: Int,
-        val failedCount: Int
-    )
-
-    private data class ComicMergeSource(
-        val archive: File,
-        val entries: List<String>
-    )
-
-    private data class FileMergeResult(
-        val outputDirectory: File?,
-        val folderCount: Int,
-        val totalImageCount: Int,
-        val copiedCount: Int,
-        val failedCount: Int
-    )
-
-    private data class FileMergeSource(
-        val directory: File,
-        val images: List<File>
-    )
-
-    private data class SimilarDirectoryInfo(
-        val name: String,
-        val path: String
-    )
-
-    private data class SimilarDirectoryNameCandidate(
-        val directory: SimilarDirectoryInfo,
-        val normalizedName: String
-    )
-
-    private data class SimilarDirectoryNamePair(
-        val left: SimilarDirectoryInfo,
-        val right: SimilarDirectoryInfo,
-        val similarity: Double
-    )
-
-    private enum class FileTransferMode {
-        COPY,
-        CUT
-    }
-
-    private data class PendingFileTransfer(
-        val sourcePath: String,
-        val mode: FileTransferMode,
-        val isDirectory: Boolean
-    )
-
     companion object {
         private const val PREFS_NAME = "saf_prefs"
         const val EXTRA_CENTER_TARGET_PATH = "center_target_path"
@@ -3913,15 +3244,6 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_FIND_SIMILAR_DIRECTORY_NAMES = 2
         private const val MENU_MERGE_COMICS_NON_RECURSIVE = 3
         private const val MENU_MERGE_FILES_NON_RECURSIVE = 4
-        private const val DIRECTORY_NAME_SIMILARITY_THRESHOLD = 0.78
-        private const val DIRECTORY_SIMILARITY_PROGRESS_ROW_INTERVAL = 25
-        private const val DIRECTORY_SIMILARITY_REPORT_PREFIX = "ComicLab_similar_directory_names_"
-        private const val DIRECTORY_SIMILARITY_REPORT_EXTENSION = ".txt"
-        private const val MERGED_COMIC_DIRECTORY_PREFIX = "ComicLab_merged_"
-        private const val MERGED_FILE_DIRECTORY_PREFIX = "ComicLab_file_merged_"
-        private const val MERGED_COMIC_MIN_FILE_NUMBER_WIDTH = 4
-        private const val MERGED_COMIC_DEFAULT_IMAGE_EXTENSION = "jpg"
-        private const val MERGED_FILE_COPY_BUFFER_SIZE = 1024 * 1024
         private val MENU_TITLE_FIND_SIMILAR_DIRECTORY_NAMES = R.string.language_menu_find_similar_directories
         private val MENU_TITLE_MERGE_COMICS_NON_RECURSIVE = R.string.language_menu_merge_comics
         private val MENU_TITLE_MERGE_FILES_NON_RECURSIVE = R.string.language_menu_merge_files
@@ -3941,21 +3263,6 @@ class MainActivity : AppCompatActivity() {
         private val MESSAGE_MERGE_FILES_FAILED = R.string.language_merge_files_failed
         private val MESSAGE_MERGE_FILES_NO_FOLDERS = R.string.language_merge_files_no_folders
         private val MESSAGE_MERGE_FILES_NO_IMAGES = R.string.language_merge_files_no_images
-        private val MERGED_COMIC_IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
-        private val DIRECTORY_NAME_SIMILARITY_IGNORED_CHARS = setOf(
-            '_',
-            '-',
-            '.',
-            '·',
-            '[',
-            ']',
-            '(',
-            ')',
-            '（',
-            '）',
-            '【',
-            '】'
-        )
         private val STORAGE_ROOT_PATH = Environment.getExternalStorageDirectory().absolutePath
     }
 

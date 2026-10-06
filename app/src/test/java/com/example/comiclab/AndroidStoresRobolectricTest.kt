@@ -1,7 +1,12 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.store.FavoriteComicStore
+import com.example.comiclab.core.store.FavoritePathStore
+import com.example.comiclab.core.store.ReadingHistoryStore
 import java.io.File
 import java.nio.file.Files
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -34,6 +39,201 @@ class AndroidStoresRobolectricTest {
     @After
     fun clearTemporaryPreferences() {
         preferenceNames.forEach { context.getSharedPreferences(it, 0).edit().clear().commit() }
+    }
+
+    @Test
+    fun favoriteComicStoreReadsLegacyJsonAndKeepsThePreferenceContractAcrossUpdates() {
+        val root = tempDirectory("comiclab-favorite-comics-legacy")
+        try {
+            val oldDirectory = File(root, "old").apply { mkdirs() }
+            val oldComic = comicFile(oldDirectory, "old.cbz")
+            val newerComic = comicFile(root, "newer.cbz")
+            val addedComic = comicFile(root, "added.cbz")
+            val preferences = context.getSharedPreferences("favorite_comic_prefs", 0)
+            val legacyRows = JSONArray()
+                .put(
+                    JSONObject()
+                        .put("path", newerComic.absolutePath)
+                        .put("addedAt", 20L)
+                        .put("fileSize", 202L)
+                        .put("modifiedAt", 2002L)
+                )
+                .put(
+                    JSONObject()
+                        .put("path", oldComic.absolutePath)
+                        .put("addedAt", 10L)
+                        .put("fileSize", 101L)
+                        .put("modifiedAt", 1001L)
+                )
+            assertTrue(preferences.edit().putString("favorite_comics", legacyRows.toString()).commit())
+
+            val loaded = FavoriteComicStore.items(context)
+            assertEquals(listOf(oldComic, newerComic), loaded.map { it.file })
+            assertEquals(10L, loaded.first().addedAt)
+            assertEquals(101L, loaded.first().fileSize)
+            assertEquals(1001L, loaded.first().modifiedAt)
+            assertEquals(setOf("favorite_comics"), preferences.all.keys)
+
+            val normalizedRows = JSONArray(preferences.getString("favorite_comics", null))
+            assertEquals(oldComic.absolutePath, normalizedRows.getJSONObject(0).getString("path"))
+            assertEquals(
+                setOf("path", "addedAt", "fileSize", "modifiedAt"),
+                normalizedRows.getJSONObject(0).keys().asSequence().toSet()
+            )
+            assertEquals(
+                FavoriteComicStore.RecordResult.ALREADY_EXISTS,
+                FavoriteComicStore.record(context, oldComic)
+            )
+            assertEquals(FavoriteComicStore.RecordResult.ADDED, FavoriteComicStore.record(context, addedComic))
+            assertEquals(listOf(oldComic, newerComic, addedComic), FavoriteComicStore.items(context).map { it.file })
+
+            FavoriteComicStore.remove(context, newerComic)
+            assertEquals(listOf(oldComic, addedComic), FavoriteComicStore.items(context).map { it.file })
+            assertEquals(setOf("favorite_comics"), preferences.all.keys)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun favoritePathStoreReadsLegacyJsonRemapsCollisionsAndRemovesTheLastEntry() {
+        val root = tempDirectory("comiclab-favorite-paths-legacy")
+        try {
+            val oldDirectory = File(root, "old").apply { mkdirs() }
+            val newDirectory = File(root, "new").apply { mkdirs() }
+            val oldShelf = File(oldDirectory, "shelf").apply { mkdirs() }
+            val newShelf = File(newDirectory, "shelf").apply { mkdirs() }
+            val unrelatedShelf = File(root, "unrelated").apply { mkdirs() }
+            val preferences = context.getSharedPreferences("favorite_path_prefs", 0)
+            val legacyRows = JSONArray()
+                .put(JSONObject().put("path", unrelatedShelf.absolutePath).put("addedAt", 30L))
+                .put(JSONObject().put("path", oldShelf.absolutePath).put("addedAt", 20L))
+                .put(JSONObject().put("path", newShelf.absolutePath).put("addedAt", 10L))
+            assertTrue(preferences.edit().putString("favorite_paths", legacyRows.toString()).commit())
+
+            val loaded = FavoritePathStore.items(context)
+            assertEquals(listOf(newShelf, oldShelf, unrelatedShelf), loaded.map { it.directory })
+            assertEquals(listOf(10L, 20L, 30L), loaded.map { it.addedAt })
+            assertEquals(setOf("favorite_paths"), preferences.all.keys)
+
+            FavoritePathStore.moveDirectory(context, oldDirectory, newDirectory)
+            val remapped = FavoritePathStore.items(context)
+            assertEquals(listOf(newShelf, unrelatedShelf), remapped.map { it.directory })
+            assertEquals(10L, remapped.first().addedAt)
+            assertEquals(1, remapped.count { it.directory.absolutePath == newShelf.absolutePath })
+            assertEquals(
+                setOf("path", "addedAt"),
+                JSONArray(preferences.getString("favorite_paths", null))
+                    .getJSONObject(0).keys().asSequence().toSet()
+            )
+
+            FavoritePathStore.remove(context, newShelf)
+            assertEquals(listOf(unrelatedShelf), FavoritePathStore.items(context).map { it.directory })
+            FavoritePathStore.remove(context, unrelatedShelf)
+            assertTrue(FavoritePathStore.items(context).isEmpty())
+            assertFalse(preferences.contains("favorite_paths"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun readingHistoryStoreReadsLegacyJsonRemapsCollisionsAndRemovesEntries() {
+        val root = tempDirectory("comiclab-reading-history-legacy")
+        try {
+            val oldDirectory = File(root, "old").apply { mkdirs() }
+            val newDirectory = File(root, "new").apply { mkdirs() }
+            val oldComic = comicFile(oldDirectory, "chapter.cbz")
+            val newComic = comicFile(newDirectory, "chapter.cbz")
+            val otherComic = comicFile(root, "other.cbz")
+            val preferences = context.getSharedPreferences("reading_history_prefs", 0)
+            val legacyRows = JSONArray()
+                .put(
+                    JSONObject()
+                        .put("path", newComic.absolutePath)
+                        .put("lastReadAt", 30L)
+                        .put("fileSize", 303L)
+                        .put("modifiedAt", 3003L)
+                )
+                .put(
+                    JSONObject()
+                        .put("path", otherComic.absolutePath)
+                        .put("lastReadAt", 20L)
+                        .put("fileSize", 202L)
+                        .put("modifiedAt", 2002L)
+                )
+                .put(
+                    JSONObject()
+                        .put("path", oldComic.absolutePath)
+                        .put("lastReadAt", 10L)
+                        .put("fileSize", 101L)
+                        .put("modifiedAt", 1001L)
+                )
+            assertTrue(preferences.edit().putString("reading_history", legacyRows.toString()).commit())
+
+            val loaded = ReadingHistoryStore.items(context)
+            assertEquals(listOf(newComic, otherComic, oldComic), loaded.map { it.file })
+            assertEquals(303L, loaded.first().fileSize)
+            assertEquals(3003L, loaded.first().modifiedAt)
+            assertEquals(setOf("reading_history"), preferences.all.keys)
+
+            ReadingHistoryStore.record(context, otherComic)
+            assertEquals(3, ReadingHistoryStore.items(context).size)
+            assertEquals(otherComic, ReadingHistoryStore.items(context).first().file)
+            assertEquals(1, ReadingHistoryStore.items(context).count { it.file == otherComic })
+
+            ReadingHistoryStore.moveDirectory(context, oldDirectory, newDirectory)
+            val remapped = ReadingHistoryStore.items(context)
+            assertEquals(listOf(otherComic, newComic), remapped.map { it.file })
+            assertEquals(30L, remapped.last().lastReadAt)
+            assertEquals(
+                setOf("path", "lastReadAt", "fileSize", "modifiedAt"),
+                JSONArray(preferences.getString("reading_history", null))
+                    .getJSONObject(0).keys().asSequence().toSet()
+            )
+
+            ReadingHistoryStore.remove(context, newComic)
+            assertEquals(listOf(otherComic), ReadingHistoryStore.items(context).map { it.file })
+            ReadingHistoryStore.remove(context, otherComic)
+            assertTrue(ReadingHistoryStore.items(context).isEmpty())
+            assertFalse(preferences.contains("reading_history"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun readingHistoryStoreCapsLegacyEntriesWhenWriting() {
+        val root = tempDirectory("comiclab-reading-history-limit")
+        try {
+            val legacyFiles = (0 until 30).map { index -> comicFile(root, "legacy-$index.cbz") }
+            val legacyRows = JSONArray()
+            legacyFiles.forEachIndexed { index, file ->
+                legacyRows.put(
+                    JSONObject()
+                        .put("path", file.absolutePath)
+                        .put("lastReadAt", (30 - index).toLong())
+                        .put("fileSize", file.length())
+                        .put("modifiedAt", file.lastModified())
+                )
+            }
+            val preferences = context.getSharedPreferences("reading_history_prefs", 0)
+            assertTrue(preferences.edit().putString("reading_history", legacyRows.toString()).commit())
+
+            assertEquals(legacyFiles, ReadingHistoryStore.items(context).map { it.file })
+            val newest = comicFile(root, "newest.cbz")
+            ReadingHistoryStore.record(context, newest)
+
+            val updated = ReadingHistoryStore.items(context)
+            assertEquals(30, updated.size)
+            assertEquals(newest, updated.first().file)
+            assertEquals(legacyFiles.take(29), updated.drop(1).map { it.file })
+            val persistedRows = JSONArray(preferences.getString("reading_history", null))
+            assertEquals(30, persistedRows.length())
+            assertEquals("reading_history", preferences.all.keys.single())
+        } finally {
+            root.deleteRecursively()
+        }
     }
 
     @Test
@@ -212,38 +412,88 @@ class AndroidStoresRobolectricTest {
         val root = tempDirectory("comiclab-ebook-progress")
         try {
             val file = File(root, "book.epub").apply { writeText("epub") }
-            assertNull(com.example.comiclab.ebook.EbookProgressStore.load(context, file))
+            assertNull(com.example.comiclab.core.store.EbookProgressStore.load(context, file))
 
-            com.example.comiclab.ebook.EbookProgressStore.save(
+            com.example.comiclab.core.store.EbookProgressStore.save(
                 context,
                 file,
                 com.example.comiclab.ebook.EbookProgress(-2, 2f)
             )
             assertEquals(
                 com.example.comiclab.ebook.EbookProgress(0, 1f),
-                com.example.comiclab.ebook.EbookProgressStore.load(context, file)
+                com.example.comiclab.core.store.EbookProgressStore.load(context, file)
             )
 
             val key = progressKey(file)
             context.getSharedPreferences("ebook_progress_prefs", 0).edit()
                 .remove("ebook_progress_${key}_fraction")
                 .commit()
-            assertNull(com.example.comiclab.ebook.EbookProgressStore.load(context, file))
+            assertNull(com.example.comiclab.core.store.EbookProgressStore.load(context, file))
 
-            com.example.comiclab.ebook.EbookProgressStore.save(
+            com.example.comiclab.core.store.EbookProgressStore.save(
                 context,
                 file,
                 com.example.comiclab.ebook.EbookProgress(4, 0.25f)
             )
-            com.example.comiclab.ebook.EbookProgressStore.clear(context, file)
-            assertNull(com.example.comiclab.ebook.EbookProgressStore.load(context, file))
+            com.example.comiclab.core.store.EbookProgressStore.clear(context, file)
+            assertNull(com.example.comiclab.core.store.EbookProgressStore.load(context, file))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun ebookProgressPreservesLegacyPerFileKeysAndClearsOnlyThatFile() {
+        val root = tempDirectory("comiclab-ebook-progress-legacy")
+        try {
+            val file = File(root, "book.epub").apply { writeText("epub") }
+            val otherFile = File(root, "other.epub").apply { writeText("other epub") }
+            val preferences = context.getSharedPreferences("ebook_progress_prefs", 0)
+            val key = progressKey(file)
+            val otherKey = progressKey(otherFile)
+            val fileChapterKey = "ebook_progress_${key}_chapter"
+            val fileFractionKey = "ebook_progress_${key}_fraction"
+            val otherChapterKey = "ebook_progress_${otherKey}_chapter"
+            val otherFractionKey = "ebook_progress_${otherKey}_fraction"
+
+            assertTrue(
+                preferences.edit()
+                    .putInt(fileChapterKey, 7)
+                    .putFloat(fileFractionKey, 0.75f)
+                    .putInt(otherChapterKey, 3)
+                    .putFloat(otherFractionKey, 0.4f)
+                    .commit()
+            )
+            assertEquals(
+                com.example.comiclab.ebook.EbookProgress(7, 0.75f),
+                com.example.comiclab.core.store.EbookProgressStore.load(context, file)
+            )
+
+            com.example.comiclab.core.store.EbookProgressStore.save(
+                context,
+                file,
+                com.example.comiclab.ebook.EbookProgress(-4, 1.5f)
+            )
+            assertEquals(
+                com.example.comiclab.ebook.EbookProgress(0, 1f),
+                com.example.comiclab.core.store.EbookProgressStore.load(context, file)
+            )
+            assertEquals(setOf(fileChapterKey, fileFractionKey, otherChapterKey, otherFractionKey), preferences.all.keys)
+            assertEquals(3, preferences.getInt(otherChapterKey, -1))
+            assertEquals(0.4f, preferences.getFloat(otherFractionKey, -1f))
+
+            com.example.comiclab.core.store.EbookProgressStore.clear(context, file)
+            assertNull(com.example.comiclab.core.store.EbookProgressStore.load(context, file))
+            assertEquals(setOf(otherChapterKey, otherFractionKey), preferences.all.keys)
+            assertEquals(3, preferences.getInt(otherChapterKey, -1))
+            assertEquals(0.4f, preferences.getFloat(otherFractionKey, -1f))
         } finally {
             root.deleteRecursively()
         }
     }
 
     private fun progressKey(file: File): String {
-        val identity = com.example.comiclab.ebook.EbookProgressStore.fileIdentity(file)
+        val identity = com.example.comiclab.core.store.EbookProgressStore.fileIdentity(file)
         val digest = java.security.MessageDigest.getInstance("SHA-256")
             .digest(identity.toByteArray(Charsets.UTF_8))
         return digest.joinToString(separator = "") { "%02x".format(it) }

@@ -1,5 +1,7 @@
 package com.example.comiclab
 
+import com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverLoadTracker
+
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals

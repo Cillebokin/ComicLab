@@ -1,5 +1,7 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.reader.decode.calculatePdfPreviewWidth
+import com.example.comiclab.core.reader.decode.shouldScheduleImmediateFullDecodeForReader
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

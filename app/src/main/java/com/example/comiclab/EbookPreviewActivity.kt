@@ -1,5 +1,7 @@
 package com.example.comiclab
 
+import com.example.comiclab.ui.common.SystemBars
+
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.content.Intent
@@ -11,7 +13,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.example.comiclab.ebook.EbookSession
 import com.example.comiclab.ebook.EbookSessionFactory
-import com.example.comiclab.ebook.EbookProgressStore
+import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.ebook.ReaderFileDetector
 import com.example.comiclab.ebook.epub.EpubParseError
 import com.example.comiclab.ebook.epub.EpubParseException

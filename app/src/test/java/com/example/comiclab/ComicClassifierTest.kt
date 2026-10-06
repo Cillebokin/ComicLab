@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.organize.ComicClassifier
 import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertEquals

@@ -74,7 +74,7 @@
             android:padding="4dp"
             android:tint="@color/comiclab_icon" />
 
-        <com.example.comiclab.MangaCollectionCoverRecyclerView
+        <com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverRecyclerView
             android:id="@+id/collectionCoverList"
             android:layout_width="match_parent"
             android:layout_height="match_parent"

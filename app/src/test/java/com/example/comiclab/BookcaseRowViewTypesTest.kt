@@ -1,5 +1,7 @@
 package com.example.comiclab
 
+import com.example.comiclab.ui.browser.bookcase.BookcaseRowViewTypes
+
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

@@ -1,5 +1,8 @@
 package com.example.comiclab
 
+import com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverPlanner
+import com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverSource
+
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.io.File

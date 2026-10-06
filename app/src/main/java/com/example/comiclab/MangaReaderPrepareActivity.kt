@@ -11,6 +11,8 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
+import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
+import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseTask
 import java.io.File
 import java.util.concurrent.Executors
 
@@ -26,6 +28,8 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
     @Volatile
     private var destroyed = false
     private var preparedDirectory: File? = null
+    private var prepareOwnerLease: PreparedReaderCacheLeaseRegistry.Lease? = null
+    private var handoffLease: PreparedReaderCacheLeaseRegistry.Lease? = null
     private var launchedReader = false
     private var startFromBeginning = false
     private var explicitStartPageIndex = NO_EXPLICIT_START_PAGE
@@ -63,10 +67,15 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         destroyed = true
-        prepareExecutor.shutdownNow()
+        prepareExecutor.shutdownNow().forEach { task ->
+            (task as? PreparedReaderCacheLeaseTask)?.cancelBeforeRun()
+        }
         handler.removeCallbacksAndMessages(null)
         if (!launchedReader) {
-            preparedDirectory?.deleteRecursively()
+            discardPreparedCache()
+        } else {
+            prepareOwnerLease?.close()
+            prepareOwnerLease = null
         }
         super.onDestroy()
     }
@@ -75,7 +84,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 destroyed = true
-                preparedDirectory?.deleteRecursively()
+                discardPreparedCache()
                 finish()
             }
         })
@@ -87,93 +96,126 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
             return
         }
 
-        val outputDir = createPreparedReaderDirectory(file)
+        val preparedCache = createPreparedReaderDirectory(file)
+        if (preparedCache == null) {
+            showError(R.string.reader_prepare_cache_failure)
+            return
+        }
+        val (outputDir, prepareOwner) = preparedCache
         preparedDirectory = outputDir
+        prepareOwnerLease = prepareOwner
         setProgress(0, 0)
 
-        prepareExecutor.execute {
-            clearOldPreparedReaderCaches()
-            if (destroyed || Thread.currentThread().isInterrupted) {
-                return@execute
-            }
-
-            val indexStartedAtNanos = ComicLabPerformance.nowNanos()
-            val entriesResult = runCatching {
-                ComicLabPerformance.trace("comiclab.reader.prepare_archive_index") {
-                    ComicArchive.imageEntries(file)
-                }
-            }
-            val entries = entriesResult.getOrElse { emptyList() }
-            ComicLabPerformance.record(
-                event = "reader_prepare_archive_index",
-                startedAtNanos = indexStartedAtNanos,
-                fields = "entries=${entries.size} bytes=${file.length()} success=${entriesResult.isSuccess}"
-            )
-
-            if (entries.isEmpty()) {
-                runOnUiThread {
+        val writerLease = PreparedReaderCacheLeaseRegistry.process.acquireWriterLease(outputDir)
+        if (writerLease == null) {
+            discardPreparedCache()
+            showError(R.string.reader_prepare_cache_failure)
+            return
+        }
+        val task = PreparedReaderCacheLeaseTask(writerLease, shouldRun = { !destroyed }) {
+            try {
+                prepareCacheOnWorker(file, outputDir)
+            } catch (throwable: Throwable) {
+                android.util.Log.e("ComicLabPrepare", "prepared reader task failed", throwable)
+                handler.post {
                     if (!destroyed) {
-                        outputDir.deleteRecursively()
-                        showError(R.string.reader_prepare_no_images)
-                    }
-                }
-                return@execute
-            }
-
-            val manifestWritten = runCatching {
-                ComicArchive.writePreparedReaderManifest(outputDir, entries)
-            }.isSuccess
-            if (!manifestWritten) {
-                runOnUiThread {
-                    if (!destroyed) {
-                        outputDir.deleteRecursively()
+                        discardPreparedCache()
                         showError(R.string.reader_prepare_cache_failure)
                     }
                 }
-                return@execute
             }
+        }
+        try {
+            prepareExecutor.execute(task)
+        } catch (throwable: Throwable) {
+            task.cancelBeforeRun()
+            discardPreparedCache()
+            showError(R.string.reader_prepare_cache_failure)
+        }
+    }
 
-            val startPosition = initialReaderPosition(file, entries.size)
-            val initialEntries = initialPreparedEntries(entries, startPosition)
-            val extractionStartedAtNanos = ComicLabPerformance.nowNanos()
-            val extractedFiles = runCatching {
-                ComicLabPerformance.trace("comiclab.reader.prepare_initial_pages") {
-                    ComicArchive.extractPreparedImagesToDirectory(
-                        file = file,
-                        entries = initialEntries,
-                        outputDir = outputDir,
-                        shouldContinue = { !destroyed }
-                    ) { completed, total ->
-                        runOnUiThread {
-                            if (!destroyed) {
-                                setProgress(completed, total)
-                            }
+    private fun prepareCacheOnWorker(file: File, outputDir: File) {
+        clearOldPreparedReaderCaches()
+        if (destroyed || Thread.currentThread().isInterrupted) {
+            return
+        }
+
+        val indexStartedAtNanos = ComicLabPerformance.nowNanos()
+        val entriesResult = runCatching {
+            ComicLabPerformance.trace("comiclab.reader.prepare_archive_index") {
+                ComicArchive.imageEntries(file)
+            }
+        }
+        val entries = entriesResult.getOrElse { emptyList() }
+        ComicLabPerformance.record(
+            event = "reader_prepare_archive_index",
+            startedAtNanos = indexStartedAtNanos,
+            fields = "entries=${entries.size} bytes=${file.length()} success=${entriesResult.isSuccess}"
+        )
+
+        if (entries.isEmpty()) {
+            handler.post {
+                if (!destroyed) {
+                    discardPreparedCache()
+                    showError(R.string.reader_prepare_no_images)
+                }
+            }
+            return
+        }
+
+        val manifestWritten = runCatching {
+            ComicArchive.writePreparedReaderManifest(outputDir, entries)
+        }.isSuccess
+        if (!manifestWritten) {
+            handler.post {
+                if (!destroyed) {
+                    discardPreparedCache()
+                    showError(R.string.reader_prepare_cache_failure)
+                }
+            }
+            return
+        }
+
+        val startPosition = initialReaderPosition(file, entries.size)
+        val initialEntries = initialPreparedEntries(entries, startPosition)
+        val extractionStartedAtNanos = ComicLabPerformance.nowNanos()
+        val extractedFiles = runCatching {
+            ComicLabPerformance.trace("comiclab.reader.prepare_initial_pages") {
+                ComicArchive.extractPreparedImagesToDirectory(
+                    file = file,
+                    entries = initialEntries,
+                    outputDir = outputDir,
+                    shouldContinue = { !destroyed }
+                ) { completed, total ->
+                    handler.post {
+                        if (!destroyed) {
+                            setProgress(completed, total)
                         }
                     }
                 }
-            }.getOrElse {
-                emptyList()
             }
-            ComicLabPerformance.record(
-                event = "reader_prepare_initial_pages",
-                startedAtNanos = extractionStartedAtNanos,
-                fields = "requested=${initialEntries.size} extracted=${extractedFiles.size} " +
-                    "bytes=${extractedFiles.sumOf { it.length() }}"
-            )
+        }.getOrElse {
+            emptyList()
+        }
+        ComicLabPerformance.record(
+            event = "reader_prepare_initial_pages",
+            startedAtNanos = extractionStartedAtNanos,
+            fields = "requested=${initialEntries.size} extracted=${extractedFiles.size} " +
+                "bytes=${extractedFiles.sumOf { it.length() }}"
+        )
 
-            runOnUiThread {
-                if (destroyed) {
-                    return@runOnUiThread
-                }
-
-                if (extractedFiles.isEmpty()) {
-                    outputDir.deleteRecursively()
-                    showError(R.string.reader_prepare_cache_failure)
-                    return@runOnUiThread
-                }
-
-                openReader(file, outputDir)
+        handler.post {
+            if (destroyed) {
+                return@post
             }
+
+            if (extractedFiles.isEmpty()) {
+                discardPreparedCache()
+                showError(R.string.reader_prepare_cache_failure)
+                return@post
+            }
+
+            openReader(file, outputDir)
         }
     }
 
@@ -233,12 +275,13 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
     }
 
     private fun openReader(file: File, outputDir: File) {
-        launchedReader = true
-        ComicLabPerformance.record(
-            event = "reader_prepare_to_launch",
-            startedAtNanos = readerLoadStartedAtNanos,
-            fields = "prepared=true"
-        )
+        val handoff = PreparedReaderCacheLeaseRegistry.process.acquireHandoffLease(outputDir)
+        if (handoff == null) {
+            discardPreparedCache()
+            showError(R.string.reader_prepare_cache_failure)
+            return
+        }
+        handoffLease = handoff
         val intent = Intent(this, MangaReaderActivity::class.java).apply {
             putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
             putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
@@ -249,17 +292,28 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
                 readerLoadStartedAtNanos ?: 0L
             )
         }
-        startActivity(intent)
+        try {
+            startActivity(intent)
+        } catch (throwable: Throwable) {
+            handoff.requestDeleteAndClose()
+            handoffLease = null
+            discardPreparedCache()
+            android.util.Log.e("ComicLabPrepare", "failed to launch prepared reader", throwable)
+            showError(R.string.reader_prepare_cache_failure)
+            return
+        }
+        launchedReader = true
+        prepareOwnerLease?.close()
+        prepareOwnerLease = null
+        ComicLabPerformance.record(
+            event = "reader_prepare_to_launch",
+            startedAtNanos = readerLoadStartedAtNanos,
+            fields = "prepared=true"
+        )
         finish()
     }
 
     private fun openReaderDirect(file: File) {
-        launchedReader = true
-        ComicLabPerformance.record(
-            event = "reader_prepare_to_launch",
-            startedAtNanos = readerLoadStartedAtNanos,
-            fields = "prepared=false"
-        )
         val intent = Intent(this, MangaReaderActivity::class.java).apply {
             putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
             putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
@@ -269,7 +323,19 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
                 readerLoadStartedAtNanos ?: 0L
             )
         }
-        startActivity(intent)
+        try {
+            startActivity(intent)
+        } catch (throwable: Throwable) {
+            android.util.Log.e("ComicLabPrepare", "failed to launch reader", throwable)
+            showError(R.string.reader_prepare_cache_failure)
+            return
+        }
+        launchedReader = true
+        ComicLabPerformance.record(
+            event = "reader_prepare_to_launch",
+            startedAtNanos = readerLoadStartedAtNanos,
+            fields = "prepared=false"
+        )
         finish()
     }
 
@@ -280,11 +346,26 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
-    private fun createPreparedReaderDirectory(file: File): File {
+    private fun createPreparedReaderDirectory(
+        file: File
+    ): Pair<File, PreparedReaderCacheLeaseRegistry.Lease>? {
         val root = File(cacheDir, PREPARED_READER_CACHE_ROOT)
-        root.mkdirs()
+        if (!root.mkdirs() && !root.isDirectory) {
+            return null
+        }
         val identity = "${file.absolutePath.hashCode()}_${file.lastModified()}_${file.length()}"
-        return File(root, "${Integer.toHexString(identity.hashCode())}_${System.currentTimeMillis()}")
+        val baseName = "${Integer.toHexString(identity.hashCode())}_${System.currentTimeMillis()}"
+        repeat(MAX_CACHE_DIRECTORY_COLLISION_ATTEMPTS) { suffix ->
+            val name = if (suffix == 0) baseName else "${baseName}_$suffix"
+            val directory = File(root, name)
+            val ownerLease = PreparedReaderCacheLeaseRegistry.process.acquirePrepareOwner(directory)
+                ?: return@repeat
+            if (directory.mkdir()) {
+                return directory to ownerLease
+            }
+            ownerLease.close()
+        }
+        return null
     }
 
     private fun clearOldPreparedReaderCaches() {
@@ -300,27 +381,39 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
                 .orEmpty()
         }
         val staleDirectories = staleDirectoriesResult.getOrDefault(emptyList())
-        var deletedDirectories = 0
-        var failedDirectories = if (staleDirectoriesResult.isFailure) 1 else 0
-        staleDirectories.forEach { directory ->
-            if (runCatching { directory.deleteRecursively() }.getOrDefault(false)) {
-                deletedDirectories++
-            } else {
-                failedDirectories++
-            }
+        val deletionRequests = staleDirectories.count { directory ->
+            PreparedReaderCacheLeaseRegistry.process.requestDeleteIfStale(
+                directory = directory,
+                maxAgeMs = PREPARED_READER_CACHE_MAX_AGE_MS,
+                nowMillis = now
+            )
         }
+        val failedDirectories = if (staleDirectoriesResult.isFailure) 1 else 0
         ComicLabPerformance.record(
             event = "reader_prepare_stale_cache_cleanup",
             startedAtNanos = cleanupStartedAtNanos,
             fields = "mainThread=${Looper.myLooper() == Looper.getMainLooper()} " +
-                "candidates=${staleDirectories.size} deleted=$deletedDirectories " +
-                "failed=$failedDirectories"
+                "candidates=${staleDirectories.size} requested=$deletionRequests " +
+                "scanFailed=$failedDirectories"
         )
+    }
+
+    private fun discardPreparedCache() {
+        val handoff = handoffLease
+        handoffLease = null
+        handoff?.requestDeleteAndClose()
+        val owner = prepareOwnerLease
+        prepareOwnerLease = null
+        owner?.requestDeleteAndClose()
+        if (handoff == null && owner == null) {
+            preparedDirectory?.let(PreparedReaderCacheLeaseRegistry.process::requestDelete)
+        }
     }
 
     companion object {
         private const val PREPARED_READER_CACHE_ROOT = "prepared_reader"
         private const val PREPARED_READER_CACHE_MAX_AGE_MS = 24L * 60L * 60L * 1000L
+        private const val MAX_CACHE_DIRECTORY_COLLISION_ATTEMPTS = 100
         private const val INITIAL_FORWARD_PREPARE_COUNT = 5
         private const val INITIAL_BACKWARD_PREPARE_COUNT = 1
         private const val NO_EXPLICIT_START_PAGE = -1

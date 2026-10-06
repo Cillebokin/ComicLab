@@ -2,6 +2,8 @@ package com.example.comiclab
 
 import android.widget.FrameLayout
 import android.widget.TextView
+import com.example.comiclab.ui.browser.FileListAdapter
+import com.example.comiclab.ui.browser.model.FileItem
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Test

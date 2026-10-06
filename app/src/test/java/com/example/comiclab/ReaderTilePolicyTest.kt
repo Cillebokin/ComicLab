@@ -1,5 +1,8 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.reader.decode.isReaderTileVisible
+import com.example.comiclab.core.reader.decode.pdfTileBitmapCacheSizeKb
+import com.example.comiclab.core.reader.decode.shouldUsePdfTiledRendering
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test

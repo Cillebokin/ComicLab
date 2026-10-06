@@ -3,7 +3,6 @@ package com.example.comiclab
 import android.content.Context
 import android.content.Intent
 import android.graphics.Rect
-import android.os.Environment
 import android.os.SystemClock
 import android.view.View
 import android.widget.EditText
@@ -17,12 +16,18 @@ import androidx.test.espresso.action.ViewActions.longClick
 import androidx.test.espresso.action.ViewActions.replaceText
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.RootMatchers.isDialog
-import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom
+import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.example.comiclab.ui.browser.model.FileItem
+import java.io.File
+import java.nio.file.Files
+import java.util.UUID
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import org.hamcrest.Description
 import org.hamcrest.Matcher
 import org.hamcrest.TypeSafeMatcher
@@ -33,11 +38,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
-import java.nio.file.Files
-import java.util.UUID
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 
 @RunWith(AndroidJUnit4::class)
 class FileTransferFlowTest {
@@ -50,8 +50,9 @@ class FileTransferFlowTest {
     private var previousCurrentPath: String? = null
     private var hadPermissionPrompted = false
     private var previousPermissionPrompted = false
-    private var allowedRoot: File? = null
+    private var testRoot: File? = null
     private var sandbox: File? = null
+    private var storedPathSandbox: StoredPathPreferenceSandbox? = null
 
     @Before
     fun setUp() {
@@ -63,29 +64,25 @@ class FileTransferFlowTest {
         previousPermissionPrompted =
             preferences!!.getBoolean(KEY_STORAGE_PERMISSION_PROMPTED, false)
 
-        val downloads = Environment.getExternalStoragePublicDirectory(
-            Environment.DIRECTORY_DOWNLOADS
-        )
-        allowedRoot = File(downloads, ALLOWED_DIRECTORY_NAME).canonicalFile
-        check(downloads.isDirectory) { "The Downloads directory must already exist" }
-        if (!allowedRoot!!.exists()) {
-            check(allowedRoot!!.mkdirs()) {
-                "Could not create the authorized test directory: ${allowedRoot!!.absolutePath}"
+        testRoot = File(context.cacheDir, TEST_ROOT_NAME).canonicalFile
+        if (!testRoot!!.exists()) {
+            check(testRoot!!.mkdirs()) {
+                "Could not create the app-private test directory: ${testRoot!!.absolutePath}"
             }
         }
-        check(allowedRoot!!.isDirectory) {
-            "The authorized test directory must already exist: ${allowedRoot!!.absolutePath}"
+        check(testRoot!!.isDirectory) {
+            "The app-private test directory must exist: ${testRoot!!.absolutePath}"
         }
-        check(!Files.isSymbolicLink(allowedRoot!!.toPath())) {
-            "The authorized test directory must not be a symbolic link"
+        check(!Files.isSymbolicLink(testRoot!!.toPath())) {
+            "The app-private test directory must not be a symbolic link"
         }
 
         sandbox = File(
-            allowedRoot,
+            testRoot,
             "comiclab-transfer-e2e-${UUID.randomUUID()}"
         ).canonicalFile
-        check(sandbox!!.toPath().startsWith(allowedRoot!!.toPath())) {
-            "The test sandbox must remain inside the authorized test directory"
+        check(sandbox!!.toPath().startsWith(testRoot!!.toPath())) {
+            "The test sandbox must remain inside the app-private test directory"
         }
         check(!sandbox!!.exists()) { "Refusing to reuse an existing test sandbox" }
         check(sandbox!!.mkdirs()) { "Could not create the isolated test sandbox" }
@@ -98,6 +95,7 @@ class FileTransferFlowTest {
                 .putBoolean(KEY_STORAGE_PERMISSION_PROMPTED, true)
                 .commit()
         )
+        storedPathSandbox = StoredPathPreferenceSandbox(context)
 
         activity = instrumentation.startActivitySync(
             Intent(context, MainActivity::class.java)
@@ -113,29 +111,35 @@ class FileTransferFlowTest {
             instrumentation.waitForIdleSync()
         }
 
-        preferences?.let { prefs ->
-            val editor = prefs.edit()
-            if (hadCurrentPath) {
-                editor.putString(KEY_CURRENT_PATH, previousCurrentPath)
-            } else {
-                editor.remove(KEY_CURRENT_PATH)
+        try {
+            preferences?.let { prefs ->
+                val editor = prefs.edit()
+                if (hadCurrentPath) {
+                    editor.putString(KEY_CURRENT_PATH, previousCurrentPath)
+                } else {
+                    editor.remove(KEY_CURRENT_PATH)
+                }
+                if (hadPermissionPrompted) {
+                    editor.putBoolean(KEY_STORAGE_PERMISSION_PROMPTED, previousPermissionPrompted)
+                } else {
+                    editor.remove(KEY_STORAGE_PERMISSION_PROMPTED)
+                }
+                check(editor.commit()) { "Could not restore the original browser preferences" }
             }
-            if (hadPermissionPrompted) {
-                editor.putBoolean(KEY_STORAGE_PERMISSION_PROMPTED, previousPermissionPrompted)
-            } else {
-                editor.remove(KEY_STORAGE_PERMISSION_PROMPTED)
-            }
-            check(editor.commit()) { "Could not restore the original browser preferences" }
-        }
-
-        val cleanupRoot = sandbox
-        if (cleanupRoot != null && cleanupRoot.exists()) {
-            val parent = allowedRoot ?: error("Missing authorized cleanup root")
-            check(cleanupRoot.canonicalFile.toPath().startsWith(parent.toPath())) {
-                "Refusing to clean anything outside the authorized test directory"
-            }
-            check(cleanupRoot.deleteRecursively()) {
-                "Test cleanup failed; the remaining data is confined to ${cleanupRoot.absolutePath}"
+        } finally {
+            try {
+                storedPathSandbox?.restore()
+            } finally {
+                val cleanupRoot = sandbox
+                if (cleanupRoot != null && cleanupRoot.exists()) {
+                    val parent = testRoot ?: error("Missing app-private test root")
+                    check(cleanupRoot.canonicalFile.toPath().startsWith(parent.toPath())) {
+                        "Refusing to clean anything outside the app-private test directory"
+                    }
+                    check(cleanupRoot.deleteRecursively()) {
+                        "Test cleanup failed; the remaining data is confined to ${cleanupRoot.absolutePath}"
+                    }
+                }
             }
         }
     }
@@ -454,7 +458,7 @@ class FileTransferFlowTest {
         const val PREFS_NAME = "saf_prefs"
         const val KEY_CURRENT_PATH = "current_path"
         const val KEY_STORAGE_PERMISSION_PROMPTED = "storage_permission_prompted"
-        const val ALLOWED_DIRECTORY_NAME = "CMCNList"
+        const val TEST_ROOT_NAME = "task32-file-transfer-tests"
         const val SOURCE_DIRECTORY_NAME = "Source"
         const val DESTINATION_DIRECTORY_NAME = "Destination"
         const val UI_TIMEOUT_MS = 15_000L

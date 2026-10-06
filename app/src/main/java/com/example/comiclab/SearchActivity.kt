@@ -1,5 +1,7 @@
 package com.example.comiclab
 
+import com.example.comiclab.ui.common.SystemBars
+
 import android.content.Intent
 import android.os.Bundle
 import android.os.Environment
@@ -14,6 +16,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.example.comiclab.ui.browser.SearchResultAdapter
 import java.io.File
 import java.util.ArrayDeque
 import java.util.Locale

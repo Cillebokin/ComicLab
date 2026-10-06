@@ -1,7 +1,7 @@
 package com.example.comiclab
 
 import android.app.Application
-import com.example.comiclab.common_function.ArchiveEntryFileCache
+import com.example.comiclab.core.archive.cache.ArchiveEntryFileCache
 
 class ComicLabApplication : Application() {
 

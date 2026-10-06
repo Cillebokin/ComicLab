@@ -1,0 +1,62 @@
+package com.example.comiclab.ui.common
+
+import com.example.comiclab.R
+import android.app.Activity
+import android.graphics.Color
+import android.content.res.Configuration
+import android.view.View
+import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+
+object SystemBars {
+
+    fun fitContentBelowSystemBars(
+        activity: Activity,
+        rootView: View,
+        statusBarBackground: View? = null,
+        statusBarColorResId: Int = R.color.comiclab_accent,
+        lightStatusBars: Boolean = false
+    ) {
+        WindowCompat.setDecorFitsSystemWindows(activity.window, false)
+        val statusBarColor = ContextCompat.getColor(activity, statusBarColorResId)
+        val isDarkMode = (activity.resources.configuration.uiMode and
+            Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        activity.window.statusBarColor = if (statusBarBackground == null) statusBarColor else Color.TRANSPARENT
+        activity.window.navigationBarColor =
+            ContextCompat.getColor(activity, R.color.comiclab_file_picker_background)
+        WindowInsetsControllerCompat(activity.window, rootView).apply {
+            isAppearanceLightStatusBars = lightStatusBars && !isDarkMode
+            isAppearanceLightNavigationBars = !isDarkMode
+        }
+
+        val initialLeft = rootView.paddingLeft
+        val initialTop = rootView.paddingTop
+        val initialRight = rootView.paddingRight
+        val initialBottom = rootView.paddingBottom
+
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            statusBarBackground?.let { background ->
+                background.setBackgroundColor(statusBarColor)
+                val layoutParams = background.layoutParams
+                if (layoutParams.height != systemBars.top) {
+                    layoutParams.height = systemBars.top
+                    background.layoutParams = layoutParams
+                }
+            }
+
+            view.setPadding(
+                initialLeft + systemBars.left,
+                initialTop + if (statusBarBackground == null) systemBars.top else 0,
+                initialRight + systemBars.right,
+                initialBottom + systemBars.bottom
+            )
+            insets
+        }
+
+        ViewCompat.requestApplyInsets(rootView)
+    }
+}

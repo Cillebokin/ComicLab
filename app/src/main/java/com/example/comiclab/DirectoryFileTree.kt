@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.transfer.FileOperationProgress
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files

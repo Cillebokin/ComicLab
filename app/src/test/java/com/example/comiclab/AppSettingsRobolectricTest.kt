@@ -61,6 +61,63 @@ class AppSettingsRobolectricTest {
     }
 
     @Test
+    fun readsLegacyPreferenceFileAndKeysWithoutChangingTheirNames() {
+        val root = tempDirectory("comiclab-settings-legacy")
+        try {
+            val firstShelf = File(root, "first").apply { mkdirs() }
+            val secondShelf = File(root, "second").apply { mkdirs() }
+            val legacyPaths = setOf(firstShelf.absolutePath, secondShelf.absolutePath)
+            val preferences = context.getSharedPreferences("app_settings", 0)
+            val legacyKeys = setOf(
+                "dark_mode_enabled",
+                "reading_direction",
+                "double_page_cover_single",
+                "volume_key_page_turn",
+                "auto_hide_system_bars",
+                "bookcase_directories",
+                "start_marker_error_tags",
+                "custom_reader_brightness_enabled",
+                "custom_reader_brightness"
+            )
+
+            assertTrue(
+                preferences.edit()
+                    .putBoolean("dark_mode_enabled", true)
+                    .putString("reading_direction", "left_to_right")
+                    .putBoolean("double_page_cover_single", false)
+                    .putBoolean("volume_key_page_turn", false)
+                    .putBoolean("auto_hide_system_bars", false)
+                    .putStringSet("bookcase_directories", legacyPaths)
+                    .putString("start_marker_error_tags", "legacy;tags")
+                    .putBoolean("custom_reader_brightness_enabled", true)
+                    .putInt("custom_reader_brightness", 211)
+                    .commit()
+            )
+            assertEquals(legacyKeys, preferences.all.keys)
+
+            assertTrue(AppSettings.isDarkModeEnabled(context))
+            assertEquals(AppSettings.READING_DIRECTION_LEFT_TO_RIGHT, AppSettings.getReadingDirection(context))
+            assertFalse(AppSettings.isDoublePageCoverSingleEnabled(context))
+            assertFalse(AppSettings.isVolumeKeyPageTurnEnabled(context))
+            assertFalse(AppSettings.isAutoHideSystemBarsEnabled(context))
+            assertEquals(legacyPaths, AppSettings.bookcaseDirectoryPaths(context))
+            assertTrue(AppSettings.isBookcaseDirectory(context, firstShelf))
+            assertEquals("legacy;tags", AppSettings.getStartMarkerErrorTags(context))
+            assertTrue(AppSettings.isCustomReaderBrightnessEnabled(context))
+            assertEquals(211, AppSettings.getCustomReaderBrightness(context))
+
+            AppSettings.applyThemeMode(context)
+            assertEquals(AppCompatDelegate.MODE_NIGHT_YES, AppCompatDelegate.getDefaultNightMode())
+            AppSettings.setDarkModeEnabled(context, false)
+            assertFalse(AppSettings.isDarkModeEnabled(context))
+            assertEquals(AppCompatDelegate.MODE_NIGHT_NO, AppCompatDelegate.getDefaultNightMode())
+            assertEquals(legacyKeys, preferences.all.keys)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun bookcaseBatchSelectionIsIdempotentAndDirectoryRemovalIncludesDescendants() {
         val root = tempDirectory("comiclab-settings-bookcase")
         try {

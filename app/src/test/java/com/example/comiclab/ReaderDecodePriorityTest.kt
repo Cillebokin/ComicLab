@@ -1,5 +1,9 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.reader.decode.shouldPreloadBackgroundFullPagesForReader
+import com.example.comiclab.core.reader.decode.shouldRefreshBoundReaderPageImmediately
+import com.example.comiclab.core.reader.decode.shouldScheduleImmediateFullDecodeForReader
+import com.example.comiclab.core.reader.decode.visiblePreviewPriorityForReader
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

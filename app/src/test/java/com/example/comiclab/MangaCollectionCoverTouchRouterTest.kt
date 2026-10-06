@@ -1,5 +1,9 @@
 package com.example.comiclab
 
+import com.example.comiclab.ui.browser.bookcase.BookcaseGestureDirection
+import com.example.comiclab.ui.browser.bookcase.canBookcaseCoverScrollHorizontally
+import com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverTouchRouter
+
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

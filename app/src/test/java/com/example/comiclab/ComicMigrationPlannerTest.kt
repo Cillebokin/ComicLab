@@ -1,5 +1,9 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.migration.ComicMigrationCopyStatus
+import com.example.comiclab.core.migration.ComicMigrationDirectoryMatch
+import com.example.comiclab.core.migration.ComicMigrationMatchReason
+import com.example.comiclab.core.migration.ComicMigrationPlanner
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files

@@ -3,11 +3,9 @@ package com.example.comiclab
 import android.annotation.SuppressLint
 import android.graphics.Color
 import android.os.Bundle
-import android.provider.Settings
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
-import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -24,8 +22,9 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.example.comiclab.core.store.ReadingHistoryStore
 import com.example.comiclab.ebook.EbookProgress
-import com.example.comiclab.ebook.EbookProgressStore
+import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.ebook.EbookReaderProgressMapper
 import com.example.comiclab.ebook.EbookSession
 import com.example.comiclab.ebook.EbookSessionFactory
@@ -35,6 +34,8 @@ import com.example.comiclab.ebook.epub.EpubParseError
 import com.example.comiclab.ebook.epub.EpubParseException
 import com.example.comiclab.ebook.mobi.MobiParseException
 import com.example.comiclab.ebook.mobi.MobiParseError
+import com.example.comiclab.ui.reader.common.ReaderBrightnessController
+import com.example.comiclab.ui.reader.common.ReaderControlsController
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.util.concurrent.Executors
@@ -52,6 +53,7 @@ class EbookReaderActivity : AppCompatActivity() {
     private lateinit var tvReaderProgress: TextView
     private lateinit var sliderScreenBrightness: SeekBar
     private lateinit var checkboxCustomBrightness: CheckBox
+    private lateinit var readerBrightnessController: ReaderBrightnessController
 
     private val loadExecutor = Executors.newSingleThreadExecutor()
     private val htmlRenderer = EbookHtmlRenderer()
@@ -66,8 +68,6 @@ class EbookReaderActivity : AppCompatActivity() {
     private var lastProgressSavedAt = 0L
     private var isUpdatingProgressControls = false
     private var isDraggingReaderProgress = false
-    private var isUpdatingBrightnessControls = false
-    private var customReaderBrightnessEnabled = false
     private lateinit var readerControlsController: ReaderControlsController
     private val readerControlsVisible: Boolean
         get() = if (::readerControlsController.isInitialized) {
@@ -120,7 +120,9 @@ class EbookReaderActivity : AppCompatActivity() {
         }
 
         bookFile = file
-        if (intent.getBooleanExtra(EXTRA_START_FROM_BEGINNING, false)) {
+        val shouldStartFromBeginning = savedInstanceState == null &&
+            intent.getBooleanExtra(EXTRA_START_FROM_BEGINNING, false)
+        if (shouldStartFromBeginning) {
             EbookProgressStore.clear(this, file)
             currentProgress = null
         } else {
@@ -321,121 +323,30 @@ class EbookReaderActivity : AppCompatActivity() {
     }
 
     private fun configureBrightnessControls() {
-        sliderScreenBrightness.min = AppSettings.MIN_READER_BRIGHTNESS
-        sliderScreenBrightness.max = AppSettings.MAX_READER_BRIGHTNESS
-        sliderScreenBrightness.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                if (!fromUser || isUpdatingBrightnessControls || !customReaderBrightnessEnabled) {
-                    return
-                }
-
-                val brightness = progress.coerceIn(
-                    AppSettings.MIN_READER_BRIGHTNESS,
-                    AppSettings.MAX_READER_BRIGHTNESS
-                )
-                AppSettings.setCustomReaderBrightness(this@EbookReaderActivity, brightness)
-                applyCustomReaderBrightness(brightness)
-            }
-
-            override fun onStartTrackingTouch(seekBar: SeekBar) {
-                if (customReaderBrightnessEnabled) {
-                    readerControlsController.cancelAutoHide()
-                }
-            }
-
-            override fun onStopTrackingTouch(seekBar: SeekBar) {
-                if (customReaderBrightnessEnabled) {
-                    val brightness = seekBar.progress.coerceIn(
-                        AppSettings.MIN_READER_BRIGHTNESS,
-                        AppSettings.MAX_READER_BRIGHTNESS
-                    )
-                    AppSettings.setCustomReaderBrightness(this@EbookReaderActivity, brightness)
-                    applyCustomReaderBrightness(brightness)
-                    showReaderControlsTemporarily()
-                }
-            }
-        })
-
-        checkboxCustomBrightness.setOnCheckedChangeListener { _, isChecked ->
-            if (isUpdatingBrightnessControls) {
-                return@setOnCheckedChangeListener
-            }
-
-            customReaderBrightnessEnabled = isChecked
-            AppSettings.setCustomReaderBrightnessEnabled(this, isChecked)
-            if (isChecked) {
-                val brightness = sliderScreenBrightness.progress.coerceIn(
-                    AppSettings.MIN_READER_BRIGHTNESS,
-                    AppSettings.MAX_READER_BRIGHTNESS
-                )
-                AppSettings.setCustomReaderBrightness(this, brightness)
-                applyCustomReaderBrightness(brightness)
-            } else {
-                restoreSystemBrightness()
-            }
-            updateBrightnessControls()
-            showReaderControlsTemporarily()
-        }
-
-        updateBrightnessControls()
-        applyReaderBrightnessSetting()
+        readerBrightnessController = ReaderBrightnessController(
+            context = applicationContext,
+            window = window,
+            slider = sliderScreenBrightness,
+            checkbox = checkboxCustomBrightness,
+            onTrackingStarted = readerControlsController::cancelAutoHide,
+            onTrackingStopped = readerControlsController::showTemporarily,
+            onBrightnessChanged = readerControlsController::showTemporarily
+        )
+        readerBrightnessController.configure()
     }
 
     private fun updateBrightnessControls() {
-        if (!::sliderScreenBrightness.isInitialized || !::checkboxCustomBrightness.isInitialized) {
-            return
+        if (::readerBrightnessController.isInitialized) {
+            readerBrightnessController.updateControls()
         }
-
-        isUpdatingBrightnessControls = true
-        customReaderBrightnessEnabled = AppSettings.isCustomReaderBrightnessEnabled(this)
-        checkboxCustomBrightness.isChecked = customReaderBrightnessEnabled
-        sliderScreenBrightness.alpha = if (customReaderBrightnessEnabled) 1f else 0.72f
-        sliderScreenBrightness.isEnabled = customReaderBrightnessEnabled
-        sliderScreenBrightness.isClickable = customReaderBrightnessEnabled
-        sliderScreenBrightness.isFocusable = customReaderBrightnessEnabled
-        sliderScreenBrightness.progress = if (customReaderBrightnessEnabled) {
-            AppSettings.getCustomReaderBrightness(this)
-        } else {
-            readSystemBrightness()
-        }
-        isUpdatingBrightnessControls = false
     }
 
     private fun applyReaderBrightnessSetting() {
-        customReaderBrightnessEnabled = AppSettings.isCustomReaderBrightnessEnabled(this)
-        if (customReaderBrightnessEnabled) {
-            applyCustomReaderBrightness(AppSettings.getCustomReaderBrightness(this))
-        } else {
-            restoreSystemBrightness()
-        }
-    }
-
-    private fun applyCustomReaderBrightness(brightness: Int) {
-        val normalized = brightness.coerceIn(
-            AppSettings.MIN_READER_BRIGHTNESS,
-            AppSettings.MAX_READER_BRIGHTNESS
-        )
-        val params = window.attributes
-        params.screenBrightness = (normalized.toFloat() / AppSettings.MAX_READER_BRIGHTNESS)
-            .coerceIn(MIN_WINDOW_BRIGHTNESS, MAX_WINDOW_BRIGHTNESS)
-        window.attributes = params
+        readerBrightnessController.applyReaderBrightnessSetting()
     }
 
     private fun restoreSystemBrightness() {
-        val params = window.attributes
-        params.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-        window.attributes = params
-    }
-
-    private fun readSystemBrightness(): Int {
-        return runCatching {
-            Settings.System.getInt(
-                contentResolver,
-                Settings.System.SCREEN_BRIGHTNESS,
-                AppSettings.DEFAULT_READER_BRIGHTNESS
-            )
-        }.getOrDefault(AppSettings.DEFAULT_READER_BRIGHTNESS)
-            .coerceIn(AppSettings.MIN_READER_BRIGHTNESS, AppSettings.MAX_READER_BRIGHTNESS)
+        readerBrightnessController.restoreSystemBrightness()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -684,8 +595,6 @@ class EbookReaderActivity : AppCompatActivity() {
         private const val BASE_URL = "https://comiclab.invalid/"
         private const val JS_BRIDGE_NAME = "ComicLabBridge"
         private const val MIN_PROGRESS_SAVE_INTERVAL_MS = 500L
-        private const val MIN_WINDOW_BRIGHTNESS = 0.01f
-        private const val MAX_WINDOW_BRIGHTNESS = 1f
     }
 
     private data class PreparedBook(

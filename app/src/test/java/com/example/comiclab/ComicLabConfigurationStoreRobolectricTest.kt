@@ -1,6 +1,10 @@
 package com.example.comiclab
 
 import androidx.appcompat.app.AppCompatDelegate
+import com.example.comiclab.core.store.FavoriteComicStore
+import com.example.comiclab.core.store.FavoritePathStore
+import com.example.comiclab.core.store.ReadingHistoryStore
+import com.example.comiclab.core.settings.ComicLabConfigurationStore
 import java.io.File
 import java.nio.file.Files
 import org.junit.After
@@ -58,7 +62,7 @@ class ComicLabConfigurationStoreRobolectricTest {
                 cbz,
                 ComicLabMangaProgress(cbz.absolutePath, 7, 12)
             )
-            com.example.comiclab.ebook.EbookProgressStore.save(
+            com.example.comiclab.core.store.EbookProgressStore.save(
                 context,
                 epub,
                 com.example.comiclab.ebook.EbookProgress(3, 0.4f)
@@ -140,7 +144,7 @@ class ComicLabConfigurationStoreRobolectricTest {
             assertEquals(ComicLabMangaProgress(comic.absolutePath, 8, 9), MangaReaderActivity.savedReadingProgress(context, comic))
             assertEquals(
                 com.example.comiclab.ebook.EbookProgress(2, 0.6f),
-                com.example.comiclab.ebook.EbookProgressStore.load(context, epub)
+                com.example.comiclab.core.store.EbookProgressStore.load(context, epub)
             )
             assertTrue(AppSettings.isDarkModeEnabled(context))
             assertEquals(AppSettings.READING_DIRECTION_RIGHT_TO_LEFT, AppSettings.getReadingDirection(context))

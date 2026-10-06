@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.organize.ComicClassifier
 import org.junit.Test
 
 import org.junit.Assert.*

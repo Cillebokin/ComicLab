@@ -75,7 +75,7 @@ class MangaReaderTilingRegressionTest {
 
     private fun createAdapter(session: ComicArchive.ImageReaderSession): Any {
         val context = RuntimeEnvironment.getApplication()
-        val adapterClass = Class.forName("com.example.comiclab.MangaReaderActivity\$MangaPageAdapter")
+        val adapterClass = Class.forName("com.example.comiclab.ui.reader.manga.MangaPageAdapter")
         val constructor = adapterClass.declaredConstructors
             .single { it.parameterCount == 14 }
             .apply { isAccessible = true }

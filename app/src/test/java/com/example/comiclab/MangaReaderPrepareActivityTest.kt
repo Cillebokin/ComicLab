@@ -1,9 +1,17 @@
 package com.example.comiclab
 
 import android.content.Intent
+import android.os.Looper
+import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
+import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseTask
 import java.io.File
 import java.util.concurrent.AbstractExecutorService
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -14,6 +22,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -53,11 +62,181 @@ class MangaReaderPrepareActivityTest {
 
             queuedExecutor.runNext()
 
-            assertFalse("expired cache is removed by preparation work", staleCache.exists())
+            assertTrue(
+                "expired cache deletion is scheduled off the preparation thread",
+                awaitCondition { !staleCache.exists() }
+            )
             assertTrue("recent cache is preserved", recentCache.exists())
         } finally {
             controller.pause().stop().destroy()
             cacheRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun destroyDoesNotDeletePreparedDirectoryWhileWorkerIsStillRunning() {
+        val application = RuntimeEnvironment.getApplication()
+        val missingArchive = File(temporaryFolder.root, "missing.cbz")
+        val executor = Executors.newSingleThreadExecutor()
+        val intent = Intent(application, MangaReaderPrepareActivity::class.java).apply {
+            putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, missingArchive.absolutePath)
+        }
+        val controller = Robolectric.buildActivity(MangaReaderPrepareActivity::class.java, intent)
+        val activity = controller.get()
+        MangaReaderPrepareActivity::class.java
+            .getDeclaredField("prepareExecutor")
+            .apply { isAccessible = true }
+            .set(activity, executor)
+
+        val preparedDirectory = temporaryFolder.newFolder("active-prepared-cache")
+        File(preparedDirectory, "page.jpg").writeBytes(byteArrayOf(1))
+        val registry = PreparedReaderCacheLeaseRegistry.process
+        val prepareOwner = registry.acquirePrepareOwner(preparedDirectory)!!
+        val writerLease = registry.acquireWriterLease(preparedDirectory)!!
+        MangaReaderPrepareActivity::class.java
+            .getDeclaredField("preparedDirectory")
+            .apply { isAccessible = true }
+            .set(activity, preparedDirectory)
+        MangaReaderPrepareActivity::class.java
+            .getDeclaredField("prepareOwnerLease")
+            .apply { isAccessible = true }
+            .set(activity, prepareOwner)
+
+        val workerStarted = CountDownLatch(1)
+        val releaseWorker = CountDownLatch(1)
+
+        try {
+            controller.create()
+            executor.execute(PreparedReaderCacheLeaseTask(writerLease) {
+                workerStarted.countDown()
+                var released = false
+                while (!released) {
+                    try {
+                        releaseWorker.await()
+                        released = true
+                    } catch (_: InterruptedException) {
+                        // Model an archive/native read that does not stop on interruption.
+                    }
+                }
+            })
+            assertTrue(workerStarted.await(5, TimeUnit.SECONDS))
+
+            controller.destroy()
+
+            assertTrue(
+                "A prepared directory must remain until its in-flight writer has stopped",
+                preparedDirectory.exists()
+            )
+        } finally {
+            releaseWorker.countDown()
+            executor.shutdownNow()
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            awaitCondition { !preparedDirectory.exists() }
+            preparedDirectory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun destroyedPrepareDropsQueuedMainCallbackAndDeletesItsCache() {
+        val application = RuntimeEnvironment.getApplication()
+        val archive = File(temporaryFolder.root, "no-images.cbz")
+        writeZip(archive, "notes.txt" to "not an image".toByteArray())
+        val executor = QueuedExecutorService()
+        val intent = Intent(application, MangaReaderPrepareActivity::class.java).apply {
+            putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, archive.absolutePath)
+        }
+        val controller = Robolectric.buildActivity(MangaReaderPrepareActivity::class.java, intent)
+        val activity = controller.get()
+        MangaReaderPrepareActivity::class.java
+            .getDeclaredField("prepareExecutor")
+            .apply { isAccessible = true }
+            .set(activity, executor)
+
+        try {
+            controller.create()
+            assertEquals(1, executor.pendingTaskCount)
+            executor.runNext()
+            val preparedDirectory = MangaReaderPrepareActivity::class.java
+                .getDeclaredField("preparedDirectory")
+                .apply { isAccessible = true }
+                .get(activity) as File
+            assertTrue(preparedDirectory.isDirectory)
+
+            // The worker posted its empty-archive result; destroy before the main callback runs.
+            controller.destroy()
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+
+            assertTrue(
+                "a dropped callback must release the temporary owner and schedule cache cleanup",
+                awaitCondition { !preparedDirectory.exists() }
+            )
+            assertTrue("cleanup must not alter the original archive", archive.isFile)
+        } finally {
+            if (!activity.isDestroyed) {
+                runCatching { controller.destroy() }
+            }
+            executor.shutdownNow()
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+        }
+    }
+
+    @Test
+    fun rejectedPreparationEnqueueReleasesBothOwnersAndDeletesOnlyItsCache() {
+        val application = RuntimeEnvironment.getApplication()
+        val archive = temporaryFolder.newFile("rejected.cbz")
+        archive.writeText("source archive fixture")
+        val intent = Intent(application, MangaReaderPrepareActivity::class.java).apply {
+            putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, archive.absolutePath)
+        }
+        val controller = Robolectric.buildActivity(MangaReaderPrepareActivity::class.java, intent)
+        val activity = controller.get()
+        MangaReaderPrepareActivity::class.java
+            .getDeclaredField("prepareExecutor")
+            .apply { isAccessible = true }
+            .set(activity, RejectingExecutorService())
+
+        try {
+            controller.create()
+            val preparedDirectory = MangaReaderPrepareActivity::class.java
+                .getDeclaredField("preparedDirectory")
+                .apply { isAccessible = true }
+                .get(activity) as File
+
+            assertTrue(
+                "a rejected worker enqueue must release the prepare and writer leases",
+                awaitCondition { !preparedDirectory.exists() }
+            )
+            assertEquals("source archive must remain unchanged", "source archive fixture", archive.readText())
+        } finally {
+            if (!activity.isDestroyed) {
+                runCatching { controller.destroy() }
+            }
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+        }
+    }
+
+    private fun awaitCondition(
+        timeoutMs: Long = 5_000,
+        condition: () -> Boolean
+    ): Boolean {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        while (System.nanoTime() < deadline) {
+            if (condition()) {
+                return true
+            }
+            Thread.yield()
+        }
+        return condition()
+    }
+
+    private fun writeZip(file: File, vararg entries: Pair<String, ByteArray>) {
+        ZipOutputStream(file.outputStream()).use { zip ->
+            entries.forEach { (name, bytes) ->
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(bytes)
+                zip.closeEntry()
+            }
         }
     }
 
@@ -90,5 +269,21 @@ class MangaReaderPrepareActivityTest {
         override fun isTerminated(): Boolean = shutdown && tasks.isEmpty()
 
         override fun awaitTermination(timeout: Long, unit: TimeUnit): Boolean = isTerminated
+    }
+
+    private class RejectingExecutorService : AbstractExecutorService() {
+        override fun execute(command: Runnable) {
+            throw RejectedExecutionException("test rejection")
+        }
+
+        override fun shutdown() = Unit
+
+        override fun shutdownNow(): MutableList<Runnable> = mutableListOf()
+
+        override fun isShutdown(): Boolean = false
+
+        override fun isTerminated(): Boolean = false
+
+        override fun awaitTermination(timeout: Long, unit: TimeUnit): Boolean = false
     }
 }

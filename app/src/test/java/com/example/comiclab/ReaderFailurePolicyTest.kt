@@ -1,5 +1,8 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.reader.decode.reducedDecodeDimensionForRetry
+import com.example.comiclab.core.reader.decode.shouldCancelPreloadAfterOutOfMemory
+import com.example.comiclab.core.reader.decode.shouldRetryFullPageAfterFailure
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

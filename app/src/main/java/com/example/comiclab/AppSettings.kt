@@ -3,40 +3,25 @@ package com.example.comiclab
 import android.content.Context
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
+import com.example.comiclab.core.settings.AppSettingsStore
 import java.io.File
 
 object AppSettings {
-    const val READING_DIRECTION_TOP_TO_BOTTOM = "top_to_bottom"
-    const val READING_DIRECTION_RIGHT_TO_LEFT = "right_to_left"
-    const val READING_DIRECTION_LEFT_TO_RIGHT = "left_to_right"
+    const val READING_DIRECTION_TOP_TO_BOTTOM = AppSettingsStore.READING_DIRECTION_TOP_TO_BOTTOM
+    const val READING_DIRECTION_RIGHT_TO_LEFT = AppSettingsStore.READING_DIRECTION_RIGHT_TO_LEFT
+    const val READING_DIRECTION_LEFT_TO_RIGHT = AppSettingsStore.READING_DIRECTION_LEFT_TO_RIGHT
 
-    private const val PREFS_NAME = "app_settings"
-    private const val KEY_READING_DIRECTION = "reading_direction"
-    private const val KEY_DOUBLE_PAGE_COVER_SINGLE = "double_page_cover_single"
-    private const val KEY_VOLUME_KEY_PAGE_TURN = "volume_key_page_turn"
-    private const val KEY_AUTO_HIDE_SYSTEM_BARS = "auto_hide_system_bars"
-    private const val KEY_BOOKCASE_DIRECTORIES = "bookcase_directories"
-    private val bookcaseDirectoriesLock = Any()
-    private const val KEY_START_MARKER_ERROR_TAGS = "start_marker_error_tags"
-    private const val KEY_CUSTOM_READER_BRIGHTNESS_ENABLED = "custom_reader_brightness_enabled"
-    private const val KEY_CUSTOM_READER_BRIGHTNESS = "custom_reader_brightness"
-    private const val KEY_DARK_MODE_ENABLED = "dark_mode_enabled"
-    const val DEFAULT_START_MARKER_ERROR_TAGS = "中;汉;漢;翻;译;譯"
-    const val DEFAULT_READER_BRIGHTNESS = 128
-    const val MIN_READER_BRIGHTNESS = 1
-    const val MAX_READER_BRIGHTNESS = 255
-    const val DEFAULT_DOUBLE_PAGE_COVER_SINGLE = true
+    const val DEFAULT_START_MARKER_ERROR_TAGS = AppSettingsStore.DEFAULT_START_MARKER_ERROR_TAGS
+    const val DEFAULT_READER_BRIGHTNESS = AppSettingsStore.DEFAULT_READER_BRIGHTNESS
+    const val MIN_READER_BRIGHTNESS = AppSettingsStore.MIN_READER_BRIGHTNESS
+    const val MAX_READER_BRIGHTNESS = AppSettingsStore.MAX_READER_BRIGHTNESS
+    const val DEFAULT_DOUBLE_PAGE_COVER_SINGLE = AppSettingsStore.DEFAULT_DOUBLE_PAGE_COVER_SINGLE
 
-    fun isDarkModeEnabled(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean(KEY_DARK_MODE_ENABLED, false)
-    }
+    fun isDarkModeEnabled(context: Context): Boolean =
+        AppSettingsStore.isDarkModeEnabled(context)
 
     fun setDarkModeEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_DARK_MODE_ENABLED, enabled)
-            .apply()
+        AppSettingsStore.setDarkModeEnabled(context, enabled)
         AppCompatDelegate.setDefaultNightMode(
             if (enabled) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
         )
@@ -44,7 +29,7 @@ object AppSettings {
 
     fun applyThemeMode(context: Context) {
         AppCompatDelegate.setDefaultNightMode(
-            if (isDarkModeEnabled(context)) {
+            if (AppSettingsStore.isDarkModeEnabled(context)) {
                 AppCompatDelegate.MODE_NIGHT_YES
             } else {
                 AppCompatDelegate.MODE_NIGHT_NO
@@ -52,121 +37,44 @@ object AppSettings {
         )
     }
 
-    fun getReadingDirection(context: Context): String {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(KEY_READING_DIRECTION, READING_DIRECTION_TOP_TO_BOTTOM)
-            ?: READING_DIRECTION_TOP_TO_BOTTOM
-    }
+    fun getReadingDirection(context: Context): String =
+        AppSettingsStore.getReadingDirection(context)
 
-    fun setReadingDirection(context: Context, direction: String) {
-        val normalizedDirection = when (direction) {
-            READING_DIRECTION_RIGHT_TO_LEFT,
-            READING_DIRECTION_LEFT_TO_RIGHT -> direction
-            else -> READING_DIRECTION_TOP_TO_BOTTOM
-        }
+    fun setReadingDirection(context: Context, direction: String) =
+        AppSettingsStore.setReadingDirection(context, direction)
 
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY_READING_DIRECTION, normalizedDirection)
-            .apply()
-    }
+    fun isDoublePageCoverSingleEnabled(context: Context): Boolean =
+        AppSettingsStore.isDoublePageCoverSingleEnabled(context)
 
-    fun isDoublePageCoverSingleEnabled(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean(KEY_DOUBLE_PAGE_COVER_SINGLE, DEFAULT_DOUBLE_PAGE_COVER_SINGLE)
-    }
+    fun setDoublePageCoverSingleEnabled(context: Context, enabled: Boolean) =
+        AppSettingsStore.setDoublePageCoverSingleEnabled(context, enabled)
 
-    fun setDoublePageCoverSingleEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_DOUBLE_PAGE_COVER_SINGLE, enabled)
-            .apply()
-    }
+    fun isVolumeKeyPageTurnEnabled(context: Context): Boolean =
+        AppSettingsStore.isVolumeKeyPageTurnEnabled(context)
 
-    fun isVolumeKeyPageTurnEnabled(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean(KEY_VOLUME_KEY_PAGE_TURN, true)
-    }
+    fun setVolumeKeyPageTurnEnabled(context: Context, enabled: Boolean) =
+        AppSettingsStore.setVolumeKeyPageTurnEnabled(context, enabled)
 
-    fun setVolumeKeyPageTurnEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_VOLUME_KEY_PAGE_TURN, enabled)
-            .apply()
-    }
+    fun isAutoHideSystemBarsEnabled(context: Context): Boolean =
+        AppSettingsStore.isAutoHideSystemBarsEnabled(context)
 
-    fun isAutoHideSystemBarsEnabled(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean(KEY_AUTO_HIDE_SYSTEM_BARS, true)
-    }
+    fun setAutoHideSystemBarsEnabled(context: Context, enabled: Boolean) =
+        AppSettingsStore.setAutoHideSystemBarsEnabled(context, enabled)
 
-    fun setAutoHideSystemBarsEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_AUTO_HIDE_SYSTEM_BARS, enabled)
-            .apply()
-    }
+    fun isBookcaseDirectory(context: Context, directory: File): Boolean =
+        AppSettingsStore.isBookcaseDirectory(context, directory)
 
-    fun isBookcaseDirectory(context: Context, directory: File): Boolean {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
-            .orEmpty()
-            .contains(directory.absolutePath)
-    }
-
-    fun setBookcaseDirectory(context: Context, directory: File, enabled: Boolean) {
-        synchronized(bookcaseDirectoriesLock) {
-            val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val currentPaths = preferences.getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
-                .orEmpty()
-                .toSet()
-            preferences.edit()
-                .putStringSet(
-                    KEY_BOOKCASE_DIRECTORIES,
-                    BookcaseFolderPaths.withSelection(currentPaths, directory.absolutePath, enabled)
-                )
-                .apply()
-        }
-    }
+    fun setBookcaseDirectory(context: Context, directory: File, enabled: Boolean) =
+        AppSettingsStore.setBookcaseDirectory(context, directory, enabled)
 
     fun setBookcaseDirectories(
         context: Context,
         directories: Collection<File>,
         enabled: Boolean
-    ): Int {
-        val selectedPaths = directories.mapTo(mutableSetOf()) { it.absolutePath }
-        if (selectedPaths.isEmpty()) {
-            return 0
-        }
+    ): Int = AppSettingsStore.setBookcaseDirectories(context, directories, enabled)
 
-        return synchronized(bookcaseDirectoriesLock) {
-            val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val currentPaths = preferences.getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
-                .orEmpty()
-                .toSet()
-            val changedCount = selectedPaths.count { (it in currentPaths) != enabled }
-            if (changedCount == 0) {
-                return@synchronized 0
-            }
-
-            preferences.edit()
-                .putStringSet(
-                    KEY_BOOKCASE_DIRECTORIES,
-                    BookcaseFolderPaths.withSelections(currentPaths, selectedPaths, enabled)
-                )
-                .apply()
-            changedCount
-        }
-    }
-
-    fun bookcaseDirectoryPaths(context: Context): Set<String> {
-        return synchronized(bookcaseDirectoriesLock) {
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
-                .orEmpty()
-                .toSet()
-        }
-    }
+    fun bookcaseDirectoryPaths(context: Context): Set<String> =
+        AppSettingsStore.bookcaseDirectoryPaths(context)
 
     fun snapshot(context: Context): ComicLabAppSettings {
         return ComicLabAppSettings(
@@ -223,78 +131,27 @@ object AppSettings {
         return appliedCount
     }
 
-    fun renameBookcaseDirectory(context: Context, oldDirectory: File, newDirectory: File) {
-        synchronized(bookcaseDirectoriesLock) {
-            val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val currentPaths = preferences.getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
-                .orEmpty()
-                .toSet()
-            preferences.edit()
-                .putStringSet(
-                    KEY_BOOKCASE_DIRECTORIES,
-                    BookcaseFolderPaths.afterRename(
-                        currentPaths,
-                        oldDirectory.absolutePath,
-                        newDirectory.absolutePath
-                    )
-                )
-                .apply()
-        }
-    }
+    fun renameBookcaseDirectory(context: Context, oldDirectory: File, newDirectory: File) =
+        AppSettingsStore.renameBookcaseDirectory(context, oldDirectory, newDirectory)
 
-    fun removeBookcaseDirectory(context: Context, directory: File) {
-        synchronized(bookcaseDirectoriesLock) {
-            val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val currentPaths = preferences.getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
-                .orEmpty()
-                .toSet()
-            preferences.edit()
-                .putStringSet(
-                    KEY_BOOKCASE_DIRECTORIES,
-                    BookcaseFolderPaths.underDirectory(currentPaths, directory.absolutePath)
-                )
-                .apply()
-        }
-    }
+    fun removeBookcaseDirectory(context: Context, directory: File) =
+        AppSettingsStore.removeBookcaseDirectory(context, directory)
 
-    fun getStartMarkerErrorTags(context: Context): String {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(KEY_START_MARKER_ERROR_TAGS, DEFAULT_START_MARKER_ERROR_TAGS)
-            ?: DEFAULT_START_MARKER_ERROR_TAGS
-    }
+    fun getStartMarkerErrorTags(context: Context): String =
+        AppSettingsStore.getStartMarkerErrorTags(context)
 
-    fun setStartMarkerErrorTags(context: Context, tags: String) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY_START_MARKER_ERROR_TAGS, tags)
-            .apply()
-    }
+    fun setStartMarkerErrorTags(context: Context, tags: String) =
+        AppSettingsStore.setStartMarkerErrorTags(context, tags)
 
-    fun isCustomReaderBrightnessEnabled(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean(KEY_CUSTOM_READER_BRIGHTNESS_ENABLED, false)
-    }
+    fun isCustomReaderBrightnessEnabled(context: Context): Boolean =
+        AppSettingsStore.isCustomReaderBrightnessEnabled(context)
 
-    fun setCustomReaderBrightnessEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_CUSTOM_READER_BRIGHTNESS_ENABLED, enabled)
-            .apply()
-    }
+    fun setCustomReaderBrightnessEnabled(context: Context, enabled: Boolean) =
+        AppSettingsStore.setCustomReaderBrightnessEnabled(context, enabled)
 
-    fun getCustomReaderBrightness(context: Context): Int {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getInt(KEY_CUSTOM_READER_BRIGHTNESS, DEFAULT_READER_BRIGHTNESS)
-            .coerceIn(MIN_READER_BRIGHTNESS, MAX_READER_BRIGHTNESS)
-    }
+    fun getCustomReaderBrightness(context: Context): Int =
+        AppSettingsStore.getCustomReaderBrightness(context)
 
-    fun setCustomReaderBrightness(context: Context, brightness: Int) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putInt(
-                KEY_CUSTOM_READER_BRIGHTNESS,
-                brightness.coerceIn(MIN_READER_BRIGHTNESS, MAX_READER_BRIGHTNESS)
-            )
-            .apply()
-    }
+    fun setCustomReaderBrightness(context: Context, brightness: Int) =
+        AppSettingsStore.setCustomReaderBrightness(context, brightness)
 }

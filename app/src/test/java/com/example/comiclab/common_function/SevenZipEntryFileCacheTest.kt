@@ -1,5 +1,7 @@
 package com.example.comiclab.common_function
 
+import com.example.comiclab.core.archive.cache.ArchiveEntryFileCache
+
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

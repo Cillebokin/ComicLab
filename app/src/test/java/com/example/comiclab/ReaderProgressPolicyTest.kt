@@ -1,5 +1,7 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.reader.progress.READER_PROGRESS_CHECKPOINT_DELAY_MS
+import com.example.comiclab.core.reader.progress.shouldPersistReaderCheckpointImmediately
 import org.junit.Assert.assertTrue
 import org.junit.Test
 

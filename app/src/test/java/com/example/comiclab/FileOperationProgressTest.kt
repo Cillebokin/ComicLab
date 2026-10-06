@@ -1,5 +1,7 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.transfer.FileOperationProgress
+import com.example.comiclab.core.transfer.FileOperationProgressPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test

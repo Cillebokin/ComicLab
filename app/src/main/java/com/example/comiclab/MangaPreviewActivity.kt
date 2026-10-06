@@ -1,6 +1,9 @@
 package com.example.comiclab
 
+import com.example.comiclab.ui.common.SystemBars
+
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
 import android.content.Intent
 import android.os.Bundle
@@ -10,6 +13,7 @@ import android.widget.GridLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.ProgressBar
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -17,6 +21,27 @@ import androidx.appcompat.app.AppCompatActivity
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+
+internal fun archivePreviewDecodeWindow(
+    firstVisibleIndex: Int,
+    lastVisibleIndex: Int,
+    totalCount: Int,
+    columnCount: Int,
+    overscanRows: Int = 1
+): IntRange? {
+    if (totalCount <= 0 || columnCount <= 0 || overscanRows < 0 ||
+        firstVisibleIndex < 0 || firstVisibleIndex >= totalCount || lastVisibleIndex < firstVisibleIndex
+    ) {
+        return null
+    }
+
+    val lastIndex = lastVisibleIndex.coerceAtMost(totalCount - 1)
+    val firstRow = firstVisibleIndex / columnCount
+    val lastRow = lastIndex / columnCount
+    val firstIndex = (firstRow - overscanRows).coerceAtLeast(0) * columnCount
+    val endExclusive = ((lastRow + overscanRows + 1) * columnCount).coerceAtMost(totalCount)
+    return firstIndex until endExclusive
+}
 
 class MangaPreviewActivity : AppCompatActivity() {
 
@@ -28,11 +53,14 @@ class MangaPreviewActivity : AppCompatActivity() {
     private lateinit var progressReading: ProgressBar
     private lateinit var tvReadingProgress: TextView
     private lateinit var gridPreview: GridLayout
+    private lateinit var scrollPreview: ScrollView
     private lateinit var btnTogglePreview: Button
     private lateinit var tvStatus: TextView
 
     private var archiveFile: File? = null
     private var imageEntries: List<String> = emptyList()
+    private var renderedEntryNames: List<String> = emptyList()
+    private var renderedPreviewCount = 0
     private var showingAll = false
     private val archiveOperationLock = Any()
     @Volatile
@@ -44,6 +72,9 @@ class MangaPreviewActivity : AppCompatActivity() {
     @Volatile
     private var destroyed = false
     private var deletePreviewInProgress = false
+    private val decodedPreviewIndices = mutableSetOf<Int>()
+    private var gridPreviewDecodeRunning = false
+    private var gridPreviewDecodeWindowDirty = false
     private val latestPreviewTaskKeys = ConcurrentHashMap<String, String>()
     private val previewTaskSequence = AtomicLong(0L)
     private val previewTasks = BoundedKeyedTaskQueue(
@@ -70,8 +101,12 @@ class MangaPreviewActivity : AppCompatActivity() {
         progressReading = findViewById(R.id.progressReading)
         tvReadingProgress = findViewById(R.id.tvReadingProgress)
         gridPreview = findViewById(R.id.gridPreview)
+        scrollPreview = findViewById(R.id.main)
         btnTogglePreview = findViewById(R.id.btnTogglePreview)
         tvStatus = findViewById(R.id.tvStatus)
+        scrollPreview.setOnScrollChangeListener { _, _, _, _, _ ->
+            requestVisiblePreviewDecode()
+        }
 
         val path = intent.getStringExtra(EXTRA_ARCHIVE_PATH)
         val file = path?.let(::File)
@@ -196,19 +231,34 @@ class MangaPreviewActivity : AppCompatActivity() {
     }
 
     private fun renderPreviewGrid() {
-        val file = archiveFile ?: return
+        if (archiveFile == null) return
         val generation = ++gridGeneration
-        val entriesToShow = if (showingAll) {
-            imageEntries
-        } else {
-            imageEntries.take(DEFAULT_PREVIEW_COUNT)
+        cancelLatestPreviewTask(GRID_TASK_KEY)
+        gridPreviewDecodeRunning = false
+        gridPreviewDecodeWindowDirty = false
+        val entriesToShowCount = if (showingAll) imageEntries.size else minOf(imageEntries.size, DEFAULT_PREVIEW_COUNT)
+
+        if (renderedEntryNames != imageEntries) {
+            gridPreview.removeAllViews()
+            renderedEntryNames = imageEntries.toList()
+            renderedPreviewCount = 0
+            decodedPreviewIndices.clear()
         }
 
-        gridPreview.removeAllViews()
+        if (renderedPreviewCount > entriesToShowCount) {
+            gridPreview.removeViews(entriesToShowCount, renderedPreviewCount - entriesToShowCount)
+            decodedPreviewIndices.removeAll { it >= entriesToShowCount }
+            renderedPreviewCount = entriesToShowCount
+        }
+        while (renderedPreviewCount < entriesToShowCount) {
+            addPreviewPlaceholder(renderedPreviewCount)
+            renderedPreviewCount++
+        }
+
         tvStatus.text = getString(R.string.loading_preview)
         tvStatus.visibility = View.VISIBLE
 
-        if (entriesToShow.isEmpty()) {
+        if (entriesToShowCount == 0) {
             tvStatus.visibility = View.INVISIBLE
             return
         }
@@ -224,39 +274,111 @@ class MangaPreviewActivity : AppCompatActivity() {
             View.GONE
         }
 
-        val indexesByEntry = entriesToShow.withIndex().associate { it.value to it.index }
+        gridPreview.post { requestVisiblePreviewDecode(generation) }
+    }
+
+    private fun requestVisiblePreviewDecode(generation: Int = gridGeneration) {
+        if (!isPreviewActive() || generation != gridGeneration) return
+        if (archiveFile == null) return
+        val visibleIndices = visiblePreviewIndices()
+        if (visibleIndices.isEmpty()) {
+            hidePreviewLoading(generation)
+            return
+        }
+        val window = archivePreviewDecodeWindow(
+            firstVisibleIndex = visibleIndices.first(),
+            lastVisibleIndex = visibleIndices.last(),
+            totalCount = renderedPreviewCount,
+            columnCount = PREVIEW_COLUMNS
+        ) ?: run {
+            hidePreviewLoading(generation)
+            return
+        }
+
+        val visibleIndexSet = visibleIndices.toHashSet()
+        val orderedWindow = visibleIndices + window.filterNot(visibleIndexSet::contains)
+        val indicesToDecode = orderedWindow.distinct().filterNot(decodedPreviewIndices::contains)
+        if (indicesToDecode.isEmpty()) {
+            hidePreviewLoading(generation)
+            return
+        }
+        tvStatus.visibility = View.VISIBLE
+        if (gridPreviewDecodeRunning) {
+            gridPreviewDecodeWindowDirty = true
+            return
+        }
+
+        gridPreviewDecodeRunning = true
+        gridPreviewDecodeWindowDirty = false
+        val entriesToDecode = indicesToDecode.mapNotNull(imageEntries::getOrNull)
+        if (entriesToDecode.isEmpty()) {
+            gridPreviewDecodeRunning = false
+            hidePreviewLoading(generation)
+            return
+        }
+        val indicesByEntry = indicesToDecode.zip(entriesToDecode)
+            .groupBy(keySelector = { it.second }, valueTransform = { it.first })
+        val file = archiveFile ?: run {
+            gridPreviewDecodeRunning = false
+            return
+        }
 
         executePreviewTask(
             taskKey = GRID_TASK_KEY,
             replaceQueued = true,
-            onRejected = { hidePreviewLoading(generation) }
+            onRejected = {
+                if (generation == gridGeneration) {
+                    gridPreviewDecodeRunning = false
+                    hidePreviewLoading(generation)
+                }
+            }
         ) { isActive ->
-            runCatching {
+            try {
                 synchronized(archiveOperationLock) {
-                    ComicArchive.decodeImages(file, entriesToShow, PREVIEW_IMAGE_MAX_SIZE, cacheDir) { entryName, bitmap ->
+                    ComicArchive.decodeImages(file, entriesToDecode, PREVIEW_IMAGE_MAX_SIZE, cacheDir) { entryName, bitmap ->
                         if (!isActive() || !isPreviewActive() || generation != gridGeneration) {
                             return@decodeImages false
                         }
 
-                        val index = indexesByEntry[entryName] ?: return@decodeImages true
+                        val indices = indicesByEntry[entryName].orEmpty()
                         runOnUiThread {
                             if (!isPreviewActive() || generation != gridGeneration) {
                                 return@runOnUiThread
                             }
-
-                            if (bitmap != null) {
-                                addPreviewImage(bitmap, index)
+                            indices.forEach { index ->
+                                decodedPreviewIndices += index
+                                if (bitmap != null) {
+                                    addPreviewImage(bitmap, index)
+                                }
+                            }
+                            if (bitmap != null && indices.any(visibleIndexSet::contains)) {
+                                tvStatus.visibility = View.INVISIBLE
                             }
                         }
-
                         true
                     }
                 }
-            }.onSuccess {
-                hidePreviewLoading(generation)
-            }.onFailure {
-                hidePreviewLoading(generation)
+            } finally {
+                runOnUiThread {
+                    if (isPreviewActive() && generation == gridGeneration) {
+                        gridPreviewDecodeRunning = false
+                        if (gridPreviewDecodeWindowDirty) {
+                            gridPreviewDecodeWindowDirty = false
+                            requestVisiblePreviewDecode(generation)
+                        } else {
+                            tvStatus.visibility = View.INVISIBLE
+                        }
+                    }
+                }
             }
+        }
+    }
+
+    private fun visiblePreviewIndices(): List<Int> {
+        val visibleRect = Rect()
+        return (0 until minOf(renderedPreviewCount, gridPreview.childCount)).filter { index ->
+            val child = gridPreview.getChildAt(index)
+            child.getGlobalVisibleRect(visibleRect) && !visibleRect.isEmpty
         }
     }
 
@@ -268,10 +390,9 @@ class MangaPreviewActivity : AppCompatActivity() {
         }
     }
 
-    private fun addPreviewImage(bitmap: Bitmap, index: Int) {
+    private fun addPreviewPlaceholder(index: Int) {
         val margin = resources.getDimensionPixelSize(R.dimen.preview_image_margin)
         val imageView = ImageView(this).apply {
-            setImageBitmap(bitmap)
             setBackgroundColor(android.graphics.Color.BLACK)
             scaleType = ImageView.ScaleType.FIT_CENTER
             adjustViewBounds = false
@@ -292,6 +413,10 @@ class MangaPreviewActivity : AppCompatActivity() {
         }
 
         gridPreview.addView(imageView, layoutParams)
+    }
+
+    private fun addPreviewImage(bitmap: Bitmap, index: Int) {
+        (gridPreview.getChildAt(index) as? ImageView)?.setImageBitmap(bitmap)
     }
 
     private fun showPreviewImageMenu(anchor: View, imageIndex: Int) {
