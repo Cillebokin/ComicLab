@@ -21,7 +21,7 @@ class ActivityScreenOrientationTest {
     }
 
     @Test
-    fun onlyReaderActivitiesFollowDeviceOrientation() {
+    fun onlyReaderActivitiesRespectUserOrientationPreference() {
         val context = RuntimeEnvironment.getApplication()
         val readerActivities = setOf(
             MangaReaderActivity::class.java.name,
@@ -35,7 +35,7 @@ class ActivityScreenOrientationTest {
         assertTrue("The application manifest should declare activities", activities.isNotEmpty())
         activities.forEach { activityInfo ->
             val expectedOrientation = if (activityInfo.name in readerActivities) {
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR
+                ActivityInfo.SCREEN_ORIENTATION_USER
             } else {
                 ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             }

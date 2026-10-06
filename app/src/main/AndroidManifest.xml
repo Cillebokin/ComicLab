@@ -29,7 +29,7 @@
 
         <activity
             android:name="com.example.comiclab.MangaReaderActivity"
-            android:screenOrientation="sensor"
+            android:screenOrientation="user"
             android:exported="false" />
 
         <activity
@@ -49,7 +49,7 @@
 
         <activity
             android:name="com.example.comiclab.EbookReaderActivity"
-            android:screenOrientation="sensor"
+            android:screenOrientation="user"
             android:exported="false" />
 
         <activity
