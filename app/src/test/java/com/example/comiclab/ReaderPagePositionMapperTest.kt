@@ -69,6 +69,23 @@ class ReaderPagePositionMapperTest {
     }
 
     @Test
+    fun visibleDoublePageSpreadKeepsItsSourcePageBeforeLayoutModeChanges() {
+        val mapper = ReaderPagePositionMapper(
+            sourceItemCount = 5,
+            doublePageReading = true,
+            coverSinglePage = true
+        )
+
+        assertEquals(
+            1,
+            mapper.displayedSourcePositionForAdapterPosition(
+                adapterPosition = 2,
+                fallbackSourcePosition = 2
+            )
+        )
+    }
+
+    @Test
     fun emptyAndOutOfRangePositionsAreSafe() {
         val emptyMapper = ReaderPagePositionMapper(
             sourceItemCount = -1,

@@ -38,6 +38,7 @@ data class ComicLabAppSettings(
     val darkModeEnabled: Boolean? = null,
     val languageTag: String? = null,
     val readingDirection: String? = null,
+    val doublePageReadingEnabled: Boolean? = null,
     val doublePageCoverSingle: Boolean? = null,
     val volumeKeyPageTurn: Boolean? = null,
     val autoHideSystemBars: Boolean? = null,
@@ -133,6 +134,9 @@ object ComicLabConfigurationJson {
             settings.put("languageTag", it)
         }
         configuration.appSettings.readingDirection?.let { settings.put("readingDirection", it) }
+        configuration.appSettings.doublePageReadingEnabled?.let {
+            settings.put("doublePageReadingEnabled", it)
+        }
         configuration.appSettings.doublePageCoverSingle?.let {
             settings.put("doublePageCoverSingle", it)
         }
@@ -255,6 +259,12 @@ object ComicLabConfigurationJson {
                     },
                 readingDirection = settingsObject.optionalString("readingDirection")
                     .also { if (settingsObject.has("readingDirection") && it == null) skippedEntries++ },
+                doublePageReadingEnabled = settingsObject.optionalBoolean("doublePageReadingEnabled")
+                    .also {
+                        if (settingsObject.has("doublePageReadingEnabled") && it == null) {
+                            skippedEntries++
+                        }
+                    },
                 doublePageCoverSingle = settingsObject.optionalBoolean("doublePageCoverSingle")
                     .also {
                         if (settingsObject.has("doublePageCoverSingle") && it == null) skippedEntries++
@@ -432,6 +442,8 @@ object ComicLabConfigurationMerger {
             darkModeEnabled = imported.darkModeEnabled ?: current.darkModeEnabled,
             languageTag = imported.languageTag ?: current.languageTag,
             readingDirection = imported.readingDirection ?: current.readingDirection,
+            doublePageReadingEnabled = imported.doublePageReadingEnabled
+                ?: current.doublePageReadingEnabled,
             doublePageCoverSingle = imported.doublePageCoverSingle ?: current.doublePageCoverSingle,
             volumeKeyPageTurn = imported.volumeKeyPageTurn ?: current.volumeKeyPageTurn,
             autoHideSystemBars = imported.autoHideSystemBars ?: current.autoHideSystemBars,

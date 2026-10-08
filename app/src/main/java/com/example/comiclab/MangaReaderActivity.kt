@@ -18,6 +18,7 @@ import android.view.View
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -33,7 +34,9 @@ import androidx.recyclerview.widget.PagerSnapHelper
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseTask
+import com.example.comiclab.core.reader.layout.DoublePageModeUnavailableReason
 import com.example.comiclab.core.reader.layout.ReaderPagePositionMapper
+import com.example.comiclab.core.reader.layout.doublePageModeUnavailableReason
 import com.example.comiclab.core.reader.progress.READER_PROGRESS_CHECKPOINT_DELAY_MS
 import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
@@ -90,6 +93,10 @@ class MangaReaderActivity : AppCompatActivity() {
     private lateinit var checkboxCustomBrightness: CheckBox
     private lateinit var readerBrightnessController: ReaderBrightnessController
     private lateinit var btnReaderPreview: Button
+    private lateinit var btnReaderDirectionTopToBottom: ImageButton
+    private lateinit var btnReaderDirectionLeftToRight: ImageButton
+    private lateinit var btnReaderDirectionRightToLeft: ImageButton
+    private lateinit var btnReaderDoublePage: ImageButton
     private lateinit var tvReaderTitle: TextView
     private lateinit var tvReaderProgress: TextView
     private lateinit var tvReaderStatus: TextView
@@ -129,12 +136,15 @@ class MangaReaderActivity : AppCompatActivity() {
             true
         }
     private var readerPreviewPanelVisible = false
+    private var stableReaderDisplayHeight = 0
     private var suppressReaderTap = false
     private var isDraggingReaderSlider = false
     private var shouldStartFromBeginning = false
     private var explicitStartPageIndex = NO_EXPLICIT_START_PAGE
     private var pendingRestorePosition: Int? = null
     private var pendingRestoreOffset = 0
+    private var restoredReaderPosition: Pair<Int, Int>? = null
+    private var readerPositionForRecreation: Pair<Int, Int>? = null
     private var restoreAttemptCount = 0
     private var restoreRetryScheduled = false
     private var currentReaderPosition = 0
@@ -142,6 +152,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private var readerScrollDirection = SCROLL_DIRECTION_FORWARD
     private var readerScrollState = RecyclerView.SCROLL_STATE_IDLE
     private var readingDirection = AppSettings.READING_DIRECTION_TOP_TO_BOTTOM
+    private var doublePageReadingEnabled = AppSettings.DEFAULT_DOUBLE_PAGE_READING_ENABLED
     private var readerCoverSinglePageEnabled = false
     private var lastReaderPreloadSpreadStart = RecyclerView.NO_POSITION
     private var volumeKeyPageTurnEnabled = true
@@ -162,8 +173,16 @@ class MangaReaderActivity : AppCompatActivity() {
             state.containsKey(STATE_READER_ORIENTATION) &&
                 state.getInt(STATE_READER_ORIENTATION) != resources.configuration.orientation
         } ?: false
+        restoredReaderPosition = savedInstanceState?.let { state ->
+            if (state.containsKey(STATE_READER_POSITION)) {
+                state.getInt(STATE_READER_POSITION) to state.getInt(STATE_READER_OFFSET)
+            } else {
+                null
+            }
+        }
         setContentView(R.layout.activity_manga_reader)
         readingDirection = AppSettings.getReadingDirection(this)
+        doublePageReadingEnabled = AppSettings.isDoublePageReadingEnabled(this)
         volumeKeyPageTurnEnabled = AppSettings.isVolumeKeyPageTurnEnabled(this)
         autoHideSystemBarsEnabled = AppSettings.isAutoHideSystemBarsEnabled(this)
 
@@ -221,13 +240,21 @@ class MangaReaderActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putInt(STATE_READER_ORIENTATION, resources.configuration.orientation)
+        if (::readerLayoutManager.isInitialized && imageEntries.isNotEmpty()) {
+            val (position, offset) = readerPositionForRecreation
+                ?: captureReaderPositionForRecreation()
+            outState.putInt(STATE_READER_POSITION, position)
+            outState.putInt(STATE_READER_OFFSET, offset)
+        }
         super.onSaveInstanceState(outState)
     }
 
     override fun onResume() {
         super.onResume()
+        doublePageReadingEnabled = AppSettings.isDoublePageReadingEnabled(this)
         volumeKeyPageTurnEnabled = AppSettings.isVolumeKeyPageTurnEnabled(this)
         autoHideSystemBarsEnabled = AppSettings.isAutoHideSystemBarsEnabled(this)
+        updateReaderModeButtons()
         readerControlsController.setAutoHideSystemBarsEnabled(autoHideSystemBarsEnabled)
         updateReaderGestureExclusionRects()
         applyReaderBrightnessSetting()
@@ -311,6 +338,11 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun bindViews() {
         rootView = findViewById(R.id.main)
         listReaderPages = findViewById(R.id.listReaderPages)
+        listReaderPages.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
+            if (stableReaderDisplayHeight <= 0 && bottom > top) {
+                stableReaderDisplayHeight = bottom - top
+            }
+        }
         layoutReaderToolbar = findViewById(R.id.layoutReaderToolbar)
         layoutReaderProgress = findViewById(R.id.layoutReaderProgress)
         readerPreviewScrim = findViewById(R.id.readerPreviewScrim)
@@ -320,6 +352,10 @@ class MangaReaderActivity : AppCompatActivity() {
         sliderScreenBrightness = findViewById(R.id.sliderScreenBrightness)
         checkboxCustomBrightness = findViewById(R.id.checkboxCustomBrightness)
         btnReaderPreview = findViewById(R.id.btnReaderPreview)
+        btnReaderDirectionTopToBottom = findViewById(R.id.btnReaderDirectionTopToBottom)
+        btnReaderDirectionLeftToRight = findViewById(R.id.btnReaderDirectionLeftToRight)
+        btnReaderDirectionRightToLeft = findViewById(R.id.btnReaderDirectionRightToLeft)
+        btnReaderDoublePage = findViewById(R.id.btnReaderDoublePage)
         tvReaderTitle = findViewById(R.id.tvReaderTitle)
         tvReaderProgress = findViewById(R.id.tvReaderProgress)
         tvReaderStatus = findViewById(R.id.tvReaderStatus)
@@ -346,6 +382,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 PagerSnapHelper().attachToRecyclerView(listReaderPages)
             }
         }
+        updateReaderModeButtons()
         listReaderPages.itemAnimator = null
         listReaderPages.setHasFixedSize(false)
         listReaderPages.setItemViewCacheSize(READER_VIEW_CACHE_SIZE)
@@ -362,8 +399,11 @@ class MangaReaderActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT
-        WindowInsetsControllerCompat(window, rootView).systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        WindowInsetsControllerCompat(window, rootView).apply {
+            isAppearanceLightStatusBars = false
+            systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
 
         val toolbarInitialMarginTop =
             (layoutReaderToolbar.layoutParams as FrameLayout.LayoutParams).topMargin
@@ -491,6 +531,22 @@ class MangaReaderActivity : AppCompatActivity() {
             } else {
                 showReaderPreviewPanel()
             }
+        }
+
+        btnReaderDirectionTopToBottom.setOnClickListener {
+            changeReadingDirection(AppSettings.READING_DIRECTION_TOP_TO_BOTTOM)
+        }
+
+        btnReaderDirectionLeftToRight.setOnClickListener {
+            changeReadingDirection(AppSettings.READING_DIRECTION_LEFT_TO_RIGHT)
+        }
+
+        btnReaderDirectionRightToLeft.setOnClickListener {
+            changeReadingDirection(AppSettings.READING_DIRECTION_RIGHT_TO_LEFT)
+        }
+
+        btnReaderDoublePage.setOnClickListener {
+            toggleDoublePageReading()
         }
 
         readerPreviewScrim.setOnClickListener {
@@ -661,9 +717,7 @@ class MangaReaderActivity : AppCompatActivity() {
         cacheUseLease: PreparedReaderCacheLeaseRegistry.Lease
     ) {
         val displayWidth = readerPageDisplayWidth()
-        val displayHeight = listReaderPages.height
-            .takeIf { it > 0 }
-            ?: resources.displayMetrics.heightPixels.coerceAtLeast(MIN_READER_IMAGE_WIDTH)
+        val displayHeight = readerPageDisplayHeight()
 
         pageAdapter?.close()
         readerCoverSinglePageEnabled = AppSettings.isDoublePageCoverSingleEnabled(this)
@@ -701,9 +755,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun bindReaderAdapter(entries: List<String>, session: ComicArchive.ImageReaderSession) {
         val readerFile = archiveFile ?: return
         val displayWidth = readerPageDisplayWidth()
-        val displayHeight = listReaderPages.height
-            .takeIf { it > 0 }
-            ?: resources.displayMetrics.heightPixels.coerceAtLeast(MIN_READER_IMAGE_WIDTH)
+        val displayHeight = readerPageDisplayHeight()
         val decodeScale = readerPageDecodeScale()
         val decodeWidth = (displayWidth * decodeScale).coerceAtMost(MAX_READER_DECODE_WIDTH)
         val decodeHeight = (displayHeight * decodeScale).coerceAtMost(MAX_READER_DECODE_HEIGHT)
@@ -1286,7 +1338,9 @@ class MangaReaderActivity : AppCompatActivity() {
 
     private fun restoreReaderPosition() {
         val file = archiveFile ?: return
-        val (savedPosition, savedOffset) = ReaderProgressStore.readPositionAndOffset(this, file)
+        val (savedPosition, savedOffset) = restoredReaderPosition
+            ?.also { restoredReaderPosition = null }
+            ?: ReaderProgressStore.readPositionAndOffset(this, file)
         val position = savedPosition.coerceIn(0, imageEntries.lastIndex.coerceAtLeast(0))
         val offset = if (isHorizontalReading() || restoreReaderPositionAfterOrientationChange) {
             0
@@ -1374,9 +1428,10 @@ class MangaReaderActivity : AppCompatActivity() {
 
         if (isHorizontalReading()) {
             val mapper = readerPagePositionMapper(totalItemCount)
-            val spreadStart = mapper.spreadStartAdapterPosition(firstVisiblePosition)
-            return mapper.sourcePositionForAdapterPosition(spreadStart)
-                ?: firstVisiblePosition.coerceIn(0, totalItemCount - 1)
+            return mapper.displayedSourcePositionForAdapterPosition(
+                adapterPosition = firstVisiblePosition,
+                fallbackSourcePosition = firstVisiblePosition.coerceIn(0, totalItemCount - 1)
+            )
         }
 
         if (isAtVerticalReaderEnd(totalItemCount)) {
@@ -1442,8 +1497,110 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun isDoublePageReading(): Boolean {
-        return isHorizontalReading() &&
-            resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        return doublePageReadingEnabled &&
+            doublePageModeUnavailableReason(
+                isHorizontalReading = isHorizontalReading(),
+                isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            ) == null
+    }
+
+    private fun changeReadingDirection(direction: String) {
+        if (direction == readingDirection) {
+            return
+        }
+        readerPositionForRecreation = captureReaderPositionForRecreation()
+        AppSettings.setReadingDirection(this, direction)
+        val directionNameResource = when (direction) {
+            AppSettings.READING_DIRECTION_LEFT_TO_RIGHT -> R.string.reading_direction_left_to_right
+            AppSettings.READING_DIRECTION_RIGHT_TO_LEFT -> R.string.reading_direction_right_to_left
+            else -> R.string.reading_direction_top_to_bottom
+        }
+        Toast.makeText(
+            this,
+            getString(R.string.reading_direction_current, getString(directionNameResource)),
+            Toast.LENGTH_SHORT
+        ).show()
+        recreate()
+    }
+
+    private fun toggleDoublePageReading() {
+        when (
+            doublePageModeUnavailableReason(
+                isHorizontalReading = isHorizontalReading(),
+                isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            )
+        ) {
+            DoublePageModeUnavailableReason.VERTICAL_READING -> {
+                Toast.makeText(
+                    this,
+                    R.string.double_page_requires_horizontal_reading,
+                    Toast.LENGTH_SHORT
+                ).show()
+                return
+            }
+            DoublePageModeUnavailableReason.LANDSCAPE_REQUIRED -> {
+                Toast.makeText(
+                    this,
+                    R.string.double_page_requires_landscape,
+                    Toast.LENGTH_SHORT
+                ).show()
+                return
+            }
+            null -> Unit
+        }
+
+        readerPositionForRecreation = captureReaderPositionForRecreation()
+        doublePageReadingEnabled = !doublePageReadingEnabled
+        AppSettings.setDoublePageReadingEnabled(this, doublePageReadingEnabled)
+        recreate()
+    }
+
+    private fun captureReaderPositionForRecreation(): Pair<Int, Int> {
+        pendingRestorePosition?.let { pendingPosition ->
+            return pendingPosition to pendingRestoreOffset
+        }
+
+        if (imageEntries.isNotEmpty() && ::readerLayoutManager.isInitialized) {
+            val firstVisible = readerLayoutManager.findFirstVisibleItemPosition()
+            if (firstVisible != RecyclerView.NO_POSITION) {
+                updateCurrentReaderPosition(firstVisible)
+            }
+        }
+        return currentReaderPosition to currentReaderOffset
+    }
+
+    private fun updateReaderModeButtons() {
+        if (
+            !::btnReaderDirectionTopToBottom.isInitialized ||
+            !::btnReaderDirectionLeftToRight.isInitialized ||
+            !::btnReaderDirectionRightToLeft.isInitialized ||
+            !::btnReaderDoublePage.isInitialized
+        ) {
+            return
+        }
+
+        btnReaderDirectionTopToBottom.isSelected =
+            readingDirection == AppSettings.READING_DIRECTION_TOP_TO_BOTTOM
+        btnReaderDirectionLeftToRight.isSelected =
+            readingDirection == AppSettings.READING_DIRECTION_LEFT_TO_RIGHT
+        btnReaderDirectionRightToLeft.isSelected =
+            readingDirection == AppSettings.READING_DIRECTION_RIGHT_TO_LEFT
+
+        val unavailableReason = doublePageModeUnavailableReason(
+            isHorizontalReading = isHorizontalReading(),
+            isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        )
+        val isEnabledForCurrentLayout = doublePageReadingEnabled && unavailableReason == null
+        btnReaderDoublePage.setImageResource(R.drawable.png_reader_double_page_mode)
+        btnReaderDoublePage.isSelected = isEnabledForCurrentLayout
+        btnReaderDoublePage.alpha = if (unavailableReason == null) 1f else 0.5f
+        btnReaderDoublePage.contentDescription = getString(
+            if (isEnabledForCurrentLayout) {
+                R.string.double_page_reading_enabled
+            } else {
+                R.string.double_page_reading_disabled
+            }
+        )
     }
 
     private fun readerPagePositionMapper(sourceItemCount: Int = imageEntries.size): ReaderPagePositionMapper {
@@ -1463,6 +1620,17 @@ class MangaReaderActivity : AppCompatActivity() {
         } else {
             viewportWidth
         }
+    }
+
+    private fun readerPageDisplayHeight(): Int {
+        if (stableReaderDisplayHeight <= 0) {
+            stableReaderDisplayHeight = listReaderPages.height
+                .takeIf { it > 0 }
+                ?: 0
+        }
+        return stableReaderDisplayHeight
+            .takeIf { it > 0 }
+            ?: resources.displayMetrics.heightPixels.coerceAtLeast(MIN_READER_IMAGE_WIDTH)
     }
 
     private fun readerSpreadStartPosition(pagePosition: Int): Int {
@@ -1659,6 +1827,8 @@ class MangaReaderActivity : AppCompatActivity() {
         private const val DEBUG_READER_STRESS_TAG = "ComicLabReaderStress"
         private const val READER_LOG_TAG = "ComicLabReader"
         private const val STATE_READER_ORIENTATION = "reader_orientation"
+        private const val STATE_READER_POSITION = "reader_position"
+        private const val STATE_READER_OFFSET = "reader_offset"
         private const val NO_EXPLICIT_START_PAGE = -1
 
         fun savedReadingProgress(context: Context, file: File): ComicLabMangaProgress? {

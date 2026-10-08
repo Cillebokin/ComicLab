@@ -188,6 +188,7 @@ object ComicLabConfigurationStore {
             darkModeEnabled,
             languageTag,
             readingDirection,
+            doublePageReadingEnabled,
             doublePageCoverSingle,
             volumeKeyPageTurn,
             autoHideSystemBars,

@@ -161,6 +161,61 @@
                 android:text="@string/custom_brightness"
                 android:textColor="@color/white" />
         </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageButton
+                android:id="@+id/btnReaderDirectionRightToLeft"
+                android:layout_width="0dp"
+                android:layout_height="@dimen/reader_toolbar_mode_button_size"
+                android:layout_weight="1"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/reading_direction_right_to_left"
+                android:padding="6dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/png_reader_direction_right_to_left"
+                android:tint="@color/reader_toolbar_mode_icon_tint" />
+
+            <ImageButton
+                android:id="@+id/btnReaderDirectionLeftToRight"
+                android:layout_width="0dp"
+                android:layout_height="@dimen/reader_toolbar_mode_button_size"
+                android:layout_weight="1"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/reading_direction_left_to_right"
+                android:padding="6dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/png_reader_direction_left_to_right"
+                android:tint="@color/reader_toolbar_mode_icon_tint" />
+
+            <ImageButton
+                android:id="@+id/btnReaderDirectionTopToBottom"
+                android:layout_width="0dp"
+                android:layout_height="@dimen/reader_toolbar_mode_button_size"
+                android:layout_weight="1"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/reading_direction_top_to_bottom"
+                android:padding="6dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/png_reader_direction_top_to_bottom"
+                android:tint="@color/reader_toolbar_mode_icon_tint" />
+
+            <ImageButton
+                android:id="@+id/btnReaderDoublePage"
+                android:layout_width="0dp"
+                android:layout_height="@dimen/reader_toolbar_mode_button_size"
+                android:layout_weight="1"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/double_page_reading_disabled"
+                android:padding="6dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/png_reader_double_page_mode"
+                android:tint="@color/reader_toolbar_mode_icon_tint" />
+        </LinearLayout>
     </LinearLayout>
 
     <TextView

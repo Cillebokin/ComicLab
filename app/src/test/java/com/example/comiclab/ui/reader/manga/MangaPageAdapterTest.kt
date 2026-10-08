@@ -53,6 +53,36 @@ class MangaPageAdapterTest {
     }
 
     @Test
+    fun horizontalPagesKeepTheCapturedViewportHeightInBothDirections() {
+        val context = RuntimeEnvironment.getApplication()
+        listOf(
+            AppSettings.READING_DIRECTION_LEFT_TO_RIGHT,
+            AppSettings.READING_DIRECTION_RIGHT_TO_LEFT
+        ).forEach { direction ->
+            val session = FakeReaderSession()
+            val adapter = newAdapter(
+                session = session,
+                entries = listOf("page.png"),
+                readingDirection = direction,
+                archiveFileName = "reader-$direction.cbz"
+            )
+            val holder = createHolder(adapter, RecyclerView(context))
+
+            try {
+                bind(adapter, holder, 0)
+
+                assertEquals(
+                    "horizontal page height should use the captured reader viewport for $direction",
+                    1_800,
+                    holder.itemView.layoutParams.height
+                )
+            } finally {
+                closeAndAwait(adapter, session)
+            }
+        }
+    }
+
+    @Test
     fun successfulPreviewIsStoredUnderItsSourceEntryPosition() {
         val decodedBitmap = AtomicReference<Bitmap>()
         val session = FakeReaderSession(previewDecoder = {
@@ -177,20 +207,22 @@ class MangaPageAdapterTest {
         session: FakeReaderSession,
         entries: List<String>,
         doublePageReading: Boolean = false,
-        coverSinglePage: Boolean = false
+        coverSinglePage: Boolean = false,
+        readingDirection: String = AppSettings.READING_DIRECTION_LEFT_TO_RIGHT,
+        archiveFileName: String = "reader-test.cbz"
     ): MangaPageAdapter {
         val context = RuntimeEnvironment.getApplication()
         return MangaPageAdapter(
             context,
             RecyclerView(context),
-            temporaryFolder.newFile("reader-test.cbz"),
+            temporaryFolder.newFile(archiveFileName),
             session,
             entries,
             2_400,
             1_800,
             7_200,
             5_400,
-            AppSettings.READING_DIRECTION_LEFT_TO_RIGHT,
+            readingDirection,
             doublePageReading,
             coverSinglePage,
             {},

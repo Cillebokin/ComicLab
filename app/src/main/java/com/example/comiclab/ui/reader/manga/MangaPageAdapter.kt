@@ -167,7 +167,7 @@ internal class MangaPageAdapter(
         return if (isHorizontalReading()) {
             RecyclerView.LayoutParams(
                 baseDisplayWidth,
-                RecyclerView.LayoutParams.MATCH_PARENT
+                baseDisplayHeight
             )
         } else {
             RecyclerView.LayoutParams(
@@ -553,7 +553,7 @@ internal class MangaPageAdapter(
         holder.imageView.visibility = View.VISIBLE
         holder.imageView.setImageDrawable(null)
         holder.imageView.setBackgroundColor(Color.BLACK)
-        setContainerSize(holder.container, baseDisplayWidth, ViewGroup.LayoutParams.MATCH_PARENT)
+        setContainerSize(holder.container, baseDisplayWidth, baseDisplayHeight)
         setFrameChildSize(
             holder.imageView,
             baseDisplayWidth,
@@ -575,7 +575,7 @@ internal class MangaPageAdapter(
         holder.imageView.setBackgroundColor(PLACEHOLDER_COLOR)
 
         if (isHorizontalReading()) {
-            setContainerSize(holder.container, baseDisplayWidth, ViewGroup.LayoutParams.MATCH_PARENT)
+            setContainerSize(holder.container, baseDisplayWidth, baseDisplayHeight)
             val imageWidth = baseDisplayWidth
             val imageHeight = if (bounds != null) {
                 val size = calculateFitInsideSize(bounds.width, bounds.height)
@@ -619,7 +619,7 @@ internal class MangaPageAdapter(
 
         if (isHorizontalReading()) {
             val imageSize = calculateFitInsideSize(bitmap.width, bitmap.height)
-            setContainerSize(holder.container, baseDisplayWidth, ViewGroup.LayoutParams.MATCH_PARENT)
+            setContainerSize(holder.container, baseDisplayWidth, baseDisplayHeight)
             setFrameChildSize(
                 holder.imageView,
                 imageSize.width,

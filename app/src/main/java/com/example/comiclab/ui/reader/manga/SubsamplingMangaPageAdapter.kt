@@ -414,7 +414,7 @@ internal class SubsamplingMangaPageAdapter(
         return if (isHorizontalReading()) {
             RecyclerView.LayoutParams(
                 baseDisplayWidth,
-                RecyclerView.LayoutParams.MATCH_PARENT
+                baseDisplayHeight
             )
         } else {
             RecyclerView.LayoutParams(
@@ -435,7 +435,7 @@ internal class SubsamplingMangaPageAdapter(
         val targetHeight: Int
         if (isHorizontalReading()) {
             targetWidth = baseDisplayWidth
-            targetHeight = RecyclerView.LayoutParams.MATCH_PARENT
+            targetHeight = baseDisplayHeight
         } else {
             targetWidth = RecyclerView.LayoutParams.MATCH_PARENT
             targetHeight = if (bounds != null) {

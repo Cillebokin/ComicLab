@@ -41,6 +41,7 @@ class AppSettingsRobolectricTest {
             AppSettings.READING_DIRECTION_TOP_TO_BOTTOM,
             AppSettings.getReadingDirection(context)
         )
+        assertTrue(AppSettings.isDoublePageReadingEnabled(context))
         assertTrue(AppSettings.isDoublePageCoverSingleEnabled(context))
         assertTrue(AppSettings.isVolumeKeyPageTurnEnabled(context))
         assertTrue(AppSettings.isAutoHideSystemBarsEnabled(context))
@@ -48,12 +49,14 @@ class AppSettingsRobolectricTest {
         assertEquals(AppSettings.DEFAULT_READER_BRIGHTNESS, AppSettings.getCustomReaderBrightness(context))
 
         AppSettings.setReadingDirection(context, "invalid")
+        AppSettings.setDoublePageReadingEnabled(context, false)
         AppSettings.setCustomReaderBrightness(context, Int.MIN_VALUE)
 
         assertEquals(
             AppSettings.READING_DIRECTION_TOP_TO_BOTTOM,
             AppSettings.getReadingDirection(context)
         )
+        assertFalse(AppSettings.isDoublePageReadingEnabled(context))
         assertEquals(AppSettings.MIN_READER_BRIGHTNESS, AppSettings.getCustomReaderBrightness(context))
 
         AppSettings.setCustomReaderBrightness(context, Int.MAX_VALUE)
@@ -148,14 +151,16 @@ class AppSettingsRobolectricTest {
             darkModeEnabled = true,
             languageTag = "zh-CN",
             readingDirection = AppSettings.READING_DIRECTION_RIGHT_TO_LEFT,
+            doublePageReadingEnabled = false,
             customReaderBrightness = 999
         )
 
-        assertEquals(4, AppSettings.applySnapshot(context, partial))
+        assertEquals(5, AppSettings.applySnapshot(context, partial))
 
         val snapshot = AppSettings.snapshot(context)
         assertTrue(snapshot.darkModeEnabled == true)
         assertEquals(AppSettings.READING_DIRECTION_RIGHT_TO_LEFT, snapshot.readingDirection)
+        assertFalse(snapshot.doublePageReadingEnabled == true)
         assertEquals(AppSettings.MAX_READER_BRIGHTNESS, snapshot.customReaderBrightness)
         assertEquals(AppCompatDelegate.MODE_NIGHT_YES, AppCompatDelegate.getDefaultNightMode())
 

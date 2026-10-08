@@ -1,6 +1,7 @@
 package com.example.comiclab
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -59,6 +60,7 @@ class ComicLabConfigurationTest {
             favoritePaths = listOf(ComicLabFavoritePath("/current", 1L)),
             appSettings = ComicLabAppSettings(
                 readingDirection = AppSettings.READING_DIRECTION_TOP_TO_BOTTOM,
+                doublePageReadingEnabled = true,
                 volumeKeyPageTurn = false
             )
         )
@@ -69,6 +71,7 @@ class ComicLabConfigurationTest {
             ),
             appSettings = ComicLabAppSettings(
                 readingDirection = AppSettings.READING_DIRECTION_RIGHT_TO_LEFT,
+                doublePageReadingEnabled = false,
                 volumeKeyPageTurn = true
             )
         )
@@ -83,6 +86,7 @@ class ComicLabConfigurationTest {
             AppSettings.READING_DIRECTION_RIGHT_TO_LEFT,
             merged.appSettings.readingDirection
         )
+        assertFalse(merged.appSettings.doublePageReadingEnabled == true)
         assertTrue(merged.appSettings.volumeKeyPageTurn == true)
     }
 
@@ -115,6 +119,7 @@ class ComicLabConfigurationTest {
                 darkModeEnabled = true,
                 languageTag = "zh-CN",
                 readingDirection = AppSettings.READING_DIRECTION_LEFT_TO_RIGHT,
+                doublePageReadingEnabled = true,
                 doublePageCoverSingle = true,
                 volumeKeyPageTurn = true,
                 autoHideSystemBars = false,

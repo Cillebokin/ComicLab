@@ -284,9 +284,14 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="continue_reading">Continue reading</string>
     <string name="read_from_beginning">Start from the beginning</string>
     <string name="reading_direction">Reading direction</string>
+    <string name="reading_direction_current">Reading direction: %1$s</string>
     <string name="reading_direction_top_to_bottom">Top to bottom</string>
     <string name="reading_direction_right_to_left">Right to left</string>
     <string name="reading_direction_left_to_right">Left to right</string>
+    <string name="double_page_reading_enabled">Double-page mode enabled</string>
+    <string name="double_page_reading_disabled">Double-page mode disabled</string>
+    <string name="double_page_requires_horizontal_reading">Double-page mode is only available for left-to-right or right-to-left reading</string>
+    <string name="double_page_requires_landscape">Double-page mode is only available in landscape orientation</string>
     <string name="double_page_cover_single">Show cover as a single page in two-page mode</string>
     <string name="file_browser">File browser</string>
     <string name="start_marker_error_tags">Feature marker error tags</string>

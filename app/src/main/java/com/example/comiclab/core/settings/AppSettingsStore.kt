@@ -14,9 +14,11 @@ internal object AppSettingsStore {
     internal const val MIN_READER_BRIGHTNESS = 1
     internal const val MAX_READER_BRIGHTNESS = 255
     internal const val DEFAULT_DOUBLE_PAGE_COVER_SINGLE = true
+    internal const val DEFAULT_DOUBLE_PAGE_READING_ENABLED = true
 
     private const val PREFS_NAME = "app_settings"
     private const val KEY_READING_DIRECTION = "reading_direction"
+    private const val KEY_DOUBLE_PAGE_READING_ENABLED = "double_page_reading_enabled"
     private const val KEY_DOUBLE_PAGE_COVER_SINGLE = "double_page_cover_single"
     private const val KEY_VOLUME_KEY_PAGE_TURN = "volume_key_page_turn"
     private const val KEY_AUTO_HIDE_SYSTEM_BARS = "auto_hide_system_bars"
@@ -55,6 +57,18 @@ internal object AppSettingsStore {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_READING_DIRECTION, normalizedDirection)
+            .apply()
+    }
+
+    fun isDoublePageReadingEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_DOUBLE_PAGE_READING_ENABLED, DEFAULT_DOUBLE_PAGE_READING_ENABLED)
+    }
+
+    fun setDoublePageReadingEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_DOUBLE_PAGE_READING_ENABLED, enabled)
             .apply()
     }
 

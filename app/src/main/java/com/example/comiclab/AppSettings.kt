@@ -15,6 +15,7 @@ object AppSettings {
     const val DEFAULT_READER_BRIGHTNESS = AppSettingsStore.DEFAULT_READER_BRIGHTNESS
     const val MIN_READER_BRIGHTNESS = AppSettingsStore.MIN_READER_BRIGHTNESS
     const val MAX_READER_BRIGHTNESS = AppSettingsStore.MAX_READER_BRIGHTNESS
+    const val DEFAULT_DOUBLE_PAGE_READING_ENABLED = AppSettingsStore.DEFAULT_DOUBLE_PAGE_READING_ENABLED
     const val DEFAULT_DOUBLE_PAGE_COVER_SINGLE = AppSettingsStore.DEFAULT_DOUBLE_PAGE_COVER_SINGLE
 
     fun isDarkModeEnabled(context: Context): Boolean =
@@ -42,6 +43,12 @@ object AppSettings {
 
     fun setReadingDirection(context: Context, direction: String) =
         AppSettingsStore.setReadingDirection(context, direction)
+
+    fun isDoublePageReadingEnabled(context: Context): Boolean =
+        AppSettingsStore.isDoublePageReadingEnabled(context)
+
+    fun setDoublePageReadingEnabled(context: Context, enabled: Boolean) =
+        AppSettingsStore.setDoublePageReadingEnabled(context, enabled)
 
     fun isDoublePageCoverSingleEnabled(context: Context): Boolean =
         AppSettingsStore.isDoublePageCoverSingleEnabled(context)
@@ -81,6 +88,7 @@ object AppSettings {
             darkModeEnabled = isDarkModeEnabled(context),
             languageTag = AppCompatDelegate.getApplicationLocales().toLanguageTags(),
             readingDirection = getReadingDirection(context),
+            doublePageReadingEnabled = isDoublePageReadingEnabled(context),
             doublePageCoverSingle = isDoublePageCoverSingleEnabled(context),
             volumeKeyPageTurn = isVolumeKeyPageTurnEnabled(context),
             autoHideSystemBars = isAutoHideSystemBarsEnabled(context),
@@ -102,6 +110,10 @@ object AppSettings {
         }
         settings.readingDirection?.let {
             setReadingDirection(context, it)
+            appliedCount++
+        }
+        settings.doublePageReadingEnabled?.let {
+            setDoublePageReadingEnabled(context, it)
             appliedCount++
         }
         settings.doublePageCoverSingle?.let {
