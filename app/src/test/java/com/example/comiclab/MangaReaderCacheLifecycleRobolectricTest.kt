@@ -703,7 +703,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
     private fun newMangaPageAdapter(session: ComicArchive.ImageReaderSession): Any {
         val context = RuntimeEnvironment.getApplication()
         val constructor = MangaPageAdapterClass.declaredConstructors.single {
-            it.parameterTypes.size == 14
+            it.parameterTypes.size == 15
         }.apply { isAccessible = true }
         return constructor.newInstance(
             context,
@@ -719,7 +719,8 @@ class MangaReaderCacheLifecycleRobolectricTest {
             false,
             false,
             { _: Int -> },
-            {}
+            {},
+            null
         )
     }
 
@@ -731,7 +732,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
     ): Any {
         val context = RuntimeEnvironment.getApplication()
         val constructor = PreparedMangaPageAdapterClass.declaredConstructors.single {
-            it.parameterTypes.size == 16
+            it.parameterTypes.size == 17
         }.apply { isAccessible = true }
         return constructor.newInstance(
             context,
@@ -749,7 +750,8 @@ class MangaReaderCacheLifecycleRobolectricTest {
             false,
             { _: Int -> },
             {},
-            closeWaitTimeoutMs
+            closeWaitTimeoutMs,
+            null
         )
     }
 

@@ -86,6 +86,35 @@ class ReaderPagePositionMapperTest {
     }
 
     @Test
+    fun doublePageSpreadCanStartAtTheSelectedSinglePage() {
+        val expectedSpreadPages = listOf<Pair<Int, Int?>>(
+            0 to 1,
+            1 to 2,
+            2 to 3,
+            3 to 4,
+            4 to 5,
+            5 to null
+        )
+
+        for ((sourcePosition, nextSourcePosition) in expectedSpreadPages) {
+            val mapper = ReaderPagePositionMapper(
+                sourceItemCount = 6,
+                doublePageReading = true,
+                coverSinglePage = true,
+                spreadAnchorSourcePosition = sourcePosition
+            )
+            val spreadStart = mapper.spreadStartAdapterPositionForSourcePosition(sourcePosition)
+
+            assertEquals(sourcePosition, mapper.sourcePositionForAdapterPosition(spreadStart))
+            assertEquals(nextSourcePosition, mapper.sourcePositionForAdapterPosition(spreadStart + 1))
+            assertEquals(
+                listOfNotNull(sourcePosition, nextSourcePosition),
+                mapper.sourcePositionsInAdapterRange(spreadStart, 2)
+            )
+        }
+    }
+
+    @Test
     fun emptyAndOutOfRangePositionsAreSafe() {
         val emptyMapper = ReaderPagePositionMapper(
             sourceItemCount = -1,

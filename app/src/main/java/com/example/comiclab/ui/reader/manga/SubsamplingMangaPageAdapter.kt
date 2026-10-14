@@ -47,7 +47,8 @@ internal class SubsamplingMangaPageAdapter(
     private val coverSinglePage: Boolean,
     private val onPageReady: (position: Int) -> Unit,
     private val onPageTap: () -> Unit,
-    private val closeWaitTimeoutMs: Long = PREPARED_READER_CLOSE_WAIT_TIMEOUT_MS
+    private val closeWaitTimeoutMs: Long = PREPARED_READER_CLOSE_WAIT_TIMEOUT_MS,
+    private val spreadAnchorSourcePosition: Int? = null
 ) : RecyclerView.Adapter<SubsamplingMangaPageAdapter.PageViewHolder>(),
     ReaderPageAdapterController {
 
@@ -68,7 +69,8 @@ internal class SubsamplingMangaPageAdapter(
     private val positionMapper = ReaderPagePositionMapper(
         sourceItemCount = entryNames.size,
         doublePageReading = doublePageReading,
-        coverSinglePage = coverSinglePage
+        coverSinglePage = coverSinglePage,
+        spreadAnchorSourcePosition = spreadAnchorSourcePosition
     )
 
     @Volatile

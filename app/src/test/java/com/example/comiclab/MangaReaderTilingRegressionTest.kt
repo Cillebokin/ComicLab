@@ -77,7 +77,7 @@ class MangaReaderTilingRegressionTest {
         val context = RuntimeEnvironment.getApplication()
         val adapterClass = Class.forName("com.example.comiclab.ui.reader.manga.MangaPageAdapter")
         val constructor = adapterClass.declaredConstructors
-            .single { it.parameterCount == 14 }
+            .single { it.parameterCount == 15 }
             .apply { isAccessible = true }
         return constructor.newInstance(
             context,
@@ -93,7 +93,8 @@ class MangaReaderTilingRegressionTest {
             false,
             false,
             { _: Int -> },
-            {}
+            {},
+            null
         )
     }
 

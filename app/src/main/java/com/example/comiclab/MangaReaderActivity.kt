@@ -145,6 +145,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private var pendingRestoreOffset = 0
     private var restoredReaderPosition: Pair<Int, Int>? = null
     private var readerPositionForRecreation: Pair<Int, Int>? = null
+    private var doublePageSpreadAnchorSourcePosition: Int? = null
     private var restoreAttemptCount = 0
     private var restoreRetryScheduled = false
     private var currentReaderPosition = 0
@@ -176,6 +177,13 @@ class MangaReaderActivity : AppCompatActivity() {
         restoredReaderPosition = savedInstanceState?.let { state ->
             if (state.containsKey(STATE_READER_POSITION)) {
                 state.getInt(STATE_READER_POSITION) to state.getInt(STATE_READER_OFFSET)
+            } else {
+                null
+            }
+        }
+        doublePageSpreadAnchorSourcePosition = savedInstanceState?.let { state ->
+            if (state.containsKey(STATE_READER_DOUBLE_PAGE_SPREAD_ANCHOR)) {
+                state.getInt(STATE_READER_DOUBLE_PAGE_SPREAD_ANCHOR).takeIf { it >= 0 }
             } else {
                 null
             }
@@ -245,6 +253,9 @@ class MangaReaderActivity : AppCompatActivity() {
                 ?: captureReaderPositionForRecreation()
             outState.putInt(STATE_READER_POSITION, position)
             outState.putInt(STATE_READER_OFFSET, offset)
+        }
+        doublePageSpreadAnchorSourcePosition?.let {
+            outState.putInt(STATE_READER_DOUBLE_PAGE_SPREAD_ANCHOR, it)
         }
         super.onSaveInstanceState(outState)
     }
@@ -736,6 +747,7 @@ class MangaReaderActivity : AppCompatActivity() {
             readingDirection = readingDirection,
             doublePageReading = isDoublePageReading(),
             coverSinglePage = readerCoverSinglePageEnabled,
+            spreadAnchorSourcePosition = doublePageSpreadAnchorSourcePosition,
             onPageReady = { position ->
                 recordInitialReaderPageReady(position, prepared = true)
                 if (isPendingReaderPosition(position)) {
@@ -784,6 +796,7 @@ class MangaReaderActivity : AppCompatActivity() {
             readingDirection = readingDirection,
             doublePageReading = isDoublePageReading(),
             coverSinglePage = readerCoverSinglePageEnabled,
+            spreadAnchorSourcePosition = doublePageSpreadAnchorSourcePosition,
             onPageReady = { position ->
                 recordInitialReaderPageReady(position, prepared = false)
                 if (isPendingReaderPosition(position)) {
@@ -1549,7 +1562,13 @@ class MangaReaderActivity : AppCompatActivity() {
             null -> Unit
         }
 
-        readerPositionForRecreation = captureReaderPositionForRecreation()
+        val positionForRecreation = captureReaderPositionForRecreation()
+        readerPositionForRecreation = positionForRecreation
+        doublePageSpreadAnchorSourcePosition = if (doublePageReadingEnabled) {
+            null
+        } else {
+            positionForRecreation.first.coerceIn(0, imageEntries.lastIndex.coerceAtLeast(0))
+        }
         doublePageReadingEnabled = !doublePageReadingEnabled
         AppSettings.setDoublePageReadingEnabled(this, doublePageReadingEnabled)
         recreate()
@@ -1607,7 +1626,8 @@ class MangaReaderActivity : AppCompatActivity() {
         return ReaderPagePositionMapper(
             sourceItemCount = sourceItemCount,
             doublePageReading = isDoublePageReading(),
-            coverSinglePage = readerCoverSinglePageEnabled
+            coverSinglePage = readerCoverSinglePageEnabled,
+            spreadAnchorSourcePosition = doublePageSpreadAnchorSourcePosition
         )
     }
 
@@ -1829,6 +1849,7 @@ class MangaReaderActivity : AppCompatActivity() {
         private const val STATE_READER_ORIENTATION = "reader_orientation"
         private const val STATE_READER_POSITION = "reader_position"
         private const val STATE_READER_OFFSET = "reader_offset"
+        private const val STATE_READER_DOUBLE_PAGE_SPREAD_ANCHOR = "reader_double_page_spread_anchor"
         private const val NO_EXPLICIT_START_PAGE = -1
 
         fun savedReadingProgress(context: Context, file: File): ComicLabMangaProgress? {

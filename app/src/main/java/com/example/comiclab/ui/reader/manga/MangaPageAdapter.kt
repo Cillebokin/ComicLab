@@ -64,7 +64,8 @@ internal class MangaPageAdapter(
     private val doublePageReading: Boolean,
     private val coverSinglePage: Boolean,
     private val onPageReady: (position: Int) -> Unit,
-    private val onPageTap: () -> Unit
+    private val onPageTap: () -> Unit,
+    private val spreadAnchorSourcePosition: Int? = null
 ) : RecyclerView.Adapter<MangaPageAdapter.PageViewHolder>(), ReaderPageAdapterController {
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -98,7 +99,8 @@ internal class MangaPageAdapter(
     private val positionMapper = ReaderPagePositionMapper(
         sourceItemCount = entries.size,
         doublePageReading = doublePageReading,
-        coverSinglePage = coverSinglePage
+        coverSinglePage = coverSinglePage,
+        spreadAnchorSourcePosition = spreadAnchorSourcePosition
     )
     private val cacheLock = Any()
     private val fullBitmapDecodeWidths = Collections.synchronizedMap(mutableMapOf<Int, Int>())
