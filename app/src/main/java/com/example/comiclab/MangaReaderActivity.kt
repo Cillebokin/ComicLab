@@ -170,6 +170,8 @@ class MangaReaderActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.decorView.setBackgroundColor(Color.BLACK)
         restoreReaderPositionAfterOrientationChange = savedInstanceState?.let { state ->
             state.containsKey(STATE_READER_ORIENTATION) &&
                 state.getInt(STATE_READER_ORIENTATION) != resources.configuration.orientation
@@ -407,11 +409,15 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun configureImmersiveSystemBars() {
-        WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isStatusBarContrastEnforced = false
+            window.isNavigationBarContrastEnforced = false
+        }
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT
         WindowInsetsControllerCompat(window, rootView).apply {
             isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
             systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
