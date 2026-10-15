@@ -2,6 +2,7 @@ package com.example.comiclab.core.settings
 
 import com.example.comiclab.BookcaseFolderPaths
 import android.content.Context
+import android.content.SharedPreferences
 import java.io.File
 
 internal object AppSettingsStore {
@@ -11,7 +12,7 @@ internal object AppSettingsStore {
 
     internal const val DEFAULT_START_MARKER_ERROR_TAGS = "中;汉;漢;翻;译;譯"
     internal const val DEFAULT_READER_BRIGHTNESS = 128
-    internal const val MIN_READER_BRIGHTNESS = 1
+    internal const val MIN_READER_BRIGHTNESS = 0
     internal const val MAX_READER_BRIGHTNESS = 255
     internal const val DEFAULT_DOUBLE_PAGE_COVER_SINGLE = true
     internal const val DEFAULT_DOUBLE_PAGE_READING_ENABLED = true
@@ -26,6 +27,8 @@ internal object AppSettingsStore {
     private const val KEY_START_MARKER_ERROR_TAGS = "start_marker_error_tags"
     private const val KEY_CUSTOM_READER_BRIGHTNESS_ENABLED = "custom_reader_brightness_enabled"
     private const val KEY_CUSTOM_READER_BRIGHTNESS = "custom_reader_brightness"
+    private const val KEY_CUSTOM_READER_BRIGHTNESS_ZERO_MIN_MIGRATED =
+        "custom_reader_brightness_zero_min_migrated"
     private const val KEY_DARK_MODE_ENABLED = "dark_mode_enabled"
     private val bookcaseDirectoriesLock = Any()
 
@@ -229,13 +232,16 @@ internal object AppSettingsStore {
     }
 
     fun getCustomReaderBrightness(context: Context): Int {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getInt(KEY_CUSTOM_READER_BRIGHTNESS, DEFAULT_READER_BRIGHTNESS)
+        val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        migrateLegacyReaderBrightnessMinimum(preferences)
+        return preferences.getInt(KEY_CUSTOM_READER_BRIGHTNESS, DEFAULT_READER_BRIGHTNESS)
             .coerceIn(MIN_READER_BRIGHTNESS, MAX_READER_BRIGHTNESS)
     }
 
     fun setCustomReaderBrightness(context: Context, brightness: Int) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        migrateLegacyReaderBrightnessMinimum(preferences)
+        preferences
             .edit()
             .putInt(
                 KEY_CUSTOM_READER_BRIGHTNESS,
@@ -243,4 +249,23 @@ internal object AppSettingsStore {
             )
             .apply()
     }
+
+    private fun migrateLegacyReaderBrightnessMinimum(preferences: SharedPreferences) {
+        if (preferences.getBoolean(KEY_CUSTOM_READER_BRIGHTNESS_ZERO_MIN_MIGRATED, false)) {
+            return
+        }
+
+        val storedBrightness = preferences.getInt(KEY_CUSTOM_READER_BRIGHTNESS, DEFAULT_READER_BRIGHTNESS)
+        val migratedBrightness = if (storedBrightness == LEGACY_MIN_READER_BRIGHTNESS) {
+            MIN_READER_BRIGHTNESS
+        } else {
+            storedBrightness.coerceIn(MIN_READER_BRIGHTNESS, MAX_READER_BRIGHTNESS)
+        }
+        preferences.edit()
+            .putInt(KEY_CUSTOM_READER_BRIGHTNESS, migratedBrightness)
+            .putBoolean(KEY_CUSTOM_READER_BRIGHTNESS_ZERO_MIN_MIGRATED, true)
+            .apply()
+    }
+
+    private const val LEGACY_MIN_READER_BRIGHTNESS = 1
 }

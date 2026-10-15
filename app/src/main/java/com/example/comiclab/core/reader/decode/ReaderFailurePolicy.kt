@@ -28,10 +28,6 @@ internal fun shouldRetryPdfPageAfterFailure(
     return isPdfSource && !isPreload && !retryAlreadyUsed
 }
 
-internal fun shouldSkipReaderPreviewDecodeAfterMemoryTrim(lowMemoryMode: Boolean): Boolean {
-    return lowMemoryMode
-}
-
 internal fun shouldRetryFullPageAfterFailure(
     isPreload: Boolean,
     alreadyRetried: Boolean

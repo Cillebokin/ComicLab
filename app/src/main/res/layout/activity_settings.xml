@@ -472,6 +472,16 @@
                     android:minHeight="32dp"
                     android:textColor="@color/comiclab_accent"
                     android:textSize="@dimen/text_body" />
+
+                <Button
+                    android:id="@+id/btnCheckUpdates"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_preview_action_button"
+                    android:text="@string/check_updates"
+                    android:textColor="@color/comiclab_text_on_accent"
+                    android:textSize="@dimen/text_value" />
             </LinearLayout>
         </LinearLayout>
     </ScrollView>

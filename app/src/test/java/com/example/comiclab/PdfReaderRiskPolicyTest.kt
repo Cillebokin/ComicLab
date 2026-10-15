@@ -8,7 +8,6 @@ import com.example.comiclab.core.archive.PdfRenderSizePolicy
 import com.example.comiclab.core.archive.createPdfRendererOrCloseDescriptor
 import com.example.comiclab.core.reader.decode.shouldRetryPdfPageAfterFailure
 import com.example.comiclab.core.reader.decode.shouldSkipPdfPreloadAfterMemoryTrim
-import com.example.comiclab.core.reader.decode.shouldSkipReaderPreviewDecodeAfterMemoryTrim
 import com.example.comiclab.core.reader.decode.shouldSkipTiledPdfPreviewDecodeAfterMemoryTrim
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -108,12 +107,6 @@ class PdfReaderRiskPolicyTest {
                 retryAlreadyUsed = true
             )
         )
-    }
-
-    @Test
-    fun previewThumbnailDecodeStopsAfterMemoryTrim() {
-        assertTrue(shouldSkipReaderPreviewDecodeAfterMemoryTrim(lowMemoryMode = true))
-        assertFalse(shouldSkipReaderPreviewDecodeAfterMemoryTrim(lowMemoryMode = false))
     }
 
     @Test

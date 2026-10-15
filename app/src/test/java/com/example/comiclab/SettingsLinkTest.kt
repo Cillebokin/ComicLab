@@ -35,4 +35,20 @@ class SettingsLinkTest {
             linkView.contains("android:layout_height=\"wrap_content\"")
         )
     }
+
+    @Test
+    fun settingsLayoutProvidesManualUpdateCheckButton() {
+        val layout = File("src/main/res/layout/activity_settings.xml").readText()
+
+        assertTrue(layout.contains("android:id=\"@+id/btnCheckUpdates\""))
+    }
+
+    @Test
+    fun mainManifestDeclaresInternetPermissionForManualChecks() {
+        val manifest = File("src/main/AndroidManifest.xml").readText()
+
+        assertTrue(
+            manifest.contains("<uses-permission android:name=\"android.permission.INTERNET\" />")
+        )
+    }
 }

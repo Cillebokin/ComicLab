@@ -8,9 +8,11 @@ import android.view.WindowManager
 import android.widget.CheckBox
 import android.widget.SeekBar
 import android.widget.SeekBar.OnSeekBarChangeListener
+import android.widget.TextView
 import com.example.comiclab.AppSettings
 import com.example.comiclab.EbookReaderActivity
 import com.example.comiclab.MangaReaderActivity
+import com.example.comiclab.SettingsActivity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -54,7 +56,7 @@ class ReaderBrightnessControllerRobolectricTest {
         )
         controller.configure()
 
-        assertEquals(AppSettings.MIN_READER_BRIGHTNESS, slider.min)
+        assertEquals(0, slider.min)
         assertEquals(AppSettings.MAX_READER_BRIGHTNESS, slider.max)
         assertEquals(AppSettings.DEFAULT_READER_BRIGHTNESS, slider.progress)
         assertFalse(checkbox.isChecked)
@@ -67,7 +69,7 @@ class ReaderBrightnessControllerRobolectricTest {
 
         Settings.System.putInt(activity.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 0)
         controller.updateControls()
-        assertEquals(AppSettings.MIN_READER_BRIGHTNESS, slider.progress)
+        assertEquals(1, slider.progress)
     }
 
     @Test
@@ -112,8 +114,28 @@ class ReaderBrightnessControllerRobolectricTest {
         assertEquals(211f / 255f, activity.window.attributes.screenBrightness, 0.0001f)
 
         slider.dispatchUserProgress(0)
-        assertEquals(AppSettings.MIN_READER_BRIGHTNESS, AppSettings.getCustomReaderBrightness(activity))
-        assertEquals(0.01f, activity.window.attributes.screenBrightness, 0.0001f)
+        assertEquals(0, AppSettings.getCustomReaderBrightness(activity))
+        assertEquals(0f, activity.window.attributes.screenBrightness, 0.0001f)
+    }
+
+    @Test
+    fun settingsScreenShowsZeroPercentAtMinimumCustomBrightness() {
+        val application = RuntimeEnvironment.getApplication()
+        AppSettings.setCustomReaderBrightnessEnabled(application, true)
+        AppSettings.setCustomReaderBrightness(application, 0)
+        val activityController = Robolectric.buildActivity(SettingsActivity::class.java)
+
+        try {
+            val activity = activityController.setup().get()
+            val slider = activity.findViewById<SeekBar>(com.example.comiclab.R.id.sliderSettingsReaderBrightness)
+            val value = activity.findViewById<TextView>(com.example.comiclab.R.id.tvSettingsBrightnessValue)
+
+            assertEquals(0, slider.min)
+            assertEquals(0, slider.progress)
+            assertEquals("0%", value.text.toString())
+        } finally {
+            runCatching { activityController.destroy() }
+        }
     }
 
     @Test
