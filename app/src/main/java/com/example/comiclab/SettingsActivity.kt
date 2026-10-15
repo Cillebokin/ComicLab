@@ -1,6 +1,9 @@
 package com.example.comiclab
 
 import com.example.comiclab.core.settings.ComicLabConfigurationStore
+import com.example.comiclab.core.update.GitHubReleaseApi
+import com.example.comiclab.core.update.ReleaseVersionComparator
+import com.example.comiclab.createRounded
 import com.example.comiclab.ui.common.SystemBars
 
 import android.content.ActivityNotFoundException
@@ -45,6 +48,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var btnRunReaderStressTest: Button
     private lateinit var btnExportConfiguration: Button
     private lateinit var btnImportConfiguration: Button
+    private lateinit var btnCheckUpdates: Button
     private lateinit var tvAppLink: TextView
     private lateinit var tvLanguageValue: TextView
     private lateinit var switchDarkMode: SwitchCompat
@@ -58,6 +62,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var tvSettingsBrightnessValue: TextView
     private val debugToolExecutor = Executors.newSingleThreadExecutor()
     private val configurationExecutor = Executors.newSingleThreadExecutor()
+    private val releaseCheckExecutor = Executors.newSingleThreadExecutor()
     private val exportConfigurationLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
@@ -93,6 +98,7 @@ class SettingsActivity : AppCompatActivity() {
         btnRunReaderStressTest = findViewById(R.id.btnRunReaderStressTest)
         btnExportConfiguration = findViewById(R.id.btnExportConfiguration)
         btnImportConfiguration = findViewById(R.id.btnImportConfiguration)
+        btnCheckUpdates = findViewById(R.id.btnCheckUpdates)
         tvAppLink = findViewById(R.id.tvAppLink)
         tvLanguageValue = findViewById(R.id.tvLanguageValue)
         switchDarkMode = findViewById(R.id.switchDarkMode)
@@ -120,12 +126,14 @@ class SettingsActivity : AppCompatActivity() {
         bindDebugTools()
         bindConfigurationManagement()
         bindProjectReleaseLink()
+        bindUpdateCheck()
     }
 
     override fun onDestroy() {
         destroyed = true
         debugToolExecutor.shutdownNow()
         configurationExecutor.shutdownNow()
+        releaseCheckExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -333,16 +341,82 @@ class SettingsActivity : AppCompatActivity() {
         tvAppLink.setTextColor(getColor(R.color.comiclab_accent))
         tvAppLink.paintFlags = tvAppLink.paintFlags or Paint.UNDERLINE_TEXT_FLAG
         tvAppLink.setOnClickListener {
-            try {
-                startActivity(
-                    Intent(
-                        Intent.ACTION_VIEW,
-                        COMICLAB_RELEASES_URL.toUri()
-                    )
-                )
-            } catch (_: ActivityNotFoundException) {
-                showMessage(getString(R.string.app_link_open_failed))
+            openProjectReleasePage()
+        }
+    }
+
+    private fun bindUpdateCheck() {
+        btnCheckUpdates.setOnClickListener {
+            checkForUpdates()
+        }
+    }
+
+    private fun checkForUpdates() {
+        if (destroyed || !btnCheckUpdates.isEnabled) {
+            return
+        }
+
+        btnCheckUpdates.isEnabled = false
+        btnCheckUpdates.setText(R.string.checking_updates)
+        val localVersion = BuildConfig.VERSION_NAME
+        releaseCheckExecutor.execute {
+            val result = runCatching {
+                val latestTag = GitHubReleaseApi.fetchLatestReleaseTag()
+                latestTag to ReleaseVersionComparator.compare(localVersion, latestTag)
             }
+            runOnUiThread {
+                if (destroyed) {
+                    return@runOnUiThread
+                }
+                btnCheckUpdates.isEnabled = true
+                btnCheckUpdates.setText(R.string.check_updates)
+                result
+                    .onSuccess { (latestTag, comparison) ->
+                        showUpdateCheckResult(localVersion, latestTag, comparison)
+                    }
+                    .onFailure {
+                        showMessage(getString(R.string.update_check_failed))
+                    }
+            }
+        }
+    }
+
+    private fun showUpdateCheckResult(
+        localVersion: String,
+        latestTag: String,
+        comparison: ReleaseVersionComparator.Result
+    ) {
+        val statusMessage = when (comparison) {
+            ReleaseVersionComparator.Result.UP_TO_DATE -> R.string.update_status_up_to_date
+            ReleaseVersionComparator.Result.UPDATE_AVAILABLE -> R.string.update_status_available
+            ReleaseVersionComparator.Result.LOCAL_NEWER -> R.string.update_status_local_newer
+            ReleaseVersionComparator.Result.UNCOMPARABLE -> R.string.update_status_uncomparable
+        }
+        val message = buildString {
+            append(getString(statusMessage))
+            append("\n\n")
+            append(getString(R.string.update_version_comparison, localVersion, latestTag))
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.update_check_title)
+            .setMessage(message)
+            .setPositiveButton(R.string.update_view_release) { _, _ ->
+                openProjectReleasePage()
+            }
+            .setNegativeButton(android.R.string.ok, null)
+            .show()
+    }
+
+    private fun openProjectReleasePage() {
+        try {
+            startActivity(
+                Intent(
+                    Intent.ACTION_VIEW,
+                    COMICLAB_RELEASES_URL.toUri()
+                )
+            )
+        } catch (_: ActivityNotFoundException) {
+            showMessage(getString(R.string.app_link_open_failed))
         }
     }
 
