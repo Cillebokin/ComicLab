@@ -14,7 +14,6 @@ import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.ComicArchive
 import com.example.comiclab.R
-import com.example.comiclab.core.reader.decode.shouldSkipReaderPreviewDecodeAfterMemoryTrim
 import java.io.File
 import java.util.Collections
 import java.util.concurrent.ExecutorService
@@ -33,6 +32,7 @@ class ReaderPreviewAdapter(
     private val decodeExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val loadingPositions = Collections.synchronizedSet(mutableSetOf<Int>())
     private val failedPositions = Collections.synchronizedSet(mutableSetOf<Int>())
+    private val decodeAttempts = Collections.synchronizedMap(mutableMapOf<Int, Int>())
     private val thumbnailWidth = context.resources.getDimensionPixelSize(
         R.dimen.reader_preview_thumbnail_width
     )
@@ -51,9 +51,6 @@ class ReaderPreviewAdapter(
 
     @Volatile
     private var closed = false
-
-    @Volatile
-    private var lowMemoryMode = false
 
     private var selectedPosition = RecyclerView.NO_POSITION
 
@@ -129,6 +126,9 @@ class ReaderPreviewAdapter(
         decodeExecutor.shutdownNow()
         loadingPositions.clear()
         failedPositions.clear()
+        synchronized(decodeAttempts) {
+            decodeAttempts.clear()
+        }
         clearVisibleBitmapReferences()
         synchronized(cache) {
             cache.evictAll()
@@ -140,11 +140,15 @@ class ReaderPreviewAdapter(
         if (level < android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
             return
         }
-        lowMemoryMode = true
         clearVisibleBitmapReferences()
         synchronized(cache) {
             cache.evictAll()
         }
+        failedPositions.clear()
+        synchronized(decodeAttempts) {
+            decodeAttempts.clear()
+        }
+        notifyAfterMemoryTrim()
     }
 
     private fun clearVisibleBitmapReferences() {
@@ -210,11 +214,26 @@ class ReaderPreviewAdapter(
 
     private fun loadThumbnail(position: Int) {
         if (closed ||
-            shouldSkipReaderPreviewDecodeAfterMemoryTrim(lowMemoryMode) ||
             position !in entries.indices ||
             position in failedPositions ||
+            synchronized(cache) { cache.get(position) != null } ||
             !loadingPositions.add(position)
         ) {
+            return
+        }
+
+        val attempt = synchronized(decodeAttempts) {
+            val nextAttempt = (decodeAttempts[position] ?: 0) + 1
+            if (nextAttempt > MAX_PREVIEW_DECODE_ATTEMPTS) {
+                null
+            } else {
+                decodeAttempts[position] = nextAttempt
+                nextAttempt
+            }
+        }
+        if (attempt == null) {
+            loadingPositions.remove(position)
+            failedPositions.add(position)
             return
         }
 
@@ -225,9 +244,10 @@ class ReaderPreviewAdapter(
                         return@execute
                     }
 
-                    val bitmap = runCatching {
+                    val decodeResult = runCatching {
                         openReaderSession().decodePreviewForWidth(entries[position], thumbnailWidth)
-                    }.getOrNull()
+                    }
+                    val bitmap = decodeResult.getOrNull()
 
                     if (closed || position !in entries.indices) {
                         bitmap?.recycle()
@@ -235,35 +255,93 @@ class ReaderPreviewAdapter(
                     }
 
                     if (bitmap == null) {
-                        failedPositions.add(position)
+                        handleThumbnailDecodeFailure(
+                            position = position,
+                            attempt = attempt,
+                            failure = decodeResult.exceptionOrNull()
+                        )
                         return@execute
                     }
 
                     synchronized(cache) {
                         cache.put(position, bitmap)
                     }
+                    synchronized(decodeAttempts) {
+                        decodeAttempts.remove(position)
+                    }
+                    failedPositions.remove(position)
                     mainHandler.post {
                         if (!closed && position in entries.indices) {
                             notifyItemChangedSafely(position)
                         }
                     }
                 } catch (throwable: Throwable) {
-                    failedPositions.add(position)
-                    if (throwable is OutOfMemoryError) {
-                        synchronized(cache) {
-                            cache.evictAll()
-                        }
-                        Log.w(LOG_TAG, "reader preview thumbnail OOM position=$position")
-                        System.gc()
-                    } else {
-                        Log.w(LOG_TAG, "reader preview thumbnail failed position=$position", throwable)
-                    }
+                    handleThumbnailDecodeFailure(position, attempt, throwable)
                 } finally {
                     loadingPositions.remove(position)
                 }
             }
         }.onFailure {
             loadingPositions.remove(position)
+            handleThumbnailDecodeFailure(position, attempt, it)
+        }
+    }
+
+    private fun handleThumbnailDecodeFailure(
+        position: Int,
+        attempt: Int,
+        failure: Throwable?
+    ) {
+        if (closed || synchronized(cache) { cache.get(position) != null }) {
+            return
+        }
+
+        if (failure is OutOfMemoryError) {
+            synchronized(cache) {
+                cache.evictAll()
+            }
+            Log.w(LOG_TAG, "reader preview thumbnail OOM position=$position")
+            System.gc()
+        } else if (failure != null) {
+            Log.w(LOG_TAG, "reader preview thumbnail failed position=$position", failure)
+        }
+
+        if (failure !is OutOfMemoryError && attempt < MAX_PREVIEW_DECODE_ATTEMPTS) {
+            mainHandler.postDelayed(
+                {
+                    if (!closed && position in entries.indices) {
+                        loadThumbnail(position)
+                    }
+                },
+                PREVIEW_RETRY_DELAY_MS
+            )
+        } else {
+            failedPositions.add(position)
+        }
+    }
+
+    private fun notifyAfterMemoryTrim() {
+        if (closed) {
+            return
+        }
+
+        val recyclerView = attachedRecyclerView
+        if (recyclerView?.isComputingLayout == true) {
+            mainHandler.post {
+                if (!closed) {
+                    notifyDataSetChangedSafely()
+                }
+            }
+        } else {
+            notifyDataSetChangedSafely()
+        }
+    }
+
+    private fun notifyDataSetChangedSafely() {
+        runCatching {
+            notifyDataSetChanged()
+        }.onFailure {
+            Log.w(LOG_TAG, "reader preview refresh failed after memory trim", it)
         }
     }
 
@@ -292,6 +370,8 @@ class ReaderPreviewAdapter(
     companion object {
         private const val LOG_TAG = "ComicLabReader"
         private const val PREVIEW_CLOSE_WAIT_TIMEOUT_MS = 8_000L
+        private const val MAX_PREVIEW_DECODE_ATTEMPTS = 2
+        private const val PREVIEW_RETRY_DELAY_MS = 120L
 
         private fun thumbnailCacheSizeKb(): Int {
             val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
