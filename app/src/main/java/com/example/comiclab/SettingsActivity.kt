@@ -300,7 +300,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun updateBrightnessValueText(brightness: Int) {
         val percent = (normalizeBrightness(brightness) * 100f / AppSettings.MAX_READER_BRIGHTNESS)
             .toInt()
-            .coerceIn(1, 100)
+            .coerceIn(0, 100)
         tvSettingsBrightnessValue.text = getString(R.string.brightness_percent, percent)
     }
 

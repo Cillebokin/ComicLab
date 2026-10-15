@@ -57,10 +57,21 @@ class AppSettingsRobolectricTest {
             AppSettings.getReadingDirection(context)
         )
         assertFalse(AppSettings.isDoublePageReadingEnabled(context))
-        assertEquals(AppSettings.MIN_READER_BRIGHTNESS, AppSettings.getCustomReaderBrightness(context))
+        assertEquals(0, AppSettings.getCustomReaderBrightness(context))
 
         AppSettings.setCustomReaderBrightness(context, Int.MAX_VALUE)
         assertEquals(AppSettings.MAX_READER_BRIGHTNESS, AppSettings.getCustomReaderBrightness(context))
+    }
+
+    @Test
+    fun migratesLegacyMinimumBrightnessToZeroButKeepsNewFirstStep() {
+        val preferences = context.getSharedPreferences("app_settings", 0)
+        preferences.edit().putInt("custom_reader_brightness", 1).commit()
+
+        assertEquals(0, AppSettings.getCustomReaderBrightness(context))
+
+        AppSettings.setCustomReaderBrightness(context, 1)
+        assertEquals(1, AppSettings.getCustomReaderBrightness(context))
     }
 
     @Test
@@ -114,7 +125,10 @@ class AppSettingsRobolectricTest {
             AppSettings.setDarkModeEnabled(context, false)
             assertFalse(AppSettings.isDarkModeEnabled(context))
             assertEquals(AppCompatDelegate.MODE_NIGHT_NO, AppCompatDelegate.getDefaultNightMode())
-            assertEquals(legacyKeys, preferences.all.keys)
+            assertEquals(
+                legacyKeys + "custom_reader_brightness_zero_min_migrated",
+                preferences.all.keys
+            )
         } finally {
             root.deleteRecursively()
         }

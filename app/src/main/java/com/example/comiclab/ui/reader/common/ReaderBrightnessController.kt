@@ -135,11 +135,12 @@ class ReaderBrightnessController(
                 AppSettings.DEFAULT_READER_BRIGHTNESS
             )
         }.getOrDefault(AppSettings.DEFAULT_READER_BRIGHTNESS)
-            .coerceIn(AppSettings.MIN_READER_BRIGHTNESS, AppSettings.MAX_READER_BRIGHTNESS)
+            .coerceIn(MIN_SYSTEM_BRIGHTNESS, AppSettings.MAX_READER_BRIGHTNESS)
     }
 
     private companion object {
-        const val MIN_WINDOW_BRIGHTNESS = 0.01f
+        const val MIN_SYSTEM_BRIGHTNESS = 1
+        const val MIN_WINDOW_BRIGHTNESS = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_OFF
         const val MAX_WINDOW_BRIGHTNESS = 1f
         const val ENABLED_SLIDER_ALPHA = 1f
         const val DISABLED_SLIDER_ALPHA = 0.72f
