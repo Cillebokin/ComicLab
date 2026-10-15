@@ -161,15 +161,6 @@
                 android:text="@string/custom_brightness"
                 android:textColor="@color/white" />
 
-            <CheckBox
-                android:id="@+id/checkboxReaderImageEnhancement"
-                style="@style/Widget.ComicLab.CheckBox"
-                android:layout_width="wrap_content"
-                android:layout_height="36dp"
-                android:layout_marginStart="8dp"
-                android:gravity="center_vertical"
-                android:text="@string/reader_image_enhancement"
-                android:textColor="@color/white" />
         </LinearLayout>
 
         <LinearLayout

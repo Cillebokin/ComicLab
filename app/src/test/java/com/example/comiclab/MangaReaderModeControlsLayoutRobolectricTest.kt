@@ -22,16 +22,14 @@ import org.robolectric.annotation.Config
 class MangaReaderModeControlsLayoutRobolectricTest {
 
     @Test
-    fun imageEnhancementToggleIsBesideBrightnessAndStartsDisabled() {
+    fun readerBrightnessRowDoesNotContainAnImageEnhancementToggle() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         val content = LayoutInflater.from(activity)
             .inflate(R.layout.activity_manga_reader, null, false)
         val customBrightness = content.findViewById<CheckBox>(R.id.checkboxCustomBrightness)
-        val imageEnhancement = content.findViewById<CheckBox>(R.id.checkboxReaderImageEnhancement)
+        val brightnessControlsRow = customBrightness.parent as ViewGroup
 
-        assertSame(customBrightness.parent, imageEnhancement.parent)
-        assertEquals(false, imageEnhancement.isChecked)
-        assertEquals(activity.getString(R.string.reader_image_enhancement), imageEnhancement.text.toString())
+        assertEquals(2, brightnessControlsRow.childCount)
     }
 
     @Test

@@ -95,9 +95,7 @@ internal class MangaPageAdapter(
     private val boundPositions = Collections.synchronizedSet(mutableSetOf<Int>())
     private val pendingRefreshPositions = Collections.synchronizedSet(mutableSetOf<Int>())
     private val pageBounds = Collections.synchronizedMap(mutableMapOf<Int, ComicArchive.ImageBounds>())
-    private val pageHolders = mutableSetOf<PageViewHolder>()
     private val isPdfSource = session.isPdfSource()
-    private var imageEnhancementEnabled = false
     private val positionMapper = ReaderPagePositionMapper(
         sourceItemCount = entries.size,
         doublePageReading = doublePageReading,
@@ -201,7 +199,6 @@ internal class MangaPageAdapter(
         container.addView(imageView)
         container.addView(tileContainer)
         return PageViewHolder(container, imageView, tileContainer).also { holder ->
-            pageHolders += holder
             holder.container.onTap = onPageTap
             holder.container.onZoomThresholdChanged = { isActive ->
                 if (isActive) {
@@ -217,7 +214,6 @@ internal class MangaPageAdapter(
     }
 
     override fun onBindViewHolder(holder: PageViewHolder, adapterPosition: Int) {
-        pageHolders += holder
         val previousPosition = holder.boundPosition
         if (previousPosition != RecyclerView.NO_POSITION) {
             boundPositions.remove(previousPosition)
@@ -245,10 +241,6 @@ internal class MangaPageAdapter(
             bindBlankPage(holder)
             return
         }
-        applyImageEnhancement(
-            holder,
-            enabled = imageEnhancementEnabled && holder.itemView.isAttachedToWindow
-        )
         boundPositions.add(sourcePosition)
         bindBestAvailable(holder, sourcePosition, adapterPosition)
         ensureVisiblePage(sourcePosition)
@@ -265,25 +257,9 @@ internal class MangaPageAdapter(
         holder.container.onZoomThresholdChanged = null
         holder.container.onTransformChanged = null
         holder.container.resetZoom()
-        ReaderImageEnhancement.clear(holder.imageView)
-        ReaderImageEnhancement.clear(holder.tileContainer)
-        pageHolders.remove(holder)
         holder.imageView.setImageDrawable(null)
         holder.tileContainer.removeAllViews()
         super.onViewRecycled(holder)
-    }
-
-    override fun onViewAttachedToWindow(holder: PageViewHolder) {
-        super.onViewAttachedToWindow(holder)
-        applyImageEnhancement(
-            holder,
-            enabled = imageEnhancementEnabled && holder.boundPosition in entries.indices
-        )
-    }
-
-    override fun onViewDetachedFromWindow(holder: PageViewHolder) {
-        applyImageEnhancement(holder, enabled = false)
-        super.onViewDetachedFromWindow(holder)
     }
 
     override fun preloadAround(
@@ -429,19 +405,6 @@ internal class MangaPageAdapter(
         }
     }
 
-    fun setImageEnhancementEnabled(enabled: Boolean) {
-        imageEnhancementEnabled = ReaderImageEnhancement.shouldApply(
-            enabled = enabled,
-            isPdfSource = isPdfSource
-        )
-        pageHolders.forEach { holder ->
-            val applyToBoundPage = imageEnhancementEnabled &&
-                holder.itemView.isAttachedToWindow &&
-                holder.boundPosition in entries.indices
-            applyImageEnhancement(holder, applyToBoundPage)
-        }
-    }
-
     override fun close() {
         if (closed) {
             return
@@ -449,11 +412,6 @@ internal class MangaPageAdapter(
         closed = true
         mainHandler.removeCallbacks(flushRefreshRunnable)
         clearHolderCallbacks()
-        pageHolders.forEach { holder ->
-            ReaderImageEnhancement.clear(holder.imageView)
-            ReaderImageEnhancement.clear(holder.tileContainer)
-        }
-        pageHolders.clear()
         clearVisibleBitmapReferences(clearFullBitmaps = true)
         decodeExecutor.shutdownNow()
         synchronized(cacheLock) {
@@ -592,7 +550,6 @@ internal class MangaPageAdapter(
     }
 
     private fun bindBlankPage(holder: PageViewHolder) {
-        applyImageEnhancement(holder, enabled = false)
         holder.tileContainer.visibility = View.GONE
         holder.tileContainer.removeAllViews()
         holder.imageView.visibility = View.VISIBLE
@@ -606,12 +563,6 @@ internal class MangaPageAdapter(
             Gravity.CENTER
         )
         holder.container.refreshContentLayout()
-    }
-
-    private fun applyImageEnhancement(holder: PageViewHolder, enabled: Boolean) {
-        val shouldApply = ReaderImageEnhancement.shouldApply(enabled, isPdfSource)
-        ReaderImageEnhancement.apply(holder.imageView, shouldApply)
-        ReaderImageEnhancement.apply(holder.tileContainer, shouldApply)
     }
 
     private fun bindPlaceholder(

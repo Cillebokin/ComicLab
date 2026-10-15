@@ -299,7 +299,6 @@
     <string name="volume_key_page_turn">音量键翻页</string>
     <string name="auto_hide_system_bars">自动隐藏状态栏/导航栏</string>
     <string name="custom_brightness">自定义亮度</string>
-    <string name="reader_image_enhancement">画质增强</string>
     <string name="brightness_percent">%1$d%%</string>
     <string name="stability_tools">稳定性工具</string>
     <string name="export_crash_log">导出崩溃日志</string>

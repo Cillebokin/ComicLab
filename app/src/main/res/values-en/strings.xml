@@ -300,7 +300,6 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="volume_key_page_turn">Turn pages with volume keys</string>
     <string name="auto_hide_system_bars">Auto-hide status and navigation bars</string>
     <string name="custom_brightness">Custom brightness</string>
-    <string name="reader_image_enhancement">Image enhancement</string>
     <string name="brightness_percent">%1$d%%</string>
     <string name="stability_tools">Stability tools</string>
     <string name="export_crash_log">Export crash log</string>

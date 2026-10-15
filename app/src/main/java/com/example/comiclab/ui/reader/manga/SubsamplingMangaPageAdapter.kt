@@ -66,8 +66,6 @@ internal class SubsamplingMangaPageAdapter(
     private val failedPositions = Collections.synchronizedSet(mutableSetOf<Int>())
     private val pageBounds = Collections.synchronizedMap(boundsByPosition.toMutableMap())
     private val activeSubsamplingViews = mutableSetOf<ReaderSubsamplingImageView>()
-    private val pageHolders = mutableSetOf<PageViewHolder>()
-    private var imageEnhancementEnabled = false
     private val positionMapper = ReaderPagePositionMapper(
         sourceItemCount = entryNames.size,
         doublePageReading = doublePageReading,
@@ -125,11 +123,10 @@ internal class SubsamplingMangaPageAdapter(
         }
         container.addView(imageView)
         container.addView(statusText)
-        return PageViewHolder(container, imageView, statusText).also(pageHolders::add)
+        return PageViewHolder(container, imageView, statusText)
     }
 
     override fun onBindViewHolder(holder: PageViewHolder, adapterPosition: Int) {
-        pageHolders += holder
         val sourcePosition = positionMapper.sourcePositionForAdapterPosition(adapterPosition)
         if (closed || sourcePosition == null || sourcePosition !in entryNames.indices ||
             sourcePosition !in pageFiles.indices
@@ -154,10 +151,6 @@ internal class SubsamplingMangaPageAdapter(
         readyPositions.add(sourcePosition)
         holder.statusText.visibility = View.GONE
         holder.imageView.visibility = View.VISIBLE
-        ReaderImageEnhancement.apply(
-            holder.imageView,
-            enabled = imageEnhancementEnabled && holder.itemView.isAttachedToWindow
-        )
         if (holder.boundFilePath != file.absolutePath) {
             holder.boundFilePath = file.absolutePath
             activeSubsamplingViews += holder.imageView
@@ -176,7 +169,6 @@ internal class SubsamplingMangaPageAdapter(
         holder.statusText.visibility = View.GONE
         holder.boundFilePath = null
         holder.imageView.visibility = View.INVISIBLE
-        ReaderImageEnhancement.apply(holder.imageView, enabled = false)
         holder.imageView.clearReaderImage { result ->
             if (result.isFailure) {
                 Log.w(
@@ -192,8 +184,6 @@ internal class SubsamplingMangaPageAdapter(
 
     override fun onViewRecycled(holder: PageViewHolder) {
         holder.boundFilePath = null
-        ReaderImageEnhancement.clear(holder.imageView)
-        pageHolders.remove(holder)
         if (!closed) {
             holder.imageView.clearReaderImage { result ->
                 if (result.isFailure) {
@@ -208,19 +198,6 @@ internal class SubsamplingMangaPageAdapter(
             }
         }
         super.onViewRecycled(holder)
-    }
-
-    override fun onViewAttachedToWindow(holder: PageViewHolder) {
-        super.onViewAttachedToWindow(holder)
-        ReaderImageEnhancement.apply(
-            holder.imageView,
-            enabled = imageEnhancementEnabled && holder.boundFilePath != null
-        )
-    }
-
-    override fun onViewDetachedFromWindow(holder: PageViewHolder) {
-        ReaderImageEnhancement.apply(holder.imageView, enabled = false)
-        super.onViewDetachedFromWindow(holder)
     }
 
     override fun preloadAround(
@@ -301,18 +278,6 @@ internal class SubsamplingMangaPageAdapter(
 
     override fun flushPendingRefreshesIfIdle() = Unit
 
-    fun setImageEnhancementEnabled(enabled: Boolean) {
-        imageEnhancementEnabled = enabled
-        pageHolders.forEach { holder ->
-            ReaderImageEnhancement.apply(
-                holder.imageView,
-                enabled = imageEnhancementEnabled &&
-                    holder.itemView.isAttachedToWindow &&
-                    holder.boundFilePath != null
-            )
-        }
-    }
-
     override fun close() {
         if (closed) {
             return
@@ -321,8 +286,6 @@ internal class SubsamplingMangaPageAdapter(
         extractExecutor.shutdownNow()
         loadingPositions.clear()
         failedPositions.clear()
-        pageHolders.forEach { holder -> ReaderImageEnhancement.clear(holder.imageView) }
-        pageHolders.clear()
         val viewsToClose = activeSubsamplingViews.toList()
         val closeLock = Any()
         var pendingCloseDependencies = viewsToClose.size + 1
