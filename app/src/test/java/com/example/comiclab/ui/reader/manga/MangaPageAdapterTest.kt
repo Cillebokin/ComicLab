@@ -209,7 +209,7 @@ class MangaPageAdapterTest {
         doublePageReading: Boolean = false,
         coverSinglePage: Boolean = false,
         readingDirection: String = AppSettings.READING_DIRECTION_LEFT_TO_RIGHT,
-        archiveFileName: String = "reader-test.cbz"
+        archiveFileName: String = "reader-test.cbz",
     ): MangaPageAdapter {
         val context = RuntimeEnvironment.getApplication()
         return MangaPageAdapter(

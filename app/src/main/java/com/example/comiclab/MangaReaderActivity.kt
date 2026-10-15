@@ -91,6 +91,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private lateinit var sliderReaderProgress: SeekBar
     private lateinit var sliderScreenBrightness: SeekBar
     private lateinit var checkboxCustomBrightness: CheckBox
+    private lateinit var checkboxReaderImageEnhancement: CheckBox
     private lateinit var readerBrightnessController: ReaderBrightnessController
     private lateinit var btnReaderPreview: Button
     private lateinit var btnReaderDirectionTopToBottom: ImageButton
@@ -158,6 +159,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private var lastReaderPreloadSpreadStart = RecyclerView.NO_POSITION
     private var volumeKeyPageTurnEnabled = true
     private var autoHideSystemBarsEnabled = true
+    private var readerImageEnhancementEnabled = false
     private var lastVolumePageTurnAt = 0L
     private var debugReaderStressEnabled = false
     private var debugReaderStressStarted = false
@@ -183,6 +185,10 @@ class MangaReaderActivity : AppCompatActivity() {
                 null
             }
         }
+        readerImageEnhancementEnabled = savedInstanceState?.getBoolean(
+            STATE_READER_IMAGE_ENHANCEMENT_ENABLED,
+            false
+        ) ?: false
         doublePageSpreadAnchorSourcePosition = savedInstanceState?.let { state ->
             if (state.containsKey(STATE_READER_DOUBLE_PAGE_SPREAD_ANCHOR)) {
                 state.getInt(STATE_READER_DOUBLE_PAGE_SPREAD_ANCHOR).takeIf { it >= 0 }
@@ -259,6 +265,7 @@ class MangaReaderActivity : AppCompatActivity() {
         doublePageSpreadAnchorSourcePosition?.let {
             outState.putInt(STATE_READER_DOUBLE_PAGE_SPREAD_ANCHOR, it)
         }
+        outState.putBoolean(STATE_READER_IMAGE_ENHANCEMENT_ENABLED, readerImageEnhancementEnabled)
         super.onSaveInstanceState(outState)
     }
 
@@ -364,6 +371,8 @@ class MangaReaderActivity : AppCompatActivity() {
         sliderReaderProgress = findViewById(R.id.sliderReaderProgress)
         sliderScreenBrightness = findViewById(R.id.sliderScreenBrightness)
         checkboxCustomBrightness = findViewById(R.id.checkboxCustomBrightness)
+        checkboxReaderImageEnhancement = findViewById(R.id.checkboxReaderImageEnhancement)
+        checkboxReaderImageEnhancement.isChecked = readerImageEnhancementEnabled
         btnReaderPreview = findViewById(R.id.btnReaderPreview)
         btnReaderDirectionTopToBottom = findViewById(R.id.btnReaderDirectionTopToBottom)
         btnReaderDirectionLeftToRight = findViewById(R.id.btnReaderDirectionLeftToRight)
@@ -566,6 +575,14 @@ class MangaReaderActivity : AppCompatActivity() {
             toggleDoublePageReading()
         }
 
+        checkboxReaderImageEnhancement.setOnCheckedChangeListener { _, enabled ->
+            readerImageEnhancementEnabled = enabled
+            when (val adapter = pageAdapter) {
+                is MangaPageAdapter -> adapter.setImageEnhancementEnabled(enabled)
+                is SubsamplingMangaPageAdapter -> adapter.setImageEnhancementEnabled(enabled)
+            }
+        }
+
         readerPreviewScrim.setOnClickListener {
             hideReaderPreviewPanel()
         }
@@ -764,6 +781,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 handleReaderTap()
             }
         )
+        adapter.setImageEnhancementEnabled(readerImageEnhancementEnabled)
         pageAdapter = adapter
         listReaderPages.adapter = adapter
         bindReaderPreviewAdapter(entries, archiveFile)
@@ -784,6 +802,12 @@ class MangaReaderActivity : AppCompatActivity() {
         }
         val pageSession = sharedSession?.acquire() ?: session
         val previewSession = sharedSession?.acquire()
+
+        checkboxReaderImageEnhancement.visibility = if (session.isPdfSource()) {
+            View.GONE
+        } else {
+            View.VISIBLE
+        }
 
         pageAdapter?.close()
         readerCoverSinglePageEnabled = !session.isPdfSource() &&
@@ -813,6 +837,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 handleReaderTap()
             }
         )
+        adapter.setImageEnhancementEnabled(readerImageEnhancementEnabled)
         pageAdapter = adapter
         listReaderPages.adapter = adapter
         bindReaderPreviewAdapter(entries, readerFile, previewSession)
@@ -1856,6 +1881,7 @@ class MangaReaderActivity : AppCompatActivity() {
         private const val STATE_READER_POSITION = "reader_position"
         private const val STATE_READER_OFFSET = "reader_offset"
         private const val STATE_READER_DOUBLE_PAGE_SPREAD_ANCHOR = "reader_double_page_spread_anchor"
+        private const val STATE_READER_IMAGE_ENHANCEMENT_ENABLED = "reader_image_enhancement_enabled"
         private const val NO_EXPLICIT_START_PAGE = -1
 
         fun savedReadingProgress(context: Context, file: File): ComicLabMangaProgress? {

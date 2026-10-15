@@ -4,6 +4,7 @@ import android.app.Activity
 import android.graphics.Color
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import android.widget.CheckBox
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.util.TypedValue
@@ -19,6 +20,19 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class MangaReaderModeControlsLayoutRobolectricTest {
+
+    @Test
+    fun imageEnhancementToggleIsBesideBrightnessAndStartsDisabled() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val content = LayoutInflater.from(activity)
+            .inflate(R.layout.activity_manga_reader, null, false)
+        val customBrightness = content.findViewById<CheckBox>(R.id.checkboxCustomBrightness)
+        val imageEnhancement = content.findViewById<CheckBox>(R.id.checkboxReaderImageEnhancement)
+
+        assertSame(customBrightness.parent, imageEnhancement.parent)
+        assertEquals(false, imageEnhancement.isChecked)
+        assertEquals(activity.getString(R.string.reader_image_enhancement), imageEnhancement.text.toString())
+    }
 
     @Test
     fun readingModeButtonsAreFourSeparateButtonsBelowCustomBrightness() {
