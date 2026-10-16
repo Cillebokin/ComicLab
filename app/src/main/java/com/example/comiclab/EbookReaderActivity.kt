@@ -493,6 +493,17 @@ class EbookReaderActivity : AppCompatActivity() {
         EbookProgressStore.save(this, file, progress)
     }
 
+    // 测试接口：仅供 Robolectric 测试读取、注入阅读进度并触发强制保存，不参与运行时逻辑。
+    internal var progressForTest: EbookProgress?
+        get() = currentProgress
+        set(value) {
+            currentProgress = value
+        }
+
+    internal fun saveProgressForTest() {
+        saveCurrentProgress(force = true)
+    }
+
     private fun showContents() {
         val book = session?.book ?: return
         val titles = book.chapters.mapIndexed { index, chapter ->

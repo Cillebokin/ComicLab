@@ -97,20 +97,13 @@ class EbookReaderLifecycleRobolectricTest {
     )
 
     private fun currentProgress(activity: EbookReaderActivity): EbookProgress? =
-        EbookReaderActivity::class.java.getDeclaredField("currentProgress")
-            .apply { isAccessible = true }
-            .get(activity) as EbookProgress?
+        activity.progressForTest
 
     private fun setCurrentProgress(activity: EbookReaderActivity, progress: EbookProgress) {
-        EbookReaderActivity::class.java.getDeclaredField("currentProgress")
-            .apply { isAccessible = true }
-            .set(activity, progress)
+        activity.progressForTest = progress
     }
 
     private fun saveCurrentProgress(activity: EbookReaderActivity) {
-        EbookReaderActivity::class.java
-            .getDeclaredMethod("saveCurrentProgress", Boolean::class.javaPrimitiveType)
-            .apply { isAccessible = true }
-            .invoke(activity, true)
+        activity.saveProgressForTest()
     }
 }
