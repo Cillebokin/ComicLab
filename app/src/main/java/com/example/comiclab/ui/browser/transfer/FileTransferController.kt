@@ -68,8 +68,8 @@ internal object FileTransferMetadataUpdatePolicy {
         runCatching {
             updateFavorites()
             updateReadingHistory()
-            updateReaderProgress()
         }
+        runCatching { updateReaderProgress() }
     }
 
     fun applyDirectoryCut(

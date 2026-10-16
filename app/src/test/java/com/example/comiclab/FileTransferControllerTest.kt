@@ -139,10 +139,27 @@ class FileTransferControllerTest {
                 calls += "favorites"
                 error("favorite store failure")
             },
-            updateReadingHistory = { calls += "reading-history" }
+            updateReadingHistory = { calls += "reading-history" },
+            updateReaderProgress = { calls += "reader-progress" }
         )
 
-        assertEquals(listOf("favorites"), calls)
+        assertEquals(listOf("favorites", "reader-progress"), calls)
+    }
+
+    @Test
+    fun fileCutRunsReaderProgressEvenWhenReadingHistoryUpdateFails() {
+        val calls = mutableListOf<String>()
+
+        FileTransferMetadataUpdatePolicy.applyFileCut(
+            updateFavorites = { calls += "favorites" },
+            updateReadingHistory = {
+                calls += "reading-history"
+                error("history store failure")
+            },
+            updateReaderProgress = { calls += "reader-progress" }
+        )
+
+        assertEquals(listOf("favorites", "reading-history", "reader-progress"), calls)
     }
 
     @Test

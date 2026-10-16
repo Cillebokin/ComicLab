@@ -186,13 +186,20 @@ class EpubParserRobolectricTest {
         val root = Files.createTempDirectory("comiclab-epub-font-obfuscation").toFile()
         try {
             val file = File(root, "obfuscated-font.epub")
+            val fonts = """
+                <item id="font0" href="Fonts/font0.otf" media-type="font/otf"/>
+                <item id="font1" href="Fonts/font1.otf" media-type="font/otf"/>
+            """.trimIndent()
             writeEpub(
                 file,
+                opf = packageXml().replace("</manifest>", "$fonts</manifest>"),
                 extraEntries = mapOf(
                     "META-INF/encryption.xml" to encryptionXml(
                         "http://www.idpf.org/2008/embedding",
                         "http://ns.adobe.com/pdf/enc#RC"
-                    )
+                    ),
+                    "EPUB/Fonts/font0.otf" to "obfuscated font 0",
+                    "EPUB/Fonts/font1.otf" to "obfuscated font 1"
                 )
             )
 
@@ -200,6 +207,73 @@ class EpubParserRobolectricTest {
 
             assertEquals(2, parsed.book.chapters.size)
             assertTrue(parsed.book.chapters[0].html.contains("<p>First page</p>"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun rejectsFontObfuscationDeclarationThatTargetsChapterInsteadOfFont() {
+        val root = Files.createTempDirectory("comiclab-epub-encrypted-chapter").toFile()
+        try {
+            val file = File(root, "chapter.epub")
+            writeEpub(
+                file,
+                extraEntries = mapOf(
+                    "META-INF/encryption.xml" to encryptionXml(
+                        listOf("http://www.idpf.org/2008/embedding" to "EPUB/Text/chapter1.xhtml")
+                    )
+                )
+            )
+
+            assertParseError(EpubParseError.ENCRYPTED, file)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun rejectsFontObfuscationDeclarationForUnlistedResource() {
+        val root = Files.createTempDirectory("comiclab-epub-unlisted-encrypted-resource").toFile()
+        try {
+            val file = File(root, "missing-font.epub")
+            writeEpub(
+                file,
+                extraEntries = mapOf(
+                    "META-INF/encryption.xml" to encryptionXml(
+                        listOf("http://www.idpf.org/2008/embedding" to "EPUB/Fonts/missing.otf")
+                    ),
+                    "EPUB/Fonts/missing.otf" to "obfuscated font"
+                )
+            )
+
+            assertParseError(EpubParseError.ENCRYPTED, file)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun rejectsFontObfuscationDeclarationWithoutCipherReference() {
+        val root = Files.createTempDirectory("comiclab-epub-encrypted-no-reference").toFile()
+        try {
+            val file = File(root, "no-reference.epub")
+            writeEpub(
+                file,
+                extraEntries = mapOf(
+                    "META-INF/encryption.xml" to """
+                        <encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"
+                          xmlns:enc="http://www.w3.org/2001/04/xmlenc#">
+                          <enc:EncryptedData>
+                            <enc:EncryptionMethod Algorithm="http://www.idpf.org/2008/embedding"/>
+                            <enc:CipherData/>
+                          </enc:EncryptedData>
+                        </encryption>
+                    """.trimIndent()
+                )
+            )
+
+            assertParseError(EpubParseError.ENCRYPTED, file)
         } finally {
             root.deleteRecursively()
         }
@@ -267,13 +341,19 @@ class EpubParserRobolectricTest {
     }
 
     private fun encryptionXml(vararg algorithms: String): String = buildString {
+        encryptionXml(algorithms.mapIndexed { index, algorithm ->
+            algorithm to "EPUB/Fonts/font$index.otf"
+        }).also(::append)
+    }
+
+    private fun encryptionXml(references: List<Pair<String, String>>): String = buildString {
         append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
         append("<encryption xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\" ")
         append("xmlns:enc=\"http://www.w3.org/2001/04/xmlenc#\">")
-        algorithms.forEachIndexed { index, algorithm ->
+        references.forEach { (algorithm, uri) ->
             append("<enc:EncryptedData>")
             append("<enc:EncryptionMethod Algorithm=\"$algorithm\"/>")
-            append("<enc:CipherData><enc:CipherReference URI=\"EPUB/Fonts/font$index.otf\"/></enc:CipherData>")
+            append("<enc:CipherData><enc:CipherReference URI=\"$uri\"/></enc:CipherData>")
             append("</enc:EncryptedData>")
         }
         append("</encryption>")

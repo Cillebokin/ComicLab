@@ -176,6 +176,121 @@ class ReaderProgressMoveRobolectricTest {
     }
 
     @Test
+    fun moveFileUsesFurtherVerticalOffsetWhenPagePositionMatches() {
+        val source = File(root, "a.cbz").apply { writeBytes(byteArrayOf(1, 2, 3, 4, 5)) }
+        val target = File(root, "b.cbz").apply { writeBytes(byteArrayOf(9, 9, 9, 9, 9)) }
+        ReaderProgressStore.restoreReadingProgress(
+            context,
+            source,
+            ComicLabMangaProgress(path = source.absolutePath, position = 4, offset = -300)
+        )
+        ReaderProgressStore.restoreReadingProgress(
+            context,
+            target,
+            ComicLabMangaProgress(path = target.absolutePath, position = 4, offset = -100)
+        )
+        source.delete()
+
+        ReaderProgressStore.moveFile(context, source, target)
+
+        assertEquals(4 to -300, ReaderProgressStore.readPositionAndOffset(context, target))
+    }
+
+    @Test
+    fun moveFileKeepsTargetWhenItsVerticalOffsetIsFurther() {
+        val source = File(root, "a.cbz").apply { writeBytes(byteArrayOf(1, 2, 3, 4, 5)) }
+        val target = File(root, "b.cbz").apply { writeBytes(byteArrayOf(9, 9, 9, 9, 9)) }
+        ReaderProgressStore.restoreReadingProgress(
+            context,
+            source,
+            ComicLabMangaProgress(path = source.absolutePath, position = 4, offset = -100)
+        )
+        ReaderProgressStore.restoreReadingProgress(
+            context,
+            target,
+            ComicLabMangaProgress(path = target.absolutePath, position = 4, offset = -300)
+        )
+        source.delete()
+
+        ReaderProgressStore.moveFile(context, source, target)
+
+        assertEquals(4 to -300, ReaderProgressStore.readPositionAndOffset(context, target))
+    }
+
+    @Test
+    fun moveFileChoosesFurthestOfProgressKeysForSourceWithChangedMtime() {
+        val source = File(root, "a.cbz").apply { writeBytes(byteArrayOf(1, 2, 3, 4, 5)) }
+        source.setLastModified(1_000_000L)
+        ReaderProgressStore.restoreReadingProgress(
+            context,
+            source,
+            ComicLabMangaProgress(path = source.absolutePath, position = 4, offset = -100)
+        )
+        source.setLastModified(2_000_000L)
+        ReaderProgressStore.restoreReadingProgress(
+            context,
+            source,
+            ComicLabMangaProgress(path = source.absolutePath, position = 4, offset = -300)
+        )
+        assertEquals(
+            "different mtimes must leave distinct historical keys for migration to reconcile",
+            4,
+            context.getSharedPreferences("reader_prefs", 0).all.keys.count {
+                it.startsWith("reader:${source.absolutePath}:")
+            }
+        )
+        val target = File(root, "b.cbz").apply { writeBytes(byteArrayOf(9, 9, 9, 9, 9)) }
+        source.delete()
+
+        ReaderProgressStore.moveFile(context, source, target)
+
+        assertEquals(4 to -300, ReaderProgressStore.readPositionAndOffset(context, target))
+        assertFalse(hasKeyWithPathPrefix(source.absolutePath))
+    }
+
+    @Test
+    fun moveFileDoesNotLetPendingTargetWriteOverwriteFurtherSourceProgress() {
+        val source = File(root, "a.cbz").apply { writeBytes(byteArrayOf(1, 2, 3, 4, 5)) }
+        val target = File(root, "b.cbz").apply { writeBytes(byteArrayOf(9, 9, 9, 9, 9)) }
+        ReaderProgressStore.restoreReadingProgress(
+            context,
+            source,
+            ComicLabMangaProgress(path = source.absolutePath, position = 8, offset = -50)
+        )
+        val pendingTargetWrite = ReaderProgressStore.prepareSave(
+            context,
+            target,
+            position = 2,
+            offset = 0
+        )
+        source.delete()
+
+        ReaderProgressStore.moveFile(context, source, target)
+        assertTrue(pendingTargetWrite.commit())
+
+        assertEquals(8 to -50, ReaderProgressStore.readPositionAndOffset(context, target))
+    }
+
+    @Test
+    fun moveFileRedirectsPreparedProgressWriteToNewPath() {
+        val source = File(root, "a.cbz").apply { writeBytes(byteArrayOf(1, 2, 3, 4, 5)) }
+        val target = File(root, "b.cbz").apply { writeBytes(byteArrayOf(9, 9, 9, 9, 9)) }
+        val preparedWrite = ReaderProgressStore.prepareSave(
+            context,
+            source,
+            position = 7,
+            offset = -240
+        )
+        source.delete()
+
+        ReaderProgressStore.moveFile(context, source, target)
+        preparedWrite.apply()
+
+        assertEquals(7 to -240, ReaderProgressStore.readPositionAndOffset(context, target))
+        assertFalse(hasKeyWithPathPrefix(source.absolutePath))
+    }
+
+    @Test
     fun readingHistoryMoveFileKeepsTheNewerEntryWhenTargetAlreadyExists() {
         val source = File(root, "a.cbz").apply { writeBytes(byteArrayOf(1, 2, 3)) }
         val target = File(root, "b.cbz").apply { writeBytes(byteArrayOf(4, 5, 6)) }

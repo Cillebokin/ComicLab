@@ -5,15 +5,69 @@ import android.content.SharedPreferences
 import com.example.comiclab.BookcaseFolderPaths
 import com.example.comiclab.ComicLabMangaProgress
 import java.io.File
+import java.util.WeakHashMap
 
 object ReaderProgressStore {
 
-    internal class PreparedWrite(private val editor: SharedPreferences.Editor) {
+    private val writeLock = Any()
+    private val pendingWrites = WeakHashMap<PreparedWrite, Unit>()
+
+    internal class PreparedWrite(
+        private val preferences: SharedPreferences,
+        internal var archiveKey: String,
+        internal val position: Int,
+        internal val offset: Int
+    ) {
+        private var mergeWithExisting = false
+
         fun apply() {
-            editor.apply()
+            finish(commit = false)
         }
 
-        fun commit(): Boolean = editor.commit()
+        fun commit(): Boolean = finish(commit = true)
+
+        internal fun redirectTo(archiveKey: String) {
+            this.archiveKey = archiveKey
+            mergeWithExisting = true
+        }
+
+        internal fun mergeWithCurrent() {
+            mergeWithExisting = true
+        }
+
+        private fun finish(commit: Boolean): Boolean = synchronized(writeLock) {
+            val savedPositionKey = positionKey(archiveKey)
+            val savedOffsetKey = offsetKey(archiveKey)
+            var existingPosition = 0
+            var existingOffset = 0
+            val shouldWrite = if (mergeWithExisting) {
+                val hasExisting = preferences.contains(savedPositionKey) || preferences.contains(savedOffsetKey)
+                existingPosition = preferences.getInt(savedPositionKey, 0)
+                existingOffset = preferences.getInt(savedOffsetKey, 0)
+                !hasExisting || isFurtherProgress(position, offset, existingPosition, existingOffset)
+            } else {
+                true
+            }
+            pendingWrites.remove(this)
+            if (!shouldWrite) {
+                return@synchronized if (commit) {
+                    preferences.edit()
+                        .putInt(savedPositionKey, existingPosition)
+                        .putInt(savedOffsetKey, existingOffset)
+                        .commit()
+                } else {
+                    true
+                }
+            }
+
+            val editor = preferences.edit()
+                .putInt(savedPositionKey, position)
+                .putInt(savedOffsetKey, offset)
+            if (commit) editor.commit() else {
+                editor.apply()
+                true
+            }
+        }
     }
 
     internal fun prepareSave(
@@ -31,12 +85,14 @@ object ReaderProgressStore {
         position: Int,
         offset: Int
     ): PreparedWrite {
-        val editor = preferences.edit()
-        val archiveKey = readerArchiveKey(file)
-        editor
-            .putInt(positionKey(archiveKey), position)
-            .putInt(offsetKey(archiveKey), offset)
-        return PreparedWrite(editor)
+        return synchronized(writeLock) {
+            PreparedWrite(
+                preferences = preferences,
+                archiveKey = readerArchiveKey(file),
+                position = position,
+                offset = offset
+            ).also { pendingWrites[it] = Unit }
+        }
     }
 
     fun readPositionAndOffset(context: Context, file: File): Pair<Int, Int> {
@@ -113,42 +169,114 @@ object ReaderProgressStore {
     }
 
     private fun moveProgress(context: Context, oldPath: String, newPath: String) {
-        val prefs = preferences(context)
-        val archiveKeys = prefs.all.keys.mapNotNull(::archiveKeyOf).distinct()
-        val editor = prefs.edit()
-        var changed = false
-        archiveKeys.forEach { archiveKey ->
-            val source = parseArchiveKey(archiveKey) ?: return@forEach
-            val movedPath = BookcaseFolderPaths.remapPath(source.path, oldPath, newPath)
-            if (movedPath == source.path) return@forEach
+        synchronized(writeLock) {
+            val prefs = preferences(context)
+            // Read the SharedPreferences map once. getAll() copies the backing map,
+            // so calling it for every stored key makes large libraries quadratic.
+            val snapshot = prefs.all
+            val migrations = linkedMapOf<String, ProgressMigration>()
 
-            val target = File(movedPath)
-            if (!target.isFile || target.length() != source.length) return@forEach
+            snapshot.keys.mapNotNull(::archiveKeyOf).distinct().forEach { archiveKey ->
+                val source = parseArchiveKey(archiveKey) ?: return@forEach
+                val movedPath = BookcaseFolderPaths.remapPath(source.path, oldPath, newPath)
+                if (movedPath == source.path) return@forEach
 
-            val position = prefs.all[positionKey(archiveKey)] as? Int
-            val offset = prefs.all[offsetKey(archiveKey)] as? Int
-            if (position == null && offset == null) return@forEach
+                val target = File(movedPath)
+                if (!target.isFile || target.length() != source.length) return@forEach
 
-            val targetKey = readerArchiveKey(target)
-            val existingPosition = prefs.all[positionKey(targetKey)] as? Int ?: -1
-            val existingOffset = prefs.all[offsetKey(targetKey)] as? Int ?: 0
-            // 目标路径已有进度时保留较新者（决策 D3）。进度不含时间戳，
-            // 以阅读位置更靠后者作为较新依据。
-            val keepExisting = existingPosition >= 0 &&
-                (existingPosition > (position ?: 0) ||
-                    (existingPosition == (position ?: 0) && existingOffset >= (offset ?: 0)))
+                val position = snapshot[positionKey(archiveKey)] as? Int
+                val offset = snapshot[offsetKey(archiveKey)] as? Int
+                if (position == null && offset == null) return@forEach
 
-            editor.remove(positionKey(archiveKey)).remove(offsetKey(archiveKey))
-            if (!keepExisting) {
-                position?.let { editor.putInt(positionKey(targetKey), it) }
-                offset?.let { editor.putInt(offsetKey(targetKey), it) }
+                val targetKey = readerArchiveKey(target)
+                val migration = migrations.getOrPut(targetKey) {
+                    ProgressMigration(targetKey)
+                }
+                migration.sourceArchiveKeys += archiveKey
+                migration.candidates += ProgressValue(position ?: 0, offset ?: 0)
             }
-            changed = true
-        }
-        if (changed) {
+
+            // A save can be queued on the reader executor before a browser cut. If
+            // the cut wins the race, redirect that still-pending write to the new key.
+            pendingWrites.keys.toList().forEach { write ->
+                val source = parseArchiveKey(write.archiveKey) ?: return@forEach
+                val movedPath = BookcaseFolderPaths.remapPath(source.path, oldPath, newPath)
+                if (movedPath == source.path) return@forEach
+
+                val target = File(movedPath)
+                if (!target.isFile || target.length() != source.length) return@forEach
+
+                val targetKey = readerArchiveKey(target)
+                val migration = migrations.getOrPut(targetKey) {
+                    ProgressMigration(targetKey)
+                }
+                migration.candidates += write.progressValue()
+                write.redirectTo(targetKey)
+            }
+
+            // A pending write already prepared for the destination must merge with
+            // the migrated source instead of overwriting it after the cut.
+            pendingWrites.keys.toList().forEach { write ->
+                if (write.archiveKey in migrations) {
+                    write.mergeWithCurrent()
+                }
+            }
+
+            if (migrations.isEmpty()) return
+
+            val editor = prefs.edit()
+            migrations.values.forEach { migration ->
+                val positionKey = positionKey(migration.targetArchiveKey)
+                val offsetKey = offsetKey(migration.targetArchiveKey)
+                val hasTargetProgress =
+                    snapshot.containsKey(positionKey) || snapshot.containsKey(offsetKey)
+                var best = if (hasTargetProgress) {
+                    ProgressValue(
+                        position = snapshot[positionKey] as? Int ?: 0,
+                        offset = snapshot[offsetKey] as? Int ?: 0
+                    )
+                } else {
+                    null
+                }
+                migration.candidates.forEach { candidate ->
+                    if (best == null || candidate.isFurtherThan(best!!)) {
+                        best = candidate
+                    }
+                }
+                best?.let { progress ->
+                    editor.putInt(positionKey, progress.position)
+                    editor.putInt(offsetKey, progress.offset)
+                }
+                migration.sourceArchiveKeys.forEach { archiveKey ->
+                    editor.remove(positionKey(archiveKey))
+                    editor.remove(offsetKey(archiveKey))
+                }
+            }
             editor.apply()
         }
     }
+
+    private data class ProgressMigration(
+        val targetArchiveKey: String,
+        val sourceArchiveKeys: MutableList<String> = mutableListOf(),
+        val candidates: MutableList<ProgressValue> = mutableListOf()
+    )
+
+    private data class ProgressValue(val position: Int, val offset: Int) {
+        fun isFurtherThan(other: ProgressValue): Boolean =
+            isFurtherProgress(position, offset, other.position, other.offset)
+    }
+
+    private fun isFurtherProgress(
+        position: Int,
+        offset: Int,
+        otherPosition: Int,
+        otherOffset: Int
+    ): Boolean = position > otherPosition ||
+        // Vertical reader offsets are child.top, so scrolling forward decreases them.
+        (position == otherPosition && offset < otherOffset)
+
+    private fun PreparedWrite.progressValue(): ProgressValue = ProgressValue(position, offset)
 
     private data class ArchiveKeyParts(val path: String, val length: Long)
 
