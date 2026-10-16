@@ -1,8 +1,8 @@
 package com.example.comiclab
 
 import android.content.Context
-import android.content.Intent
 import android.graphics.Rect
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.View
 import android.widget.EditText
@@ -22,7 +22,13 @@ import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import com.example.comiclab.ui.browser.model.FileItem
+import com.example.comiclab.core.store.FavoriteComicStore
+import com.example.comiclab.core.store.FavoritePathStore
+import com.example.comiclab.core.store.ReaderProgressStore
+import com.example.comiclab.core.store.ReadingHistoryStore
 import java.io.File
 import java.nio.file.Files
 import java.util.UUID
@@ -33,6 +39,7 @@ import org.hamcrest.Matcher
 import org.hamcrest.TypeSafeMatcher
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -53,10 +60,14 @@ class FileTransferFlowTest {
     private var testRoot: File? = null
     private var sandbox: File? = null
     private var storedPathSandbox: StoredPathPreferenceSandbox? = null
+    private var protectedPreferenceSnapshots: Map<String, Map<String, Any?>> = emptyMap()
 
     @Before
     fun setUp() {
         context = instrumentation.targetContext
+        protectedPreferenceSnapshots = PROTECTED_PREFERENCE_NAMES.associateWith { name ->
+            snapshotPreferences(name)
+        }
         preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         hadCurrentPath = preferences!!.contains(KEY_CURRENT_PATH)
         previousCurrentPath = preferences!!.getString(KEY_CURRENT_PATH, null)
@@ -64,25 +75,37 @@ class FileTransferFlowTest {
         previousPermissionPrompted =
             preferences!!.getBoolean(KEY_STORAGE_PERMISSION_PROMPTED, false)
 
-        testRoot = File(context.cacheDir, TEST_ROOT_NAME).canonicalFile
-        if (!testRoot!!.exists()) {
-            check(testRoot!!.mkdirs()) {
-                "Could not create the app-private test directory: ${testRoot!!.absolutePath}"
-            }
-        }
+        testRoot = File(TEST_ROOT_PATH).canonicalFile
         check(testRoot!!.isDirectory) {
-            "The app-private test directory must exist: ${testRoot!!.absolutePath}"
+            "The requested validation directory must already exist: ${testRoot!!.absolutePath}"
         }
         check(!Files.isSymbolicLink(testRoot!!.toPath())) {
-            "The app-private test directory must not be a symbolic link"
+            "The requested validation directory must not be a symbolic link"
+        }
+        val previousPath = previousCurrentPath?.let(::File)?.canonicalFile?.toPath()
+        val validationRootPath = testRoot!!.toPath()
+        val previousPathWithinTestRoot = previousPath
+            ?.takeIf { it.startsWith(validationRootPath) }
+            ?.let(validationRootPath::relativize)
+        if (
+            previousPathWithinTestRoot != null &&
+            previousPathWithinTestRoot.nameCount > 0 &&
+            previousPathWithinTestRoot.getName(0).toString().startsWith(TEST_SANDBOX_PREFIX)
+        ) {
+            // Recover the browser path if a prior instrumentation process was interrupted
+            // after setting current_path but before its @After restoration ran.
+            previousCurrentPath = testRoot!!.absolutePath
         }
 
         sandbox = File(
             testRoot,
-            "comiclab-transfer-e2e-${UUID.randomUUID()}"
+            "$TEST_SANDBOX_PREFIX${UUID.randomUUID()}"
         ).canonicalFile
         check(sandbox!!.toPath().startsWith(testRoot!!.toPath())) {
-            "The test sandbox must remain inside the app-private test directory"
+            "The test sandbox must remain inside the requested validation directory"
+        }
+        check(sandbox!!.name.startsWith(TEST_SANDBOX_PREFIX)) {
+            "The test sandbox must use its dedicated cleanup prefix"
         }
         check(!sandbox!!.exists()) { "Refusing to reuse an existing test sandbox" }
         check(sandbox!!.mkdirs()) { "Could not create the isolated test sandbox" }
@@ -97,10 +120,7 @@ class FileTransferFlowTest {
         )
         storedPathSandbox = StoredPathPreferenceSandbox(context)
 
-        activity = instrumentation.startActivitySync(
-            Intent(context, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        ) as MainActivity
+        activity = launchBrowserActivity()
         awaitListItem(SOURCE_DIRECTORY_NAME)
     }
 
@@ -130,14 +150,21 @@ class FileTransferFlowTest {
             try {
                 storedPathSandbox?.restore()
             } finally {
-                val cleanupRoot = sandbox
-                if (cleanupRoot != null && cleanupRoot.exists()) {
-                    val parent = testRoot ?: error("Missing app-private test root")
-                    check(cleanupRoot.canonicalFile.toPath().startsWith(parent.toPath())) {
-                        "Refusing to clean anything outside the app-private test directory"
-                    }
-                    check(cleanupRoot.deleteRecursively()) {
-                        "Test cleanup failed; the remaining data is confined to ${cleanupRoot.absolutePath}"
+                try {
+                    restoreProtectedPreferences()
+                } finally {
+                    val cleanupRoot = sandbox
+                    if (cleanupRoot != null && cleanupRoot.exists()) {
+                        val parent = testRoot ?: error("Missing validation test root")
+                        check(cleanupRoot.canonicalFile.toPath().startsWith(parent.toPath())) {
+                            "Refusing to clean anything outside the validation test directory"
+                        }
+                        check(cleanupRoot.name.startsWith(TEST_SANDBOX_PREFIX)) {
+                            "Refusing to clean a directory without the test-only prefix"
+                        }
+                        check(cleanupRoot.deleteRecursively()) {
+                            "Test cleanup failed; the remaining data is confined to ${cleanupRoot.absolutePath}"
+                        }
                     }
                 }
             }
@@ -280,6 +307,161 @@ class FileTransferFlowTest {
         onView(withId(R.id.btnPasteFile)).check(matches(isDisplayed()))
     }
 
+    @Test
+    fun cutDirectoryMigratesBookcaseFavoritesHistoryAndProgressOnDevice() {
+        val sourceDirectory = createComicFolder("cut-metadata")
+        val sourceArchive = File(sourceDirectory, "nested/chapter.cbz")
+        val expectedBytes = sourceArchive.readBytes()
+        val lastReadAt = System.currentTimeMillis() - 1_000L
+
+        assertEquals(
+            FavoritePathStore.RecordResult.ADDED,
+            FavoritePathStore.record(context, sourceDirectory)
+        )
+        assertEquals(
+            FavoriteComicStore.RecordResult.ADDED,
+            FavoriteComicStore.record(context, sourceArchive)
+        )
+        ReadingHistoryStore.merge(
+            context,
+            listOf(historyItem(sourceArchive, lastReadAt))
+        )
+        ReaderProgressStore.restoreReadingProgress(
+            context,
+            sourceArchive,
+            ComicLabMangaProgress(
+                path = sourceArchive.absolutePath,
+                position = 4,
+                offset = -91
+            )
+        )
+        AppSettings.setBookcaseDirectory(context, sourceDirectory, enabled = true)
+
+        openDirectory(SOURCE_DIRECTORY_NAME)
+        chooseDirectoryAction(sourceDirectory.name, R.id.btnCutDirectory)
+        navigateToDestination()
+        onView(withId(R.id.btnPasteFile)).perform(click())
+        awaitTransferModeEnded()
+
+        val movedDirectory = File(destinationDirectory(), sourceDirectory.name)
+        val movedArchive = File(movedDirectory, "nested/chapter.cbz")
+        assertFalse(sourceDirectory.exists())
+        assertArrayEquals(expectedBytes, movedArchive.readBytes())
+        assertEquals(setOf(movedDirectory.absolutePath), FavoritePathStore.favoriteDirectoryPaths(context))
+        assertEquals(setOf(movedArchive.absolutePath), FavoriteComicStore.favoriteFilePaths(context))
+        val history = ReadingHistoryStore.items(context)
+        assertEquals(listOf(movedArchive.absolutePath), history.map { it.file.absolutePath })
+        assertEquals(lastReadAt, history.single().lastReadAt)
+        assertEquals(4 to -91, ReaderProgressStore.readPositionAndOffset(context, movedArchive))
+        assertTrue(AppSettings.bookcaseDirectoryPaths(context).contains(movedDirectory.absolutePath))
+        assertFalse(AppSettings.bookcaseDirectoryPaths(context).contains(sourceDirectory.absolutePath))
+        assertFalse(
+            context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+                .all.keys.any { it.startsWith("reader:${sourceArchive.absolutePath}:") }
+        )
+    }
+
+    @Test
+    fun renamingDirectoryMigratesMetadataAndKeepsNewerTargetHistoryOnDevice() {
+        val sourceDirectory = createComicFolder("rename-directory")
+        val sourceArchive = File(sourceDirectory, "nested/chapter.cbz")
+        val sourceReadAt = System.currentTimeMillis() - 10_000L
+        val targetReadAt = sourceReadAt + 5_000L
+        val targetDirectory = File(sourceDirectory.parentFile, "renamed-directory")
+        val staleTargetArchive = File(targetDirectory, "nested/chapter.cbz")
+
+        assertEquals(
+            FavoritePathStore.RecordResult.ADDED,
+            FavoritePathStore.record(context, sourceDirectory)
+        )
+        assertEquals(
+            FavoriteComicStore.RecordResult.ADDED,
+            FavoriteComicStore.record(context, sourceArchive)
+        )
+        ReadingHistoryStore.merge(context, listOf(historyItem(sourceArchive, sourceReadAt)))
+        ReaderProgressStore.restoreReadingProgress(
+            context,
+            sourceArchive,
+            ComicLabMangaProgress(sourceArchive.absolutePath, position = 6, offset = -40)
+        )
+        AppSettings.setBookcaseDirectory(context, sourceDirectory, enabled = true)
+
+        check(staleTargetArchive.parentFile?.mkdirs() == true)
+        staleTargetArchive.writeBytes(sourceArchive.readBytes())
+        check(staleTargetArchive.setLastModified(sourceArchive.lastModified()))
+        ReadingHistoryStore.merge(context, listOf(historyItem(staleTargetArchive, targetReadAt)))
+        ReaderProgressStore.restoreReadingProgress(
+            context,
+            staleTargetArchive,
+            ComicLabMangaProgress(staleTargetArchive.absolutePath, position = 9, offset = -10)
+        )
+        check(staleTargetArchive.delete())
+        check(targetDirectory.deleteRecursively())
+
+        openDirectory(SOURCE_DIRECTORY_NAME)
+        renameDirectoryInBrowser(sourceDirectory.name, targetDirectory.name)
+
+        val movedArchive = File(targetDirectory, "nested/chapter.cbz")
+        assertTrue(targetDirectory.isDirectory)
+        assertFalse(sourceDirectory.exists())
+        assertTrue(AppSettings.bookcaseDirectoryPaths(context).contains(targetDirectory.absolutePath))
+        assertFalse(AppSettings.bookcaseDirectoryPaths(context).contains(sourceDirectory.absolutePath))
+        assertEquals(setOf(targetDirectory.absolutePath), FavoritePathStore.favoriteDirectoryPaths(context))
+        assertEquals(setOf(movedArchive.absolutePath), FavoriteComicStore.favoriteFilePaths(context))
+        val history = ReadingHistoryStore.items(context)
+        assertEquals(listOf(movedArchive.absolutePath), history.map { it.file.absolutePath })
+        assertEquals(targetReadAt, history.single().lastReadAt)
+        assertEquals(9 to -10, ReaderProgressStore.readPositionAndOffset(context, movedArchive))
+        assertFalse(
+            context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+                .all.keys.any { it.startsWith("reader:${sourceArchive.absolutePath}:") }
+        )
+    }
+
+    @Test
+    fun renamingFileMigratesFavoriteHistoryAndProgressOnDevice() {
+        val sourceArchive = createComicFile(SOURCE_DIRECTORY_NAME, "rename-file.cbz", "file rename bytes")
+        val lastReadAt = System.currentTimeMillis() - 10_000L
+        val targetReadAt = lastReadAt + 5_000L
+        val targetArchive = File(sourceArchive.parentFile, "renamed-file.cbz")
+
+        assertEquals(
+            FavoriteComicStore.RecordResult.ADDED,
+            FavoriteComicStore.record(context, sourceArchive)
+        )
+        ReadingHistoryStore.merge(context, listOf(historyItem(sourceArchive, lastReadAt)))
+        ReaderProgressStore.restoreReadingProgress(
+            context,
+            sourceArchive,
+            ComicLabMangaProgress(sourceArchive.absolutePath, position = 7, offset = -30)
+        )
+
+        targetArchive.writeBytes(sourceArchive.readBytes())
+        targetArchive.setLastModified(sourceArchive.lastModified())
+        ReadingHistoryStore.merge(context, listOf(historyItem(targetArchive, targetReadAt)))
+        ReaderProgressStore.restoreReadingProgress(
+            context,
+            targetArchive,
+            ComicLabMangaProgress(targetArchive.absolutePath, position = 9, offset = -15)
+        )
+        check(targetArchive.delete())
+
+        openDirectory(SOURCE_DIRECTORY_NAME)
+        renameFileInBrowser(sourceArchive.name, targetArchive.nameWithoutExtension)
+
+        assertFalse(sourceArchive.exists())
+        assertTrue(targetArchive.isFile)
+        assertEquals(setOf(targetArchive.absolutePath), FavoriteComicStore.favoriteFilePaths(context))
+        val history = ReadingHistoryStore.items(context)
+        assertEquals(listOf(targetArchive.absolutePath), history.map { it.file.absolutePath })
+        assertEquals(targetReadAt, history.single().lastReadAt)
+        assertEquals(9 to -15, ReaderProgressStore.readPositionAndOffset(context, targetArchive))
+        assertFalse(
+            context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+                .all.keys.any { it.startsWith("reader:${sourceArchive.absolutePath}:") }
+        )
+    }
+
     private fun createComicFile(parentName: String, name: String, contents: String): File {
         val file = File(File(sandbox, parentName), name)
         ZipOutputStream(file.outputStream()).use { zip ->
@@ -299,6 +481,74 @@ class FileTransferFlowTest {
         createComicFile("$SOURCE_DIRECTORY_NAME/$name", ".hidden.cbz", "hidden bytes")
         File(directory, "empty").mkdir()
         return directory
+    }
+
+    private fun historyItem(file: File, lastReadAt: Long) = ReadingHistoryStore.Item(
+        file = file,
+        lastReadAt = lastReadAt,
+        fileSize = file.length(),
+        modifiedAt = file.lastModified()
+    )
+
+    private fun renameDirectoryInBrowser(oldName: String, newName: String) {
+        awaitListItem(oldName)
+        onData(fileItemNamed(oldName))
+            .inAdapterView(withId(R.id.listFiles))
+            .perform(longClick())
+        waitForActionToSettle(R.id.btnRenameDirectoryName)
+        onView(withId(R.id.btnRenameDirectoryName))
+            .inRoot(isDialog())
+            .perform(click())
+        onView(isAssignableFrom(EditText::class.java))
+            .inRoot(isDialog())
+            .perform(replaceText(newName))
+        onView(withText(R.string.confirm)).inRoot(isDialog()).perform(click())
+    }
+
+    private fun renameFileInBrowser(oldName: String, newName: String) {
+        awaitListItem(oldName)
+        onData(fileItemNamed(oldName))
+            .inAdapterView(withId(R.id.listFiles))
+            .perform(click())
+        waitForActionToSettle(R.id.btnRenameFileName)
+        onView(withId(R.id.btnRenameFileName))
+            .inRoot(isDialog())
+            .perform(click())
+        onView(isAssignableFrom(EditText::class.java))
+            .inRoot(isDialog())
+            .perform(replaceText(newName))
+        onView(withText(R.string.confirm)).inRoot(isDialog()).perform(click())
+    }
+
+    private fun snapshotPreferences(name: String): Map<String, Any?> {
+        return context.getSharedPreferences(name, Context.MODE_PRIVATE)
+            .all
+            .mapValues { (_, value) ->
+                if (value is Set<*>) value.filterIsInstance<String>().toSet() else value
+            }
+    }
+
+    private fun restoreProtectedPreferences() {
+        protectedPreferenceSnapshots.forEach { (name, values) ->
+            val editor = context.getSharedPreferences(name, Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+            values.forEach { (key, value) ->
+                when (value) {
+                    is String -> editor.putString(key, value)
+                    is Boolean -> editor.putBoolean(key, value)
+                    is Int -> editor.putInt(key, value)
+                    is Long -> editor.putLong(key, value)
+                    is Float -> editor.putFloat(key, value)
+                    is Set<*> -> editor.putStringSet(
+                        key,
+                        value.filterIsInstance<String>().toMutableSet()
+                    )
+                    else -> error("Unsupported SharedPreferences value for $name/$key")
+                }
+            }
+            check(editor.commit()) { "Could not restore $name after device validation" }
+        }
     }
 
     private fun openDirectory(name: String) {
@@ -400,6 +650,30 @@ class FileTransferFlowTest {
         openDirectory(DESTINATION_DIRECTORY_NAME)
     }
 
+    private fun launchBrowserActivity(): MainActivity {
+        val descriptor = instrumentation.uiAutomation.executeShellCommand(
+            "am start -n com.example.comiclab/.MainActivity -f 0x10008000"
+        )
+        val shellOutput = ParcelFileDescriptor.AutoCloseInputStream(descriptor)
+            .bufferedReader()
+            .use { it.readText() }
+        check(shellOutput.contains("Starting:")) {
+            "device shell could not foreground isolated file-transfer test browser: $shellOutput"
+        }
+
+        var resumedActivity: MainActivity? = null
+        awaitCondition("isolated MainActivity did not resume") {
+            instrumentation.runOnMainSync {
+                resumedActivity = ActivityLifecycleMonitorRegistry.getInstance()
+                    .getActivitiesInStage(Stage.RESUMED)
+                    .filterIsInstance<MainActivity>()
+                    .firstOrNull { !it.isFinishing && !it.isDestroyed }
+            }
+            resumedActivity != null
+        }
+        return checkNotNull(resumedActivity)
+    }
+
     private fun awaitTransferModeEnded() {
         awaitCondition("transfer mode should end after a successful paste") {
             var ended = false
@@ -455,10 +729,12 @@ class FileTransferFlowTest {
         }
 
     private companion object {
+        const val TEST_ROOT_PATH = "/sdcard/Download/CMCNList"
+        const val TEST_SANDBOX_PREFIX = "ComicLab-DeviceValidation-"
+        val PROTECTED_PREFERENCE_NAMES = listOf("reader_prefs", "app_settings")
         const val PREFS_NAME = "saf_prefs"
         const val KEY_CURRENT_PATH = "current_path"
         const val KEY_STORAGE_PERMISSION_PROMPTED = "storage_permission_prompted"
-        const val TEST_ROOT_NAME = "task32-file-transfer-tests"
         const val SOURCE_DIRECTORY_NAME = "Source"
         const val DESTINATION_DIRECTORY_NAME = "Destination"
         const val UI_TIMEOUT_MS = 15_000L

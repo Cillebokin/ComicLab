@@ -42,6 +42,9 @@ import com.example.comiclab.core.reader.decode.shouldSkipTiledPdfPreviewDecodeAf
 import com.example.comiclab.core.reader.decode.shouldUsePdfTiledRendering
 import com.example.comiclab.core.reader.decode.visiblePreviewPriorityForReader
 import com.example.comiclab.core.reader.layout.ReaderPagePositionMapper
+import com.example.comiclab.ui.reader.manga.page.calculateFitInsideSize
+import com.example.comiclab.ui.reader.manga.page.calculateSampleSizeForWidth
+import com.example.comiclab.ui.reader.manga.page.sourceToDisplayY
 import java.io.File
 import java.util.Collections
 import java.util.concurrent.PriorityBlockingQueue
@@ -611,13 +614,23 @@ internal class MangaPageAdapter(
             setContainerSize(holder.container, baseDisplayWidth, baseDisplayHeight)
             val imageWidth = baseDisplayWidth
             val imageHeight = if (bounds != null) {
-                val size = calculateFitInsideSize(bounds.width, bounds.height)
+                val size = calculateFitInsideSize(
+                    bounds.width,
+                    bounds.height,
+                    baseDisplayWidth,
+                    baseDisplayHeight
+                )
                 size.height
             } else {
                 baseDisplayHeight
             }
             val centeredWidth = if (bounds != null) {
-                calculateFitInsideSize(bounds.width, bounds.height).width
+                calculateFitInsideSize(
+                    bounds.width,
+                    bounds.height,
+                    baseDisplayWidth,
+                    baseDisplayHeight
+                ).width
             } else {
                 imageWidth
             }
@@ -651,7 +664,12 @@ internal class MangaPageAdapter(
         holder.imageView.setBackgroundColor(Color.BLACK)
 
         if (isHorizontalReading()) {
-            val imageSize = calculateFitInsideSize(bitmap.width, bitmap.height)
+            val imageSize = calculateFitInsideSize(
+                bitmap.width,
+                bitmap.height,
+                baseDisplayWidth,
+                baseDisplayHeight
+            )
             setContainerSize(holder.container, baseDisplayWidth, baseDisplayHeight)
             setFrameChildSize(
                 holder.imageView,
@@ -1882,18 +1900,6 @@ internal class MangaPageAdapter(
             decodedPixels >= TILED_DECODED_PIXEL_THRESHOLD
     }
 
-    private fun calculateSampleSizeForWidth(width: Int, targetWidth: Int): Int {
-        if (width <= 0 || targetWidth <= 0) {
-            return 1
-        }
-
-        var sampleSize = 1
-        while (width / (sampleSize * 2) >= targetWidth) {
-            sampleSize *= 2
-        }
-        return sampleSize
-    }
-
     private fun setContainerHeight(container: FrameLayout, height: Int) {
         setContainerSize(container, RecyclerView.LayoutParams.MATCH_PARENT, height)
     }
@@ -1954,16 +1960,6 @@ internal class MangaPageAdapter(
         }
     }
 
-    private fun sourceToDisplayY(sourceY: Int, sourceHeight: Int, imageHeight: Int): Int {
-        if (sourceHeight <= 0 || imageHeight <= 0) {
-            return 0
-        }
-
-        return (sourceY.toFloat() / sourceHeight.toFloat() * imageHeight.toFloat())
-            .roundToInt()
-            .coerceIn(0, imageHeight)
-    }
-
     private fun calculateDisplayHeight(width: Int, height: Int, imageWidth: Int): Int {
         if (width <= 0 || height <= 0 || imageWidth <= 0) {
             return MIN_READER_PAGE_HEIGHT
@@ -1972,20 +1968,6 @@ internal class MangaPageAdapter(
         return (imageWidth.toFloat() / width.toFloat() * height.toFloat())
             .roundToInt()
             .coerceAtLeast(1)
-    }
-
-    private fun calculateFitInsideSize(width: Int, height: Int): DisplaySize {
-        if (width <= 0 || height <= 0 || baseDisplayWidth <= 0 || baseDisplayHeight <= 0) {
-            return DisplaySize(baseDisplayWidth, baseDisplayHeight)
-        }
-
-        val widthScale = baseDisplayWidth.toFloat() / width.toFloat()
-        val heightScale = baseDisplayHeight.toFloat() / height.toFloat()
-        val scale = minOf(widthScale, heightScale)
-        return DisplaySize(
-            width = (width * scale).roundToInt().coerceAtLeast(1),
-            height = (height * scale).roundToInt().coerceAtLeast(1)
-        )
     }
 
     private fun zoomedDisplayWidth(): Int {
@@ -2220,11 +2202,6 @@ internal class MangaPageAdapter(
         val tileIndex: Int,
         val imageWidth: Int,
         val decodeWidth: Int
-    )
-
-    private data class DisplaySize(
-        val width: Int,
-        val height: Int
     )
 
     private enum class DecodeTaskKind {
