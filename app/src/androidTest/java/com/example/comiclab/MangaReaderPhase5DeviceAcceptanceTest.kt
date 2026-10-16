@@ -116,7 +116,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
 
         awaitDebugStress(activity, expectedSteps = 8)
         exercisePinchAndFastSwipe(activity)
-        val positionBeforeRotation = field<Int>(activity, "currentReaderPosition")
+        val positionBeforeRotation = activity.currentReaderPositionForTest
         assertTrue("Page flipping should advance beyond the first page", positionBeforeRotation > 0)
 
         val previous = activity
@@ -127,7 +127,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         assertEquals(Configuration.ORIENTATION_LANDSCAPE, onMain { activity.resources.configuration.orientation })
         awaitExecutor(oldProgressExecutor)
         awaitCondition("reader-position restoration retries did not finish") {
-            field<Int?>(activity, "pendingRestorePosition") == null
+            activity.pendingRestorePositionForTest == null
         }
         val persistedPosition = ReaderProgressStore.readPositionAndOffset(context, archive).first
         val restored = runCatching {
@@ -135,9 +135,9 @@ class MangaReaderPhase5DeviceAcceptanceTest {
                 positionBeforeRotation in visibleSourcePositions(activity)
             }
         }.isSuccess
-        val restoredPosition = field<Int>(activity, "currentReaderPosition")
+        val restoredPosition = activity.currentReaderPositionForTest
         val visibleSources = visibleSourcePositions(activity)
-        val expectedPosition = invoke(activity, "readerSpreadStartSourcePosition", persistedPosition) as Int
+        val expectedPosition = activity.readerSpreadStartSourcePositionForTest(persistedPosition)
         assertEquals("rotation should preserve the saved source page", positionBeforeRotation, persistedPosition)
         assertTrue("saved source page should still be visible: $visibleSources", restored)
         assertEquals(
@@ -147,7 +147,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
             expectedPosition,
             restoredPosition
         )
-        assertEquals(18, field<List<String>>(activity, "imageEntries").size)
+        assertEquals(18, activity.imageEntriesForTest.size)
 
         finishReader(activity)
         assertTrue("reader progress writer should drain on exit", checkNotNull(progressExecutor(activity)).awaitTermination(10, TimeUnit.SECONDS))
@@ -159,9 +159,9 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         val pdf = createPdf("pdf-reader.pdf", pageCount = 4)
         val activity = launchReader(pdf)
 
-        assertEquals(4, field<List<String>>(activity, "imageEntries").size)
-        assertTrue("PDF page should reach the reader-ready callback", field<Boolean>(activity, "firstReaderPageReadyMetricReported"))
-        assertTrue("PDF should use the ordinary page adapter", field<Any>(activity, "pageAdapter").javaClass.simpleName == "MangaPageAdapter")
+        assertEquals(4, activity.imageEntriesForTest.size)
+        assertTrue("PDF page should reach the reader-ready callback", activity.firstReaderPageReadyMetricReportedForTest)
+        assertTrue("PDF should use the ordinary page adapter", activity.pageAdapterForTest?.javaClass?.simpleName == "MangaPageAdapter")
         onMain { activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
         val rotated = awaitReadyReader(activity)
         assertEquals(Configuration.ORIENTATION_LANDSCAPE, onMain { rotated.resources.configuration.orientation })
@@ -182,8 +182,8 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         ComicArchive.writePreparedReaderManifest(cacheDirectory, entries)
 
         var activity = launchReader(archive, preparedCacheDirectory = cacheDirectory)
-        assertEquals("SubsamplingMangaPageAdapter", field<Any>(activity, "pageAdapter").javaClass.simpleName)
-        assertEquals(12, field<List<String>>(activity, "imageEntries").size)
+        assertEquals("SubsamplingMangaPageAdapter", activity.pageAdapterForTest?.javaClass?.simpleName)
+        assertEquals(12, activity.imageEntriesForTest.size)
         assertTrue(cacheDirectory.isDirectory)
         exercisePinchAndFastSwipe(activity)
 
@@ -193,7 +193,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         activity = awaitReadyReader(previous)
         awaitExecutor(oldProgressExecutor)
         assertEquals(Configuration.ORIENTATION_LANDSCAPE, onMain { activity.resources.configuration.orientation })
-        assertEquals("SubsamplingMangaPageAdapter", field<Any>(activity, "pageAdapter").javaClass.simpleName)
+        assertEquals("SubsamplingMangaPageAdapter", activity.pageAdapterForTest?.javaClass?.simpleName)
         assertTrue("prepared cache must remain leased by the rotated reader", cacheDirectory.isDirectory)
 
         finishReader(activity)
@@ -241,17 +241,17 @@ class MangaReaderPhase5DeviceAcceptanceTest {
                 val current = onMain { resumedReader() }
                 if (current == null || current === previous) return@awaitCondition false
                 val ready = onMain {
-                    val adapter = field<Any?>(current, "pageAdapter")
-                    val recyclerView = field<RecyclerView>(current, "listReaderPages")
+                    val adapter = current.pageAdapterForTest
+                    val recyclerView = current.listReaderPagesForTest
                     val pageReady = if (adapter?.javaClass?.simpleName == "SubsamplingMangaPageAdapter") {
                         (0 until recyclerView.childCount).any { index ->
                             (findZoomView(recyclerView.getChildAt(index)) as? ReaderSubsamplingImageView)
                                 ?.isImageLoaded() == true
                         }
                     } else {
-                        field<Boolean>(current, "firstReaderPageReadyMetricReported")
+                        current.firstReaderPageReadyMetricReportedForTest
                     }
-                    pageReady && field<List<String>>(current, "imageEntries").isNotEmpty() && adapter != null
+                    pageReady && current.imageEntriesForTest.isNotEmpty() && adapter != null
                 }
                 if (ready) readyReader = current
                 ready
@@ -260,16 +260,16 @@ class MangaReaderPhase5DeviceAcceptanceTest {
             val state = onMain {
                 resumedReader()?.let { current ->
                     "activity=${System.identityHashCode(current)} " +
-                        "firstReady=${field<Boolean>(current, "firstReaderPageReadyMetricReported")} " +
-                        "entries=${field<List<String>>(current, "imageEntries").size} " +
-                        "adapter=${field<Any?>(current, "pageAdapter")?.javaClass?.simpleName} " +
-                        "status=${field<android.widget.TextView>(current, "tvReaderStatus").text} " +
+                        "firstReady=${current.firstReaderPageReadyMetricReportedForTest} " +
+                        "entries=${current.imageEntriesForTest.size} " +
+                        "adapter=${current.pageAdapterForTest?.javaClass?.simpleName} " +
+                        "status=${current.tvReaderStatusForTest.text} " +
                         "orientation=${current.resources.configuration.orientation} " +
-                        "current=${field<Int>(current, "currentReaderPosition")} " +
-                        "offset=${field<Int>(current, "currentReaderOffset")} " +
-                        "pending=${field<Int?>(current, "pendingRestorePosition")} " +
+                        "current=${current.currentReaderPositionForTest} " +
+                        "offset=${current.currentReaderOffsetForTest} " +
+                        "pending=${current.pendingRestorePositionForTest} " +
                         "children=" +
-                        (field<RecyclerView>(current, "listReaderPages")).let { recyclerView ->
+                        current.listReaderPagesForTest.let { recyclerView ->
                             (0 until recyclerView.childCount).map { index ->
                                 val child = recyclerView.getChildAt(index)
                                 "${recyclerView.getChildAdapterPosition(child)}:${child.top}-${child.bottom}"
@@ -286,7 +286,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
 
     private fun awaitDebugStress(activity: MangaReaderActivity, expectedSteps: Int) {
         awaitCondition("debug reader stress did not exercise all flip/zoom/preload steps") {
-            field<Int>(activity, "debugReaderStressStep") >= expectedSteps
+            activity.debugReaderStressStepForTest >= expectedSteps
         }
     }
 
@@ -294,7 +294,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         onView(withId(R.id.listReaderPages)).check(matches(isDisplayed()))
         instrumentation.waitForIdleSync()
         val zoomView = onMain {
-            findVisibleZoomView(field(activity, "listReaderPages") as RecyclerView)
+            findVisibleZoomView(activity.listReaderPagesForTest)
         }
         assertNotNull("a visible page should expose its zoom view", zoomView)
         val receivedEvents = java.util.Collections.synchronizedList(mutableListOf<String>())
@@ -319,7 +319,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
             }
         }
 
-        invoke(activity, "jumpReaderToPage", 0)
+        onMain { activity.jumpReaderToPageForTest(0) }
         onView(withId(R.id.listReaderPages)).perform(
             GeneralSwipeAction(
                 Swipe.FAST,
@@ -329,11 +329,11 @@ class MangaReaderPhase5DeviceAcceptanceTest {
             )
         )
         awaitCondition("fast page swipe did not advance the reader") {
-            field<Int>(activity, "currentReaderPosition") > 0
+            activity.currentReaderPositionForTest > 0
         }
         awaitCondition("fast page swipe did not settle before rotation checks") {
             onMain {
-                (field(activity, "listReaderPages") as RecyclerView).scrollState == RecyclerView.SCROLL_STATE_IDLE
+                activity.listReaderPagesForTest.scrollState == RecyclerView.SCROLL_STATE_IDLE
             }
         }
     }
@@ -345,7 +345,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
     }
 
     private fun progressExecutor(activity: MangaReaderActivity): ExecutorService? =
-        runCatching { field<ExecutorService>(activity, "readerProgressExecutor") }.getOrNull()
+        activity.readerProgressExecutorForTest
 
     private fun awaitExecutor(executor: ExecutorService) {
         assertTrue("previous Activity progress writer did not drain", executor.awaitTermination(10, TimeUnit.SECONDS))
@@ -497,43 +497,39 @@ class MangaReaderPhase5DeviceAcceptanceTest {
     }
 
     private fun zoomScale(view: View): Float = when (view) {
-        is ReaderPageZoomLayout -> field(view, "scale")
+        is ReaderPageZoomLayout -> view.scaleForTest
         is ReaderSubsamplingImageView -> view.scale
         else -> error("Unsupported reader zoom view: ${view.javaClass.name}")
     }
 
     private fun visibleSourcePositions(activity: MangaReaderActivity): List<Int> {
-        val imageCount = field<List<String>>(activity, "imageEntries").size
+        val imageCount = activity.imageEntriesForTest.size
         val (firstAdapterPosition, lastAdapterPosition) = onMain {
-            val layoutManager = field(activity, "readerLayoutManager") as androidx.recyclerview.widget.LinearLayoutManager
+            val layoutManager = activity.readerLayoutManagerForTest
             layoutManager.findFirstVisibleItemPosition() to layoutManager.findLastVisibleItemPosition()
         }
-        val mapper = checkNotNull(invoke(activity, "readerPagePositionMapper", imageCount))
-        return invoke(
-            mapper,
-            "sourcePositionsInAdapterRange",
-            firstAdapterPosition,
-            if (firstAdapterPosition == RecyclerView.NO_POSITION || lastAdapterPosition == RecyclerView.NO_POSITION) {
-                1
-            } else {
-                (lastAdapterPosition - firstAdapterPosition + 1).coerceAtLeast(1)
-            }
-        ) as List<Int>
+        val mapper = onMain { activity.readerPagePositionMapperForTest(imageCount) }
+        val visibleCount = if (firstAdapterPosition == RecyclerView.NO_POSITION || lastAdapterPosition == RecyclerView.NO_POSITION) {
+            1
+        } else {
+            (lastAdapterPosition - firstAdapterPosition + 1).coerceAtLeast(1)
+        }
+        return onMain { mapper.sourcePositionsInAdapterRange(firstAdapterPosition, visibleCount) }
     }
 
     private fun readerPositionSnapshot(activity: MangaReaderActivity): String = onMain {
-        val recyclerView = field(activity, "listReaderPages") as RecyclerView
-        val layoutManager = field(activity, "readerLayoutManager") as androidx.recyclerview.widget.LinearLayoutManager
+        val recyclerView = activity.listReaderPagesForTest
+        val layoutManager = activity.readerLayoutManagerForTest
         val positions = (0 until recyclerView.childCount).map { index ->
             val child = recyclerView.getChildAt(index)
             "${recyclerView.getChildAdapterPosition(child)}:${child.top}-${child.bottom}"
         }
         "orientation=${activity.resources.configuration.orientation} " +
-            "current=${field<Int>(activity, "currentReaderPosition")} " +
-            "offset=${field<Int>(activity, "currentReaderOffset")} " +
-            "pending=${field<Int?>(activity, "pendingRestorePosition")} " +
-            "pendingOffset=${field<Int>(activity, "pendingRestoreOffset")} " +
-            "restoreAttempts=${field<Int>(activity, "restoreAttemptCount")} " +
+            "current=${activity.currentReaderPositionForTest} " +
+            "offset=${activity.currentReaderOffsetForTest} " +
+            "pending=${activity.pendingRestorePositionForTest} " +
+            "pendingOffset=${activity.pendingRestoreOffsetForTest} " +
+            "restoreAttempts=${activity.restoreAttemptCountForTest} " +
             "first=${layoutManager.findFirstVisibleItemPosition()} " +
             "last=${layoutManager.findLastVisibleItemPosition()} " +
             "children=$positions"
@@ -550,18 +546,6 @@ class MangaReaderPhase5DeviceAcceptanceTest {
             .getActivitiesInStage(Stage.RESUMED)
             .filterIsInstance<MainActivity>()
             .firstOrNull { !it.isFinishing && !it.isDestroyed }
-
-    private fun <T> field(target: Any, name: String): T {
-        val reflected = target.javaClass.getDeclaredField(name).apply { isAccessible = true }
-        @Suppress("UNCHECKED_CAST")
-        return reflected.get(target) as T
-    }
-
-    private fun invoke(target: Any, name: String, vararg arguments: Any?): Any? {
-        val method = target.javaClass.declaredMethods.first { it.name == name && it.parameterCount == arguments.size }
-            .apply { isAccessible = true }
-        return onMain { method.invoke(target, *arguments) }
-    }
 
     private fun <T> onMain(action: () -> T): T {
         val value = AtomicReference<T>()

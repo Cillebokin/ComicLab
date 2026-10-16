@@ -30,6 +30,10 @@ class ReaderPageZoomLayout @JvmOverloads constructor(
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
 
     private var scale = MIN_SCALE
+
+    // 测试接口：仅供设备测试读取当前缩放倍率，不参与运行时逻辑。
+    internal val scaleForTest: Float
+        get() = scale
     private var panX = 0f
     private var panY = 0f
     private var lastTouchX = 0f

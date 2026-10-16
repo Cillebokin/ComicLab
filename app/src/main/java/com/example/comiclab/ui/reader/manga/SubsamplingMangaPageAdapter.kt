@@ -53,7 +53,7 @@ internal class SubsamplingMangaPageAdapter(
     ReaderPageAdapterController {
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val extractExecutor = ThreadPoolExecutor(
+    private var extractExecutor = ThreadPoolExecutor(
         1,
         1,
         0L,
@@ -277,6 +277,21 @@ internal class SubsamplingMangaPageAdapter(
     }
 
     override fun flushPendingRefreshesIfIdle() = Unit
+
+    // 测试接口：仅供单元测试直接验证页面布局计算，不参与运行时逻辑。
+    internal fun applyPageLayoutForTest(container: FrameLayout, bounds: ComicArchive.ImageBounds?) {
+        applyPageLayout(container, bounds)
+    }
+
+    // 测试接口：仅供单元测试注入抽取执行器并观察活动子采样视图，不参与运行时逻辑。
+    internal var extractExecutorForTest: ThreadPoolExecutor
+        get() = extractExecutor
+        set(value) {
+            extractExecutor = value
+        }
+
+    internal val activeSubsamplingViewsForTest: MutableSet<ReaderSubsamplingImageView>
+        get() = activeSubsamplingViews
 
     override fun close() {
         if (closed) {

@@ -43,7 +43,10 @@ class EpubParser {
         zipFile: ZipFile,
         untitledChapterTitle: String
     ): ParsedEpub {
-        if (zipFile.getEntry(ENCRYPTION_ENTRY) != null) {
+        val encryptionEntry = zipFile.getEntry(ENCRYPTION_ENTRY)
+        if (encryptionEntry != null &&
+            !isFontObfuscationOnly(zipFile.getInputStream(encryptionEntry))
+        ) {
             throw EpubParseException(
                 EpubParseError.ENCRYPTED,
                 "Encrypted EPUB resources are not supported"
@@ -158,6 +161,45 @@ class EpubParser {
                 ?: throw EpubParseException(EpubParseError.INVALID_CONTAINER, "EPUB rootfile is missing")
         } finally {
             input.close()
+        }
+    }
+
+    /**
+     * encryption.xml 只声明字体混淆时，电子书仍可阅读（混淆字体本身不影响正文）。
+     * 任何其他算法、缺少算法声明、XML 无法解析或没有任何加密条目，都按加密拒绝。
+     */
+    private fun isFontObfuscationOnly(input: InputStream): Boolean {
+        val algorithms = runCatching { readEncryptedDataAlgorithms(input) }
+            .getOrElse { return false }
+        return algorithms.isNotEmpty() && algorithms.all { it in FONT_OBFUSCATION_ALGORITHMS }
+    }
+
+    /** 每个 EncryptedData 返回一个算法标识；缺少 EncryptionMethod 时返回空字符串。 */
+    private fun readEncryptedDataAlgorithms(input: InputStream): List<String> {
+        return input.use { stream ->
+            val parser = newParser(stream)
+            val algorithms = mutableListOf<String>()
+            var insideEncryptedData = false
+            var currentAlgorithm: String? = null
+            while (parser.next() != XmlPullParser.END_DOCUMENT) {
+                when (parser.eventType) {
+                    XmlPullParser.START_TAG -> when (parser.name.substringAfterLast(':')) {
+                        "EncryptedData" -> {
+                            insideEncryptedData = true
+                            currentAlgorithm = null
+                        }
+                        "EncryptionMethod" -> if (insideEncryptedData && currentAlgorithm == null) {
+                            currentAlgorithm = parser.getAttributeValue(null, "Algorithm")?.trim().orEmpty()
+                        }
+                    }
+                    XmlPullParser.END_TAG -> if (parser.name.substringAfterLast(':') == "EncryptedData") {
+                        algorithms += currentAlgorithm.orEmpty()
+                        insideEncryptedData = false
+                        currentAlgorithm = null
+                    }
+                }
+            }
+            algorithms
         }
     }
 
@@ -402,6 +444,11 @@ class EpubParser {
         const val MIMETYPE_ENTRY = "mimetype"
         const val CONTAINER_ENTRY = "META-INF/container.xml"
         const val ENCRYPTION_ENTRY = "META-INF/encryption.xml"
+        /** EPUB 3 OCF 定义的字体混淆算法（IDPF 与 Adobe 两种标识）。 */
+        val FONT_OBFUSCATION_ALGORITHMS = setOf(
+            "http://www.idpf.org/2008/embedding",
+            "http://ns.adobe.com/pdf/enc#RC"
+        )
         const val EPUB_MIMETYPE = "application/epub+zip"
         const val OPF_MIME_TYPE = "application/oebps-package+xml"
         const val XHTML_MIME_TYPE = "application/xhtml+xml"

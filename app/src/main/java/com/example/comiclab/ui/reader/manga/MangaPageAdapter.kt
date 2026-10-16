@@ -69,7 +69,7 @@ internal class MangaPageAdapter(
 ) : RecyclerView.Adapter<MangaPageAdapter.PageViewHolder>(), ReaderPageAdapterController {
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val decodeExecutor = ThreadPoolExecutor(
+    private var decodeExecutor = ThreadPoolExecutor(
         READER_DECODE_THREAD_COUNT,
         READER_DECODE_THREAD_COUNT,
         0L,
@@ -403,6 +403,37 @@ internal class MangaPageAdapter(
         mainHandler.post {
             flushPendingRefreshes()
         }
+    }
+
+    // 测试接口：仅供单元测试读取预览加载状态、触发预览请求与读取预览缓存，不参与运行时逻辑。
+    internal val loadingPreviewPagesForTest: Set<Int>
+        get() = loadingPreviewPages
+
+    internal val failedPreviewPagesForTest: Set<Int>
+        get() = failedPreviewPages
+
+    internal fun requestPreviewForTest(position: Int) {
+        ensurePreview(position, 100, 0, false)
+    }
+
+    internal fun cachedPreviewForTest(position: Int): Bitmap? = previewBitmap(position)
+
+    internal fun shouldUseTiledPageForTest(bounds: ComicArchive.ImageBounds): Boolean =
+        shouldUseTiledPage(bounds)
+
+    internal fun ensureFullOrTiledPageForTest(position: Int, priority: Int, generation: Int, isPreload: Boolean) {
+        ensureFullOrTiledPage(position, priority, generation, isPreload)
+    }
+
+    // 测试接口：仅供单元测试注入解码执行器并直接触发预览解码，不参与运行时逻辑。
+    internal var decodeExecutorForTest: ThreadPoolExecutor
+        get() = decodeExecutor
+        set(value) {
+            decodeExecutor = value
+        }
+
+    internal fun ensurePreviewForTest(position: Int, priority: Int, generation: Int, isPreload: Boolean) {
+        ensurePreview(position, priority, generation, isPreload)
     }
 
     override fun close() {

@@ -181,6 +181,104 @@ class EpubParserRobolectricTest {
         }
     }
 
+    @Test
+    fun opensBookWhenEncryptionDeclaresOnlyFontObfuscation() {
+        val root = Files.createTempDirectory("comiclab-epub-font-obfuscation").toFile()
+        try {
+            val file = File(root, "obfuscated-font.epub")
+            writeEpub(
+                file,
+                extraEntries = mapOf(
+                    "META-INF/encryption.xml" to encryptionXml(
+                        "http://www.idpf.org/2008/embedding",
+                        "http://ns.adobe.com/pdf/enc#RC"
+                    )
+                )
+            )
+
+            val parsed = EpubParser().parse(file, untitledChapterTitle = "Untitled")
+
+            assertEquals(2, parsed.book.chapters.size)
+            assertTrue(parsed.book.chapters[0].html.contains("<p>First page</p>"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun rejectsBookWhenEncryptionUsesRealCipher() {
+        val root = Files.createTempDirectory("comiclab-epub-real-encryption").toFile()
+        try {
+            val file = File(root, "drm.epub")
+            writeEpub(
+                file,
+                extraEntries = mapOf(
+                    "META-INF/encryption.xml" to encryptionXml("http://www.w3.org/2001/04/xmlenc#aes128-cbc")
+                )
+            )
+
+            assertParseError(EpubParseError.ENCRYPTED, file)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun rejectsBookWhenFontObfuscationIsMixedWithRealCipher() {
+        val root = Files.createTempDirectory("comiclab-epub-mixed-encryption").toFile()
+        try {
+            val file = File(root, "mixed.epub")
+            writeEpub(
+                file,
+                extraEntries = mapOf(
+                    "META-INF/encryption.xml" to encryptionXml(
+                        "http://www.idpf.org/2008/embedding",
+                        "http://www.w3.org/2001/04/xmlenc#aes256-cbc"
+                    )
+                )
+            )
+
+            assertParseError(EpubParseError.ENCRYPTED, file)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun rejectsBookWhenEncryptionXmlIsUnreadableOrDeclaresNothing() {
+        val root = Files.createTempDirectory("comiclab-epub-unknown-encryption").toFile()
+        try {
+            val truncated = File(root, "truncated.epub")
+            writeEpub(
+                truncated,
+                extraEntries = mapOf("META-INF/encryption.xml" to "<encryption><EncryptedData>")
+            )
+            val empty = File(root, "empty.epub")
+            writeEpub(
+                empty,
+                extraEntries = mapOf("META-INF/encryption.xml" to "<encryption/>")
+            )
+
+            assertParseError(EpubParseError.ENCRYPTED, truncated)
+            assertParseError(EpubParseError.ENCRYPTED, empty)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    private fun encryptionXml(vararg algorithms: String): String = buildString {
+        append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+        append("<encryption xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\" ")
+        append("xmlns:enc=\"http://www.w3.org/2001/04/xmlenc#\">")
+        algorithms.forEachIndexed { index, algorithm ->
+            append("<enc:EncryptedData>")
+            append("<enc:EncryptionMethod Algorithm=\"$algorithm\"/>")
+            append("<enc:CipherData><enc:CipherReference URI=\"EPUB/Fonts/font$index.otf\"/></enc:CipherData>")
+            append("</enc:EncryptedData>")
+        }
+        append("</encryption>")
+    }
+
     private fun writeEpub(
         file: File,
         container: String = CONTAINER_XML,

@@ -29,7 +29,7 @@ class ReaderPreviewAdapter(
 ) : RecyclerView.Adapter<ReaderPreviewAdapter.PreviewViewHolder>() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val decodeExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private var decodeExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val loadingPositions = Collections.synchronizedSet(mutableSetOf<Int>())
     private val failedPositions = Collections.synchronizedSet(mutableSetOf<Int>())
     private val decodeAttempts = Collections.synchronizedMap(mutableMapOf<Int, Int>())
@@ -116,6 +116,21 @@ class ReaderPreviewAdapter(
         if (selectedPosition != RecyclerView.NO_POSITION) {
             notifyItemChangedSafely(selectedPosition)
         }
+    }
+
+    // 测试接口：仅供单元测试读取缩略图失败记录，不参与运行时逻辑。
+    internal val failedPositionsForTest: Set<Int>
+        get() = failedPositions
+
+    // 测试接口：仅供单元测试注入解码执行器并触发缩略图加载，不参与运行时逻辑。
+    internal var decodeExecutorForTest: ExecutorService
+        get() = decodeExecutor
+        set(value) {
+            decodeExecutor = value
+        }
+
+    internal fun loadThumbnailForTest(position: Int) {
+        loadThumbnail(position)
     }
 
     fun close() {

@@ -62,11 +62,13 @@ class FileTransferController {
 internal object FileTransferMetadataUpdatePolicy {
     fun applyFileCut(
         updateFavorites: () -> Unit,
-        updateReadingHistory: () -> Unit
+        updateReadingHistory: () -> Unit,
+        updateReaderProgress: () -> Unit = {}
     ) {
         runCatching {
             updateFavorites()
             updateReadingHistory()
+            updateReaderProgress()
         }
     }
 
@@ -74,11 +76,13 @@ internal object FileTransferMetadataUpdatePolicy {
         updateFavoritePaths: () -> Unit,
         updateFavoriteComics: () -> Unit,
         updateReadingHistory: () -> Unit,
-        updateBookcasePaths: () -> Unit
+        updateBookcasePaths: () -> Unit,
+        updateReaderProgress: () -> Unit = {}
     ) {
         runCatching { updateFavoritePaths() }
         runCatching { updateFavoriteComics() }
         runCatching { updateReadingHistory() }
         runCatching { updateBookcasePaths() }
+        runCatching { updateReaderProgress() }
     }
 }

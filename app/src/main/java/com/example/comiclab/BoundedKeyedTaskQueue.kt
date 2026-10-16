@@ -81,7 +81,13 @@ internal class BoundedKeyedTaskQueue(
         }
     }
 
-    /** Cancels queued work and signals running work to stop at its next safe boundary. */
+    /**
+     * Cancels queued work and signals running work to stop at its next safe boundary.
+     *
+     * Returns `true` only when a queued task was removed before it started. Returns `false` for
+     * running tasks (their block observes cancellation through `isActive`), for unknown keys and
+     * for tasks that already finished. A running key stays reserved until its block returns.
+     */
     fun cancel(key: String): Boolean {
         val state = tasks[key] ?: return false
         state.cancelled.set(true)

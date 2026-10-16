@@ -3,7 +3,7 @@ package com.example.comiclab
 import android.graphics.Bitmap
 import android.graphics.Rect
 import androidx.recyclerview.widget.RecyclerView
-import java.io.File
+import com.example.comiclab.ui.reader.manga.MangaPageAdapter
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -73,53 +73,36 @@ class MangaReaderTilingRegressionTest {
         }
     }
 
-    private fun createAdapter(session: ComicArchive.ImageReaderSession): Any {
+    private fun createAdapter(session: ComicArchive.ImageReaderSession): MangaPageAdapter {
         val context = RuntimeEnvironment.getApplication()
-        val adapterClass = Class.forName("com.example.comiclab.ui.reader.manga.MangaPageAdapter")
-        val constructor = adapterClass.declaredConstructors
-            .single { it.parameterCount == 15 }
-            .apply { isAccessible = true }
-        return constructor.newInstance(
-            context,
-            RecyclerView(context),
-            temporaryFolder.newFile("reader-test.cbz"),
-            session,
-            listOf("page.png"),
-            2_400,
-            1_800,
-            7_200,
-            5_400,
-            AppSettings.READING_DIRECTION_TOP_TO_BOTTOM,
-            false,
-            false,
-            { _: Int -> },
-            {},
-            null
+        return MangaPageAdapter(
+            context = context,
+            recyclerView = RecyclerView(context),
+            archiveFile = temporaryFolder.newFile("reader-test.cbz"),
+            session = session,
+            entries = listOf("page.png"),
+            baseDisplayWidth = 2_400,
+            baseDisplayHeight = 1_800,
+            decodeWidth = 7_200,
+            decodeHeight = 5_400,
+            readingDirection = AppSettings.READING_DIRECTION_TOP_TO_BOTTOM,
+            doublePageReading = false,
+            coverSinglePage = false,
+            onPageReady = { _: Int -> },
+            onPageTap = {},
+            spreadAnchorSourcePosition = null
         )
     }
 
-    private fun invokeShouldUseTiledPage(adapter: Any, bounds: ComicArchive.ImageBounds): Boolean {
-        val method = adapter.javaClass
-            .getDeclaredMethod("shouldUseTiledPage", ComicArchive.ImageBounds::class.java)
-            .apply { isAccessible = true }
-        return method.invoke(adapter, bounds) as Boolean
+    private fun invokeShouldUseTiledPage(adapter: MangaPageAdapter, bounds: ComicArchive.ImageBounds): Boolean =
+        adapter.shouldUseTiledPageForTest(bounds)
+
+    private fun invokeEnsureFullOrTiledPage(adapter: MangaPageAdapter) {
+        adapter.ensureFullOrTiledPageForTest(0, 100, 0, false)
     }
 
-    private fun invokeEnsureFullOrTiledPage(adapter: Any) {
-        val method = adapter.javaClass.getDeclaredMethod(
-            "ensureFullOrTiledPage",
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-            Boolean::class.javaPrimitiveType
-        ).apply { isAccessible = true }
-        method.invoke(adapter, 0, 100, 0, false)
-    }
-
-    private fun invokeClose(adapter: Any) {
-        adapter.javaClass.getDeclaredMethod("close")
-            .apply { isAccessible = true }
-            .invoke(adapter)
+    private fun invokeClose(adapter: MangaPageAdapter) {
+        adapter.close()
     }
 
     private class FakeReaderSession(

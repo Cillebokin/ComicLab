@@ -21,7 +21,9 @@ import com.davemorrissey.labs.subscaleview.ImageSource
 import com.davemorrissey.labs.subscaleview.decoder.DecoderFactory
 import com.davemorrissey.labs.subscaleview.decoder.ImageRegionDecoder
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
+import com.example.comiclab.ui.reader.manga.MangaPageAdapter
 import com.example.comiclab.ui.reader.manga.ReaderPreviewAdapter
+import com.example.comiclab.ui.reader.manga.SubsamplingMangaPageAdapter
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -62,10 +64,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
             controller.create()
             assertEquals(1, oldExecutor.pendingTaskCount)
             oldExecutor.runNextOnWorker()
-            val viewModelField = MangaReaderActivity::class.java
-                .getDeclaredField("preparedReaderViewModel\$delegate")
-                .apply { isAccessible = true }
-            val oldViewModel = (viewModelField.get(oldActivity) as Lazy<*>).value
+            val oldViewModel = oldActivity.preparedReaderViewModelForTest
 
             // The posted bounds callback is still pending while Robolectric recreates the Activity.
             controller.recreate()
@@ -74,7 +73,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
             assertSame(
                 "the cache owner must survive Activity recreation",
                 oldViewModel,
-                (viewModelField.get(newActivity) as Lazy<*>).value
+                newActivity.preparedReaderViewModelForTest
             )
             assertTrue(pageFile.exists())
 
@@ -217,10 +216,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
         val progressExecutor = ManualExecutorService()
         val controller = buildReaderController(application, archive, preparedCache, loadExecutor)
         val activity = controller.get()
-        MangaReaderActivity::class.java
-            .getDeclaredField("readerProgressExecutor")
-            .apply { isAccessible = true }
-            .set(activity, progressExecutor)
+        activity.readerProgressExecutorForTest = progressExecutor
 
         try {
             controller.create()
@@ -302,11 +298,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
             executor.runNextOnWorker()
             Shadows.shadowOf(Looper.getMainLooper()).idle()
 
-            val entries = MangaReaderActivity::class.java
-                .getDeclaredField("imageEntries")
-                .apply { isAccessible = true }
-                .get(activity) as List<*>
-            assertEquals(listOf("page.png"), entries)
+            assertEquals(listOf("page.png"), activity.imageEntriesForTest)
             assertTrue("fallback must preserve the original archive", archive.isFile)
         } finally {
             if (!activity.isDestroyed) {
@@ -329,12 +321,8 @@ class MangaReaderCacheLifecycleRobolectricTest {
             sharedSession = session,
             onPageClick = {}
         )
-        val loadThumbnail = ReaderPreviewAdapter::class.java
-            .getDeclaredMethod("loadThumbnail", Int::class.javaPrimitiveType)
-            .apply { isAccessible = true }
-
         try {
-            loadThumbnail.invoke(adapter, 0)
+            adapter.loadThumbnailForTest(0)
             assertTrue(session.decodeStarted.await(5, TimeUnit.SECONDS))
 
             adapter.close()
@@ -361,16 +349,10 @@ class MangaReaderCacheLifecycleRobolectricTest {
             sharedSession = session,
             onPageClick = {}
         )
-        ReaderPreviewAdapter::class.java
-            .getDeclaredField("decodeExecutor")
-            .apply { isAccessible = true }
-            .set(adapter, executor)
-        val loadThumbnail = ReaderPreviewAdapter::class.java
-            .getDeclaredMethod("loadThumbnail", Int::class.javaPrimitiveType)
-            .apply { isAccessible = true }
+        adapter.decodeExecutorForTest = executor
 
         try {
-            loadThumbnail.invoke(adapter, 0)
+            adapter.loadThumbnailForTest(0)
             assertTrue(session.decodeStarted.await(5, TimeUnit.SECONDS))
 
             adapter.close()
@@ -394,25 +376,13 @@ class MangaReaderCacheLifecycleRobolectricTest {
         val session = BlockingPreviewSession()
         val adapter = newMangaPageAdapter(session)
         val executor = TimedOutThreadPoolExecutor()
-        MangaPageAdapterClass
-            .getDeclaredField("decodeExecutor")
-            .apply { isAccessible = true }
-            .set(adapter, executor)
-        MangaPageAdapterClass
-            .getDeclaredMethod(
-                "ensurePreview",
-                Int::class.javaPrimitiveType,
-                Int::class.javaPrimitiveType,
-                Int::class.javaPrimitiveType,
-                Boolean::class.javaPrimitiveType
-            )
-            .apply { isAccessible = true }
-            .invoke(adapter, 0, 0, 0, false)
+        adapter.decodeExecutorForTest = executor
+        adapter.ensurePreviewForTest(0, 0, 0, false)
 
         try {
             assertTrue(session.decodeStarted.await(5, TimeUnit.SECONDS))
 
-            closeMangaPageAdapter(adapter)
+            adapter.close()
 
             assertTrue("close should record the timeout before the decode is released", executor.firstAwaitReturned.await(5, TimeUnit.SECONDS))
             assertFalse("the archive session must stay open while decode still reads it", session.closed.get())
@@ -421,7 +391,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
             assertEquals("late completion must close the session exactly once", 1, session.closeCount.get())
         } finally {
             session.finishDecode.countDown()
-            closeMangaPageAdapter(adapter)
+            adapter.close()
             executor.shutdownNow()
             Shadows.shadowOf(Looper.getMainLooper()).idle()
         }
@@ -570,16 +540,12 @@ class MangaReaderCacheLifecycleRobolectricTest {
         val adapter = newPreparedMangaPageAdapter(preparedCache, imageFile, cacheUseLease)
         val decoder = BlockingRegionDecoder()
         val view = newTiledReaderView(context, imageFile, decoder)
-        val activeViewsField = PreparedMangaPageAdapterClass
-            .getDeclaredField("activeSubsamplingViews")
-            .apply { isAccessible = true }
-        @Suppress("UNCHECKED_CAST")
-        (activeViewsField.get(adapter) as MutableSet<ReaderSubsamplingImageView>).add(view)
+        adapter.activeSubsamplingViewsForTest.add(view)
 
         assertTrue("the prepared image should enter decoder initialization", pumpMainUntil {
             decoder.initStarted.count == 0L
         })
-        closePreparedMangaPageAdapter(adapter)
+        adapter.close()
 
         assertTrue("the pending-delete cache must remain while native init is running", imageFile.exists())
         assertEquals("the cache lease has not reached its deletion executor", 0, deletionExecutor.pendingTaskCount)
@@ -610,10 +576,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
             closeWaitTimeoutMs = 0L
         )
         val extractorExecutor = TimedOutThreadPoolExecutor()
-        PreparedMangaPageAdapterClass
-            .getDeclaredField("extractExecutor")
-            .apply { isAccessible = true }
-            .set(adapter, extractorExecutor)
+        adapter.extractExecutorForTest = extractorExecutor
         val extractionStarted = CountDownLatch(1)
         val finishExtraction = CountDownLatch(1)
         extractorExecutor.execute {
@@ -631,7 +594,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
 
         try {
             assertTrue(extractionStarted.await(5, TimeUnit.SECONDS))
-            closePreparedMangaPageAdapter(adapter)
+            adapter.close()
 
             assertTrue("the configured close timeout should be observed", extractorExecutor.firstAwaitReturned.await(5, TimeUnit.SECONDS))
             assertTrue("the cache stays leased while extraction still reads it", imageFile.exists())
@@ -663,17 +626,12 @@ class MangaReaderCacheLifecycleRobolectricTest {
         val adapter = newPreparedMangaPageAdapter(preparedCache, imageFile, cacheUseLease)
         val decoder = BlockingRegionDecoder(failOnRecycle = true).apply { finishInit.countDown() }
         val view = newTiledReaderView(context, imageFile, decoder)
-        val activeViewsField = PreparedMangaPageAdapterClass
-            .getDeclaredField("activeSubsamplingViews")
-            .apply { isAccessible = true }
-        @Suppress("UNCHECKED_CAST")
-        val activeViews = activeViewsField.get(adapter) as MutableSet<ReaderSubsamplingImageView>
-        activeViews.add(view)
+        adapter.activeSubsamplingViewsForTest.add(view)
         assertTrue("the failing fake decoder must initialize before close", pumpMainUntil {
             decoder.initStarted.count == 0L
         })
 
-        closePreparedMangaPageAdapter(adapter)
+        adapter.close()
         val closeResult = AtomicReference<Result<Unit>?>(null)
         val closeCompleted = CountDownLatch(1)
         view.closeReaderImage {
@@ -700,27 +658,24 @@ class MangaReaderCacheLifecycleRobolectricTest {
         return condition()
     }
 
-    private fun newMangaPageAdapter(session: ComicArchive.ImageReaderSession): Any {
+    private fun newMangaPageAdapter(session: ComicArchive.ImageReaderSession): MangaPageAdapter {
         val context = RuntimeEnvironment.getApplication()
-        val constructor = MangaPageAdapterClass.declaredConstructors.single {
-            it.parameterTypes.size == 15
-        }.apply { isAccessible = true }
-        return constructor.newInstance(
-            context,
-            androidx.recyclerview.widget.RecyclerView(context),
-            temporaryFolder.newFile("archive-close.cbz"),
-            session,
-            listOf("page.png"),
-            100,
-            100,
-            100,
-            100,
-            "LTR",
-            false,
-            false,
-            { _: Int -> },
-            {},
-            null
+        return MangaPageAdapter(
+            context = context,
+            recyclerView = androidx.recyclerview.widget.RecyclerView(context),
+            archiveFile = temporaryFolder.newFile("archive-close.cbz"),
+            session = session,
+            entries = listOf("page.png"),
+            baseDisplayWidth = 100,
+            baseDisplayHeight = 100,
+            decodeWidth = 100,
+            decodeHeight = 100,
+            readingDirection = "LTR",
+            doublePageReading = false,
+            coverSinglePage = false,
+            onPageReady = { _: Int -> },
+            onPageTap = {},
+            spreadAnchorSourcePosition = null
         )
     }
 
@@ -729,29 +684,26 @@ class MangaReaderCacheLifecycleRobolectricTest {
         imageFile: File,
         cacheUseLease: PreparedReaderCacheLeaseRegistry.Lease,
         closeWaitTimeoutMs: Long = 8_000L
-    ): Any {
+    ): SubsamplingMangaPageAdapter {
         val context = RuntimeEnvironment.getApplication()
-        val constructor = PreparedMangaPageAdapterClass.declaredConstructors.single {
-            it.parameterTypes.size == 17
-        }.apply { isAccessible = true }
-        return constructor.newInstance(
-            context,
-            androidx.recyclerview.widget.RecyclerView(context),
-            temporaryFolder.newFile("prepared-adapter-close.cbz"),
-            listOf("page.png"),
-            listOf(imageFile),
-            emptyMap<Int, ComicArchive.ImageBounds>(),
-            preparedCache,
-            cacheUseLease,
-            48,
-            48,
-            AppSettings.READING_DIRECTION_LEFT_TO_RIGHT,
-            false,
-            false,
-            { _: Int -> },
-            {},
-            closeWaitTimeoutMs,
-            null
+        return SubsamplingMangaPageAdapter(
+            context = context,
+            recyclerView = androidx.recyclerview.widget.RecyclerView(context),
+            archiveFile = temporaryFolder.newFile("prepared-adapter-close.cbz"),
+            entryNames = listOf("page.png"),
+            pageFiles = listOf(imageFile),
+            boundsByPosition = emptyMap<Int, ComicArchive.ImageBounds>(),
+            preparedCacheDir = preparedCache,
+            cacheUseLease = cacheUseLease,
+            baseDisplayWidth = 48,
+            baseDisplayHeight = 48,
+            readingDirection = AppSettings.READING_DIRECTION_LEFT_TO_RIGHT,
+            doublePageReading = false,
+            coverSinglePage = false,
+            onPageReady = { _: Int -> },
+            onPageTap = {},
+            closeWaitTimeoutMs = closeWaitTimeoutMs,
+            spreadAnchorSourcePosition = null
         )
     }
 
@@ -774,26 +726,6 @@ class MangaReaderCacheLifecycleRobolectricTest {
         return view
     }
 
-    private fun closeMangaPageAdapter(adapter: Any) {
-        MangaPageAdapterClass.getDeclaredMethod("close")
-            .apply { isAccessible = true }
-            .invoke(adapter)
-    }
-
-    private fun closePreparedMangaPageAdapter(adapter: Any) {
-        PreparedMangaPageAdapterClass.getDeclaredMethod("close")
-            .apply { isAccessible = true }
-            .invoke(adapter)
-    }
-
-    private val MangaPageAdapterClass: Class<*> by lazy {
-        Class.forName("com.example.comiclab.ui.reader.manga.MangaPageAdapter")
-    }
-
-    private val PreparedMangaPageAdapterClass: Class<*> by lazy {
-        Class.forName("com.example.comiclab.ui.reader.manga.SubsamplingMangaPageAdapter")
-    }
-
     private fun buildReaderController(
         application: android.app.Application,
         archive: File,
@@ -814,11 +746,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
             }
         }
     ).also { controller ->
-        val activity = controller.get()
-        MangaReaderActivity::class.java
-            .getDeclaredField("readerLoadExecutor")
-            .apply { isAccessible = true }
-            .set(activity, executor)
+        controller.get().readerLoadExecutorForTest = executor
     }
 
     private fun createPreparedReaderFixture(
@@ -839,48 +767,29 @@ class MangaReaderCacheLifecycleRobolectricTest {
     }
 
     private fun currentReaderPosition(activity: MangaReaderActivity): Int =
-        MangaReaderActivity::class.java.getDeclaredField("currentReaderPosition")
-            .apply { isAccessible = true }
-            .getInt(activity)
+        activity.currentReaderPositionForTest
 
     private fun setPendingReaderProgress(activity: MangaReaderActivity, position: Int, offset: Int) {
-        MangaReaderActivity::class.java.getDeclaredField("pendingRestorePosition")
-            .apply { isAccessible = true }
-            .set(activity, position)
-        MangaReaderActivity::class.java.getDeclaredField("pendingRestoreOffset")
-            .apply { isAccessible = true }
-            .setInt(activity, offset)
+        activity.setPendingReaderProgressForTest(position, offset)
     }
 
     private fun saveReaderPosition(activity: MangaReaderActivity, forceCommit: Boolean = true) {
-        MangaReaderActivity::class.java
-            .getDeclaredMethod("saveReaderPosition", Boolean::class.javaPrimitiveType)
-            .apply { isAccessible = true }
-            .invoke(activity, forceCommit)
+        activity.saveReaderPositionForTest(forceCommit)
     }
 
     private fun jumpReaderToPage(activity: MangaReaderActivity, position: Int) {
-        MangaReaderActivity::class.java
-            .getDeclaredMethod("jumpReaderToPage", Int::class.javaPrimitiveType)
-            .apply { isAccessible = true }
-            .invoke(activity, position)
+        activity.jumpReaderToPageForTest(position)
     }
 
     private fun awaitReaderProgressWrite(activity: MangaReaderActivity) {
-        val executor = MangaReaderActivity::class.java
-            .getDeclaredField("readerProgressExecutor")
-            .apply { isAccessible = true }
-            .get(activity) as java.util.concurrent.ExecutorService
+        val executor = activity.readerProgressExecutorForTest
         val completed = CountDownLatch(1)
         executor.execute { completed.countDown() }
         assertTrue("reader progress writes must finish before recreation", completed.await(5, TimeUnit.SECONDS))
     }
 
     private fun awaitReaderEntries(activity: MangaReaderActivity): Boolean = pumpMainUntil {
-        (MangaReaderActivity::class.java
-            .getDeclaredField("imageEntries")
-            .apply { isAccessible = true }
-            .get(activity) as? List<*>)?.size == 6
+        activity.imageEntriesForTest.size == 6
     }
 
     private fun createPng(): ByteArray {

@@ -93,9 +93,7 @@ class SubsamplingMangaPageAdapterTest {
         }
 
         try {
-            adapter.javaClass.declaredMethods.single { it.name == "applyPageLayout" }
-                .apply { isAccessible = true }
-                .invoke(adapter, container, null)
+            adapter.applyPageLayoutForTest(container, null)
 
             assertEquals(1920, container.layoutParams.height)
         } finally {

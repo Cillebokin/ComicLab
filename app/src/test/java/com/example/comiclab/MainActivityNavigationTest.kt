@@ -6,11 +6,9 @@ import android.os.Looper
 import android.view.View
 import android.widget.EditText
 import android.widget.ListView
-import android.widget.AdapterView
 import com.example.comiclab.ui.browser.model.FileItem
 import java.io.File
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -97,15 +95,11 @@ class MainActivityNavigationTest {
             assertEquals(current.absolutePath,
                 activity.findViewById<EditText>(R.id.etPath).text.toString())
 
-            MainActivity::class.java.getDeclaredField("currentPath")
-                .apply { isAccessible = true }
-                .set(activity, File(storageRoot, "missing").absolutePath)
+            activity.currentPathForTest = File(storageRoot, "missing").absolutePath
             invokeLoadCurrentDirectory(activity)
             awaitDirectoryLoad(activity)
 
-            assertEquals(storageRoot.absolutePath,
-                MainActivity::class.java.getDeclaredField("currentPath")
-                    .apply { isAccessible = true }.get(activity))
+            assertEquals(storageRoot.absolutePath, activity.currentPathForTest)
             assertEquals(storageRoot.absolutePath,
                 activity.findViewById<EditText>(R.id.etPath).text.toString())
             assertEquals(storageRoot.absolutePath, preferences.getString("current_path", null))
@@ -132,16 +126,13 @@ class MainActivityNavigationTest {
             list.measure(View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(500, View.MeasureSpec.EXACTLY))
             list.layout(0, 0, 800, 500)
-            val cacheField = MainActivity::class.java.getDeclaredField("directoryScrollStateCache")
-                .apply { isAccessible = true }
-            (cacheField.get(activity) as DirectoryScrollStateCache).save(
+            activity.directoryScrollStateCacheForTest.save(
                 FileListScrollState(parent.absolutePath, 3, -17,
                     File(parent, "page12.txt").absolutePath, false))
             activity.findViewById<View>(R.id.btnBack).performClick()
             awaitDirectoryLoad(activity)
             // Robolectric lays rows out at zero; inspect the offset requested by the Activity.
-            val requestedTop = AdapterView::class.java.getDeclaredField("mSpecificTop")
-                .apply { isAccessible = true }.getInt(list)
+            val requestedTop = activity.requestedScrollTopForTest
             assertEquals(-17, requestedTop)
             list.measure(View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(500, View.MeasureSpec.EXACTLY))
@@ -207,20 +198,14 @@ class MainActivityNavigationTest {
     }
 
     private fun awaitDirectoryLoad(activity: MainActivity) {
-        val field = MainActivity::class.java.getDeclaredField("directoryLoadExecutor")
-            .apply { isAccessible = true }
         val barrier = CountDownLatch(1)
-        (field.get(activity) as ThreadPoolExecutor).execute { barrier.countDown() }
+        activity.directoryLoadExecutorForTest.execute { barrier.countDown() }
         assertTrue(barrier.await(10, TimeUnit.SECONDS))
         shadowOf(Looper.getMainLooper()).idle()
     }
 
     private fun invokeLoadCurrentDirectory(activity: MainActivity) {
-        MainActivity::class.java.getDeclaredMethod(
-            "loadCurrentDirectory",
-            String::class.java,
-            FileListScrollState::class.java
-        ).apply { isAccessible = true }.invoke(activity, null, null)
+        activity.loadCurrentDirectoryForTest()
     }
 
     @Test

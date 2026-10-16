@@ -3,7 +3,6 @@ package com.example.comiclab.ui.browser
 import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import android.os.Looper
-import android.util.LruCache
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -11,7 +10,6 @@ import android.widget.ListView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.AppSettings
-import com.example.comiclab.BoundedKeyedTaskQueue
 import com.example.comiclab.CommonFunc
 import com.example.comiclab.core.store.FavoritePathStore
 import com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverAdapter
@@ -203,10 +201,10 @@ class FileListAdapterBindingTest {
         val release = CountDownLatch(1)
         try {
             val started = CountDownLatch(2)
-            val queue = field<BoundedKeyedTaskQueue>(adapter, "archiveCoverTasks")
+            val queue = adapter.archiveCoverTasksForTest
             repeat(2) { index -> queue.execute("fixture-$index") { started.countDown(); release.await() } }
             assertTrue(started.await(5, TimeUnit.SECONDS))
-            field<LruCache<String, List<MangaCollectionCoverSource>>>(adapter, "collectionSourceCache").put("collection:${directory.absolutePath}:${directory.lastModified()}", listOf(MangaCollectionCoverSource(archive, "cover.png")))
+            adapter.collectionSourceCacheForTest.put("collection:${directory.absolutePath}:${directory.lastModified()}", listOf(MangaCollectionCoverSource(archive, "cover.png")))
             val row = adapter.getView(0, null, FrameLayout(context))
             val recycler = row.findViewById<RecyclerView>(R.id.collectionCoverList)
             assertEquals(View.VISIBLE, recycler.visibility)
@@ -220,7 +218,7 @@ class FileListAdapterBindingTest {
                 nested.onBindViewHolder(holder, 0)
                 assertEquals(1, nested.itemCount)
                 assertTrue(holder.imageView.contentDescription.toString().contains(archive.name))
-                block(adapter, nested, holder, field(adapter, "collectionCoverLoadTracker"))
+                block(adapter, nested, holder, adapter.collectionCoverLoadTrackerForTest)
             } finally { activity.finish() }
         } finally { adapter.close(); release.countDown(); AppSettings.setBookcaseDirectory(context, directory, false) }
     }
@@ -228,13 +226,9 @@ class FileListAdapterBindingTest {
     // Only decoded-result delivery is controlled; registration and recycle use actual adapter paths.
     private fun deliver(adapter: FileListAdapter, key: String, requestId: Long): Bitmap {
         val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
-        val method = FileListAdapter::class.java.declaredMethods.single { it.name == "handleCollectionCoverResult" }
-        method.isAccessible = true
-        method.invoke(adapter, key, requestId, "fixture-bookcase", null, 0, bitmap)
+        adapter.handleCollectionCoverResultForTest(key, requestId, "fixture-bookcase", null, 0, bitmap)
         return bitmap
     }
-    @Suppress("UNCHECKED_CAST")
-    private fun <T> field(adapter: FileListAdapter, name: String): T = FileListAdapter::class.java.getDeclaredField(name).let { it.isAccessible = true; it.get(adapter) as T }
     private fun text(row: View, id: Int) = row.findViewById<TextView>(id).text.toString()
     private fun fixture(block: (File) -> Unit) {
         val root = Files.createTempDirectory("comiclab-binding-").toFile()

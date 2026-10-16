@@ -48,6 +48,7 @@ import com.example.comiclab.ui.reader.manga.ReaderPageAdapterController
 import com.example.comiclab.ui.reader.manga.ReaderPreviewAdapter
 import com.example.comiclab.ui.reader.manga.SubsamplingMangaPageAdapter
 import java.io.File
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.abs
@@ -102,8 +103,8 @@ class MangaReaderActivity : AppCompatActivity() {
     private lateinit var tvReaderStatus: TextView
 
     private val handler = Handler(Looper.getMainLooper())
-    private val readerLoadExecutor = Executors.newSingleThreadExecutor()
-    private val readerProgressExecutor = Executors.newSingleThreadExecutor()
+    private var readerLoadExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private var readerProgressExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val readerLoadGeneration = AtomicInteger(0)
     private val preparedReaderViewModel by lazy {
         ViewModelProvider(this)[MangaReaderViewModel::class.java]
@@ -1244,6 +1245,77 @@ class MangaReaderActivity : AppCompatActivity() {
             isIdle = isIdle,
             isDiscreteJump = isDiscreteJump
         )
+    }
+
+    // 测试接口：仅供单元测试注入执行器、读取阅读状态并触发保存/跳页，不参与运行时逻辑。
+    internal var readerLoadExecutorForTest: ExecutorService
+        get() = readerLoadExecutor
+        set(value) {
+            readerLoadExecutor = value
+        }
+
+    internal var readerProgressExecutorForTest: ExecutorService
+        get() = readerProgressExecutor
+        set(value) {
+            readerProgressExecutor = value
+        }
+
+    internal val preparedReaderViewModelForTest: MangaReaderViewModel
+        get() = preparedReaderViewModel
+
+    internal val imageEntriesForTest: List<String>
+        get() = imageEntries
+
+    internal val currentReaderPositionForTest: Int
+        get() = currentReaderPosition
+
+    internal fun setPendingReaderProgressForTest(position: Int, offset: Int) {
+        pendingRestorePosition = position
+        pendingRestoreOffset = offset
+    }
+
+    internal fun saveReaderPositionForTest(forceCommit: Boolean) {
+        saveReaderPosition(forceCommit)
+    }
+
+    internal val listReaderPagesForTest: ZoomableReaderRecyclerView
+        get() = listReaderPages
+
+    internal val readerLayoutManagerForTest: LinearLayoutManager
+        get() = readerLayoutManager
+
+    internal val currentReaderOffsetForTest: Int
+        get() = currentReaderOffset
+
+    internal val pendingRestorePositionForTest: Int?
+        get() = pendingRestorePosition
+
+    internal val pendingRestoreOffsetForTest: Int
+        get() = pendingRestoreOffset
+
+    internal val restoreAttemptCountForTest: Int
+        get() = restoreAttemptCount
+
+    internal fun readerPagePositionMapperForTest(sourceItemCount: Int): ReaderPagePositionMapper =
+        readerPagePositionMapper(sourceItemCount)
+
+    internal val tvReaderStatusForTest: TextView
+        get() = tvReaderStatus
+
+    internal val firstReaderPageReadyMetricReportedForTest: Boolean
+        get() = firstReaderPageReadyMetricReported
+
+    internal val pageAdapterForTest: ReaderPageAdapterController?
+        get() = pageAdapter
+
+    internal val debugReaderStressStepForTest: Int
+        get() = debugReaderStressStep
+
+    internal fun readerSpreadStartSourcePositionForTest(pagePosition: Int): Int =
+        readerSpreadStartSourcePosition(pagePosition)
+
+    internal fun jumpReaderToPageForTest(position: Int) {
+        jumpReaderToPage(position)
     }
 
     private fun jumpReaderToPage(position: Int) {

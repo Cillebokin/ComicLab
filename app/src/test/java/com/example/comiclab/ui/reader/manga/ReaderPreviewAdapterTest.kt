@@ -231,10 +231,7 @@ class ReaderPreviewAdapterTest {
         return condition()
     }
 
-    private fun failedPositions(adapter: ReaderPreviewAdapter): Set<*> =
-        adapter.javaClass.getDeclaredField("failedPositions")
-            .apply { isAccessible = true }
-            .get(adapter) as Set<*>
+    private fun failedPositions(adapter: ReaderPreviewAdapter): Set<*> = adapter.failedPositionsForTest
 
     private class FakePreviewSession(
         private val previewDecoder: (String, Int) -> Bitmap? = { _, _ -> null }
