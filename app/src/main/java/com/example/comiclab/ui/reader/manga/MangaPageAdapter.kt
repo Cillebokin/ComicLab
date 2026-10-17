@@ -44,6 +44,8 @@ import com.example.comiclab.core.reader.decode.visiblePreviewPriorityForReader
 import com.example.comiclab.core.reader.layout.ReaderPagePositionMapper
 import com.example.comiclab.ui.reader.manga.page.calculateFitInsideSize
 import com.example.comiclab.ui.reader.manga.page.calculateSampleSizeForWidth
+import com.example.comiclab.ui.reader.manga.page.buildPageTiles
+import com.example.comiclab.ui.reader.manga.page.PageTile
 import com.example.comiclab.ui.reader.manga.page.PreloadWindow
 import com.example.comiclab.ui.reader.manga.page.sourceToDisplayY
 import java.io.File
@@ -707,7 +709,13 @@ internal class MangaPageAdapter(
         holder.imageView.setImageBitmap(previewBitmap(sourcePosition))
 
         val tileDecodeWidth = tileDecodeWidth(imageWidth, bounds.width)
-        val tiles = buildTiles(bounds, imageWidth, tileDecodeWidth)
+        val tiles = buildPageTiles(
+            sourceWidth = bounds.width,
+            sourceHeight = bounds.height,
+            imageWidth = imageWidth,
+            tileDecodeWidth = tileDecodeWidth,
+            isPdfSource = isPdfSource
+        )
         holder.tileContainer.removeAllViews()
         holder.container.refreshContentLayout()
         mainHandler.post {
@@ -726,7 +734,13 @@ internal class MangaPageAdapter(
         val bounds = pageBounds[position] ?: return
         val imageWidth = zoomedDisplayWidth()
         val tileDecodeWidth = tileDecodeWidth(imageWidth, bounds.width)
-        val tiles = buildTiles(bounds, imageWidth, tileDecodeWidth)
+        val tiles = buildPageTiles(
+            sourceWidth = bounds.width,
+            sourceHeight = bounds.height,
+            imageWidth = imageWidth,
+            tileDecodeWidth = tileDecodeWidth,
+            isPdfSource = isPdfSource
+        )
         ensureVisibleTiles(holder, position, bounds, imageWidth, tileDecodeWidth, tiles)
     }
 
@@ -1834,45 +1848,6 @@ internal class MangaPageAdapter(
         fullPositionsToRemove.forEach(::removeFullBitmap)
     }
 
-    private fun buildTiles(
-        bounds: ComicArchive.ImageBounds,
-        imageWidth: Int,
-        tileDecodeWidth: Int
-    ): List<PageTile> {
-        val sourceTileHeightByDisplay = (TILE_MAX_DISPLAY_HEIGHT.toFloat() * bounds.width / imageWidth)
-            .roundToInt()
-        val sourceTileHeightByPixels = (TILE_MAX_SOURCE_PIXELS / bounds.width.coerceAtLeast(1))
-            .coerceAtLeast(TILE_MIN_SOURCE_HEIGHT)
-        val sourceTileHeightByDecodedPixels = if (tileDecodeWidth > 0 && bounds.width > 0) {
-            (TILE_MAX_DECODED_PIXELS.toFloat() * bounds.width.toFloat() /
-                (tileDecodeWidth.toFloat() * tileDecodeWidth.toFloat()))
-                .roundToInt()
-        } else {
-            sourceTileHeightByPixels
-        }
-        val minSourceTileHeight = if (isPdfSource) {
-            PDF_TILE_MIN_SOURCE_HEIGHT
-        } else {
-            TILE_MIN_SOURCE_HEIGHT
-        }
-        val sourceTileHeight = minOf(
-            sourceTileHeightByDisplay,
-            sourceTileHeightByPixels,
-            sourceTileHeightByDecodedPixels
-        )
-            .coerceAtLeast(minSourceTileHeight)
-        val tiles = mutableListOf<PageTile>()
-        var top = 0
-        var index = 0
-        while (top < bounds.height) {
-            val bottom = (top + sourceTileHeight).coerceAtMost(bounds.height)
-            tiles.add(PageTile(index, Rect(0, top, bounds.width, bottom)))
-            top = bottom
-            index++
-        }
-        return tiles
-    }
-
     private fun shouldUseTiledPage(bounds: ComicArchive.ImageBounds): Boolean {
         if (isHorizontalReading()) {
             return false
@@ -2193,11 +2168,6 @@ internal class MangaPageAdapter(
         var tileRefreshRunnable: Runnable? = null
     }
 
-    private data class PageTile(
-        val index: Int,
-        val sourceRect: Rect
-    )
-
     private data class TileKey(
         val position: Int,
         val tileIndex: Int,
@@ -2278,11 +2248,6 @@ internal class MangaPageAdapter(
         private const val TILED_DECODED_HEIGHT_THRESHOLD = 5200
         private const val TILED_SOURCE_PIXEL_THRESHOLD = 12_000_000L
         private const val TILED_DECODED_PIXEL_THRESHOLD = 8_000_000L
-        private const val TILE_MAX_DISPLAY_HEIGHT = 2400
-        private const val TILE_MIN_SOURCE_HEIGHT = 512
-        private const val PDF_TILE_MIN_SOURCE_HEIGHT = 128
-        private const val TILE_MAX_SOURCE_PIXELS = 4_000_000
-        private const val TILE_MAX_DECODED_PIXELS = 4_000_000L
         private const val PDF_FULL_RENDER_SCALE = 2
         private const val PDF_ZOOM_RENDER_SCALE = 3
         private const val PDF_TILE_RENDER_SCALE = 2
