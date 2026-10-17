@@ -1,4 +1,4 @@
-package com.example.comiclab
+package com.example.comiclab.ui.reader.manga
 
 import android.view.View
 import androidx.recyclerview.widget.LinearLayoutManager

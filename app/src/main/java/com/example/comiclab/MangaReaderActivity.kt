@@ -45,6 +45,8 @@ import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
 import com.example.comiclab.ui.reader.common.ReaderBrightnessController
 import com.example.comiclab.ui.reader.common.ReaderControlsController
+import com.example.comiclab.ui.reader.manga.ReaderDoublePageSnapHelper
+import com.example.comiclab.ui.reader.manga.ReaderPageZoomLayout
 import com.example.comiclab.ui.reader.manga.MangaPageAdapter
 import com.example.comiclab.ui.reader.manga.MangaReaderViewModel
 import com.example.comiclab.ui.reader.manga.ReaderPageAdapterController

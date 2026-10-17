@@ -31,6 +31,9 @@ import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.core.store.ReaderProgressStore
+import com.example.comiclab.ui.reader.manga.ReaderDoublePageSnapHelper
+import com.example.comiclab.ui.reader.manga.ReaderPageZoomLayout
+import com.example.comiclab.ui.reader.manga.ReaderSubsamplingImageView
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -115,7 +118,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         var activity = launchReader(archive, debugStressIterations = 8)
 
         awaitDebugStress(activity, expectedSteps = 8)
-        exercisePinchAndFastSwipe(activity)
+        exercisePinchAndFastSwipe(activity, "ordinary-page-zoom.png")
         val positionBeforeRotation = activity.currentReaderPositionForTest
         assertTrue("Page flipping should advance beyond the first page", positionBeforeRotation > 0)
 
@@ -155,6 +158,43 @@ class MangaReaderPhase5DeviceAcceptanceTest {
     }
 
     @Test
+    fun horizontalLandscapeReaderShowsAndSnapsCompleteDoublePageSpreads() {
+        val archive = createArchive("double-page-reader.cbz", pageCount = 8)
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_LEFT_TO_RIGHT)
+        AppSettings.setDoublePageReadingEnabled(context, true)
+        AppSettings.setDoublePageCoverSingleEnabled(context, true)
+
+        val previous = launchReader(archive)
+        onMain { previous.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+        val activity = awaitReadyReader(previous)
+        assertEquals(
+            Configuration.ORIENTATION_LANDSCAPE,
+            onMain { activity.resources.configuration.orientation }
+        )
+        assertTrue(
+            "landscape horizontal double-page mode should attach its spread snap helper",
+            onMain {
+                activity.listReaderPagesForTest.onFlingListener is ReaderDoublePageSnapHelper
+            }
+        )
+
+        onMain { activity.jumpReaderToPageForTest(1) }
+        awaitCondition("the double-page spread did not lay out both source pages") {
+            val visible = visibleSourcePositions(activity)
+            visible.contains(1) && visible.contains(2)
+        }
+        val visible = visibleSourcePositions(activity)
+        assertTrue("the visible spread should contain source pages 2 and 3: $visible", visible.contains(1) && visible.contains(2))
+        captureR17Screenshot("double-page-spread.png")
+
+        finishReader(activity)
+        assertTrue(
+            "double-page reader progress writer should drain on exit",
+            checkNotNull(progressExecutor(activity)).awaitTermination(10, TimeUnit.SECONDS)
+        )
+    }
+
+    @Test
     fun pdfArchivePathRendersPagesOnDeviceAndClosesOnExit() {
         val pdf = createPdf("pdf-reader.pdf", pageCount = 4)
         val activity = launchReader(pdf)
@@ -162,6 +202,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         assertEquals(4, activity.imageEntriesForTest.size)
         assertTrue("PDF page should reach the reader-ready callback", activity.firstReaderPageReadyMetricReportedForTest)
         assertTrue("PDF should use the ordinary page adapter", activity.pageAdapterForTest?.javaClass?.simpleName == "MangaPageAdapter")
+        captureR17Screenshot("pdf-page.png")
         onMain { activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
         val rotated = awaitReadyReader(activity)
         assertEquals(Configuration.ORIENTATION_LANDSCAPE, onMain { rotated.resources.configuration.orientation })
@@ -185,7 +226,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         assertEquals("SubsamplingMangaPageAdapter", activity.pageAdapterForTest?.javaClass?.simpleName)
         assertEquals(12, activity.imageEntriesForTest.size)
         assertTrue(cacheDirectory.isDirectory)
-        exercisePinchAndFastSwipe(activity)
+        exercisePinchAndFastSwipe(activity, "prepared-page-zoom.png")
 
         val previous = activity
         val oldProgressExecutor = checkNotNull(progressExecutor(previous))
@@ -290,7 +331,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         }
     }
 
-    private fun exercisePinchAndFastSwipe(activity: MangaReaderActivity) {
+    private fun exercisePinchAndFastSwipe(activity: MangaReaderActivity, screenshotName: String) {
         onView(withId(R.id.listReaderPages)).check(matches(isDisplayed()))
         instrumentation.waitForIdleSync()
         val zoomView = onMain {
@@ -312,6 +353,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
             "pinch gesture should increase the page scale; scale=$zoomedScale events=$receivedEvents",
             zoomedScale > 1.05f
         )
+        captureR17Screenshot(screenshotName)
         onMain {
             when (val view = checkNotNull(zoomView)) {
                 is ReaderPageZoomLayout -> view.resetZoom()
@@ -408,6 +450,22 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         } finally {
             bitmap.recycle()
         }
+    }
+
+    private fun captureR17Screenshot(fileName: String) {
+        instrumentation.waitForIdleSync()
+        SystemClock.sleep(750)
+        instrumentation.waitForIdleSync()
+        val screenshotDirectory = File(checkNotNull(context.getExternalFilesDir(null)), "w3-1j-r17")
+        check(screenshotDirectory.isDirectory || screenshotDirectory.mkdirs()) {
+            "Could not create the app-specific R17 screenshot directory"
+        }
+        val screenshot = File(screenshotDirectory, fileName)
+        val descriptor = instrumentation.uiAutomation.executeShellCommand(
+            "screencap -p ${screenshot.absolutePath}"
+        )
+        ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
+        assertTrue("R17 screenshot was not written: $screenshot", screenshot.isFile && screenshot.length() > 0L)
     }
 
     private fun findZoomView(view: View): View? {
@@ -565,6 +623,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
 
     private companion object {
         val PREFERENCE_FILES = listOf(
+            "app_settings",
             "saf_prefs",
             "reader_prefs",
             "reading_history_prefs",

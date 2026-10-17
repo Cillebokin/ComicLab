@@ -8,6 +8,7 @@ import android.view.View
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
+import com.example.comiclab.ui.reader.manga.ReaderSubsamplingImageView
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit

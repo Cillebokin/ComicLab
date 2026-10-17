@@ -18,7 +18,6 @@ import androidx.recyclerview.widget.RecyclerView
 import com.davemorrissey.labs.subscaleview.ImageSource
 import com.example.comiclab.AppSettings
 import com.example.comiclab.ComicArchive
-import com.example.comiclab.ReaderSubsamplingImageView
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
 import com.example.comiclab.core.reader.decode.preparedReaderNearbyPositions
 import com.example.comiclab.core.reader.layout.ReaderPagePositionMapper

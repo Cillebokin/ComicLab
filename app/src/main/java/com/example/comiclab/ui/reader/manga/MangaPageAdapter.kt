@@ -22,7 +22,6 @@ import com.example.comiclab.MAX_READER_DECODE_HEIGHT
 import com.example.comiclab.MAX_READER_DECODE_WIDTH
 import com.example.comiclab.MAX_READER_TILE_DECODE_WIDTH
 import com.example.comiclab.R
-import com.example.comiclab.ReaderPageZoomLayout
 import com.example.comiclab.readerPageContentGravity
 import com.example.comiclab.core.reader.decode.calculatePdfPreviewWidth
 import com.example.comiclab.core.reader.decode.calculatePdfRenderWidthByPixelBudget

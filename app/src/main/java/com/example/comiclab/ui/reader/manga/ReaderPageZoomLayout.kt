@@ -1,4 +1,4 @@
-package com.example.comiclab
+package com.example.comiclab.ui.reader.manga
 
 import android.animation.ValueAnimator
 import android.content.Context

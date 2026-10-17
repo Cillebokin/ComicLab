@@ -24,6 +24,7 @@ import com.davemorrissey.labs.subscaleview.decoder.ImageRegionDecoder
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
 import com.example.comiclab.ui.reader.manga.MangaPageAdapter
 import com.example.comiclab.ui.reader.manga.ReaderPreviewAdapter
+import com.example.comiclab.ui.reader.manga.ReaderSubsamplingImageView
 import com.example.comiclab.ui.reader.manga.SubsamplingMangaPageAdapter
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
