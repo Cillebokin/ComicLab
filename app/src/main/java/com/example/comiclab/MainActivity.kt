@@ -45,6 +45,7 @@ import com.example.comiclab.ui.browser.transfer.FileTransferController
 import com.example.comiclab.ui.browser.transfer.FileTransferMetadataUpdatePolicy
 import com.example.comiclab.ui.browser.transfer.FileTransferMode
 import com.example.comiclab.ui.browser.transfer.PendingFileTransfer
+import com.example.comiclab.core.transfer.DirectoryFileTree
 import com.example.comiclab.core.transfer.DirectoryTransferOperations
 import com.example.comiclab.core.transfer.FileOperationProgress
 import com.example.comiclab.core.transfer.FileOperationProgressPolicy
