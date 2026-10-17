@@ -49,6 +49,7 @@ import com.example.comiclab.ui.browser.DirectoryScrollStateCache
 import com.example.comiclab.ui.browser.FileListScrollState
 import com.example.comiclab.ui.browser.model.FileItem
 import com.example.comiclab.ui.browser.transfer.FileTransferController
+import com.example.comiclab.ui.browser.transfer.FileTransferWorkflowController
 import com.example.comiclab.ui.browser.transfer.FileTransferMetadataUpdatePolicy
 import com.example.comiclab.ui.browser.transfer.FileTransferMode
 import com.example.comiclab.ui.browser.transfer.PendingFileTransfer
@@ -70,7 +71,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class MainActivity : AppCompatActivity() {
 
-    private data class FileOperationProgressViews(
+    internal data class FileOperationProgressViews(
         val dialog: AlertDialog,
         val status: TextView,
         val progressBar: ProgressBar,
@@ -176,6 +177,27 @@ class MainActivity : AppCompatActivity() {
         get() = fileTransferController.pendingTransfer
     private val isFileTransferInProgress: Boolean
         get() = fileTransferController.isTransferInProgress
+
+    private val fileTransferWorkflowController by lazy(LazyThreadSafetyMode.NONE) {
+        FileTransferWorkflowController(
+            activity = this,
+            stateController = fileTransferController,
+            executor = fileTransferExecutor,
+            showProgressCallback = { showFileOperationProgress() },
+            createProgressReporterCallback = { views ->
+                createFileOperationProgressReporter(views)
+            },
+            dismissProgressCallback = { views -> dismissFileOperationProgress(views) },
+            currentPathProvider = { currentPath },
+            captureScrollState = { captureFileListScrollState() },
+            loadDirectory = { scrollState ->
+                loadCurrentDirectory(scrollStateToRestore = scrollState)
+            },
+            invalidateChildCount = { directory -> invalidateDirectoryChildCount(directory) },
+            showMessageCallback = { message -> showMessage(message) },
+            updateToolbarCallback = { updateFileTransferToolbar() }
+        )
+    }
 
     private val prefs by lazy {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -612,11 +634,8 @@ class MainActivity : AppCompatActivity() {
         updateFileTransferToolbar()
     }
 
-    // 模拟目录剪切完成的回调路径，与原测试的调用顺序一致：先显示进度，再处理结果。
-    private var progressViewsForTest: FileOperationProgressViews? = null
-
     internal fun showFileOperationProgressForTest() {
-        progressViewsForTest = showFileOperationProgress()
+        fileTransferWorkflowController.showFileOperationProgressForTest()
     }
 
     internal fun handleDirectoryTransferFailureForTest(
@@ -624,12 +643,10 @@ class MainActivity : AppCompatActivity() {
         result: DirectoryTransferOperations.Result,
         destinationDirectory: File
     ) {
-        handleDirectoryTransferResult(
+        fileTransferWorkflowController.handleDirectoryTransferFailureForTest(
             transfer,
             result,
-            destinationDirectory,
-            null,
-            checkNotNull(progressViewsForTest)
+            destinationDirectory
         )
     }
 
@@ -1049,27 +1066,13 @@ class MainActivity : AppCompatActivity() {
         loadCurrentDirectory(targetDirectory.absolutePath)
     }
 
-    private fun isPendingFileTransferSource(file: File): Boolean {
-        val transfer = pendingFileTransfer ?: return false
-        val source = File(transfer.sourcePath)
-        return if (transfer.isDirectory) {
-            isSamePathOrDescendant(file, source)
-        } else {
-            file.absoluteFile.toPath().normalize() == source.absoluteFile.toPath().normalize()
-        }
-    }
+    private fun isPendingFileTransferSource(file: File): Boolean =
+        fileTransferController.isPendingTransferSource(file)
 
-    private fun containsPendingFileTransferSource(directory: File): Boolean {
-        val transfer = pendingFileTransfer ?: return false
-        val source = File(transfer.sourcePath)
-        return isSamePathOrDescendant(source, directory) ||
-            (transfer.isDirectory && isSamePathOrDescendant(directory, source))
-    }
+    private fun containsPendingFileTransferSource(directory: File): Boolean =
+        fileTransferController.containsPendingTransferSource(directory)
 
-    private fun isSamePathOrDescendant(candidate: File, directory: File): Boolean {
-        return candidate.absoluteFile.toPath().normalize()
-            .startsWith(directory.absoluteFile.toPath().normalize())
-    }
+
 
     private fun restorePendingFileTransfer(savedInstanceState: Bundle?) {
         val state = savedInstanceState ?: return
@@ -1093,18 +1096,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun beginFileTransfer(file: File, mode: FileTransferMode) {
-        if (pendingFileTransfer != null || isFileTransferInProgress) {
-            return
-        }
-        if (!file.isFile && !file.isDirectory) {
-            showMessage(getString(R.string.file_transfer_source_missing))
-            return
-        }
-
-        val transfer = PendingFileTransfer(file.absolutePath, mode, file.isDirectory)
-        if (fileTransferController.begin(transfer)) {
-            updateFileTransferToolbar()
-        }
+        fileTransferWorkflowController.beginFileTransfer(file, mode)
     }
 
     private fun updateFileTransferToolbar() {
@@ -1151,155 +1143,38 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun pastePendingFile() {
-        if (isFileTransferInProgress) {
-            return
-        }
-        val transfer = pendingFileTransfer ?: return
-        val sourceFile = File(transfer.sourcePath)
-        val destinationDirectory = File(currentPath)
-        val sourceExists = if (transfer.isDirectory) sourceFile.isDirectory else sourceFile.isFile
-        if (!sourceExists) {
-            showMessage(getString(R.string.file_transfer_source_missing))
-            return
-        }
-        if (!destinationDirectory.isDirectory) {
-            showMessage(getString(R.string.file_transfer_failed))
-            return
-        }
-
-        if (transfer.isDirectory) {
-            if (DirectoryTransferOperations.isDestinationInsideSource(
-                    sourceFile,
-                    destinationDirectory
-                )
-            ) {
-                showMessage(getString(R.string.folder_paste_into_source))
-                return
-            }
-            val targetDirectory = File(destinationDirectory, sourceFile.name)
-            if (targetDirectory.exists()) {
-                showPasteDirectoryNameDialog(transfer, destinationDirectory)
-            } else {
-                startDirectoryTransfer(transfer, destinationDirectory, sourceFile.name)
-            }
-            return
-        }
-
-        val targetFile = File(destinationDirectory, sourceFile.name)
-        if (targetFile.exists() || targetFile.absoluteFile == sourceFile.absoluteFile) {
-            showPasteFileNameDialog(transfer, destinationDirectory)
-        } else {
-            startFileTransfer(transfer, destinationDirectory, sourceFile.name)
-        }
+        fileTransferWorkflowController.pastePendingFile()
     }
 
-    private fun showPasteDirectoryNameDialog(
+
+
+
+
+
+
+
+
+
+
+
+
+    private fun startFileTransfer(
         transfer: PendingFileTransfer,
-        destinationDirectory: File
+        destinationDirectory: File,
+        targetName: String
     ) {
-        if (pendingFileTransfer != transfer || isFileTransferInProgress) {
-            return
-        }
-        val sourceDirectory = File(transfer.sourcePath)
-        if (!transfer.isDirectory || !sourceDirectory.isDirectory) {
-            showMessage(getString(R.string.file_transfer_source_missing))
-            return
-        }
-
-        val input = EditText(this).apply {
-            setSingleLine(true)
-            setText(
-                DirectoryTransferOperations.suggestedName(
-                    sourceDirectory.name,
-                    destinationDirectory
-                )
-            )
-            setSelection(text.length)
-        }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(R.string.paste_folder_conflict_title)
-            .setMessage(R.string.paste_folder_conflict_message)
-            .setView(input)
-            .setPositiveButton(R.string.confirm, null)
-            .setNegativeButton(android.R.string.cancel, null)
-            .createRounded()
-        dialog.show()
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val targetName = DirectoryTransferOperations.targetDirectoryName(
-                input.text?.toString().orEmpty()
-            )
-            if (targetName == null) {
-                val errorMessage = if (input.text.isNullOrBlank()) {
-                    getString(R.string.rename_directory_name_empty)
-                } else {
-                    getString(R.string.rename_directory_name_invalid)
-                }
-                input.error = errorMessage
-                return@setOnClickListener
-            }
-
-            if (File(destinationDirectory, targetName).exists()) {
-                input.error = getString(R.string.paste_folder_name_exists)
-                return@setOnClickListener
-            }
-
-            dialog.dismiss()
-            startDirectoryTransfer(transfer, destinationDirectory, targetName)
-        }
+        fileTransferWorkflowController.startFileTransfer(transfer, destinationDirectory, targetName)
     }
 
-    private fun showPasteFileNameDialog(
-        transfer: PendingFileTransfer,
-        destinationDirectory: File
-    ) {
-        if (pendingFileTransfer != transfer || isFileTransferInProgress) {
-            return
-        }
-        val sourceFile = File(transfer.sourcePath)
-        if (transfer.isDirectory || !sourceFile.isFile) {
-            showMessage(getString(R.string.file_transfer_source_missing))
-            return
-        }
 
-        val input = EditText(this).apply {
-            setSingleLine(true)
-            setText(FileTransferOperations.suggestedName(sourceFile.name, destinationDirectory))
-            setSelection(text.length)
-        }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(R.string.paste_file_conflict_title)
-            .setMessage(R.string.paste_file_conflict_message)
-            .setView(input)
-            .setPositiveButton(R.string.confirm, null)
-            .setNegativeButton(android.R.string.cancel, null)
-            .createRounded()
-        dialog.show()
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val targetName = FileTransferOperations.targetFileName(
-                sourceFile.name,
-                input.text?.toString().orEmpty()
-            )
-            if (targetName == null) {
-                val errorMessage = if (input.text.isNullOrBlank()) {
-                    getString(R.string.rename_file_name_empty)
-                } else {
-                    getString(R.string.rename_file_name_invalid)
-                }
-                input.error = errorMessage
-                return@setOnClickListener
-            }
 
-            if (File(destinationDirectory, targetName).exists()) {
-                input.error = getString(R.string.paste_file_name_exists)
-                return@setOnClickListener
-            }
 
-            dialog.dismiss()
-            startFileTransfer(transfer, destinationDirectory, targetName)
-        }
+
+    private fun exitPendingFileTransfer() {
+        fileTransferWorkflowController.exitPendingFileTransfer()
     }
 
-    private fun showFileOperationProgress(): FileOperationProgressViews {
+    internal fun showFileOperationProgress(): FileOperationProgressViews {
         val content = layoutInflater.inflate(R.layout.dialog_file_operation_progress, null)
         val views = FileOperationProgressViews(
             dialog = AlertDialog.Builder(this)
@@ -1316,7 +1191,7 @@ class MainActivity : AppCompatActivity() {
         return views
     }
 
-    private fun createFileOperationProgressReporter(
+    internal fun createFileOperationProgressReporter(
         views: FileOperationProgressViews
     ): (FileOperationProgress) -> Unit {
         var lastUpdateAt = 0L
@@ -1404,277 +1279,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun dismissFileOperationProgress(views: FileOperationProgressViews) {
+    internal fun dismissFileOperationProgress(views: FileOperationProgressViews) {
         if (views.dialog.isShowing) {
             views.dialog.dismiss()
         }
-    }
-
-    private fun startFileTransfer(
-        transfer: PendingFileTransfer,
-        destinationDirectory: File,
-        targetName: String
-    ) {
-        if (pendingFileTransfer != transfer || isFileTransferInProgress) {
-            return
-        }
-        val sourceFile = File(transfer.sourcePath)
-        val targetFile = File(destinationDirectory, targetName)
-        if (targetFile.exists()) {
-            showPasteFileNameDialog(transfer, destinationDirectory)
-            return
-        }
-
-        val scrollState = captureFileListScrollState()
-        val wasFavorite = transfer.mode == FileTransferMode.CUT &&
-            FavoriteComicStore.isFavorite(this, sourceFile)
-        val wasInReadingHistory = transfer.mode == FileTransferMode.CUT &&
-            ReadingHistoryStore.items(this).any { it.file.absolutePath == sourceFile.absolutePath }
-        if (!fileTransferController.startPaste(transfer)) {
-            return
-        }
-        updateFileTransferToolbar()
-        val progressViews = showFileOperationProgress()
-        val reportProgress = createFileOperationProgressReporter(progressViews)
-        fileTransferExecutor.execute {
-            val result = FileTransferOperations.transfer(
-                sourceFile = sourceFile,
-                targetFile = targetFile,
-                moveSource = transfer.mode == FileTransferMode.CUT,
-                onProgress = reportProgress
-            )
-            if (result == FileTransferOperations.Result.SUCCESS &&
-                transfer.mode == FileTransferMode.CUT
-            ) {
-                FileTransferMetadataUpdatePolicy.applyFileCut(
-                    updateFavorites = {
-                        if (wasFavorite) {
-                            FavoriteComicStore.remove(applicationContext, sourceFile)
-                            FavoriteComicStore.record(applicationContext, targetFile)
-                        }
-                    },
-                    updateReadingHistory = {
-                        if (wasInReadingHistory) {
-                            ReadingHistoryStore.remove(applicationContext, sourceFile)
-                            ReadingHistoryStore.record(applicationContext, targetFile)
-                        }
-                    },
-                    updateReaderProgress = {
-                        ReaderProgressStore.moveFile(applicationContext, sourceFile, targetFile)
-                    }
-                )
-            }
-            if (result == FileTransferOperations.Result.SUCCESS ||
-                result == FileTransferOperations.Result.SOURCE_DELETE_FAILED
-            ) {
-                invalidateDirectoryChildCount(destinationDirectory)
-                if (result == FileTransferOperations.Result.SUCCESS &&
-                    transfer.mode == FileTransferMode.CUT
-                ) {
-                    invalidateDirectoryChildCount(sourceFile.parentFile)
-                }
-            }
-            runOnUiThread {
-                dismissFileOperationProgress(progressViews)
-                if (isDestroyed || isFinishing) {
-                    return@runOnUiThread
-                }
-                fileTransferController.finishPaste(
-                    transfer,
-                    result = result
-                )
-                updateFileTransferToolbar()
-                when (result) {
-                    FileTransferOperations.Result.SUCCESS -> {
-                        showMessage(
-                            getString(
-                                if (transfer.mode == FileTransferMode.COPY) {
-                                    R.string.file_copy_success
-                                } else {
-                                    R.string.file_cut_success
-                                }
-                            )
-                        )
-                        loadCurrentDirectory(scrollStateToRestore = scrollState)
-                    }
-
-                    FileTransferOperations.Result.TARGET_EXISTS -> {
-                        showPasteFileNameDialog(transfer, destinationDirectory)
-                    }
-
-                    FileTransferOperations.Result.SOURCE_NOT_FILE -> {
-                        showMessage(getString(R.string.file_transfer_source_missing))
-                    }
-
-                    FileTransferOperations.Result.SOURCE_DELETE_FAILED -> {
-                        showMessage(getString(R.string.file_cut_source_delete_failed))
-                    }
-
-                    FileTransferOperations.Result.DESTINATION_NOT_DIRECTORY,
-                    FileTransferOperations.Result.FAILED -> {
-                        showMessage(getString(R.string.file_transfer_failed))
-                    }
-                }
-            }
-        }
-    }
-
-    private fun startDirectoryTransfer(
-        transfer: PendingFileTransfer,
-        destinationDirectory: File,
-        targetName: String
-    ) {
-        if (pendingFileTransfer != transfer || isFileTransferInProgress) {
-            return
-        }
-        val sourceDirectory = File(transfer.sourcePath)
-        val targetDirectory = File(destinationDirectory, targetName)
-        if (DirectoryTransferOperations.isDestinationInsideSource(
-                sourceDirectory,
-                destinationDirectory
-            )
-        ) {
-            showMessage(getString(R.string.folder_paste_into_source))
-            return
-        }
-        if (targetDirectory.exists()) {
-            showPasteDirectoryNameDialog(transfer, destinationDirectory)
-            return
-        }
-
-        val scrollState = captureFileListScrollState()
-        if (!fileTransferController.startPaste(transfer)) {
-            return
-        }
-        updateFileTransferToolbar()
-        val progressViews = showFileOperationProgress()
-        val reportProgress = createFileOperationProgressReporter(progressViews)
-        fileTransferExecutor.execute {
-            val result = DirectoryTransferOperations.transfer(
-                sourceDirectory = sourceDirectory,
-                destinationDirectory = destinationDirectory,
-                targetName = targetName,
-                moveSource = transfer.mode == FileTransferMode.CUT,
-                onProgress = reportProgress
-            )
-            if (result == DirectoryTransferOperations.Result.SUCCESS &&
-                transfer.mode == FileTransferMode.CUT
-            ) {
-                FileTransferMetadataUpdatePolicy.applyDirectoryCut(
-                    updateFavoritePaths = {
-                        FavoritePathStore.moveDirectory(
-                            applicationContext,
-                            sourceDirectory,
-                            targetDirectory
-                        )
-                    },
-                    updateFavoriteComics = {
-                        FavoriteComicStore.moveDirectory(
-                            applicationContext,
-                            sourceDirectory,
-                            targetDirectory
-                        )
-                    },
-                    updateReadingHistory = {
-                        ReadingHistoryStore.moveDirectory(
-                            applicationContext,
-                            sourceDirectory,
-                            targetDirectory
-                        )
-                    },
-                    updateBookcasePaths = {
-                        AppSettings.renameBookcaseDirectory(
-                            applicationContext,
-                            sourceDirectory,
-                            targetDirectory
-                        )
-                    },
-                    updateReaderProgress = {
-                        ReaderProgressStore.moveDirectory(
-                            applicationContext,
-                            sourceDirectory,
-                            targetDirectory
-                        )
-                    }
-                )
-            }
-            if (result == DirectoryTransferOperations.Result.SUCCESS ||
-                result == DirectoryTransferOperations.Result.SOURCE_DELETE_FAILED
-            ) {
-                invalidateDirectoryChildCount(destinationDirectory)
-                if (transfer.mode == FileTransferMode.CUT) {
-                    invalidateDirectoryChildCount(sourceDirectory.parentFile)
-                    if (result == DirectoryTransferOperations.Result.SOURCE_DELETE_FAILED) {
-                        invalidateDirectoryChildCount(sourceDirectory)
-                    }
-                }
-            }
-            runOnUiThread {
-                handleDirectoryTransferResult(
-                    transfer = transfer,
-                    result = result,
-                    destinationDirectory = destinationDirectory,
-                    scrollState = scrollState,
-                    progressViews = progressViews
-                )
-            }
-        }
-    }
-
-    private fun handleDirectoryTransferResult(
-        transfer: PendingFileTransfer,
-        result: DirectoryTransferOperations.Result,
-        destinationDirectory: File,
-        scrollState: FileListScrollState?,
-        progressViews: FileOperationProgressViews
-    ) {
-        dismissFileOperationProgress(progressViews)
-        if (isDestroyed || isFinishing) {
-            return
-        }
-        fileTransferController.finishPaste(transfer, result)
-        updateFileTransferToolbar()
-        when (result) {
-            DirectoryTransferOperations.Result.SUCCESS -> {
-                showMessage(
-                    getString(
-                        if (transfer.mode == FileTransferMode.COPY) {
-                            R.string.folder_copy_success
-                        } else {
-                            R.string.folder_cut_success
-                        }
-                    )
-                )
-                loadCurrentDirectory(scrollStateToRestore = scrollState)
-            }
-
-            DirectoryTransferOperations.Result.TARGET_EXISTS -> {
-                showPasteDirectoryNameDialog(transfer, destinationDirectory)
-            }
-
-            DirectoryTransferOperations.Result.SOURCE_NOT_DIRECTORY -> {
-                showMessage(getString(R.string.file_transfer_source_missing))
-            }
-
-            DirectoryTransferOperations.Result.DESTINATION_INSIDE_SOURCE -> {
-                showMessage(getString(R.string.folder_paste_into_source))
-            }
-
-            DirectoryTransferOperations.Result.SOURCE_DELETE_FAILED -> {
-                showMessage(getString(R.string.folder_cut_source_delete_failed))
-                loadCurrentDirectory(scrollStateToRestore = scrollState)
-            }
-
-            DirectoryTransferOperations.Result.DESTINATION_NOT_DIRECTORY,
-            DirectoryTransferOperations.Result.INVALID_TARGET_NAME,
-            DirectoryTransferOperations.Result.FAILED -> {
-                showMessage(getString(R.string.file_transfer_failed))
-            }
-        }
-    }
-
-    private fun exitPendingFileTransfer() {
-        if (fileTransferController.exit()) updateFileTransferToolbar()
     }
 
     private fun showArchiveMenu(file: File) {
@@ -2158,8 +1766,8 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_PENDING_FILE_TRANSFER_PATH = "pending_file_transfer_path"
         private const val KEY_PENDING_FILE_TRANSFER_MODE = "pending_file_transfer_mode"
         private const val KEY_PENDING_FILE_TRANSFER_IS_DIRECTORY = "pending_file_transfer_is_directory"
-        private const val PROGRESS_UI_UPDATE_INTERVAL_MS = 120L
         private const val CLEAR_CLICK_STATE_DELAY_MS = 240L
+        private const val PROGRESS_UI_UPDATE_INTERVAL_MS = 120L
         private val INVALID_FILE_NAME_CHARS = setOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')
         private const val MENU_CLASSIFY_BY_START_MARKER = 1
         private const val MENU_FIND_SIMILAR_DIRECTORY_NAMES = 2

@@ -48,6 +48,7 @@ import com.example.comiclab.ui.reader.common.ReaderControlsController
 import com.example.comiclab.ui.reader.manga.ReaderDoublePageSnapHelper
 import com.example.comiclab.ui.reader.manga.ReaderPageZoomLayout
 import com.example.comiclab.ui.reader.manga.MangaPageAdapter
+import com.example.comiclab.ui.reader.manga.MangaReaderProgressController
 import com.example.comiclab.ui.reader.manga.MangaReaderViewModel
 import com.example.comiclab.ui.reader.manga.ReaderPageAdapterController
 import com.example.comiclab.ui.reader.manga.ReaderPreviewAdapter
@@ -110,6 +111,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var readerLoadExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var readerProgressExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private lateinit var readerProgressController: MangaReaderProgressController
     private val readerLoadGeneration = AtomicInteger(0)
     private val preparedReaderViewModel by lazy {
         ViewModelProvider(this)[MangaReaderViewModel::class.java]
@@ -176,6 +178,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        readerProgressController = MangaReaderProgressController(this) { readerProgressExecutor }
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.decorView.setBackgroundColor(Color.BLACK)
         restoreReaderPositionAfterOrientationChange = savedInstanceState?.let { state ->
@@ -235,7 +238,7 @@ class MangaReaderActivity : AppCompatActivity() {
         }
         configureDebugReaderStress()
         if (shouldStartFromBeginning) {
-            clearSavedReadingProgress(this, file)
+            readerProgressController.clear(file)
         }
 
         val preparedCachePath = intent.getStringExtra(EXTRA_PREPARED_READER_CACHE_DIR)
@@ -299,7 +302,7 @@ class MangaReaderActivity : AppCompatActivity() {
         readerLoadExecutor.shutdownNow().forEach { task ->
             (task as? PreparedReaderCacheLeaseTask)?.cancelBeforeRun()
         }
-        readerProgressExecutor.shutdown()
+        readerProgressController.shutdown()
         handler.removeCallbacksAndMessages(null)
         readerControlsController.close()
         CrashLogManager.recordReaderSessionFinished(this, readerSessionMarker)
@@ -1398,29 +1401,12 @@ class MangaReaderActivity : AppCompatActivity() {
             offsetToSave = currentReaderOffset
         }
 
-        val preparedWrite = ReaderProgressStore.prepareSave(
-            context = this,
+        readerProgressController.save(
             file = file,
             position = positionToSave,
-            offset = offsetToSave
+            offset = offsetToSave,
+            forceCommit = forceCommit
         )
-        if (readerProgressExecutor.isShutdown) {
-            return
-        }
-        readerProgressExecutor.execute {
-            if (forceCommit) {
-                preparedWrite.commit()
-            } else {
-                preparedWrite.apply()
-            }
-            CrashLogManager.recordReaderCheckpoint(
-                context = this,
-                file = file,
-                position = positionToSave,
-                offset = offsetToSave,
-                durable = forceCommit
-            )
-        }
     }
 
     private fun updateCurrentReaderPosition(firstVisiblePosition: Int) {
@@ -1436,7 +1422,7 @@ class MangaReaderActivity : AppCompatActivity() {
         val file = archiveFile ?: return
         val (savedPosition, savedOffset) = restoredReaderPosition
             ?.also { restoredReaderPosition = null }
-            ?: ReaderProgressStore.readPositionAndOffset(this, file)
+            ?: readerProgressController.readPositionAndOffset(file)
         val position = savedPosition.coerceIn(0, imageEntries.lastIndex.coerceAtLeast(0))
         val offset = if (isHorizontalReading() || restoreReaderPositionAfterOrientationChange) {
             0
@@ -1955,8 +1941,5 @@ class MangaReaderActivity : AppCompatActivity() {
             return ReaderProgressStore.savedReadingPageCount(context, file, totalCount)
         }
 
-        private fun clearSavedReadingProgress(context: Context, file: File) {
-            ReaderProgressStore.clearSavedReadingProgress(context, file)
-        }
     }
 }

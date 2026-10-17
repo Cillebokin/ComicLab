@@ -6,6 +6,7 @@ import com.example.comiclab.ui.browser.transfer.FileTransferController
 import com.example.comiclab.ui.browser.transfer.FileTransferMetadataUpdatePolicy
 import com.example.comiclab.ui.browser.transfer.FileTransferMode
 import com.example.comiclab.ui.browser.transfer.PendingFileTransfer
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -13,6 +14,37 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FileTransferControllerTest {
+
+    @Test
+    fun directoryTransferProtectsItsSourceTreeAndAncestorsButNotSiblings() {
+        val controller = FileTransferController()
+        val storageRoot = File("transfer-root").absoluteFile
+        val source = File(storageRoot, "source")
+        controller.begin(
+            PendingFileTransfer(source.absolutePath, FileTransferMode.CUT, isDirectory = true)
+        )
+
+        assertTrue(controller.isPendingTransferSource(File(source, "nested/page.jpg")))
+        assertTrue(controller.containsPendingTransferSource(storageRoot))
+        assertTrue(controller.containsPendingTransferSource(File(source, "nested")))
+        assertFalse(controller.isPendingTransferSource(File(storageRoot, "source-other/page.jpg")))
+        assertFalse(controller.containsPendingTransferSource(File(storageRoot, "unrelated")))
+    }
+
+    @Test
+    fun fileTransferProtectsOnlyItsExactSourceAndContainingDirectories() {
+        val controller = FileTransferController()
+        val storageRoot = File("transfer-root").absoluteFile
+        val source = File(storageRoot, "source.cbz")
+        controller.begin(
+            PendingFileTransfer(source.absolutePath, FileTransferMode.COPY, isDirectory = false)
+        )
+
+        assertTrue(controller.isPendingTransferSource(source))
+        assertTrue(controller.containsPendingTransferSource(storageRoot))
+        assertFalse(controller.isPendingTransferSource(File(storageRoot, "other.cbz")))
+        assertFalse(controller.containsPendingTransferSource(File(storageRoot, "unrelated")))
+    }
 
     @Test
     fun beginKeepsFirstPendingTransferAndRejectsAnother() {
