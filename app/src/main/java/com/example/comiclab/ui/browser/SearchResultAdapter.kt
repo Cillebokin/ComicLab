@@ -15,7 +15,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.ui.browser.bookcase.AbsListViewScrollStateTracker
 import com.example.comiclab.AppSettings
 import com.example.comiclab.ui.browser.bookcase.BookcaseRowViewTypes
-import com.example.comiclab.BoundedKeyedTaskQueue
+import com.example.comiclab.core.concurrent.BoundedKeyedTaskQueue
 import com.example.comiclab.ComicArchive
 import com.example.comiclab.CommonFunc
 import com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverAdapter

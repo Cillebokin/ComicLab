@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.concurrent.LatestTaskDispatcher
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor

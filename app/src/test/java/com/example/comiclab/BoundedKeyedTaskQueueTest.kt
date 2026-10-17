@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.concurrent.BoundedKeyedTaskQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean

@@ -1,4 +1,4 @@
-package com.example.comiclab
+package com.example.comiclab.core.concurrent
 
 import java.io.Closeable
 import java.util.concurrent.ArrayBlockingQueue

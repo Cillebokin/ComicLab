@@ -2,6 +2,7 @@ package com.example.comiclab
 
 import com.example.comiclab.ui.browser.organize.ComicOrganizeController
 import com.example.comiclab.ui.browser.refresh.DirectoryRefreshController
+import com.example.comiclab.core.concurrent.LatestTaskDispatcher
 import com.example.comiclab.ui.browser.toolbar.RoundedPopupMenuItem
 import com.example.comiclab.ui.browser.toolbar.SortAndSearchController
 import com.example.comiclab.ui.browser.toolbar.showRoundedPopupMenu

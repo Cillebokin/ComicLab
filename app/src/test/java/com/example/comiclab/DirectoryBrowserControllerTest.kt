@@ -1,6 +1,7 @@
 package com.example.comiclab
 
 import com.example.comiclab.ui.browser.DirectoryBrowserController
+import com.example.comiclab.core.concurrent.LatestTaskDispatcher
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch

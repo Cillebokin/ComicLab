@@ -6,7 +6,7 @@ import com.example.comiclab.DirectoryScrollStateCache
 import com.example.comiclab.DirectorySortOrder
 import com.example.comiclab.DirectorySortPolicy
 import com.example.comiclab.FileListScrollState
-import com.example.comiclab.LatestTaskDispatcher
+import com.example.comiclab.core.concurrent.LatestTaskDispatcher
 import com.example.comiclab.ui.browser.model.FileItem
 import java.io.File
 import java.util.concurrent.Executor
