@@ -1,6 +1,5 @@
 package com.example.comiclab.core.transfer
 
-import com.example.comiclab.DirectoryFileTree
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException

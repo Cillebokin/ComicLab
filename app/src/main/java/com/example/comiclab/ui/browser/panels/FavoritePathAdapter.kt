@@ -9,8 +9,8 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.R
-import com.example.comiclab.RoundedPopupMenu
 import com.example.comiclab.core.store.FavoritePathStore
+import com.example.comiclab.ui.common.RoundedPopupMenu
 
 class FavoritePathAdapter(
     private val context: Context,

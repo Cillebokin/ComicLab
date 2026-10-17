@@ -43,11 +43,20 @@ class EpubParser {
         zipFile: ZipFile,
         untitledChapterTitle: String
     ): ParsedEpub {
-        if (zipFile.getEntry(ENCRYPTION_ENTRY) != null) {
-            throw EpubParseException(
-                EpubParseError.ENCRYPTED,
-                "Encrypted EPUB resources are not supported"
-            )
+        val encryptionEntry = zipFile.getEntry(ENCRYPTION_ENTRY)
+        val encryptedResources = if (encryptionEntry == null) {
+            emptyList()
+        } else {
+            val references = runCatching {
+                readEncryptedDataReferences(zipFile.getInputStream(encryptionEntry))
+            }.getOrNull()
+            if (references.isNullOrEmpty() || references.any { reference ->
+                    reference.algorithm !in FONT_OBFUSCATION_ALGORITHMS || reference.uri.isBlank()
+                }
+            ) {
+                throw encryptedResourcesNotSupported()
+            }
+            references
         }
 
         val mimetypeEntry = zipFile.getEntry(MIMETYPE_ENTRY)
@@ -72,6 +81,16 @@ class EpubParser {
         }
         if (resolvedManifest.isEmpty()) {
             throw EpubParseException(EpubParseError.INVALID_PACKAGE, "EPUB manifest is empty")
+        }
+        val manifestByPath = resolvedManifest.groupBy(ManifestItem::path)
+        if (encryptedResources.any { reference ->
+                val path = EpubPath.resolve("", reference.uri) ?: return@any true
+                val items = manifestByPath[path].orEmpty()
+                items.size != 1 || !isFontMediaType(items.single().mediaType) ||
+                    zipFile.getEntry(path) == null
+            }
+        ) {
+            throw encryptedResourcesNotSupported()
         }
 
         val manifestById = resolvedManifest.associateBy { it.id }
@@ -160,6 +179,62 @@ class EpubParser {
             input.close()
         }
     }
+
+    /** 每个 EncryptedData 必须有唯一算法和 CipherReference，供后续对照 OPF 字体清单。 */
+    private fun readEncryptedDataReferences(input: InputStream): List<EncryptedResourceReference> {
+        return input.use { stream ->
+            val parser = newParser(stream)
+            val references = mutableListOf<EncryptedResourceReference>()
+            var insideEncryptedData = false
+            var currentAlgorithm: String? = null
+            var currentUri: String? = null
+            var algorithmCount = 0
+            var referenceCount = 0
+            while (parser.next() != XmlPullParser.END_DOCUMENT) {
+                when (parser.eventType) {
+                    XmlPullParser.START_TAG -> when (parser.name.substringAfterLast(':')) {
+                        "EncryptedData" -> {
+                            if (insideEncryptedData) error("Nested EncryptedData is invalid")
+                            insideEncryptedData = true
+                            currentAlgorithm = null
+                            currentUri = null
+                            algorithmCount = 0
+                            referenceCount = 0
+                        }
+                        "EncryptionMethod" -> if (insideEncryptedData) {
+                            algorithmCount++
+                            currentAlgorithm = parser.getAttributeValue(null, "Algorithm")?.trim().orEmpty()
+                        }
+                        "CipherReference" -> if (insideEncryptedData) {
+                            referenceCount++
+                            currentUri = parser.getAttributeValue(null, "URI")?.trim().orEmpty()
+                        }
+                    }
+                    XmlPullParser.END_TAG -> if (parser.name.substringAfterLast(':') == "EncryptedData") {
+                        if (!insideEncryptedData || algorithmCount != 1 || referenceCount != 1 ||
+                            currentAlgorithm.isNullOrBlank() || currentUri.isNullOrBlank()
+                        ) {
+                            error("EncryptedData must declare one algorithm and one CipherReference")
+                        }
+                        references += EncryptedResourceReference(currentAlgorithm!!, currentUri!!)
+                        insideEncryptedData = false
+                        currentAlgorithm = null
+                        currentUri = null
+                    }
+                }
+            }
+            if (insideEncryptedData) error("EncryptedData is incomplete")
+            references
+        }
+    }
+
+    private fun isFontMediaType(mediaType: String): Boolean =
+        mediaType.startsWith("font/") || mediaType in LEGACY_FONT_MEDIA_TYPES
+
+    private fun encryptedResourcesNotSupported() = EpubParseException(
+        EpubParseError.ENCRYPTED,
+        "Encrypted EPUB resources are not supported"
+    )
 
     private fun parsePackage(input: InputStream): PackageData {
         return try {
@@ -384,6 +459,11 @@ class EpubParser {
         val path: String = ""
     )
 
+    private data class EncryptedResourceReference(
+        val algorithm: String,
+        val uri: String
+    )
+
     private data class SpineItem(
         val idref: String,
         val linear: Boolean
@@ -402,6 +482,19 @@ class EpubParser {
         const val MIMETYPE_ENTRY = "mimetype"
         const val CONTAINER_ENTRY = "META-INF/container.xml"
         const val ENCRYPTION_ENTRY = "META-INF/encryption.xml"
+        /** EPUB 3 OCF 定义的字体混淆算法（IDPF 与 Adobe 两种标识）。 */
+        val FONT_OBFUSCATION_ALGORITHMS = setOf(
+            "http://www.idpf.org/2008/embedding",
+            "http://ns.adobe.com/pdf/enc#RC"
+        )
+        val LEGACY_FONT_MEDIA_TYPES = setOf(
+            "application/font-sfnt",
+            "application/font-woff",
+            "application/vnd.ms-opentype",
+            "application/x-font-opentype",
+            "application/x-font-ttf",
+            "application/x-font-woff"
+        )
         const val EPUB_MIMETYPE = "application/epub+zip"
         const val OPF_MIME_TYPE = "application/oebps-package+xml"
         const val XHTML_MIME_TYPE = "application/xhtml+xml"

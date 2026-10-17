@@ -1,6 +1,8 @@
 package com.example.comiclab.ebook.mobi
 
 import java.nio.charset.StandardCharsets
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -12,7 +14,91 @@ class Kf8ParserTest {
         val skeleton = "<html><body><h1>Chapter</h1></body></html>"
         val fragment = "<p>正文内容</p>"
         val rawMarkup = (skeleton + fragment).toByteArray(charset)
-        val records = buildList {
+        val records = validRecords(skeleton, fragment, charset)
+        val warnings = mutableListOf<Throwable?>()
+
+        val content = Kf8Parser(warn = { _, throwable -> warnings += throwable }).parse(
+            rawMarkup = rawMarkup,
+            charset = charset,
+            header = records.first(),
+            headerRecordIndex = 0,
+            totalRecordCount = records.size,
+            readRecord = records::get
+        )
+
+        assertTrue(content.documents.single().contains(fragment))
+        assertNull(content.fallbackReason)
+        assertTrue(warnings.isEmpty())
+    }
+
+    @Test
+    fun reportsFallbackWhenReconstructionThrows() {
+        val charset = StandardCharsets.UTF_8
+        val skeleton = "<html><body><h1>Chapter</h1></body></html>"
+        val fragment = "<p>正文内容</p>"
+        val rawMarkup = (skeleton + fragment).toByteArray(charset)
+        val records = validRecords(skeleton, fragment, charset)
+        val warnings = mutableListOf<Pair<String, Throwable?>>()
+
+        val content = Kf8Parser(warn = { message, throwable -> warnings += message to throwable }).parse(
+            rawMarkup = rawMarkup,
+            charset = charset,
+            header = records.first(),
+            headerRecordIndex = 0,
+            totalRecordCount = records.size,
+            readRecord = { index ->
+                if (index == 0) records.first() else throw IllegalStateException("corrupt record $index")
+            }
+        )
+
+        assertEquals(Kf8FallbackReason.RECONSTRUCTION_FAILED, content.fallbackReason)
+        assertEquals(String(rawMarkup, charset), content.documents.single())
+        assertEquals(1, warnings.size)
+        assertTrue(warnings.single().first.contains("fell back"))
+        assertTrue(warnings.single().second is IllegalStateException)
+    }
+
+    @Test
+    fun reportsFallbackWhenReconstructionProducesNoDocuments() {
+        val charset = StandardCharsets.UTF_8
+        val rawMarkup = "<p>plain</p>".toByteArray(charset)
+        val warnings = mutableListOf<Pair<String, Throwable?>>()
+
+        val content = Kf8Parser(warn = { message, throwable -> warnings += message to throwable }).parse(
+            rawMarkup = rawMarkup,
+            charset = charset,
+            header = ByteArray(256),
+            headerRecordIndex = 0,
+            totalRecordCount = 1,
+            readRecord = { ByteArray(256) }
+        )
+
+        assertEquals(Kf8FallbackReason.NO_DOCUMENTS, content.fallbackReason)
+        assertEquals("<p>plain</p>", content.documents.single())
+        assertEquals(1, warnings.size)
+        assertNull(warnings.single().second)
+    }
+
+    @Test
+    fun emptyMarkupIsGenuinelyEmptyAndNotReportedAsFallback() {
+        val warnings = mutableListOf<Throwable?>()
+
+        val content = Kf8Parser(warn = { _, throwable -> warnings += throwable }).parse(
+            rawMarkup = ByteArray(0),
+            charset = StandardCharsets.UTF_8,
+            header = ByteArray(256),
+            headerRecordIndex = 0,
+            totalRecordCount = 1,
+            readRecord = { ByteArray(256) }
+        )
+
+        assertTrue(content.documents.isEmpty())
+        assertNull(content.fallbackReason)
+        assertTrue(warnings.isEmpty())
+    }
+
+    private fun validRecords(skeleton: String, fragment: String, charset: java.nio.charset.Charset): List<ByteArray> {
+        return buildList {
             add(ByteArray(256).also { header ->
                 putUnsignedInt(header, 248, 3)
                 putUnsignedInt(header, 252, 1)
@@ -30,17 +116,6 @@ class Kf8ParserTest {
                 values = listOf(0, fragment.toByteArray(charset).size)
             ))
         }
-
-        val content = Kf8Parser().parse(
-            rawMarkup = rawMarkup,
-            charset = charset,
-            header = records.first(),
-            headerRecordIndex = 0,
-            totalRecordCount = records.size,
-            readRecord = records::get
-        )
-
-        assertTrue(content.documents.single().contains(fragment))
     }
 
     private fun buildMainIndex(definitions: List<Pair<Int, Int>>): ByteArray {

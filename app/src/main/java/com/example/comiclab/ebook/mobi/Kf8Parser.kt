@@ -1,5 +1,6 @@
 package com.example.comiclab.ebook.mobi
 
+import android.util.Log
 import java.io.ByteArrayOutputStream
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
@@ -13,10 +14,28 @@ import java.nio.charset.StandardCharsets
  */
 data class Kf8Content(
     val documents: List<String>,
-    val stylesheet: String? = null
+    val stylesheet: String? = null,
+    /** 非空表示文档重建未成功，已回退到原始标记；为空表示重建成功或内容确实为空。 */
+    val fallbackReason: Kf8FallbackReason? = null
 )
 
-class Kf8Parser {
+enum class Kf8FallbackReason {
+    /** 重建过程抛出异常。 */
+    RECONSTRUCTION_FAILED,
+
+    /** 重建正常结束但没有产生任何文档（索引结构不符合预期）。 */
+    NO_DOCUMENTS
+}
+
+private const val KF8_LOG_TAG = "ComicLabKf8"
+
+private fun logKf8Fallback(message: String, throwable: Throwable?) {
+    Log.w(KF8_LOG_TAG, message, throwable)
+}
+
+class Kf8Parser(
+    private val warn: (message: String, throwable: Throwable?) -> Unit = ::logKf8Fallback
+) {
 
     fun parse(
         rawMarkup: ByteArray,
@@ -46,7 +65,7 @@ class Kf8Parser {
             .trim()
             .takeIf(String::isNotBlank)
 
-        val documents = runCatching {
+        val reconstruction = runCatching {
             reconstructDocuments(
                 rawMarkup = rawMarkup,
                 charset = charset,
@@ -55,17 +74,33 @@ class Kf8Parser {
                 totalRecordCount = totalRecordCount,
                 readRecord = readRecord
             )
-        }.getOrNull()
-            ?.takeIf { it.isNotEmpty() }
-            ?: flows
-                .take(1)
-                .map { String(it, charset) }
-                .filter(String::isNotBlank)
-                .ifEmpty { listOf(String(rawMarkup, charset)) }
+        }
+        val reconstructed = reconstruction.getOrNull()?.takeIf { it.isNotEmpty() }
+        if (reconstructed != null) {
+            return Kf8Content(
+                documents = reconstructed,
+                stylesheet = stylesheet
+            )
+        }
+
+        val failure = reconstruction.exceptionOrNull()
+        val fallbackReason = if (failure != null) {
+            Kf8FallbackReason.RECONSTRUCTION_FAILED
+        } else {
+            Kf8FallbackReason.NO_DOCUMENTS
+        }
+        warn("KF8 document reconstruction fell back to raw markup: $fallbackReason", failure)
+
+        val documents = flows
+            .take(1)
+            .map { String(it, charset) }
+            .filter(String::isNotBlank)
+            .ifEmpty { listOf(String(rawMarkup, charset)) }
 
         return Kf8Content(
             documents = documents,
-            stylesheet = stylesheet
+            stylesheet = stylesheet,
+            fallbackReason = fallbackReason
         )
     }
 

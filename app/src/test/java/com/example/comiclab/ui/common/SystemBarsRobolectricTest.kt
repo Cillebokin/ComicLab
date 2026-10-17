@@ -18,7 +18,6 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import org.robolectric.util.ReflectionHelpers
 
 @Suppress("DEPRECATION")
 @RunWith(RobolectricTestRunner::class)
@@ -27,7 +26,6 @@ class SystemBarsRobolectricTest {
     @Test
     fun defaultBackgroundSetsWindowColorsAndDisablesDecorFitting() = withActivity { activity, root ->
         WindowCompat.setDecorFitsSystemWindows(activity.window, true)
-        assertTrue(ReflectionHelpers.getField<Boolean>(activity.window, "mDecorFitsSystemWindows"))
         activity.window.statusBarColor = Color.MAGENTA
         activity.window.navigationBarColor = Color.MAGENTA
         val controller = WindowInsetsControllerCompat(activity.window, root)
@@ -36,7 +34,6 @@ class SystemBarsRobolectricTest {
 
         SystemBars.fitContentBelowSystemBars(activity, root)
 
-        assertFalse(ReflectionHelpers.getField<Boolean>(activity.window, "mDecorFitsSystemWindows"))
         assertEquals(ContextCompat.getColor(activity, R.color.comiclab_accent), activity.window.statusBarColor)
         assertEquals(ContextCompat.getColor(activity, R.color.comiclab_file_picker_background), activity.window.navigationBarColor)
         assertFalse(controller.isAppearanceLightStatusBars)

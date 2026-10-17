@@ -49,10 +49,7 @@ class MangaReaderPrepareActivityTest {
         }
         val controller = Robolectric.buildActivity(MangaReaderPrepareActivity::class.java, intent)
         val activity = controller.get()
-        val executorField = MangaReaderPrepareActivity::class.java
-            .getDeclaredField("prepareExecutor")
-            .apply { isAccessible = true }
-        executorField.set(activity, queuedExecutor)
+        activity.prepareExecutorForTest = queuedExecutor
 
         try {
             controller.create()
@@ -83,24 +80,14 @@ class MangaReaderPrepareActivityTest {
         }
         val controller = Robolectric.buildActivity(MangaReaderPrepareActivity::class.java, intent)
         val activity = controller.get()
-        MangaReaderPrepareActivity::class.java
-            .getDeclaredField("prepareExecutor")
-            .apply { isAccessible = true }
-            .set(activity, executor)
+        activity.prepareExecutorForTest = executor
 
         val preparedDirectory = temporaryFolder.newFolder("active-prepared-cache")
         File(preparedDirectory, "page.jpg").writeBytes(byteArrayOf(1))
         val registry = PreparedReaderCacheLeaseRegistry.process
         val prepareOwner = registry.acquirePrepareOwner(preparedDirectory)!!
         val writerLease = registry.acquireWriterLease(preparedDirectory)!!
-        MangaReaderPrepareActivity::class.java
-            .getDeclaredField("preparedDirectory")
-            .apply { isAccessible = true }
-            .set(activity, preparedDirectory)
-        MangaReaderPrepareActivity::class.java
-            .getDeclaredField("prepareOwnerLease")
-            .apply { isAccessible = true }
-            .set(activity, prepareOwner)
+        activity.adoptPreparedDirectoryForTest(preparedDirectory, prepareOwner)
 
         val workerStarted = CountDownLatch(1)
         val releaseWorker = CountDownLatch(1)
@@ -148,19 +135,13 @@ class MangaReaderPrepareActivityTest {
         }
         val controller = Robolectric.buildActivity(MangaReaderPrepareActivity::class.java, intent)
         val activity = controller.get()
-        MangaReaderPrepareActivity::class.java
-            .getDeclaredField("prepareExecutor")
-            .apply { isAccessible = true }
-            .set(activity, executor)
+        activity.prepareExecutorForTest = executor
 
         try {
             controller.create()
             assertEquals(1, executor.pendingTaskCount)
             executor.runNext()
-            val preparedDirectory = MangaReaderPrepareActivity::class.java
-                .getDeclaredField("preparedDirectory")
-                .apply { isAccessible = true }
-                .get(activity) as File
+            val preparedDirectory = checkNotNull(activity.preparedDirectoryForTest)
             assertTrue(preparedDirectory.isDirectory)
 
             // The worker posted its empty-archive result; destroy before the main callback runs.
@@ -191,17 +172,11 @@ class MangaReaderPrepareActivityTest {
         }
         val controller = Robolectric.buildActivity(MangaReaderPrepareActivity::class.java, intent)
         val activity = controller.get()
-        MangaReaderPrepareActivity::class.java
-            .getDeclaredField("prepareExecutor")
-            .apply { isAccessible = true }
-            .set(activity, RejectingExecutorService())
+        activity.prepareExecutorForTest = RejectingExecutorService()
 
         try {
             controller.create()
-            val preparedDirectory = MangaReaderPrepareActivity::class.java
-                .getDeclaredField("preparedDirectory")
-                .apply { isAccessible = true }
-                .get(activity) as File
+            val preparedDirectory = checkNotNull(activity.preparedDirectoryForTest)
 
             assertTrue(
                 "a rejected worker enqueue must release the prepare and writer leases",

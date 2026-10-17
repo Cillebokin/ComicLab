@@ -13,7 +13,9 @@ import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseTask
+import com.example.comiclab.core.diagnostics.ComicLabPerformance
 import java.io.File
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 class MangaReaderPrepareActivity : AppCompatActivity() {
@@ -22,7 +24,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
     private lateinit var tvPrepareStatus: TextView
     private lateinit var progressPrepareReader: ProgressBar
 
-    private val prepareExecutor = Executors.newSingleThreadExecutor()
+    private var prepareExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
 
     @Volatile
@@ -34,6 +36,24 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
     private var startFromBeginning = false
     private var explicitStartPageIndex = NO_EXPLICIT_START_PAGE
     private var readerLoadStartedAtNanos: Long? = null
+
+    // 测试接口：仅供单元测试替换准备线程池、注入准备目录与所有者租约、读取准备目录，不参与运行时逻辑。
+    internal var prepareExecutorForTest: ExecutorService
+        get() = prepareExecutor
+        set(value) {
+            prepareExecutor = value
+        }
+
+    internal val preparedDirectoryForTest: File?
+        get() = preparedDirectory
+
+    internal fun adoptPreparedDirectoryForTest(
+        directory: File,
+        owner: PreparedReaderCacheLeaseRegistry.Lease
+    ) {
+        preparedDirectory = directory
+        prepareOwnerLease = owner
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

@@ -1,7 +1,7 @@
 package com.example.comiclab.core.store
 
 import android.content.SharedPreferences
-import com.example.comiclab.ComicLabMangaProgress
+import com.example.comiclab.core.settings.ComicLabMangaProgress
 import java.io.File
 import java.lang.reflect.Proxy
 import org.junit.After

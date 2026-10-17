@@ -1,6 +1,5 @@
 package com.example.comiclab.core.store
 
-import com.example.comiclab.BookcaseFolderPaths
 import android.content.Context
 import com.example.comiclab.ebook.ReaderFileDetector
 import org.json.JSONArray
@@ -124,6 +123,14 @@ object ReadingHistoryStore {
         }
     }
 
+    /**
+     * 重命名单个文件后迁移历史记录。路径完全匹配时 remapPath 返回新路径，
+     * 冲突时保留阅读时间较新的记录（决策 D3）。
+     */
+    fun moveFile(context: Context, oldFile: File, newFile: File) {
+        moveDirectory(context, oldFile, newFile)
+    }
+
     fun moveDirectory(context: Context, oldDirectory: File, newDirectory: File) {
         val movedItems = LinkedHashMap<String, StoredItem>()
         readStoredItems(context).forEach { item ->
@@ -202,7 +209,7 @@ object ReadingHistoryStore {
     }
 
     private fun prefs(context: Context) =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        PrefsGateway.open(context, PREFS_NAME)
 
     private data class StoredItem(
         val path: String,

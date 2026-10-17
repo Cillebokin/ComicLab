@@ -2,6 +2,7 @@ package com.example.comiclab
 
 import android.app.Application
 import com.example.comiclab.core.archive.cache.ArchiveEntryFileCache
+import com.example.comiclab.core.diagnostics.CrashLogManager
 
 class ComicLabApplication : Application() {
 

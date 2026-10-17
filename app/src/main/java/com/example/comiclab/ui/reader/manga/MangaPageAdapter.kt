@@ -17,12 +17,11 @@ import android.widget.ImageView
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.AppSettings
 import com.example.comiclab.ComicArchive
-import com.example.comiclab.CrashLogManager
+import com.example.comiclab.core.diagnostics.CrashLogManager
 import com.example.comiclab.MAX_READER_DECODE_HEIGHT
 import com.example.comiclab.MAX_READER_DECODE_WIDTH
 import com.example.comiclab.MAX_READER_TILE_DECODE_WIDTH
 import com.example.comiclab.R
-import com.example.comiclab.ReaderPageZoomLayout
 import com.example.comiclab.readerPageContentGravity
 import com.example.comiclab.core.reader.decode.calculatePdfPreviewWidth
 import com.example.comiclab.core.reader.decode.calculatePdfRenderWidthByPixelBudget
@@ -42,6 +41,13 @@ import com.example.comiclab.core.reader.decode.shouldSkipTiledPdfPreviewDecodeAf
 import com.example.comiclab.core.reader.decode.shouldUsePdfTiledRendering
 import com.example.comiclab.core.reader.decode.visiblePreviewPriorityForReader
 import com.example.comiclab.core.reader.layout.ReaderPagePositionMapper
+import com.example.comiclab.ui.reader.manga.page.calculateDisplayHeight
+import com.example.comiclab.ui.reader.manga.page.calculateFitInsideSize
+import com.example.comiclab.ui.reader.manga.page.calculateSampleSizeForWidth
+import com.example.comiclab.ui.reader.manga.page.buildPageTiles
+import com.example.comiclab.ui.reader.manga.page.PageTile
+import com.example.comiclab.ui.reader.manga.page.PreloadWindow
+import com.example.comiclab.ui.reader.manga.page.sourceToDisplayY
 import java.io.File
 import java.util.Collections
 import java.util.concurrent.PriorityBlockingQueue
@@ -69,7 +75,7 @@ internal class MangaPageAdapter(
 ) : RecyclerView.Adapter<MangaPageAdapter.PageViewHolder>(), ReaderPageAdapterController {
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val decodeExecutor = ThreadPoolExecutor(
+    private var decodeExecutor = ThreadPoolExecutor(
         READER_DECODE_THREAD_COUNT,
         READER_DECODE_THREAD_COUNT,
         0L,
@@ -405,6 +411,37 @@ internal class MangaPageAdapter(
         }
     }
 
+    // 测试接口：仅供单元测试读取预览加载状态、触发预览请求与读取预览缓存，不参与运行时逻辑。
+    internal val loadingPreviewPagesForTest: Set<Int>
+        get() = loadingPreviewPages
+
+    internal val failedPreviewPagesForTest: Set<Int>
+        get() = failedPreviewPages
+
+    internal fun requestPreviewForTest(position: Int) {
+        ensurePreview(position, 100, 0, false)
+    }
+
+    internal fun cachedPreviewForTest(position: Int): Bitmap? = previewBitmap(position)
+
+    internal fun shouldUseTiledPageForTest(bounds: ComicArchive.ImageBounds): Boolean =
+        shouldUseTiledPage(bounds)
+
+    internal fun ensureFullOrTiledPageForTest(position: Int, priority: Int, generation: Int, isPreload: Boolean) {
+        ensureFullOrTiledPage(position, priority, generation, isPreload)
+    }
+
+    // 测试接口：仅供单元测试注入解码执行器并直接触发预览解码，不参与运行时逻辑。
+    internal var decodeExecutorForTest: ThreadPoolExecutor
+        get() = decodeExecutor
+        set(value) {
+            decodeExecutor = value
+        }
+
+    internal fun ensurePreviewForTest(position: Int, priority: Int, generation: Int, isPreload: Boolean) {
+        ensurePreview(position, priority, generation, isPreload)
+    }
+
     override fun close() {
         if (closed) {
             return
@@ -580,13 +617,23 @@ internal class MangaPageAdapter(
             setContainerSize(holder.container, baseDisplayWidth, baseDisplayHeight)
             val imageWidth = baseDisplayWidth
             val imageHeight = if (bounds != null) {
-                val size = calculateFitInsideSize(bounds.width, bounds.height)
+                val size = calculateFitInsideSize(
+                    bounds.width,
+                    bounds.height,
+                    baseDisplayWidth,
+                    baseDisplayHeight
+                )
                 size.height
             } else {
                 baseDisplayHeight
             }
             val centeredWidth = if (bounds != null) {
-                calculateFitInsideSize(bounds.width, bounds.height).width
+                calculateFitInsideSize(
+                    bounds.width,
+                    bounds.height,
+                    baseDisplayWidth,
+                    baseDisplayHeight
+                ).width
             } else {
                 imageWidth
             }
@@ -602,7 +649,12 @@ internal class MangaPageAdapter(
 
         val imageWidth = zoomedDisplayWidth()
         val imageHeight = if (bounds != null) {
-            calculateDisplayHeight(bounds.width, bounds.height, imageWidth)
+            calculateDisplayHeight(
+                bounds.width,
+                bounds.height,
+                imageWidth,
+                MIN_READER_PAGE_HEIGHT
+            )
         } else {
             (imageWidth * ESTIMATED_READER_PAGE_HEIGHT_RATIO)
                 .roundToInt()
@@ -620,7 +672,12 @@ internal class MangaPageAdapter(
         holder.imageView.setBackgroundColor(Color.BLACK)
 
         if (isHorizontalReading()) {
-            val imageSize = calculateFitInsideSize(bitmap.width, bitmap.height)
+            val imageSize = calculateFitInsideSize(
+                bitmap.width,
+                bitmap.height,
+                baseDisplayWidth,
+                baseDisplayHeight
+            )
             setContainerSize(holder.container, baseDisplayWidth, baseDisplayHeight)
             setFrameChildSize(
                 holder.imageView,
@@ -634,7 +691,12 @@ internal class MangaPageAdapter(
         }
 
         val imageWidth = zoomedDisplayWidth()
-        val imageHeight = calculateDisplayHeight(bitmap.width, bitmap.height, imageWidth)
+        val imageHeight = calculateDisplayHeight(
+            bitmap.width,
+            bitmap.height,
+            imageWidth,
+            MIN_READER_PAGE_HEIGHT
+        )
         setContainerHeight(holder.container, imageHeight)
         setFrameChildSize(holder.imageView, imageWidth, imageHeight)
         holder.imageView.setImageBitmap(bitmap)
@@ -647,7 +709,12 @@ internal class MangaPageAdapter(
         bounds: ComicArchive.ImageBounds
     ) {
         val imageWidth = zoomedDisplayWidth()
-        val imageHeight = calculateDisplayHeight(bounds.width, bounds.height, imageWidth)
+        val imageHeight = calculateDisplayHeight(
+            bounds.width,
+            bounds.height,
+            imageWidth,
+            MIN_READER_PAGE_HEIGHT
+        )
         setContainerHeight(holder.container, imageHeight)
         setFrameChildSize(holder.imageView, imageWidth, imageHeight)
         setFrameChildSize(holder.tileContainer, imageWidth, imageHeight)
@@ -657,7 +724,13 @@ internal class MangaPageAdapter(
         holder.imageView.setImageBitmap(previewBitmap(sourcePosition))
 
         val tileDecodeWidth = tileDecodeWidth(imageWidth, bounds.width)
-        val tiles = buildTiles(bounds, imageWidth, tileDecodeWidth)
+        val tiles = buildPageTiles(
+            sourceWidth = bounds.width,
+            sourceHeight = bounds.height,
+            imageWidth = imageWidth,
+            tileDecodeWidth = tileDecodeWidth,
+            isPdfSource = isPdfSource
+        )
         holder.tileContainer.removeAllViews()
         holder.container.refreshContentLayout()
         mainHandler.post {
@@ -676,7 +749,13 @@ internal class MangaPageAdapter(
         val bounds = pageBounds[position] ?: return
         val imageWidth = zoomedDisplayWidth()
         val tileDecodeWidth = tileDecodeWidth(imageWidth, bounds.width)
-        val tiles = buildTiles(bounds, imageWidth, tileDecodeWidth)
+        val tiles = buildPageTiles(
+            sourceWidth = bounds.width,
+            sourceHeight = bounds.height,
+            imageWidth = imageWidth,
+            tileDecodeWidth = tileDecodeWidth,
+            isPdfSource = isPdfSource
+        )
         ensureVisibleTiles(holder, position, bounds, imageWidth, tileDecodeWidth, tiles)
     }
 
@@ -721,7 +800,12 @@ internal class MangaPageAdapter(
             return
         }
 
-        val imageHeight = calculateDisplayHeight(bounds.width, bounds.height, imageWidth)
+        val imageHeight = calculateDisplayHeight(
+            bounds.width,
+            bounds.height,
+            imageWidth,
+            MIN_READER_PAGE_HEIGHT
+        )
         val containerTop = holder.container.top
         val pageViewportTop = (-containerTop).coerceIn(0, imageHeight).toFloat()
         val pageViewportBottom = (recyclerView.height - containerTop)
@@ -1784,45 +1868,6 @@ internal class MangaPageAdapter(
         fullPositionsToRemove.forEach(::removeFullBitmap)
     }
 
-    private fun buildTiles(
-        bounds: ComicArchive.ImageBounds,
-        imageWidth: Int,
-        tileDecodeWidth: Int
-    ): List<PageTile> {
-        val sourceTileHeightByDisplay = (TILE_MAX_DISPLAY_HEIGHT.toFloat() * bounds.width / imageWidth)
-            .roundToInt()
-        val sourceTileHeightByPixels = (TILE_MAX_SOURCE_PIXELS / bounds.width.coerceAtLeast(1))
-            .coerceAtLeast(TILE_MIN_SOURCE_HEIGHT)
-        val sourceTileHeightByDecodedPixels = if (tileDecodeWidth > 0 && bounds.width > 0) {
-            (TILE_MAX_DECODED_PIXELS.toFloat() * bounds.width.toFloat() /
-                (tileDecodeWidth.toFloat() * tileDecodeWidth.toFloat()))
-                .roundToInt()
-        } else {
-            sourceTileHeightByPixels
-        }
-        val minSourceTileHeight = if (isPdfSource) {
-            PDF_TILE_MIN_SOURCE_HEIGHT
-        } else {
-            TILE_MIN_SOURCE_HEIGHT
-        }
-        val sourceTileHeight = minOf(
-            sourceTileHeightByDisplay,
-            sourceTileHeightByPixels,
-            sourceTileHeightByDecodedPixels
-        )
-            .coerceAtLeast(minSourceTileHeight)
-        val tiles = mutableListOf<PageTile>()
-        var top = 0
-        var index = 0
-        while (top < bounds.height) {
-            val bottom = (top + sourceTileHeight).coerceAtMost(bounds.height)
-            tiles.add(PageTile(index, Rect(0, top, bounds.width, bottom)))
-            top = bottom
-            index++
-        }
-        return tiles
-    }
-
     private fun shouldUseTiledPage(bounds: ComicArchive.ImageBounds): Boolean {
         if (isHorizontalReading()) {
             return false
@@ -1840,7 +1885,12 @@ internal class MangaPageAdapter(
         // 按整页解码实际采用的宽度估算，避免横屏宽度大于原图时误判为超长页。
         val targetDecodeWidth = fullPageDecodeWidth(bounds)
         val sourcePixels = bounds.width.toLong() * bounds.height.toLong()
-        val decodedHeight = calculateDisplayHeight(bounds.width, bounds.height, targetDecodeWidth)
+        val decodedHeight = calculateDisplayHeight(
+            bounds.width,
+            bounds.height,
+            targetDecodeWidth,
+            MIN_READER_PAGE_HEIGHT
+        )
         val sampleSize = calculateSampleSizeForWidth(bounds.width, targetDecodeWidth)
         val decodedPixels = (bounds.width / sampleSize).toLong() *
             (bounds.height / sampleSize).toLong()
@@ -1849,18 +1899,6 @@ internal class MangaPageAdapter(
             decodedHeight >= TILED_DECODED_HEIGHT_THRESHOLD ||
             sourcePixels >= TILED_SOURCE_PIXEL_THRESHOLD ||
             decodedPixels >= TILED_DECODED_PIXEL_THRESHOLD
-    }
-
-    private fun calculateSampleSizeForWidth(width: Int, targetWidth: Int): Int {
-        if (width <= 0 || targetWidth <= 0) {
-            return 1
-        }
-
-        var sampleSize = 1
-        while (width / (sampleSize * 2) >= targetWidth) {
-            sampleSize *= 2
-        }
-        return sampleSize
     }
 
     private fun setContainerHeight(container: FrameLayout, height: Int) {
@@ -1921,40 +1959,6 @@ internal class MangaPageAdapter(
             layoutParams.topMargin = top
             view.layoutParams = layoutParams
         }
-    }
-
-    private fun sourceToDisplayY(sourceY: Int, sourceHeight: Int, imageHeight: Int): Int {
-        if (sourceHeight <= 0 || imageHeight <= 0) {
-            return 0
-        }
-
-        return (sourceY.toFloat() / sourceHeight.toFloat() * imageHeight.toFloat())
-            .roundToInt()
-            .coerceIn(0, imageHeight)
-    }
-
-    private fun calculateDisplayHeight(width: Int, height: Int, imageWidth: Int): Int {
-        if (width <= 0 || height <= 0 || imageWidth <= 0) {
-            return MIN_READER_PAGE_HEIGHT
-        }
-
-        return (imageWidth.toFloat() / width.toFloat() * height.toFloat())
-            .roundToInt()
-            .coerceAtLeast(1)
-    }
-
-    private fun calculateFitInsideSize(width: Int, height: Int): DisplaySize {
-        if (width <= 0 || height <= 0 || baseDisplayWidth <= 0 || baseDisplayHeight <= 0) {
-            return DisplaySize(baseDisplayWidth, baseDisplayHeight)
-        }
-
-        val widthScale = baseDisplayWidth.toFloat() / width.toFloat()
-        val heightScale = baseDisplayHeight.toFloat() / height.toFloat()
-        val scale = minOf(widthScale, heightScale)
-        return DisplaySize(
-            width = (width * scale).roundToInt().coerceAtLeast(1),
-            height = (height * scale).roundToInt().coerceAtLeast(1)
-        )
     }
 
     private fun zoomedDisplayWidth(): Int {
@@ -2179,11 +2183,6 @@ internal class MangaPageAdapter(
         var tileRefreshRunnable: Runnable? = null
     }
 
-    private data class PageTile(
-        val index: Int,
-        val sourceRect: Rect
-    )
-
     private data class TileKey(
         val position: Int,
         val tileIndex: Int,
@@ -2191,185 +2190,11 @@ internal class MangaPageAdapter(
         val decodeWidth: Int
     )
 
-    private data class DisplaySize(
-        val width: Int,
-        val height: Int
-    )
-
     private enum class DecodeTaskKind {
         PREVIEW,
         FULL,
         ZOOM_FULL,
         TILE
-    }
-
-    private data class PreloadWindow(
-        val previewStart: Int,
-        val previewEnd: Int,
-        val protectedStart: Int,
-        val protectedEnd: Int,
-        val previewPositions: List<Int>,
-        val fullPositions: List<Int>
-    ) {
-        companion object {
-            fun from(
-                firstVisible: Int,
-                lastVisible: Int,
-                lastIndex: Int,
-                scrollDirection: Int,
-                isFastScroll: Boolean,
-                isIdle: Boolean,
-                isPdfSource: Boolean
-            ): PreloadWindow {
-                val movingForward = scrollDirection >= 0
-                val fullBefore: Int
-                val fullAfter: Int
-                val previewBefore: Int
-                val previewAfter: Int
-
-                when {
-                    isPdfSource && isIdle -> {
-                        fullBefore = PDF_IDLE_FULL_PRELOAD_BEFORE_COUNT
-                        fullAfter = PDF_IDLE_FULL_PRELOAD_AFTER_COUNT
-                        previewBefore = PDF_IDLE_PREVIEW_PRELOAD_BEFORE_COUNT
-                        previewAfter = PDF_IDLE_PREVIEW_PRELOAD_AFTER_COUNT
-                    }
-
-                    isPdfSource && isFastScroll && movingForward -> {
-                        fullBefore = 0
-                        fullAfter = 0
-                        previewBefore = PDF_FAST_PREVIEW_PRELOAD_BEFORE_COUNT
-                        previewAfter = PDF_FAST_PREVIEW_PRELOAD_FORWARD_COUNT
-                    }
-
-                    isPdfSource && isFastScroll -> {
-                        fullBefore = 0
-                        fullAfter = 0
-                        previewBefore = PDF_FAST_PREVIEW_PRELOAD_FORWARD_COUNT
-                        previewAfter = PDF_FAST_PREVIEW_PRELOAD_BEFORE_COUNT
-                    }
-
-                    isPdfSource && movingForward -> {
-                        fullBefore = 0
-                        fullAfter = 0
-                        previewBefore = PDF_NORMAL_PREVIEW_PRELOAD_BEFORE_COUNT
-                        previewAfter = PDF_NORMAL_PREVIEW_PRELOAD_FORWARD_COUNT
-                    }
-
-                    isPdfSource -> {
-                        fullBefore = 0
-                        fullAfter = 0
-                        previewBefore = PDF_NORMAL_PREVIEW_PRELOAD_FORWARD_COUNT
-                        previewAfter = PDF_NORMAL_PREVIEW_PRELOAD_BEFORE_COUNT
-                    }
-
-                    isIdle -> {
-                        fullBefore = IDLE_FULL_PRELOAD_BEFORE_COUNT
-                        fullAfter = IDLE_FULL_PRELOAD_AFTER_COUNT
-                        previewBefore = IDLE_PREVIEW_PRELOAD_BEFORE_COUNT
-                        previewAfter = IDLE_PREVIEW_PRELOAD_AFTER_COUNT
-                    }
-
-                    isFastScroll && movingForward -> {
-                        fullBefore = 0
-                        fullAfter = 0
-                        previewBefore = FAST_PREVIEW_PRELOAD_BEFORE_COUNT
-                        previewAfter = FAST_PREVIEW_PRELOAD_FORWARD_COUNT
-                    }
-
-                    isFastScroll -> {
-                        fullBefore = 0
-                        fullAfter = 0
-                        previewBefore = FAST_PREVIEW_PRELOAD_FORWARD_COUNT
-                        previewAfter = FAST_PREVIEW_PRELOAD_BEFORE_COUNT
-                    }
-
-                    movingForward -> {
-                        fullBefore = NORMAL_FULL_PRELOAD_BEFORE_COUNT
-                        fullAfter = NORMAL_FULL_PRELOAD_FORWARD_COUNT
-                        previewBefore = NORMAL_PREVIEW_PRELOAD_BEFORE_COUNT
-                        previewAfter = NORMAL_PREVIEW_PRELOAD_FORWARD_COUNT
-                    }
-
-                    else -> {
-                        fullBefore = NORMAL_FULL_PRELOAD_FORWARD_COUNT
-                        fullAfter = NORMAL_FULL_PRELOAD_BEFORE_COUNT
-                        previewBefore = NORMAL_PREVIEW_PRELOAD_FORWARD_COUNT
-                        previewAfter = NORMAL_PREVIEW_PRELOAD_BEFORE_COUNT
-                    }
-                }
-
-                val fullStart = (firstVisible - fullBefore).coerceAtLeast(0)
-                val fullEnd = (lastVisible + fullAfter).coerceAtMost(lastIndex)
-                val previewStart = (firstVisible - previewBefore).coerceAtLeast(0)
-                val previewEnd = (lastVisible + previewAfter).coerceAtMost(lastIndex)
-                val cacheProtectedBefore = if (isPdfSource) {
-                    PDF_CACHE_PROTECTED_BEFORE_COUNT
-                } else {
-                    CACHE_PROTECTED_BEFORE_COUNT
-                }
-                val cacheProtectedAfter = if (isPdfSource) {
-                    PDF_CACHE_PROTECTED_AFTER_COUNT
-                } else {
-                    CACHE_PROTECTED_AFTER_COUNT
-                }
-                val protectedStart = (firstVisible - cacheProtectedBefore).coerceAtLeast(0)
-                val protectedEnd = (lastVisible + cacheProtectedAfter).coerceAtMost(lastIndex)
-
-                val previewPositions = orderedPreloadPositions(
-                    firstVisible = firstVisible,
-                    lastVisible = lastVisible,
-                    start = previewStart,
-                    end = previewEnd,
-                    movingForward = movingForward
-                )
-                val fullPositions = orderedPreloadPositions(
-                    firstVisible = firstVisible,
-                    lastVisible = lastVisible,
-                    start = fullStart,
-                    end = fullEnd,
-                    movingForward = movingForward
-                )
-
-                return PreloadWindow(
-                    previewStart = previewStart,
-                    previewEnd = previewEnd,
-                    protectedStart = protectedStart,
-                    protectedEnd = protectedEnd,
-                    previewPositions = previewPositions,
-                    fullPositions = fullPositions
-                )
-            }
-
-            private fun orderedPreloadPositions(
-                firstVisible: Int,
-                lastVisible: Int,
-                start: Int,
-                end: Int,
-                movingForward: Boolean
-            ): List<Int> {
-                if (end < start) {
-                    return emptyList()
-                }
-
-                val forwardPositions = if (lastVisible + 1 <= end) {
-                    (lastVisible + 1..end).toList()
-                } else {
-                    emptyList()
-                }
-                val backwardPositions = if (firstVisible - 1 >= start) {
-                    (firstVisible - 1 downTo start).toList()
-                } else {
-                    emptyList()
-                }
-
-                return if (movingForward) {
-                    forwardPositions + backwardPositions
-                } else {
-                    backwardPositions + forwardPositions
-                }
-            }
-        }
     }
 
     private class DecodeTask(
@@ -2425,28 +2250,6 @@ internal class MangaPageAdapter(
         private const val MAX_PREVIEW_DECODE_WIDTH = 720
         private const val PDF_MIN_PREVIEW_DECODE_WIDTH = 360
         private const val PDF_MAX_PREVIEW_DECODE_WIDTH = 1080
-        private const val NORMAL_FULL_PRELOAD_BEFORE_COUNT = 1
-        private const val NORMAL_FULL_PRELOAD_FORWARD_COUNT = 1
-        private const val NORMAL_PREVIEW_PRELOAD_BEFORE_COUNT = 1
-        private const val NORMAL_PREVIEW_PRELOAD_FORWARD_COUNT = 5
-        private const val FAST_PREVIEW_PRELOAD_BEFORE_COUNT = 1
-        private const val FAST_PREVIEW_PRELOAD_FORWARD_COUNT = 8
-        private const val IDLE_FULL_PRELOAD_BEFORE_COUNT = 1
-        private const val IDLE_FULL_PRELOAD_AFTER_COUNT = 1
-        private const val IDLE_PREVIEW_PRELOAD_BEFORE_COUNT = 2
-        private const val IDLE_PREVIEW_PRELOAD_AFTER_COUNT = 4
-        private const val CACHE_PROTECTED_BEFORE_COUNT = 1
-        private const val CACHE_PROTECTED_AFTER_COUNT = 3
-        private const val PDF_NORMAL_PREVIEW_PRELOAD_BEFORE_COUNT = 1
-        private const val PDF_NORMAL_PREVIEW_PRELOAD_FORWARD_COUNT = 3
-        private const val PDF_FAST_PREVIEW_PRELOAD_BEFORE_COUNT = 1
-        private const val PDF_FAST_PREVIEW_PRELOAD_FORWARD_COUNT = 5
-        private const val PDF_IDLE_FULL_PRELOAD_BEFORE_COUNT = 1
-        private const val PDF_IDLE_FULL_PRELOAD_AFTER_COUNT = 1
-        private const val PDF_IDLE_PREVIEW_PRELOAD_BEFORE_COUNT = 2
-        private const val PDF_IDLE_PREVIEW_PRELOAD_AFTER_COUNT = 4
-        private const val PDF_CACHE_PROTECTED_BEFORE_COUNT = 1
-        private const val PDF_CACHE_PROTECTED_AFTER_COUNT = 2
         private const val FULL_CACHE_TRIM_THRESHOLD_PERCENT = 88
         private const val UI_REFRESH_THROTTLE_MS = 24L
         private const val UI_REFRESH_RETRY_MS = 48L
@@ -2460,11 +2263,6 @@ internal class MangaPageAdapter(
         private const val TILED_DECODED_HEIGHT_THRESHOLD = 5200
         private const val TILED_SOURCE_PIXEL_THRESHOLD = 12_000_000L
         private const val TILED_DECODED_PIXEL_THRESHOLD = 8_000_000L
-        private const val TILE_MAX_DISPLAY_HEIGHT = 2400
-        private const val TILE_MIN_SOURCE_HEIGHT = 512
-        private const val PDF_TILE_MIN_SOURCE_HEIGHT = 128
-        private const val TILE_MAX_SOURCE_PIXELS = 4_000_000
-        private const val TILE_MAX_DECODED_PIXELS = 4_000_000L
         private const val PDF_FULL_RENDER_SCALE = 2
         private const val PDF_ZOOM_RENDER_SCALE = 3
         private const val PDF_TILE_RENDER_SCALE = 2

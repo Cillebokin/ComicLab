@@ -18,11 +18,11 @@ import androidx.recyclerview.widget.RecyclerView
 import com.davemorrissey.labs.subscaleview.ImageSource
 import com.example.comiclab.AppSettings
 import com.example.comiclab.ComicArchive
-import com.example.comiclab.ReaderSubsamplingImageView
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
 import com.example.comiclab.core.reader.decode.preparedReaderNearbyPositions
 import com.example.comiclab.core.reader.layout.ReaderPagePositionMapper
 import com.example.comiclab.readerPageContentGravity
+import com.example.comiclab.ui.reader.manga.page.calculateDisplayHeight
 import java.io.File
 import java.util.Collections
 import java.util.concurrent.PriorityBlockingQueue
@@ -53,7 +53,7 @@ internal class SubsamplingMangaPageAdapter(
     ReaderPageAdapterController {
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val extractExecutor = ThreadPoolExecutor(
+    private var extractExecutor = ThreadPoolExecutor(
         1,
         1,
         0L,
@@ -278,6 +278,21 @@ internal class SubsamplingMangaPageAdapter(
 
     override fun flushPendingRefreshesIfIdle() = Unit
 
+    // 测试接口：仅供单元测试直接验证页面布局计算，不参与运行时逻辑。
+    internal fun applyPageLayoutForTest(container: FrameLayout, bounds: ComicArchive.ImageBounds?) {
+        applyPageLayout(container, bounds)
+    }
+
+    // 测试接口：仅供单元测试注入抽取执行器并观察活动子采样视图，不参与运行时逻辑。
+    internal var extractExecutorForTest: ThreadPoolExecutor
+        get() = extractExecutor
+        set(value) {
+            extractExecutor = value
+        }
+
+    internal val activeSubsamplingViewsForTest: MutableSet<ReaderSubsamplingImageView>
+        get() = activeSubsamplingViews
+
     override fun close() {
         if (closed) {
             return
@@ -441,7 +456,12 @@ internal class SubsamplingMangaPageAdapter(
         } else {
             targetWidth = RecyclerView.LayoutParams.MATCH_PARENT
             targetHeight = if (bounds != null) {
-                calculateDisplayHeight(bounds.width, bounds.height, baseDisplayWidth)
+                calculateDisplayHeight(
+                    bounds.width,
+                    bounds.height,
+                    baseDisplayWidth,
+                    MIN_READER_PAGE_HEIGHT
+                )
             } else {
                 (baseDisplayWidth * ESTIMATED_READER_PAGE_HEIGHT_RATIO)
                     .roundToInt()
@@ -648,16 +668,6 @@ internal class SubsamplingMangaPageAdapter(
             else -> NORMAL_PREPARE_FORWARD_COUNT
         }
     )
-
-    private fun calculateDisplayHeight(width: Int, height: Int, imageWidth: Int): Int {
-        if (width <= 0 || height <= 0 || imageWidth <= 0) {
-            return MIN_READER_PAGE_HEIGHT
-        }
-
-        return (imageWidth.toFloat() / width.toFloat() * height.toFloat())
-            .roundToInt()
-            .coerceAtLeast(1)
-    }
 
     private fun isHorizontalReading(): Boolean {
         return readingDirection == AppSettings.READING_DIRECTION_RIGHT_TO_LEFT ||

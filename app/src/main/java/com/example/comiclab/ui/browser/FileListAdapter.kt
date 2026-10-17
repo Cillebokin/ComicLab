@@ -15,9 +15,9 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.ui.browser.bookcase.AbsListViewScrollStateTracker
 import com.example.comiclab.AppSettings
 import com.example.comiclab.ui.browser.bookcase.BookcaseRowViewTypes
-import com.example.comiclab.BoundedKeyedTaskQueue
+import com.example.comiclab.core.concurrent.BoundedKeyedTaskQueue
 import com.example.comiclab.ComicArchive
-import com.example.comiclab.ComicLabPerformance
+import com.example.comiclab.core.diagnostics.ComicLabPerformance
 import com.example.comiclab.CommonFunc
 import com.example.comiclab.core.store.FavoriteComicStore
 import com.example.comiclab.core.store.FavoritePathStore
@@ -585,6 +585,27 @@ class FileListAdapter(
         }
     }
 
+    // 测试接口：仅供单元测试注入封面任务、缓存与加载状态，并直接投递解码结果，不参与运行时逻辑。
+    internal val archiveCoverTasksForTest: BoundedKeyedTaskQueue
+        get() = archiveCoverTasks
+
+    internal val collectionSourceCacheForTest: LruCache<String, List<MangaCollectionCoverSource>>
+        get() = collectionSourceCache
+
+    internal val collectionCoverLoadTrackerForTest: MangaCollectionCoverLoadTracker<ImageView>
+        get() = collectionCoverLoadTracker
+
+    internal fun handleCollectionCoverResultForTest(
+        cacheKey: String,
+        requestId: Long,
+        bookcaseCacheKey: String,
+        requestStartedAtNanos: Long?,
+        archiveHash: Int,
+        cover: Bitmap?
+    ) {
+        handleCollectionCoverResult(cacheKey, requestId, bookcaseCacheKey, requestStartedAtNanos, archiveHash, cover)
+    }
+
     fun close() {
         closed = true
         archiveCoverTasks.close()
@@ -617,11 +638,11 @@ class FileListAdapter(
         if (!preserveBackground) {
             imgIcon.background = null
         }
-        imgIcon.setPadding(dpToPx(DEFAULT_ICON_PADDING_DP), dpToPx(DEFAULT_ICON_PADDING_DP), dpToPx(DEFAULT_ICON_PADDING_DP), dpToPx(DEFAULT_ICON_PADDING_DP))
+        imgIcon.setPadding(context.dpToPx(DEFAULT_ICON_PADDING_DP), context.dpToPx(DEFAULT_ICON_PADDING_DP), context.dpToPx(DEFAULT_ICON_PADDING_DP), context.dpToPx(DEFAULT_ICON_PADDING_DP))
         updateIconSize(
             imgIcon,
-            dpToPx(iconSizeDp),
-            dpToPx(iconSizeDp)
+            context.dpToPx(iconSizeDp),
+            context.dpToPx(iconSizeDp)
         )
     }
 
@@ -707,18 +728,6 @@ class FileListAdapter(
         }
     }
 
-    private fun View.findAncestorAbsListView(): AbsListView? {
-        var current = parent
-        while (current is View) {
-            if (current is AbsListView) {
-                return current
-            }
-            current = current.parent
-        }
-        return null
-    }
-
-
     private fun bindCollectionCoverBitmap(imgIcon: ImageView, bitmap: Bitmap) {
         imgIcon.imageTintList = null
         imgIcon.setBackgroundColor(android.graphics.Color.BLACK)
@@ -741,8 +750,8 @@ class FileListAdapter(
         imgIcon.setPadding(0, 0, 0, 0)
         updateIconSize(
             imgIcon,
-            dpToPx(ARCHIVE_COVER_WIDTH_DP),
-            dpToPx(ARCHIVE_COVER_HEIGHT_DP)
+            context.dpToPx(ARCHIVE_COVER_WIDTH_DP),
+            context.dpToPx(ARCHIVE_COVER_HEIGHT_DP)
         )
     }
 
@@ -751,19 +760,9 @@ class FileListAdapter(
         imgIcon.setPadding(0, 0, 0, 0)
         updateIconSize(
             imgIcon,
-            dpToPx(ARCHIVE_COVER_WIDTH_DP),
-            dpToPx(ARCHIVE_COVER_HEIGHT_DP)
+            context.dpToPx(ARCHIVE_COVER_WIDTH_DP),
+            context.dpToPx(ARCHIVE_COVER_HEIGHT_DP)
         )
-    }
-
-    private fun applyHalfSizeIconPadding(imgIcon: ImageView) {
-        val drawable = imgIcon.drawable ?: return
-        val params = imgIcon.layoutParams
-        val targetWidth = drawable.intrinsicWidth / 2
-        val targetHeight = drawable.intrinsicHeight / 2
-        val horizontalPadding = ((params.width - targetWidth) / 2).coerceAtLeast(0)
-        val verticalPadding = ((params.height - targetHeight) / 2).coerceAtLeast(0)
-        imgIcon.setPadding(horizontalPadding, verticalPadding, horizontalPadding, verticalPadding)
     }
 
     private fun resetCollectionCoverContainer(
@@ -802,25 +801,6 @@ class FileListAdapter(
     ) {
         imgIcon.visibility = View.GONE
         collectionCoverList.visibility = View.VISIBLE
-    }
-
-    private fun updateIconSize(imgIcon: ImageView, width: Int, height: Int) {
-        val layoutParams = imgIcon.layoutParams
-        if (layoutParams.width == width && layoutParams.height == height) {
-            return
-        }
-
-        layoutParams.width = width
-        layoutParams.height = height
-        imgIcon.layoutParams = layoutParams
-    }
-
-    private fun dpToPx(value: Int): Int {
-        return (value * context.resources.displayMetrics.density).toInt()
-    }
-
-    private fun archiveCoverCacheKey(file: File): String {
-        return "${file.absolutePath}:${file.lastModified()}:${file.length()}"
     }
 
     private fun mangaCollectionCacheKey(directory: File): String {

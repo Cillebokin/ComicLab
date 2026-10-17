@@ -5,7 +5,6 @@ import android.graphics.Rect
 import android.graphics.drawable.BitmapDrawable
 import android.os.Looper
 import android.view.ViewGroup
-import android.widget.ImageView
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.AppSettings
 import com.example.comiclab.ComicArchive
@@ -122,9 +121,8 @@ class MangaPageAdapterTest {
 
             assertTrue("both entries should reach the fake reader session", requests.await(5, TimeUnit.SECONDS))
             assertTrue("failed previews should be recorded and loading state cleared", awaitCondition {
-                val failed = privateSet(adapter, "failedPreviewPages")
-                val loading = privateSet(adapter, "loadingPreviewPages")
-                failed.containsAll(listOf(0, 1)) && loading.isEmpty()
+                adapter.failedPreviewPagesForTest.containsAll(listOf(0, 1)) &&
+                    adapter.loadingPreviewPagesForTest.isEmpty()
             })
         } finally {
             closeAndAwait(adapter, session)
@@ -158,11 +156,11 @@ class MangaPageAdapterTest {
             releaseDecode.countDown()
 
             assertTrue("late decode should finish and clear loading state", awaitCondition {
-                privateSet(adapter, "loadingPreviewPages").isEmpty()
+                adapter.loadingPreviewPagesForTest.isEmpty()
             })
             Shadows.shadowOf(Looper.getMainLooper()).idle()
 
-            val imageView = privateField(holder, "imageView") as ImageView
+            val imageView = holder.imageView
             val displayedBitmap = (imageView.drawable as? BitmapDrawable)?.bitmap
             assertNull("the current page has no preview in this fixture", displayedBitmap)
         } finally {
@@ -231,51 +229,23 @@ class MangaPageAdapterTest {
     }
 
     private fun requestPreview(adapter: MangaPageAdapter, position: Int) {
-        adapter.javaClass.getDeclaredMethod(
-            "ensurePreview",
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-            Boolean::class.javaPrimitiveType
-        ).apply { isAccessible = true }
-            .invoke(adapter, position, 100, 0, false)
+        adapter.requestPreviewForTest(position)
     }
 
     private fun cachedPreview(adapter: MangaPageAdapter, position: Int): Bitmap? {
-        return adapter.javaClass.getDeclaredMethod("previewBitmap", Int::class.javaPrimitiveType)
-            .apply { isAccessible = true }
-            .invoke(adapter, position) as Bitmap?
+        return adapter.cachedPreviewForTest(position)
     }
 
-    private fun createHolder(adapter: MangaPageAdapter, parent: ViewGroup): RecyclerView.ViewHolder {
-        val method = adapter.javaClass.getDeclaredMethod(
-            "onCreateViewHolder",
-            ViewGroup::class.java,
-            Int::class.javaPrimitiveType
-        ).apply { isAccessible = true }
-        return method.invoke(adapter, parent, 0) as RecyclerView.ViewHolder
+    private fun createHolder(adapter: MangaPageAdapter, parent: ViewGroup): MangaPageAdapter.PageViewHolder {
+        return adapter.onCreateViewHolder(parent, 0)
     }
 
-    private fun bind(adapter: MangaPageAdapter, holder: RecyclerView.ViewHolder, position: Int) {
-        adapter.javaClass.methods.first {
-            it.name == "onBindViewHolder" &&
-                it.parameterTypes.size == 2 &&
-                it.parameterTypes[0] == RecyclerView.ViewHolder::class.java
-        }.invoke(adapter, holder, position)
+    private fun bind(adapter: MangaPageAdapter, holder: MangaPageAdapter.PageViewHolder, position: Int) {
+        adapter.onBindViewHolder(holder, position)
     }
 
-    private fun recycle(adapter: MangaPageAdapter, holder: RecyclerView.ViewHolder) {
-        adapter.javaClass.methods.first {
-            it.name == "onViewRecycled" && it.parameterTypes.singleOrNull() == RecyclerView.ViewHolder::class.java
-        }.invoke(adapter, holder)
-    }
-
-    private fun privateSet(adapter: MangaPageAdapter, name: String): Set<*> {
-        return adapter.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(adapter) as Set<*>
-    }
-
-    private fun privateField(target: Any, name: String): Any? {
-        return target.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(target)
+    private fun recycle(adapter: MangaPageAdapter, holder: MangaPageAdapter.PageViewHolder) {
+        adapter.onViewRecycled(holder)
     }
 
     private fun awaitCondition(condition: () -> Boolean): Boolean {

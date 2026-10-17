@@ -281,6 +281,30 @@ class ImageFileMergeOperationsTest {
         assertEquals(0, completed.failedCount)
     }
 
+    @Test
+    fun copyToExistingTargetReturnsFalseAndLeavesTargetAndDirectoryUntouched() {
+        val root = temporaryFolder.newFolder("direct-existing-target-root")
+        val source = File(root, "source.jpg").apply {
+            writeText("source bytes")
+            assertTrue(setLastModified(1_700_000_000_000L))
+        }
+        val target = File(root, "0001.jpg").apply {
+            writeText("existing bytes")
+            assertTrue(setLastModified(1_600_000_000_000L))
+        }
+
+        val copied = ImageFileMergeOperations.copyImageFileToTarget(source, target)
+
+        assertFalse(copied)
+        assertEquals("existing bytes", target.readText())
+        assertEquals(1_600_000_000_000L, target.lastModified())
+        // 暂存文件必须被清理，目录中只剩原有的两个文件。
+        assertEquals(
+            listOf("0001.jpg", "source.jpg"),
+            root.listFiles().orEmpty().map { it.name }.sorted()
+        )
+    }
+
     private fun ImageFileMergeResult.completed(): ImageFileMergeResult.Completed {
         assertTrue("Expected a completed result but was $this", this is ImageFileMergeResult.Completed)
         return this as ImageFileMergeResult.Completed

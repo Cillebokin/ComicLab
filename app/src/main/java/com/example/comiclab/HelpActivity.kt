@@ -1,6 +1,9 @@
 package com.example.comiclab
 
 import com.example.comiclab.ui.common.SystemBars
+import com.example.comiclab.ui.help.HelpArticle
+import com.example.comiclab.ui.help.HelpArticleAdapter
+import com.example.comiclab.ui.help.HelpArticles
 
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable

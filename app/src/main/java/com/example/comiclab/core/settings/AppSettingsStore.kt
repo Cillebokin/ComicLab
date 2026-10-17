@@ -1,6 +1,7 @@
 package com.example.comiclab.core.settings
 
-import com.example.comiclab.BookcaseFolderPaths
+import com.example.comiclab.core.store.BookcaseFolderPaths
+import com.example.comiclab.core.store.PrefsGateway
 import android.content.Context
 import android.content.SharedPreferences
 import java.io.File
@@ -33,19 +34,19 @@ internal object AppSettingsStore {
     private val bookcaseDirectoriesLock = Any()
 
     fun isDarkModeEnabled(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return PrefsGateway.open(context, PREFS_NAME)
             .getBoolean(KEY_DARK_MODE_ENABLED, false)
     }
 
     fun setDarkModeEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        PrefsGateway.open(context, PREFS_NAME)
             .edit()
             .putBoolean(KEY_DARK_MODE_ENABLED, enabled)
             .apply()
     }
 
     fun getReadingDirection(context: Context): String {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return PrefsGateway.open(context, PREFS_NAME)
             .getString(KEY_READING_DIRECTION, READING_DIRECTION_TOP_TO_BOTTOM)
             ?: READING_DIRECTION_TOP_TO_BOTTOM
     }
@@ -57,62 +58,62 @@ internal object AppSettingsStore {
             else -> READING_DIRECTION_TOP_TO_BOTTOM
         }
 
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        PrefsGateway.open(context, PREFS_NAME)
             .edit()
             .putString(KEY_READING_DIRECTION, normalizedDirection)
             .apply()
     }
 
     fun isDoublePageReadingEnabled(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return PrefsGateway.open(context, PREFS_NAME)
             .getBoolean(KEY_DOUBLE_PAGE_READING_ENABLED, DEFAULT_DOUBLE_PAGE_READING_ENABLED)
     }
 
     fun setDoublePageReadingEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        PrefsGateway.open(context, PREFS_NAME)
             .edit()
             .putBoolean(KEY_DOUBLE_PAGE_READING_ENABLED, enabled)
             .apply()
     }
 
     fun isDoublePageCoverSingleEnabled(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return PrefsGateway.open(context, PREFS_NAME)
             .getBoolean(KEY_DOUBLE_PAGE_COVER_SINGLE, DEFAULT_DOUBLE_PAGE_COVER_SINGLE)
     }
 
     fun setDoublePageCoverSingleEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        PrefsGateway.open(context, PREFS_NAME)
             .edit()
             .putBoolean(KEY_DOUBLE_PAGE_COVER_SINGLE, enabled)
             .apply()
     }
 
     fun isVolumeKeyPageTurnEnabled(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return PrefsGateway.open(context, PREFS_NAME)
             .getBoolean(KEY_VOLUME_KEY_PAGE_TURN, true)
     }
 
     fun setVolumeKeyPageTurnEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        PrefsGateway.open(context, PREFS_NAME)
             .edit()
             .putBoolean(KEY_VOLUME_KEY_PAGE_TURN, enabled)
             .apply()
     }
 
     fun isAutoHideSystemBarsEnabled(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return PrefsGateway.open(context, PREFS_NAME)
             .getBoolean(KEY_AUTO_HIDE_SYSTEM_BARS, true)
     }
 
     fun setAutoHideSystemBarsEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        PrefsGateway.open(context, PREFS_NAME)
             .edit()
             .putBoolean(KEY_AUTO_HIDE_SYSTEM_BARS, enabled)
             .apply()
     }
 
     fun isBookcaseDirectory(context: Context, directory: File): Boolean {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return PrefsGateway.open(context, PREFS_NAME)
             .getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
             .orEmpty()
             .contains(directory.absolutePath)
@@ -120,7 +121,7 @@ internal object AppSettingsStore {
 
     fun setBookcaseDirectory(context: Context, directory: File, enabled: Boolean) {
         synchronized(bookcaseDirectoriesLock) {
-            val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val preferences = PrefsGateway.open(context, PREFS_NAME)
             val currentPaths = preferences.getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
                 .orEmpty()
                 .toSet()
@@ -144,7 +145,7 @@ internal object AppSettingsStore {
         }
 
         return synchronized(bookcaseDirectoriesLock) {
-            val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val preferences = PrefsGateway.open(context, PREFS_NAME)
             val currentPaths = preferences.getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
                 .orEmpty()
                 .toSet()
@@ -165,7 +166,7 @@ internal object AppSettingsStore {
 
     fun bookcaseDirectoryPaths(context: Context): Set<String> {
         return synchronized(bookcaseDirectoriesLock) {
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            PrefsGateway.open(context, PREFS_NAME)
                 .getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
                 .orEmpty()
                 .toSet()
@@ -174,7 +175,7 @@ internal object AppSettingsStore {
 
     fun renameBookcaseDirectory(context: Context, oldDirectory: File, newDirectory: File) {
         synchronized(bookcaseDirectoriesLock) {
-            val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val preferences = PrefsGateway.open(context, PREFS_NAME)
             val currentPaths = preferences.getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
                 .orEmpty()
                 .toSet()
@@ -193,7 +194,7 @@ internal object AppSettingsStore {
 
     fun removeBookcaseDirectory(context: Context, directory: File) {
         synchronized(bookcaseDirectoriesLock) {
-            val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val preferences = PrefsGateway.open(context, PREFS_NAME)
             val currentPaths = preferences.getStringSet(KEY_BOOKCASE_DIRECTORIES, emptySet())
                 .orEmpty()
                 .toSet()
@@ -207,39 +208,39 @@ internal object AppSettingsStore {
     }
 
     fun getStartMarkerErrorTags(context: Context): String {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return PrefsGateway.open(context, PREFS_NAME)
             .getString(KEY_START_MARKER_ERROR_TAGS, DEFAULT_START_MARKER_ERROR_TAGS)
             ?: DEFAULT_START_MARKER_ERROR_TAGS
     }
 
     fun setStartMarkerErrorTags(context: Context, tags: String) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        PrefsGateway.open(context, PREFS_NAME)
             .edit()
             .putString(KEY_START_MARKER_ERROR_TAGS, tags)
             .apply()
     }
 
     fun isCustomReaderBrightnessEnabled(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return PrefsGateway.open(context, PREFS_NAME)
             .getBoolean(KEY_CUSTOM_READER_BRIGHTNESS_ENABLED, false)
     }
 
     fun setCustomReaderBrightnessEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        PrefsGateway.open(context, PREFS_NAME)
             .edit()
             .putBoolean(KEY_CUSTOM_READER_BRIGHTNESS_ENABLED, enabled)
             .apply()
     }
 
     fun getCustomReaderBrightness(context: Context): Int {
-        val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val preferences = PrefsGateway.open(context, PREFS_NAME)
         migrateLegacyReaderBrightnessMinimum(preferences)
         return preferences.getInt(KEY_CUSTOM_READER_BRIGHTNESS, DEFAULT_READER_BRIGHTNESS)
             .coerceIn(MIN_READER_BRIGHTNESS, MAX_READER_BRIGHTNESS)
     }
 
     fun setCustomReaderBrightness(context: Context, brightness: Int) {
-        val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val preferences = PrefsGateway.open(context, PREFS_NAME)
         migrateLegacyReaderBrightnessMinimum(preferences)
         preferences
             .edit()

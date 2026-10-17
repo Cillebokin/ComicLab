@@ -8,7 +8,7 @@ import java.security.MessageDigest
 object EbookProgressStore {
 
     fun load(context: Context, file: File): EbookProgress? {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = PrefsGateway.open(context, PREFS_NAME)
         val key = progressKey(file)
         if (!prefs.contains(keyForChapter(key)) || !prefs.contains(keyForFraction(key))) {
             return null
@@ -23,7 +23,7 @@ object EbookProgressStore {
     fun save(context: Context, file: File, progress: EbookProgress) {
         val normalized = progress.normalized()
         val key = progressKey(file)
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        PrefsGateway.open(context, PREFS_NAME)
             .edit()
             .putInt(keyForChapter(key), normalized.chapterIndex)
             .putFloat(keyForFraction(key), normalized.scrollFraction)
@@ -32,7 +32,7 @@ object EbookProgressStore {
 
     fun clear(context: Context, file: File) {
         val key = progressKey(file)
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        PrefsGateway.open(context, PREFS_NAME)
             .edit()
             .remove(keyForChapter(key))
             .remove(keyForFraction(key))

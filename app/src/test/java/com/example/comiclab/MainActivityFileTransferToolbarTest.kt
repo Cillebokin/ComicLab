@@ -11,10 +11,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageButton
 import com.example.comiclab.ui.browser.transfer.FileTransferMode
-import com.example.comiclab.ui.browser.transfer.FileTransferController
 import com.example.comiclab.ui.browser.transfer.PendingFileTransfer
 import java.io.File
-import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
 import androidx.core.content.ContextCompat
 import org.junit.Assert.assertEquals
@@ -66,14 +64,7 @@ class MainActivityFileTransferToolbarTest {
             assertEquals(View.GONE, newFolderButton.visibility)
 
             val copyMode = FileTransferMode.COPY
-            MainActivity::class.java
-                .getDeclaredMethod(
-                    "beginFileTransfer",
-                    File::class.java,
-                    FileTransferMode::class.java
-                )
-                .apply { isAccessible = true }
-                .invoke(activity, sourceFile, copyMode)
+            activity.beginFileTransferForTest(sourceFile, copyMode)
 
             assertEquals(View.VISIBLE, newFolderButton.visibility)
             val toolbar = newFolderButton.parent as ViewGroup
@@ -111,16 +102,10 @@ class MainActivityFileTransferToolbarTest {
         val originalActivity = originalController.get()
         var restoredController: org.robolectric.android.controller.ActivityController<MainActivity>? = null
         try {
-            MainActivity::class.java
-                .getDeclaredMethod("beginFileTransfer", File::class.java, FileTransferMode::class.java)
-                .apply { isAccessible = true }
-                .invoke(originalActivity, sourceFile, FileTransferMode.CUT)
+            originalActivity.beginFileTransferForTest(sourceFile, FileTransferMode.CUT)
 
             val state = Bundle()
-            MainActivity::class.java
-                .getDeclaredMethod("onSaveInstanceState", Bundle::class.java)
-                .apply { isAccessible = true }
-                .invoke(originalActivity, state)
+            originalController.saveInstanceState(state)
             assertEquals(sourceFile.absolutePath, state.getString("pending_file_transfer_path"))
             assertEquals("CUT", state.getString("pending_file_transfer_mode"))
             assertTrue(state.getBoolean("pending_file_transfer_is_directory") == false)
@@ -218,46 +203,27 @@ class MainActivityFileTransferToolbarTest {
         val activity = controller.get()
         try {
             beginFileTransfer(activity, sourceDirectory, FileTransferMode.CUT)
-            val transferController = MainActivity::class.java
-                .getDeclaredField("fileTransferController")
-                .apply { isAccessible = true }
-                .get(activity) as FileTransferController
+            val transferController = activity.fileTransferControllerForTest
             val transfer = checkNotNull(transferController.pendingTransfer)
             assertTrue(transfer.isDirectory)
             assertTrue(transferController.startPaste(transfer))
 
-            MainActivity::class.java
-                .getDeclaredMethod("updateFileTransferToolbar")
-                .apply { isAccessible = true }
-                .invoke(activity)
-            val progressViews = MainActivity::class.java
-                .getDeclaredMethod("showFileOperationProgress")
-                .apply { isAccessible = true }
-                .invoke(activity)
+            activity.updateFileTransferToolbarForTest()
+            activity.showFileOperationProgressForTest()
             val progressDialog = checkNotNull(ShadowAlertDialog.getLatestAlertDialog())
             assertTrue(progressDialog.isShowing)
 
-            val loadGeneration = MainActivity::class.java
-                .getDeclaredField("directoryLoadGeneration")
-                .apply { isAccessible = true }
-                .get(activity) as java.util.concurrent.atomic.AtomicInteger
-            val generationBeforeCallback = loadGeneration.get()
-            MainActivity::class.java.declaredMethods
-                .single { it.name == "handleDirectoryTransferResult" }
-                .apply { isAccessible = true }
-                .invoke(
-                    activity,
-                    transfer,
-                    DirectoryTransferOperations.Result.SOURCE_DELETE_FAILED,
-                    destination,
-                    null,
-                    progressViews
-                )
+            val generationBeforeCallback = activity.directoryLoadGenerationForTest
+            activity.handleDirectoryTransferFailureForTest(
+                transfer,
+                DirectoryTransferOperations.Result.SOURCE_DELETE_FAILED,
+                destination
+            )
 
             assertFalse(progressDialog.isShowing)
             assertEquals(transfer, transferController.pendingTransfer)
             assertFalse(transferController.isTransferInProgress)
-            assertTrue(loadGeneration.get() > generationBeforeCallback)
+            assertTrue(activity.directoryLoadGenerationForTest > generationBeforeCallback)
             assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.btnPasteFile).visibility)
             assertTrue(activity.findViewById<View>(R.id.btnPasteFile).isEnabled)
             assertTrue(activity.findViewById<View>(R.id.btnExitFileTransfer).isEnabled)
@@ -287,10 +253,7 @@ class MainActivityFileTransferToolbarTest {
     }
 
     private fun beginFileTransfer(activity: MainActivity, sourceFile: File, mode: FileTransferMode) {
-        MainActivity::class.java
-            .getDeclaredMethod("beginFileTransfer", File::class.java, FileTransferMode::class.java)
-            .apply { isAccessible = true }
-            .invoke(activity, sourceFile, mode)
+        activity.beginFileTransferForTest(sourceFile, mode)
     }
 
     private fun invokeStartFileTransfer(
@@ -298,23 +261,15 @@ class MainActivityFileTransferToolbarTest {
         transfer: PendingFileTransfer,
         destination: File
     ) {
-        MainActivity::class.java
-            .getDeclaredMethod(
-                "startFileTransfer",
-                PendingFileTransfer::class.java,
-                File::class.java,
-                String::class.java
-            )
-            .apply { isAccessible = true }
-            .invoke(activity, transfer, destination, transfer.sourcePath.substringAfterLast(File.separator))
+        activity.startFileTransferForTest(
+            transfer,
+            destination,
+            transfer.sourcePath.substringAfterLast(File.separator)
+        )
     }
 
     private fun awaitFileTransfer(activity: MainActivity) {
-        val executor = MainActivity::class.java
-            .getDeclaredField("fileTransferExecutor")
-            .apply { isAccessible = true }
-            .get(activity) as ExecutorService
-        executor.submit {}.get(5, TimeUnit.SECONDS)
+        activity.fileTransferExecutorForTest.submit {}.get(5, TimeUnit.SECONDS)
         shadowOf(Looper.getMainLooper()).idle()
     }
 }

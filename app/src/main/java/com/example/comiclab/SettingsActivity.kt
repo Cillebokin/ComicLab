@@ -1,9 +1,12 @@
 package com.example.comiclab
 
 import com.example.comiclab.core.settings.ComicLabConfigurationStore
+import com.example.comiclab.core.settings.ComicLabConfigurationJson
 import com.example.comiclab.core.update.GitHubReleaseApi
 import com.example.comiclab.core.update.ReleaseVersionComparator
-import com.example.comiclab.createRounded
+import com.example.comiclab.core.diagnostics.CrashLogManager
+import com.example.comiclab.core.store.PrefsGateway
+import com.example.comiclab.ui.common.createRounded
 import com.example.comiclab.ui.common.SystemBars
 
 import android.content.ActivityNotFoundException
@@ -611,7 +614,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun savedBrowserDirectoryForStress(): File {
-        val savedPath = getSharedPreferences(BROWSER_PREFS_NAME, MODE_PRIVATE)
+        val savedPath = PrefsGateway.open(this, BROWSER_PREFS_NAME)
             .getString(KEY_BROWSER_CURRENT_PATH, null)
             ?.takeIf { it.isNotBlank() }
             ?.let(::File)

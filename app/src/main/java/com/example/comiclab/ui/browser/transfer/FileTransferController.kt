@@ -2,6 +2,7 @@ package com.example.comiclab.ui.browser.transfer
 
 import com.example.comiclab.core.transfer.DirectoryTransferOperations
 import com.example.comiclab.core.transfer.FileTransferOperations
+import java.io.File
 
 /** Owns the pending transfer and the paste-in-progress state for the browser. */
 class FileTransferController {
@@ -10,6 +11,28 @@ class FileTransferController {
 
     var isTransferInProgress: Boolean = false
         private set
+
+    fun isPendingTransferSource(file: File): Boolean {
+        val transfer = pendingTransfer ?: return false
+        val source = File(transfer.sourcePath)
+        return if (transfer.isDirectory) {
+            isSamePathOrDescendant(file, source)
+        } else {
+            file.absoluteFile.toPath().normalize() == source.absoluteFile.toPath().normalize()
+        }
+    }
+
+    fun containsPendingTransferSource(directory: File): Boolean {
+        val transfer = pendingTransfer ?: return false
+        val source = File(transfer.sourcePath)
+        return isSamePathOrDescendant(source, directory) ||
+            (transfer.isDirectory && isSamePathOrDescendant(directory, source))
+    }
+
+    private fun isSamePathOrDescendant(candidate: File, directory: File): Boolean {
+        return candidate.absoluteFile.toPath().normalize()
+            .startsWith(directory.absoluteFile.toPath().normalize())
+    }
 
     fun begin(transfer: PendingFileTransfer): Boolean {
         if (pendingTransfer != null || isTransferInProgress) return false
@@ -62,23 +85,27 @@ class FileTransferController {
 internal object FileTransferMetadataUpdatePolicy {
     fun applyFileCut(
         updateFavorites: () -> Unit,
-        updateReadingHistory: () -> Unit
+        updateReadingHistory: () -> Unit,
+        updateReaderProgress: () -> Unit = {}
     ) {
         runCatching {
             updateFavorites()
             updateReadingHistory()
         }
+        runCatching { updateReaderProgress() }
     }
 
     fun applyDirectoryCut(
         updateFavoritePaths: () -> Unit,
         updateFavoriteComics: () -> Unit,
         updateReadingHistory: () -> Unit,
-        updateBookcasePaths: () -> Unit
+        updateBookcasePaths: () -> Unit,
+        updateReaderProgress: () -> Unit = {}
     ) {
         runCatching { updateFavoritePaths() }
         runCatching { updateFavoriteComics() }
         runCatching { updateReadingHistory() }
         runCatching { updateBookcasePaths() }
+        runCatching { updateReaderProgress() }
     }
 }
