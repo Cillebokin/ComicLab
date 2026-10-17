@@ -1,4 +1,4 @@
-package com.example.comiclab
+package com.example.comiclab.core.store
 
 internal object BookcaseFolderPaths {
 

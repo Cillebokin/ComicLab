@@ -1,6 +1,5 @@
 package com.example.comiclab.core.store
 
-import com.example.comiclab.BookcaseFolderPaths
 import android.content.Context
 import com.example.comiclab.ebook.ReaderFileDetector
 import org.json.JSONArray

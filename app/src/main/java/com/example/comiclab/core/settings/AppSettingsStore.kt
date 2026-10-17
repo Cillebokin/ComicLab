@@ -1,6 +1,6 @@
 package com.example.comiclab.core.settings
 
-import com.example.comiclab.BookcaseFolderPaths
+import com.example.comiclab.core.store.BookcaseFolderPaths
 import android.content.Context
 import android.content.SharedPreferences
 import java.io.File

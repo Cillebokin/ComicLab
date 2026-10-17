@@ -2,7 +2,6 @@ package com.example.comiclab.core.store
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.example.comiclab.BookcaseFolderPaths
 import com.example.comiclab.ComicLabMangaProgress
 import java.io.File
 import java.util.WeakHashMap

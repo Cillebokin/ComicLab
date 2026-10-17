@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.store.BookcaseFolderPaths
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
