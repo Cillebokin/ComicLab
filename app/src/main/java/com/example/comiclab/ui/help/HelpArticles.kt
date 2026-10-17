@@ -1,7 +1,8 @@
-package com.example.comiclab
+package com.example.comiclab.ui.help
 
 import androidx.annotation.RawRes
 import androidx.annotation.StringRes
+import com.example.comiclab.R
 
 data class HelpArticle(
     val id: String,

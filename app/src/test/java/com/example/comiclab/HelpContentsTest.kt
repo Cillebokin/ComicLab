@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import com.example.comiclab.ui.help.HelpArticles
 import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Element

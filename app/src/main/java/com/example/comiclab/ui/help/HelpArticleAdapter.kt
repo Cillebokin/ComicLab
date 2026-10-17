@@ -1,4 +1,4 @@
-package com.example.comiclab
+package com.example.comiclab.ui.help
 
 import android.view.LayoutInflater
 import android.view.View
@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+import com.example.comiclab.R
 
 class HelpArticleAdapter(
     private val articles: List<HelpArticle>,
