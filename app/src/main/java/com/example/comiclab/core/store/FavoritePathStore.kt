@@ -190,7 +190,7 @@ object FavoritePathStore {
     }
 
     private fun prefs(context: Context) =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        PrefsGateway.open(context, PREFS_NAME)
 
     private fun validStoredItems(items: List<StoredItem>): List<StoredItem> {
         return items.filter { item ->

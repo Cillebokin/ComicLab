@@ -3,6 +3,7 @@ package com.example.comiclab.core.diagnostics
 import android.content.Context
 import android.os.Build
 import android.os.SystemClock
+import com.example.comiclab.core.store.PrefsGateway
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -297,8 +298,8 @@ object CrashLogManager {
         return File(context.filesDir, CRASH_LOG_DIR_NAME)
     }
 
-    private fun diagnosticPrefs(context: Context) = context.applicationContext
-        .getSharedPreferences(READER_DIAGNOSTIC_PREFS_NAME, Context.MODE_PRIVATE)
+    private fun diagnosticPrefs(context: Context) =
+        PrefsGateway.open(context.applicationContext, READER_DIAGNOSTIC_PREFS_NAME)
 }
 
 internal fun formatReaderCheckpoint(

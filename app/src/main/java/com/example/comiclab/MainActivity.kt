@@ -38,6 +38,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import com.example.comiclab.core.store.FavoriteComicStore
 import com.example.comiclab.core.store.FavoritePathStore
+import com.example.comiclab.core.store.PrefsGateway
 import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
 import com.example.comiclab.ebook.ReaderFileDetector
@@ -200,7 +201,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val prefs by lazy {
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        PrefsGateway.open(this, PREFS_NAME)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

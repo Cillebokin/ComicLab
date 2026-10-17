@@ -299,7 +299,7 @@ object ReaderProgressStore {
     }
 
     private fun preferences(context: Context): SharedPreferences =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        PrefsGateway.open(context, PREFS_NAME)
 
     private fun readerArchiveKey(file: File): String =
         "$ARCHIVE_KEY_PREFIX${file.absolutePath}:${file.lastModified()}:${file.length()}"
