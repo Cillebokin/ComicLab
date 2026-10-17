@@ -4,6 +4,7 @@ import com.example.comiclab.core.migration.ComicMigrationCopyStatus
 import com.example.comiclab.core.migration.ComicMigrationPlanner
 import com.example.comiclab.core.migration.ComicMigrationTargetPlan
 import com.example.comiclab.ui.common.SystemBars
+import com.example.comiclab.ui.migration.ComicMigrationDirectoryAdapter
 
 import android.app.ActivityManager
 import android.app.AlertDialog
