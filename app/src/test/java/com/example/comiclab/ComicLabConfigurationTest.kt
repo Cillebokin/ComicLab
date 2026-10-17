@@ -1,5 +1,14 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.settings.ComicLabAppSettings
+import com.example.comiclab.core.settings.ComicLabConfiguration
+import com.example.comiclab.core.settings.ComicLabConfigurationJson
+import com.example.comiclab.core.settings.ComicLabConfigurationMerger
+import com.example.comiclab.core.settings.ComicLabEbookProgress
+import com.example.comiclab.core.settings.ComicLabFavoriteComic
+import com.example.comiclab.core.settings.ComicLabFavoritePath
+import com.example.comiclab.core.settings.ComicLabHistoryEntry
+import com.example.comiclab.core.settings.ComicLabMangaProgress
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

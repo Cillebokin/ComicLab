@@ -1,14 +1,6 @@
 package com.example.comiclab.core.settings
 
 import com.example.comiclab.AppSettings
-import com.example.comiclab.ComicLabAppSettings
-import com.example.comiclab.ComicLabConfiguration
-import com.example.comiclab.ComicLabConfigurationJson
-import com.example.comiclab.ComicLabEbookProgress
-import com.example.comiclab.ComicLabFavoriteComic
-import com.example.comiclab.ComicLabFavoritePath
-import com.example.comiclab.ComicLabHistoryEntry
-import com.example.comiclab.ComicLabMangaProgress
 import com.example.comiclab.MangaReaderActivity
 import android.content.Context
 import com.example.comiclab.core.store.FavoriteComicStore

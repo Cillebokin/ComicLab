@@ -3,6 +3,7 @@ package com.example.comiclab
 import android.content.Context
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
+import com.example.comiclab.core.settings.ComicLabAppSettings
 import com.example.comiclab.core.settings.AppSettingsStore
 import java.io.File
 

@@ -1,4 +1,4 @@
-package com.example.comiclab
+package com.example.comiclab.core.settings
 
 import org.json.JSONArray
 import org.json.JSONObject

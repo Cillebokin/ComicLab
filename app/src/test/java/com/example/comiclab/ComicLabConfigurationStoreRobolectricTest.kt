@@ -1,6 +1,13 @@
 package com.example.comiclab
 
 import androidx.appcompat.app.AppCompatDelegate
+import com.example.comiclab.core.settings.ComicLabAppSettings
+import com.example.comiclab.core.settings.ComicLabConfiguration
+import com.example.comiclab.core.settings.ComicLabEbookProgress
+import com.example.comiclab.core.settings.ComicLabFavoriteComic
+import com.example.comiclab.core.settings.ComicLabFavoritePath
+import com.example.comiclab.core.settings.ComicLabHistoryEntry
+import com.example.comiclab.core.settings.ComicLabMangaProgress
 import com.example.comiclab.core.store.FavoriteComicStore
 import com.example.comiclab.core.store.FavoritePathStore
 import com.example.comiclab.core.store.ReadingHistoryStore

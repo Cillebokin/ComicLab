@@ -2,6 +2,7 @@ package com.example.comiclab
 
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
+import com.example.comiclab.core.settings.ComicLabAppSettings
 import java.io.File
 import java.nio.file.Files
 import org.junit.After

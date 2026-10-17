@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.settings.ComicLabMangaProgress
 import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
 import java.io.File

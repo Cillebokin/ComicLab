@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.settings.ComicLabMangaProgress
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Point

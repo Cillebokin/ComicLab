@@ -1,6 +1,7 @@
 package com.example.comiclab
 
 import com.example.comiclab.core.settings.ComicLabConfigurationStore
+import com.example.comiclab.core.settings.ComicLabConfigurationJson
 import com.example.comiclab.core.update.GitHubReleaseApi
 import com.example.comiclab.core.update.ReleaseVersionComparator
 import com.example.comiclab.createRounded

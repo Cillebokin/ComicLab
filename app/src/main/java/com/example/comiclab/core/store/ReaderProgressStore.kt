@@ -2,7 +2,7 @@ package com.example.comiclab.core.store
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.example.comiclab.ComicLabMangaProgress
+import com.example.comiclab.core.settings.ComicLabMangaProgress
 import java.io.File
 import java.util.WeakHashMap
 

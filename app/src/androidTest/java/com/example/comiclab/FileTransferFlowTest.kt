@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.settings.ComicLabMangaProgress
 import android.content.Context
 import android.graphics.Rect
 import android.os.ParcelFileDescriptor

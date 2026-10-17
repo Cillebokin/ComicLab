@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.settings.ComicLabMangaProgress
 import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.pm.ApplicationInfo
