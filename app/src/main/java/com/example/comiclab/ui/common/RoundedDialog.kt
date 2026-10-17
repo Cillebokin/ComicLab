@@ -1,8 +1,9 @@
-package com.example.comiclab
+package com.example.comiclab.ui.common
 
 import android.content.DialogInterface
 import android.graphics.drawable.ColorDrawable
 import androidx.core.content.ContextCompat
+import com.example.comiclab.R
 
 fun android.app.AlertDialog.Builder.showRounded(): android.app.AlertDialog {
     return createRounded().also { it.show() }

@@ -19,8 +19,8 @@ import com.example.comiclab.core.organize.DirectorySimilarityScanner
 import com.example.comiclab.core.organize.ImageFileMergeOperations
 import com.example.comiclab.core.organize.ImageFileMergeProgress
 import com.example.comiclab.core.organize.ImageFileMergeResult
-import com.example.comiclab.createRounded
-import com.example.comiclab.showRounded
+import com.example.comiclab.ui.common.createRounded
+import com.example.comiclab.ui.common.showRounded
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.atomic.AtomicInteger

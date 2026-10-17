@@ -1,4 +1,4 @@
-package com.example.comiclab
+package com.example.comiclab.ui.common
 
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable

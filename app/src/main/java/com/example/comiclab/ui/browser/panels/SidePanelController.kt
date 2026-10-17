@@ -11,13 +11,13 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.example.comiclab.InsetDividerItemDecoration
 import com.example.comiclab.R
 import com.example.comiclab.core.store.FavoriteComicStore
 import com.example.comiclab.core.store.FavoritePathStore
 import com.example.comiclab.core.store.ReadingHistoryStore
-import com.example.comiclab.showRounded
 import com.example.comiclab.ui.browser.dpToPx
+import com.example.comiclab.ui.common.InsetDividerItemDecoration
+import com.example.comiclab.ui.common.showRounded
 import java.io.File
 
 /**

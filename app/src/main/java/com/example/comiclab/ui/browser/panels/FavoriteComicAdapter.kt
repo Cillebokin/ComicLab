@@ -14,8 +14,8 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.core.concurrent.BoundedKeyedTaskQueue
 import com.example.comiclab.ComicArchive
 import com.example.comiclab.R
-import com.example.comiclab.RoundedPopupMenu
 import com.example.comiclab.core.store.FavoriteComicStore
+import com.example.comiclab.ui.common.RoundedPopupMenu
 import java.util.Collections
 
 class FavoriteComicAdapter(

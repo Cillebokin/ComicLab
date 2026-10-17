@@ -5,7 +5,7 @@ import com.example.comiclab.core.settings.ComicLabConfigurationJson
 import com.example.comiclab.core.update.GitHubReleaseApi
 import com.example.comiclab.core.update.ReleaseVersionComparator
 import com.example.comiclab.core.diagnostics.CrashLogManager
-import com.example.comiclab.createRounded
+import com.example.comiclab.ui.common.createRounded
 import com.example.comiclab.ui.common.SystemBars
 
 import android.content.ActivityNotFoundException

@@ -1,10 +1,11 @@
-package com.example.comiclab
+package com.example.comiclab.ui.common
 
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
+import com.example.comiclab.R
 
 class InsetDividerItemDecoration(
     context: Context,

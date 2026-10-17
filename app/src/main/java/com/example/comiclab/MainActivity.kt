@@ -8,6 +8,9 @@ import com.example.comiclab.ui.browser.toolbar.SortAndSearchController
 import com.example.comiclab.ui.browser.toolbar.showRoundedPopupMenu
 import com.example.comiclab.ui.browser.panels.SidePanelController
 import com.example.comiclab.ui.common.SystemBars
+import com.example.comiclab.ui.common.createRounded
+import com.example.comiclab.ui.common.showRounded
+import com.example.comiclab.ui.common.showRoundedContent
 
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException

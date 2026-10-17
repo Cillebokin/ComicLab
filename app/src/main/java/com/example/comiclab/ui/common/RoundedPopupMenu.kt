@@ -1,4 +1,4 @@
-package com.example.comiclab
+package com.example.comiclab.ui.common
 
 import android.content.Context
 import android.graphics.Rect
@@ -10,6 +10,7 @@ import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.TextView
 import androidx.core.content.ContextCompat
+import com.example.comiclab.R
 
 object RoundedPopupMenu {
 

@@ -1,8 +1,9 @@
 package com.example.comiclab
 
 import android.content.Context
-import android.content.Intent
 import android.graphics.Rect
+import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
@@ -11,10 +12,15 @@ import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
+import com.example.comiclab.ui.common.RoundedPopupMenu
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(AndroidJUnit4::class)
 class RoundedPopupMenuPositionTest {
@@ -32,11 +38,11 @@ class RoundedPopupMenuPositionTest {
 
         try {
             check(preferences.edit().putBoolean("storage_permission_prompted", true).commit())
-            activity = instrumentation.startActivitySync(
-                Intent(context, MainActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            ) as MainActivity
-            instrumentation.waitForIdleSync()
+            executeShellCommand(
+                instrumentation,
+                "am start -n com.example.comiclab/.MainActivity -f 0x10008000"
+            )
+            activity = awaitMainActivity(instrumentation)
 
             instrumentation.runOnMainSync {
                 val launchedActivity = activity!!
@@ -106,5 +112,40 @@ class RoundedPopupMenuPositionTest {
             }
             check(editor.commit())
         }
+    }
+
+    private fun awaitMainActivity(instrumentation: android.app.Instrumentation): MainActivity {
+        val deadline = SystemClock.elapsedRealtime() + TimeUnit.SECONDS.toMillis(20)
+        while (SystemClock.elapsedRealtime() < deadline) {
+            instrumentation.waitForIdleSync()
+            val activity = onMain(instrumentation) {
+                ActivityLifecycleMonitorRegistry.getInstance()
+                    .getActivitiesInStage(Stage.RESUMED)
+                    .filterIsInstance<MainActivity>()
+                    .firstOrNull { !it.isFinishing && !it.isDestroyed }
+            }
+            if (activity != null) return activity
+            Thread.sleep(50L)
+        }
+        error("MainActivity did not resume")
+    }
+
+    private fun executeShellCommand(
+        instrumentation: android.app.Instrumentation,
+        command: String
+    ): String {
+        val descriptor = instrumentation.uiAutomation.executeShellCommand(command)
+        return ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use {
+            it.readText()
+        }
+    }
+
+    private fun <T> onMain(
+        instrumentation: android.app.Instrumentation,
+        action: () -> T
+    ): T {
+        val value = AtomicReference<T>()
+        instrumentation.runOnMainSync { value.set(action()) }
+        return value.get()
     }
 }
