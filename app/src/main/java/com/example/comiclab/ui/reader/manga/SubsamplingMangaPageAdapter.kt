@@ -22,6 +22,7 @@ import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
 import com.example.comiclab.core.reader.decode.preparedReaderNearbyPositions
 import com.example.comiclab.core.reader.layout.ReaderPagePositionMapper
 import com.example.comiclab.readerPageContentGravity
+import com.example.comiclab.ui.reader.manga.page.calculateDisplayHeight
 import java.io.File
 import java.util.Collections
 import java.util.concurrent.PriorityBlockingQueue
@@ -455,7 +456,12 @@ internal class SubsamplingMangaPageAdapter(
         } else {
             targetWidth = RecyclerView.LayoutParams.MATCH_PARENT
             targetHeight = if (bounds != null) {
-                calculateDisplayHeight(bounds.width, bounds.height, baseDisplayWidth)
+                calculateDisplayHeight(
+                    bounds.width,
+                    bounds.height,
+                    baseDisplayWidth,
+                    MIN_READER_PAGE_HEIGHT
+                )
             } else {
                 (baseDisplayWidth * ESTIMATED_READER_PAGE_HEIGHT_RATIO)
                     .roundToInt()
@@ -662,16 +668,6 @@ internal class SubsamplingMangaPageAdapter(
             else -> NORMAL_PREPARE_FORWARD_COUNT
         }
     )
-
-    private fun calculateDisplayHeight(width: Int, height: Int, imageWidth: Int): Int {
-        if (width <= 0 || height <= 0 || imageWidth <= 0) {
-            return MIN_READER_PAGE_HEIGHT
-        }
-
-        return (imageWidth.toFloat() / width.toFloat() * height.toFloat())
-            .roundToInt()
-            .coerceAtLeast(1)
-    }
 
     private fun isHorizontalReading(): Boolean {
         return readingDirection == AppSettings.READING_DIRECTION_RIGHT_TO_LEFT ||

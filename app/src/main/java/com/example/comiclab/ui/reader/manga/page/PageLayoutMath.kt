@@ -47,3 +47,18 @@ internal fun calculateSampleSizeForWidth(width: Int, targetWidth: Int): Int {
     }
     return sampleSize
 }
+
+internal fun calculateDisplayHeight(
+    width: Int,
+    height: Int,
+    imageWidth: Int,
+    fallbackHeight: Int
+): Int {
+    if (width <= 0 || height <= 0 || imageWidth <= 0) {
+        return fallbackHeight
+    }
+
+    return (imageWidth.toFloat() / width.toFloat() * height.toFloat())
+        .roundToInt()
+        .coerceAtLeast(1)
+}

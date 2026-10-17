@@ -41,6 +41,7 @@ import com.example.comiclab.core.reader.decode.shouldSkipTiledPdfPreviewDecodeAf
 import com.example.comiclab.core.reader.decode.shouldUsePdfTiledRendering
 import com.example.comiclab.core.reader.decode.visiblePreviewPriorityForReader
 import com.example.comiclab.core.reader.layout.ReaderPagePositionMapper
+import com.example.comiclab.ui.reader.manga.page.calculateDisplayHeight
 import com.example.comiclab.ui.reader.manga.page.calculateFitInsideSize
 import com.example.comiclab.ui.reader.manga.page.calculateSampleSizeForWidth
 import com.example.comiclab.ui.reader.manga.page.buildPageTiles
@@ -648,7 +649,12 @@ internal class MangaPageAdapter(
 
         val imageWidth = zoomedDisplayWidth()
         val imageHeight = if (bounds != null) {
-            calculateDisplayHeight(bounds.width, bounds.height, imageWidth)
+            calculateDisplayHeight(
+                bounds.width,
+                bounds.height,
+                imageWidth,
+                MIN_READER_PAGE_HEIGHT
+            )
         } else {
             (imageWidth * ESTIMATED_READER_PAGE_HEIGHT_RATIO)
                 .roundToInt()
@@ -685,7 +691,12 @@ internal class MangaPageAdapter(
         }
 
         val imageWidth = zoomedDisplayWidth()
-        val imageHeight = calculateDisplayHeight(bitmap.width, bitmap.height, imageWidth)
+        val imageHeight = calculateDisplayHeight(
+            bitmap.width,
+            bitmap.height,
+            imageWidth,
+            MIN_READER_PAGE_HEIGHT
+        )
         setContainerHeight(holder.container, imageHeight)
         setFrameChildSize(holder.imageView, imageWidth, imageHeight)
         holder.imageView.setImageBitmap(bitmap)
@@ -698,7 +709,12 @@ internal class MangaPageAdapter(
         bounds: ComicArchive.ImageBounds
     ) {
         val imageWidth = zoomedDisplayWidth()
-        val imageHeight = calculateDisplayHeight(bounds.width, bounds.height, imageWidth)
+        val imageHeight = calculateDisplayHeight(
+            bounds.width,
+            bounds.height,
+            imageWidth,
+            MIN_READER_PAGE_HEIGHT
+        )
         setContainerHeight(holder.container, imageHeight)
         setFrameChildSize(holder.imageView, imageWidth, imageHeight)
         setFrameChildSize(holder.tileContainer, imageWidth, imageHeight)
@@ -784,7 +800,12 @@ internal class MangaPageAdapter(
             return
         }
 
-        val imageHeight = calculateDisplayHeight(bounds.width, bounds.height, imageWidth)
+        val imageHeight = calculateDisplayHeight(
+            bounds.width,
+            bounds.height,
+            imageWidth,
+            MIN_READER_PAGE_HEIGHT
+        )
         val containerTop = holder.container.top
         val pageViewportTop = (-containerTop).coerceIn(0, imageHeight).toFloat()
         val pageViewportBottom = (recyclerView.height - containerTop)
@@ -1864,7 +1885,12 @@ internal class MangaPageAdapter(
         // 按整页解码实际采用的宽度估算，避免横屏宽度大于原图时误判为超长页。
         val targetDecodeWidth = fullPageDecodeWidth(bounds)
         val sourcePixels = bounds.width.toLong() * bounds.height.toLong()
-        val decodedHeight = calculateDisplayHeight(bounds.width, bounds.height, targetDecodeWidth)
+        val decodedHeight = calculateDisplayHeight(
+            bounds.width,
+            bounds.height,
+            targetDecodeWidth,
+            MIN_READER_PAGE_HEIGHT
+        )
         val sampleSize = calculateSampleSizeForWidth(bounds.width, targetDecodeWidth)
         val decodedPixels = (bounds.width / sampleSize).toLong() *
             (bounds.height / sampleSize).toLong()
@@ -1933,16 +1959,6 @@ internal class MangaPageAdapter(
             layoutParams.topMargin = top
             view.layoutParams = layoutParams
         }
-    }
-
-    private fun calculateDisplayHeight(width: Int, height: Int, imageWidth: Int): Int {
-        if (width <= 0 || height <= 0 || imageWidth <= 0) {
-            return MIN_READER_PAGE_HEIGHT
-        }
-
-        return (imageWidth.toFloat() / width.toFloat() * height.toFloat())
-            .roundToInt()
-            .coerceAtLeast(1)
     }
 
     private fun zoomedDisplayWidth(): Int {

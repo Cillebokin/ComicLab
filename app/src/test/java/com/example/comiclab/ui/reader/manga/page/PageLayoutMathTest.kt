@@ -77,4 +77,18 @@ class PageLayoutMathTest {
         assertEquals(4, calculateSampleSizeForWidth(800, 200))
         assertEquals(2, calculateSampleSizeForWidth(800, 201))
     }
+
+    @Test
+    fun displayHeightScalesByTargetWidthAndPreservesRounding() {
+        assertEquals(750, calculateDisplayHeight(1_000, 1_500, 500, 320))
+        assertEquals(2, calculateDisplayHeight(4, 3, 2, 320))
+    }
+
+    @Test
+    fun displayHeightUsesFallbackForInvalidBoundsAndClampsValidResultToOne() {
+        assertEquals(417, calculateDisplayHeight(0, 100, 100, 417))
+        assertEquals(417, calculateDisplayHeight(100, 0, 100, 417))
+        assertEquals(417, calculateDisplayHeight(100, 100, 0, 417))
+        assertEquals(1, calculateDisplayHeight(1_000_000, 1, 100, 417))
+    }
 }
