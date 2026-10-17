@@ -7,7 +7,7 @@ import android.widget.TextView
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import com.example.comiclab.AppSettings
-import com.example.comiclab.FileListScrollState
+import com.example.comiclab.ui.browser.FileListScrollState
 import com.example.comiclab.R
 import com.example.comiclab.core.organize.ComicArchiveMergeProgress
 import com.example.comiclab.core.organize.ComicClassifier

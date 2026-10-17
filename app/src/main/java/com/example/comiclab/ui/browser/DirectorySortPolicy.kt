@@ -1,4 +1,4 @@
-package com.example.comiclab
+package com.example.comiclab.ui.browser
 
 import java.io.File
 import java.util.Locale

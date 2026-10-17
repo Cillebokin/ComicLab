@@ -6,6 +6,7 @@ import android.os.Looper
 import android.view.View
 import android.widget.EditText
 import android.widget.ListView
+import com.example.comiclab.ui.browser.FileListScrollState
 import com.example.comiclab.ui.browser.model.FileItem
 import java.io.File
 import java.util.concurrent.CountDownLatch

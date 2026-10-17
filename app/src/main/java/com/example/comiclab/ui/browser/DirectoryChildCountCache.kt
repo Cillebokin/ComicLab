@@ -1,4 +1,4 @@
-package com.example.comiclab
+package com.example.comiclab.ui.browser
 
 /** Keeps recent directory child counts and drops entries when the directory timestamp changes. */
 class DirectoryChildCountCache(private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {

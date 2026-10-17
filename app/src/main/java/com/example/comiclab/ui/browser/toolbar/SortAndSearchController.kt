@@ -5,7 +5,7 @@ import android.content.SharedPreferences
 import android.os.Environment
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
-import com.example.comiclab.DirectorySortOrder
+import com.example.comiclab.ui.browser.DirectorySortOrder
 import com.example.comiclab.R
 import com.example.comiclab.SearchActivity
 

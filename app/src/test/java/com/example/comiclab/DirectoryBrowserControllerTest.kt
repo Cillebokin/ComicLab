@@ -1,6 +1,10 @@
 package com.example.comiclab
 
 import com.example.comiclab.ui.browser.DirectoryBrowserController
+import com.example.comiclab.ui.browser.DirectoryChildCountCache
+import com.example.comiclab.ui.browser.DirectoryScrollStateCache
+import com.example.comiclab.ui.browser.DirectorySortOrder
+import com.example.comiclab.ui.browser.FileListScrollState
 import com.example.comiclab.core.concurrent.LatestTaskDispatcher
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue

@@ -1,5 +1,8 @@
 package com.example.comiclab
 
+import com.example.comiclab.ui.browser.DirectorySortMetadata
+import com.example.comiclab.ui.browser.DirectorySortOrder
+import com.example.comiclab.ui.browser.DirectorySortPolicy
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Test

@@ -41,6 +41,9 @@ import com.example.comiclab.ebook.ReaderFileDetector
 import com.example.comiclab.ebook.ReaderFileType
 import com.example.comiclab.ui.browser.FileListAdapter
 import com.example.comiclab.ui.browser.DirectoryBrowserController
+import com.example.comiclab.ui.browser.DirectoryChildCountCache
+import com.example.comiclab.ui.browser.DirectoryScrollStateCache
+import com.example.comiclab.ui.browser.FileListScrollState
 import com.example.comiclab.ui.browser.model.FileItem
 import com.example.comiclab.ui.browser.transfer.FileTransferController
 import com.example.comiclab.ui.browser.transfer.FileTransferMetadataUpdatePolicy

@@ -1,5 +1,7 @@
 package com.example.comiclab
 
+import com.example.comiclab.ui.browser.DirectoryScrollStateCache
+import com.example.comiclab.ui.browser.FileListScrollState
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Test
