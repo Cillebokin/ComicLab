@@ -1,4 +1,4 @@
-package com.example.comiclab
+package com.example.comiclab.core.diagnostics
 
 import android.content.Context
 import android.os.Build

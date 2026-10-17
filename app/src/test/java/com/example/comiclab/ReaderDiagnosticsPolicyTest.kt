@@ -1,5 +1,11 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.diagnostics.formatReaderCheckpoint
+import com.example.comiclab.core.diagnostics.formatReaderRender
+import com.example.comiclab.core.diagnostics.formatReaderSessionMarker
+import com.example.comiclab.core.diagnostics.isReaderSessionMarkerActive
+import com.example.comiclab.core.diagnostics.isSameReaderSessionMarker
+import com.example.comiclab.core.diagnostics.shouldPersistReaderRenderStart
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

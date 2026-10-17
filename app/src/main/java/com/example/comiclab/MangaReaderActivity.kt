@@ -35,6 +35,8 @@ import androidx.recyclerview.widget.PagerSnapHelper
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseTask
+import com.example.comiclab.core.diagnostics.ComicLabPerformance
+import com.example.comiclab.core.diagnostics.CrashLogManager
 import com.example.comiclab.core.reader.layout.DoublePageModeUnavailableReason
 import com.example.comiclab.core.reader.layout.ReaderPagePositionMapper
 import com.example.comiclab.core.reader.layout.doublePageModeUnavailableReason

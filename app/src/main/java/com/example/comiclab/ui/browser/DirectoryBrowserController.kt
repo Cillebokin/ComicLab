@@ -1,6 +1,6 @@
 package com.example.comiclab.ui.browser
 
-import com.example.comiclab.ComicLabPerformance
+import com.example.comiclab.core.diagnostics.ComicLabPerformance
 import com.example.comiclab.DirectoryChildCountCache
 import com.example.comiclab.DirectoryScrollStateCache
 import com.example.comiclab.DirectorySortOrder

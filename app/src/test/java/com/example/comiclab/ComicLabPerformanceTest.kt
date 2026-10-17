@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.diagnostics.ComicLabPerformance
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

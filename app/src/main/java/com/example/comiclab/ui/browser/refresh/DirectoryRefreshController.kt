@@ -5,7 +5,7 @@ import android.view.ViewTreeObserver
 import android.widget.ListView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import com.example.comiclab.ComicLabPerformance
+import com.example.comiclab.core.diagnostics.ComicLabPerformance
 import com.example.comiclab.DirectorySortOrder
 import com.example.comiclab.FileListScrollState
 import com.example.comiclab.R

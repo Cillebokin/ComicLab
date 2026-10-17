@@ -17,7 +17,7 @@ import android.widget.ImageView
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.AppSettings
 import com.example.comiclab.ComicArchive
-import com.example.comiclab.CrashLogManager
+import com.example.comiclab.core.diagnostics.CrashLogManager
 import com.example.comiclab.MAX_READER_DECODE_HEIGHT
 import com.example.comiclab.MAX_READER_DECODE_WIDTH
 import com.example.comiclab.MAX_READER_TILE_DECODE_WIDTH

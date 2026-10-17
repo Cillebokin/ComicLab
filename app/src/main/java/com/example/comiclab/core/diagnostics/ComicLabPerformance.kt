@@ -1,8 +1,9 @@
-package com.example.comiclab
+package com.example.comiclab.core.diagnostics
 
 import android.os.SystemClock
 import android.os.Trace
 import android.util.Log
+import com.example.comiclab.BuildConfig
 
 /** Debug-only timings for repeatable on-device performance checks. */
 internal object ComicLabPerformance {

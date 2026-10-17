@@ -17,7 +17,7 @@ import com.example.comiclab.AppSettings
 import com.example.comiclab.ui.browser.bookcase.BookcaseRowViewTypes
 import com.example.comiclab.core.concurrent.BoundedKeyedTaskQueue
 import com.example.comiclab.ComicArchive
-import com.example.comiclab.ComicLabPerformance
+import com.example.comiclab.core.diagnostics.ComicLabPerformance
 import com.example.comiclab.CommonFunc
 import com.example.comiclab.core.store.FavoriteComicStore
 import com.example.comiclab.core.store.FavoritePathStore

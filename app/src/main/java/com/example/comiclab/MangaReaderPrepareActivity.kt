@@ -13,6 +13,7 @@ import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseTask
+import com.example.comiclab.core.diagnostics.ComicLabPerformance
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
