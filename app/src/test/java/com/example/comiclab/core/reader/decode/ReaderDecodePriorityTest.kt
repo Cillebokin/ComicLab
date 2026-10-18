@@ -29,19 +29,18 @@ class ReaderDecodePriorityTest {
     }
 
     @Test
-    fun pdfFullDecodeWaitsUntilReaderIsIdle() {
+    fun pdfFullDecodeStartsImmediatelyOnlyForDiscreteJump() {
         assertEquals(
             false,
             shouldScheduleImmediateFullDecodeForReader(
-                isPdfSource = true,
-                isReaderIdle = false
+                isPdfSource = true
             )
         )
         assertEquals(
             true,
             shouldScheduleImmediateFullDecodeForReader(
                 isPdfSource = true,
-                isReaderIdle = true
+                isDiscreteJump = true
             )
         )
     }

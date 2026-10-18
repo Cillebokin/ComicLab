@@ -100,8 +100,11 @@ internal class MangaPageAdapter(
     private val tiledPages = Collections.synchronizedSet(mutableSetOf<Int>())
     private val boundPositions = Collections.synchronizedSet(mutableSetOf<Int>())
     private val pendingRefreshPositions = Collections.synchronizedSet(mutableSetOf<Int>())
+    private val pendingPdfIdleFullDecodeCallbacks = mutableMapOf<Int, Runnable>()
     private val pageBounds = Collections.synchronizedMap(mutableMapOf<Int, ComicArchive.ImageBounds>())
     private val isPdfSource = session.isPdfSource()
+    @Volatile
+    private var pdfFastScrollMode = false
     private val positionMapper = ReaderPagePositionMapper(
         sourceItemCount = entries.size,
         doublePageReading = doublePageReading,
@@ -229,6 +232,8 @@ internal class MangaPageAdapter(
         if (previousPosition != holder.boundPosition) {
             if (previousPosition != RecyclerView.NO_POSITION) {
                 zoomQualityRequestedPages.remove(previousPosition)
+                cancelPendingPdfIdleFullDecode(previousPosition)
+                cancelQueuedPreloadForPosition(previousPosition, DecodeTaskKind.PREVIEW)
                 cancelQueuedPreloadForPosition(previousPosition, DecodeTaskKind.ZOOM_FULL)
             }
             holder.container.resetZoom()
@@ -257,6 +262,8 @@ internal class MangaPageAdapter(
         if (holder.boundPosition != RecyclerView.NO_POSITION) {
             boundPositions.remove(holder.boundPosition)
             zoomQualityRequestedPages.remove(holder.boundPosition)
+            cancelPendingPdfIdleFullDecode(holder.boundPosition)
+            cancelQueuedPreloadForPosition(holder.boundPosition, DecodeTaskKind.PREVIEW)
             cancelQueuedPreloadForPosition(holder.boundPosition, DecodeTaskKind.ZOOM_FULL)
         }
         holder.boundPosition = RecyclerView.NO_POSITION
@@ -278,6 +285,10 @@ internal class MangaPageAdapter(
     ) {
         if (entries.isEmpty() || closed) {
             return
+        }
+        pdfFastScrollMode = isPdfSource && isFastScroll && !isIdle && !isDiscreteJump
+        if (isPdfSource && (!isIdle || isDiscreteJump)) {
+            cancelPendingPdfIdleFullDecodes()
         }
 
         val firstVisibleAdapterPosition = positionMapper
@@ -319,14 +330,25 @@ internal class MangaPageAdapter(
                 isPreload = true
             )
         ) {
-            window.previewPositions.forEach { position ->
-                ensurePreview(position, PRIORITY_PRELOAD_PREVIEW, generation, isPreload = true)
+            window.previewPositions.forEachIndexed { index, position ->
+                val isAheadOfViewport = if (scrollDirection >= 0) {
+                    position > lastVisible
+                } else {
+                    position < firstVisible
+                }
+                val priority = if (isPdfSource && isFastScroll && isAheadOfViewport && index < 3) {
+                    PRIORITY_FAST_PRELOAD_PREVIEW
+                } else {
+                    PRIORITY_PRELOAD_PREVIEW
+                }
+                ensurePreview(position, priority, generation, isPreload = true)
             }
         }
 
-        if (isPdfSource && shouldScheduleImmediateFullDecodeForReader(
+        if (isPdfSource && isIdle && !isDiscreteJump) {
+            (firstVisible..lastVisible).forEach(::schedulePdfIdleFullDecode)
+        } else if (isPdfSource && shouldScheduleImmediateFullDecodeForReader(
                 isPdfSource = true,
-                isReaderIdle = isIdle,
                 isDiscreteJump = isDiscreteJump
             )
         ) {
@@ -415,6 +437,9 @@ internal class MangaPageAdapter(
     internal val loadingPreviewPagesForTest: Set<Int>
         get() = loadingPreviewPages
 
+    internal val loadingFullPagesForTest: Set<Int>
+        get() = loadingFullPages
+
     internal val failedPreviewPagesForTest: Set<Int>
         get() = failedPreviewPages
 
@@ -448,6 +473,7 @@ internal class MangaPageAdapter(
         }
         closed = true
         mainHandler.removeCallbacks(flushRefreshRunnable)
+        cancelPendingPdfIdleFullDecodes()
         clearHolderCallbacks()
         clearVisibleBitmapReferences(clearFullBitmaps = true)
         decodeExecutor.shutdownNow()
@@ -875,12 +901,8 @@ internal class MangaPageAdapter(
                 generation = 0,
                 isPreload = false
             )
-            if (shouldScheduleImmediateFullDecodeForReader(
-                    isPdfSource = true,
-                    isReaderIdle = recyclerView.scrollState == RecyclerView.SCROLL_STATE_IDLE
-                )
-            ) {
-                ensureFullOrTiledPage(position, PRIORITY_VISIBLE, generation = 0, isPreload = false)
+            if (recyclerView.scrollState == RecyclerView.SCROLL_STATE_IDLE) {
+                schedulePdfIdleFullDecode(position)
             }
             return
         }
@@ -953,6 +975,7 @@ internal class MangaPageAdapter(
         if (!registeredLoading && isPreload) {
             return
         }
+        val targetWidth = previewDecodeWidth()
 
         submitTask(
             priority = priority,
@@ -962,14 +985,13 @@ internal class MangaPageAdapter(
             cancelable = isPreload
         ) {
             try {
-                if (isPreload && !isUsefulPreload(position, generation)) {
+                if (isPreload && !isUsefulPreviewPreload(position, generation)) {
                     return@submitTask
                 }
                 if (previewBitmap(position) != null) {
                     return@submitTask
                 }
 
-                val targetWidth = previewDecodeWidth()
                 val bitmap = decodeWithRenderDiagnostics(
                     position = position,
                     kind = "PREVIEW",
@@ -1008,7 +1030,7 @@ internal class MangaPageAdapter(
                     bitmapBytes = bitmap.byteCount
                 )
 
-                if (isPreload && !isUsefulPreload(position, generation)) {
+                if (isPreload && !isUsefulPreviewPreload(position, generation)) {
                     bitmap.recycle()
                     return@submitTask
                 }
@@ -1039,6 +1061,7 @@ internal class MangaPageAdapter(
         isPreload: Boolean
     ) {
         if (!isPreload) {
+            cancelPendingPdfIdleFullDecode(position)
             cancelQueuedPreloadForPosition(position, DecodeTaskKind.FULL)
         }
 
@@ -1784,6 +1807,45 @@ internal class MangaPageAdapter(
             position in preloadWindowStart..preloadWindowEnd
     }
 
+    private fun isUsefulPreviewPreload(position: Int, generation: Int): Boolean {
+        return !closed &&
+            position in preloadWindowStart..preloadWindowEnd &&
+            (isPdfSource || generation == preloadGeneration.get())
+    }
+
+    private fun schedulePdfIdleFullDecode(position: Int) {
+        if (!isPdfSource || closed || position !in entries.indices ||
+            position !in boundPositions || position in loadingFullPages ||
+            position in pendingPdfIdleFullDecodeCallbacks
+        ) {
+            return
+        }
+
+        val callback = Runnable {
+            pendingPdfIdleFullDecodeCallbacks.remove(position)
+            if (!closed && recyclerView.scrollState == RecyclerView.SCROLL_STATE_IDLE &&
+                position in boundPositions
+            ) {
+                ensureFullOrTiledPage(position, PRIORITY_VISIBLE, generation = 0, isPreload = false)
+            }
+        }
+        pendingPdfIdleFullDecodeCallbacks[position] = callback
+        mainHandler.postDelayed(callback, PDF_IDLE_FULL_DECODE_DELAY_MS)
+    }
+
+    private fun cancelPendingPdfIdleFullDecode(position: Int) {
+        pendingPdfIdleFullDecodeCallbacks.remove(position)?.let { callback ->
+            mainHandler.removeCallbacks(callback)
+        }
+    }
+
+    private fun cancelPendingPdfIdleFullDecodes() {
+        pendingPdfIdleFullDecodeCallbacks.values.toList().forEach { callback ->
+            mainHandler.removeCallbacks(callback)
+        }
+        pendingPdfIdleFullDecodeCallbacks.clear()
+    }
+
     private fun cancelStaleZoomQualityRequests() {
         zoomQualityRequestedPages.toList().forEach { position ->
             if (position !in boundPositions ||
@@ -1803,17 +1865,32 @@ internal class MangaPageAdapter(
         val queue = decodeExecutor.queue
         queue.toList().forEach { runnable ->
             val task = runnable as? DecodeTask ?: return@forEach
-            if (!task.cancelable) {
+            val isVisiblePdfPreview = isPdfSource &&
+                task.kind == DecodeTaskKind.PREVIEW &&
+                task.generation == 0
+            if (!task.cancelable && !isVisiblePdfPreview) {
                 return@forEach
             }
 
-            val isStale = if (task.kind == DecodeTaskKind.ZOOM_FULL) {
-                task.position !in zoomQualityRequestedPages ||
-                    task.position !in boundPositions ||
-                    task.position !in protectedWindowStart..protectedWindowEnd
-            } else {
-                task.generation != currentGeneration ||
+            val isStale = when {
+                task.kind == DecodeTaskKind.ZOOM_FULL -> {
+                    task.position !in zoomQualityRequestedPages ||
+                        task.position !in boundPositions ||
+                        task.position !in protectedWindowStart..protectedWindowEnd
+                }
+
+                isVisiblePdfPreview -> {
+                    task.position !in visibleWindowStart..visibleWindowEnd
+                }
+
+                isPdfSource && task.kind == DecodeTaskKind.PREVIEW -> {
                     task.position !in preloadWindowStart..preloadWindowEnd
+                }
+
+                else -> {
+                    task.generation != currentGeneration ||
+                        task.position !in preloadWindowStart..preloadWindowEnd
+                }
             }
             if (isStale) {
                 if (queue.remove(task)) {
@@ -1828,7 +1905,11 @@ internal class MangaPageAdapter(
         val queue = decodeExecutor.queue
         queue.toList().forEach { runnable ->
             val task = runnable as? DecodeTask ?: return@forEach
-            if (task.cancelable && task.position == position && task.kind == kind) {
+            val isPdfVisiblePreview = isPdfSource && kind == DecodeTaskKind.PREVIEW
+            if ((task.cancelable || isPdfVisiblePreview) &&
+                task.position == position &&
+                task.kind == kind
+            ) {
                 if (queue.remove(task)) {
                     task.cancelled = true
                     clearLoadingForCanceledTask(task)
@@ -1967,11 +2048,16 @@ internal class MangaPageAdapter(
 
     private fun previewDecodeWidth(): Int {
         if (isPdfSource) {
-            return calculatePdfPreviewWidth(
+            val regularWidth = calculatePdfPreviewWidth(
                 baseDisplayWidth = baseDisplayWidth,
                 minimumWidth = PDF_MIN_PREVIEW_DECODE_WIDTH,
                 maximumWidth = PDF_MAX_PREVIEW_DECODE_WIDTH
             )
+            return if (pdfFastScrollMode) {
+                minOf(regularWidth, PDF_FAST_PREVIEW_DECODE_WIDTH)
+            } else {
+                regularWidth
+            }
         }
         return (baseDisplayWidth / 2).coerceIn(MIN_PREVIEW_DECODE_WIDTH, MAX_PREVIEW_DECODE_WIDTH)
     }
@@ -2249,12 +2335,15 @@ internal class MangaPageAdapter(
         private const val MIN_PREVIEW_DECODE_WIDTH = 240
         private const val MAX_PREVIEW_DECODE_WIDTH = 720
         private const val PDF_MIN_PREVIEW_DECODE_WIDTH = 360
+        private const val PDF_FAST_PREVIEW_DECODE_WIDTH = 180
+        private const val PDF_IDLE_FULL_DECODE_DELAY_MS = 250L
         private const val PDF_MAX_PREVIEW_DECODE_WIDTH = 1080
         private const val FULL_CACHE_TRIM_THRESHOLD_PERCENT = 88
         private const val UI_REFRESH_THROTTLE_MS = 24L
         private const val UI_REFRESH_RETRY_MS = 48L
         private const val PRIORITY_VISIBLE = 100
         private const val PRIORITY_VISIBLE_PREVIEW = 90
+        private const val PRIORITY_FAST_PRELOAD_PREVIEW = PRIORITY_VISIBLE_PREVIEW - 1
         private const val PRIORITY_TILE = 80
         private const val PRIORITY_ZOOM_FULL = 95
         private const val PRIORITY_PRELOAD = 30
