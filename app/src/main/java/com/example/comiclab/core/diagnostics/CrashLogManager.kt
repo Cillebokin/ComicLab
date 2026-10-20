@@ -355,3 +355,29 @@ internal fun formatReaderRender(
         "target=${targetWidth ?: "?"}x${targetHeight ?: "?"} " +
         "bitmapBytes=${bitmapBytes ?: "?"} usedHeapKb=$usedHeapKb maxHeapKb=$maxHeapKb"
 }
+
+internal fun formatReaderDecodeQueueTiming(
+    position: Int,
+    kind: String,
+    queueWaitNanos: Long,
+    pendingBefore: Int
+): String {
+    return "event=decode_queue page=${position + 1} position=$position kind=$kind " +
+        "queueWaitMs=${formatTimingMillis(queueWaitNanos)} pendingBefore=${pendingBefore.coerceAtLeast(0)}"
+}
+
+internal fun formatPdfPageRenderTiming(
+    position: Int,
+    kind: String,
+    gateWaitNanos: Long,
+    renderNanos: Long,
+    targetWidth: Int,
+    targetHeight: Int
+): String {
+    return "event=page_render page=${position + 1} position=$position kind=$kind " +
+        "gateWaitMs=${formatTimingMillis(gateWaitNanos)} " +
+        "renderMs=${formatTimingMillis(renderNanos)} target=${targetWidth}x$targetHeight"
+}
+
+private fun formatTimingMillis(nanos: Long): String =
+    String.format(Locale.ROOT, "%.1f", nanos.coerceAtLeast(0L) / 1_000_000.0)

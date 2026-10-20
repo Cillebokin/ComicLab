@@ -182,11 +182,11 @@ internal data class PreloadWindow(
         private const val PDF_NORMAL_PREVIEW_PRELOAD_BEFORE_COUNT = 1
         private const val PDF_NORMAL_PREVIEW_PRELOAD_FORWARD_COUNT = 3
         private const val PDF_FAST_PREVIEW_PRELOAD_BEFORE_COUNT = 1
-        private const val PDF_FAST_PREVIEW_PRELOAD_FORWARD_COUNT = 5
+        private const val PDF_FAST_PREVIEW_PRELOAD_FORWARD_COUNT = 16
         private const val PDF_IDLE_FULL_PRELOAD_BEFORE_COUNT = 1
         private const val PDF_IDLE_FULL_PRELOAD_AFTER_COUNT = 1
         private const val PDF_IDLE_PREVIEW_PRELOAD_BEFORE_COUNT = 2
-        private const val PDF_IDLE_PREVIEW_PRELOAD_AFTER_COUNT = 4
+        private const val PDF_IDLE_PREVIEW_PRELOAD_AFTER_COUNT = 16
         private const val PDF_CACHE_PROTECTED_BEFORE_COUNT = 1
         private const val PDF_CACHE_PROTECTED_AFTER_COUNT = 2
     }

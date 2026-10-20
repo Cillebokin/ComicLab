@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.util.LruCache
 import android.view.Gravity
@@ -18,6 +19,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.AppSettings
 import com.example.comiclab.ComicArchive
 import com.example.comiclab.core.diagnostics.CrashLogManager
+import com.example.comiclab.core.diagnostics.formatReaderDecodeQueueTiming
 import com.example.comiclab.MAX_READER_DECODE_HEIGHT
 import com.example.comiclab.MAX_READER_DECODE_WIDTH
 import com.example.comiclab.MAX_READER_TILE_DECODE_WIDTH
@@ -25,6 +27,8 @@ import com.example.comiclab.R
 import com.example.comiclab.readerPageContentGravity
 import com.example.comiclab.core.reader.decode.calculatePdfPreviewWidth
 import com.example.comiclab.core.reader.decode.calculatePdfRenderWidthByPixelBudget
+import com.example.comiclab.core.reader.decode.pdfDecodeThreadCountForScroll
+import com.example.comiclab.core.reader.decode.fastPdfPreviewPreloadPriorityForReader
 import com.example.comiclab.core.reader.decode.isReaderTileVisible
 import com.example.comiclab.core.reader.decode.pdfFullBitmapCacheSizeKb
 import com.example.comiclab.core.reader.decode.pdfTileBitmapCacheSizeKb
@@ -75,9 +79,25 @@ internal class MangaPageAdapter(
 ) : RecyclerView.Adapter<MangaPageAdapter.PageViewHolder>(), ReaderPageAdapterController {
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val isPdfSource = session.isPdfSource()
+    private val hasIndependentPdfSessions = isPdfSource &&
+        archiveFile.extension.equals("pdf", ignoreCase = true)
+    private val decoderSessions = Collections.synchronizedSet(mutableSetOf(session))
+    private val nextPdfWorkerSession = AtomicInteger(0)
+    private val additionalPdfSessionLock = Any()
+    @Volatile
+    private var additionalPdfSession: ComicArchive.ImageReaderSession? = null
+    private val decodeSessionForWorker: ThreadLocal<ComicArchive.ImageReaderSession> =
+        ThreadLocal.withInitial<ComicArchive.ImageReaderSession> {
+            if (!hasIndependentPdfSessions || nextPdfWorkerSession.getAndIncrement() == 0) {
+                session
+            } else {
+                additionalPdfDecodeSession()
+            }
+        }
     private var decodeExecutor = ThreadPoolExecutor(
         READER_DECODE_THREAD_COUNT,
-        READER_DECODE_THREAD_COUNT,
+        if (hasIndependentPdfSessions) PDF_FAST_SCROLL_DECODE_THREAD_COUNT else READER_DECODE_THREAD_COUNT,
         0L,
         TimeUnit.MILLISECONDS,
         PriorityBlockingQueue<Runnable>()
@@ -102,9 +122,10 @@ internal class MangaPageAdapter(
     private val pendingRefreshPositions = Collections.synchronizedSet(mutableSetOf<Int>())
     private val pendingPdfIdleFullDecodeCallbacks = mutableMapOf<Int, Runnable>()
     private val pageBounds = Collections.synchronizedMap(mutableMapOf<Int, ComicArchive.ImageBounds>())
-    private val isPdfSource = session.isPdfSource()
     @Volatile
     private var pdfFastScrollMode = false
+    @Volatile
+    private var pdfIdlePreviewPreloadMode = false
     private val positionMapper = ReaderPagePositionMapper(
         sourceItemCount = entries.size,
         doublePageReading = doublePageReading,
@@ -171,6 +192,35 @@ internal class MangaPageAdapter(
     override fun getItemCount(): Int = adapterItemCount
 
     override fun readerItemCount(): Int = entries.size
+
+    override fun allVisiblePagesHaveRenderableContent(recyclerView: RecyclerView): Boolean {
+        val recyclerBounds = Rect()
+        if (!recyclerView.getGlobalVisibleRect(recyclerBounds)) {
+            return false
+        }
+        val visibleHolders = mutableListOf<PageViewHolder>()
+        for (index in 0 until recyclerView.childCount) {
+            val child = recyclerView.getChildAt(index)
+            val childBounds = Rect()
+            if (!child.getGlobalVisibleRect(childBounds) ||
+                !Rect.intersects(recyclerBounds, childBounds)
+            ) {
+                continue
+            }
+            (recyclerView.getChildViewHolder(child) as? PageViewHolder)?.let(visibleHolders::add)
+        }
+
+        val visiblePositions = visibleHolders
+            .mapNotNull { holder -> holder.boundPosition.takeIf { it in entries.indices } }
+            .distinct()
+        return areVisibleReaderPagesRenderable(visiblePositions) { position ->
+            val holder = visibleHolders.firstOrNull { it.boundPosition == position }
+                ?: return@areVisibleReaderPagesRenderable false
+            holder.imageView.drawable != null || (0 until holder.tileContainer.childCount).any { index ->
+                (holder.tileContainer.getChildAt(index) as? ImageView)?.drawable != null
+            }
+        }
+    }
 
     override fun getItemId(position: Int): Long = position.toLong()
 
@@ -287,6 +337,15 @@ internal class MangaPageAdapter(
             return
         }
         pdfFastScrollMode = isPdfSource && isFastScroll && !isIdle && !isDiscreteJump
+        pdfIdlePreviewPreloadMode = isPdfSource && isIdle && !isDiscreteJump
+        val desiredDecodeThreadCount = pdfDecodeThreadCountForScroll(
+            isPdfSource = isPdfSource,
+            isFastScroll = pdfFastScrollMode,
+            hasIndependentSessions = hasIndependentPdfSessions
+        ).coerceAtMost(decodeExecutor.maximumPoolSize)
+        if (decodeExecutor.corePoolSize != desiredDecodeThreadCount) {
+            decodeExecutor.corePoolSize = desiredDecodeThreadCount
+        }
         if (isPdfSource && (!isIdle || isDiscreteJump)) {
             cancelPendingPdfIdleFullDecodes()
         }
@@ -336,10 +395,17 @@ internal class MangaPageAdapter(
                 } else {
                     position < firstVisible
                 }
-                val priority = if (isPdfSource && isFastScroll && isAheadOfViewport && index < 3) {
-                    PRIORITY_FAST_PRELOAD_PREVIEW
+                val priority = if (isPdfSource && isFastScroll && isAheadOfViewport) {
+                    fastPdfPreviewPreloadPriorityForReader(
+                        distanceFromViewport = index,
+                        visiblePriority = PRIORITY_VISIBLE_PREVIEW,
+                        backgroundPriority = PRIORITY_PRELOAD_PREVIEW
+                    )
                 } else {
                     PRIORITY_PRELOAD_PREVIEW
+                }
+                if (isPdfSource) {
+                    updateQueuedPdfPreviewPriority(position, priority)
                 }
                 ensurePreview(position, priority, generation, isPreload = true)
             }
@@ -513,6 +579,24 @@ internal class MangaPageAdapter(
         }
     }
 
+    private fun additionalPdfDecodeSession(): ComicArchive.ImageReaderSession {
+        additionalPdfSession?.let { return it }
+        synchronized(additionalPdfSessionLock) {
+            additionalPdfSession?.let { return it }
+            val opened = runCatching {
+                ComicArchive.openReaderSession(archiveFile, context.cacheDir)
+            }.onFailure {
+                Log.w(READER_ADAPTER_LOG_TAG, "could not open an independent PDF decode session", it)
+            }.getOrNull() ?: return session
+            additionalPdfSession = opened
+            decoderSessions.add(opened)
+            return opened
+        }
+    }
+
+    private fun decodeSessionForCurrentThread(): ComicArchive.ImageReaderSession =
+        decodeSessionForWorker.get() ?: session
+
     private fun clearVisibleBitmapReferences(clearFullBitmaps: Boolean) {
         for (index in 0 until recyclerView.childCount) {
             val holder = recyclerView.getChildViewHolder(recyclerView.getChildAt(index))
@@ -543,8 +627,13 @@ internal class MangaPageAdapter(
                     tileBitmapCache.evictAll()
                     clearFullBitmapMetadata()
                 }
-                runCatching { session.close() }
-                    .onFailure { Log.w(READER_ADAPTER_LOG_TAG, "reader session close failed", it) }
+                val sessionsToClose = synchronized(decoderSessions) { decoderSessions.toList() }
+                sessionsToClose.forEach { decodeSession ->
+                    runCatching { decodeSession.close() }
+                        .onFailure {
+                            Log.w(READER_ADAPTER_LOG_TAG, "reader session close failed", it)
+                        }
+                }
             },
             "ComicLabReaderSessionClose"
         ).apply { isDaemon = true }.start()
@@ -972,11 +1061,9 @@ internal class MangaPageAdapter(
         }
 
         val registeredLoading = loadingPreviewPages.add(position)
-        if (!registeredLoading && isPreload) {
+        if (!registeredLoading) {
             return
         }
-        val targetWidth = previewDecodeWidth()
-
         submitTask(
             priority = priority,
             position = position,
@@ -991,6 +1078,7 @@ internal class MangaPageAdapter(
                 if (previewBitmap(position) != null) {
                     return@submitTask
                 }
+                val targetWidth = previewDecodeWidth(isPreload)
 
                 val bitmap = decodeWithRenderDiagnostics(
                     position = position,
@@ -999,7 +1087,8 @@ internal class MangaPageAdapter(
                     targetHeight = null
                 ) {
                     runCatching {
-                        session.decodePreviewForWidth(entries[position], targetWidth)
+                        decodeSessionForCurrentThread()
+                            .decodePreviewForWidth(entries[position], targetWidth)
                     }.onFailure {
                         handleDecodeFailure(
                             position = position,
@@ -1114,7 +1203,7 @@ internal class MangaPageAdapter(
                 }
 
                 val bounds = pageBounds[position]
-                    ?: runCatching { session.readBounds(entries[position]) }
+                    ?: runCatching { decodeSessionForCurrentThread().readBounds(entries[position]) }
                         .onFailure { handleDecodeFailure(position, DecodeTaskKind.FULL, it) }
                         .getOrNull()
                         ?.also { pageBounds[position] = it }
@@ -1153,7 +1242,8 @@ internal class MangaPageAdapter(
                             targetHeight = null
                         ) {
                             runCatching {
-                                session.decodePreviewForWidth(entries[position], previewWidth)
+                                decodeSessionForCurrentThread()
+                                    .decodePreviewForWidth(entries[position], previewWidth)
                             }.onFailure {
                                 handleDecodeFailure(
                                     position = position,
@@ -1294,7 +1384,7 @@ internal class MangaPageAdapter(
                 }
 
                 val bounds = pageBounds[position]
-                    ?: runCatching { session.readBounds(entries[position]) }
+                    ?: runCatching { decodeSessionForCurrentThread().readBounds(entries[position]) }
                         .onFailure {
                             handleDecodeFailure(position, DecodeTaskKind.ZOOM_FULL, it)
                         }
@@ -1399,13 +1489,13 @@ internal class MangaPageAdapter(
         ) {
             runCatching {
                 if (isHorizontalReading() || fitWithinBounds) {
-                    session.decodeImageForPage(
+                    decodeSessionForCurrentThread().decodeImageForPage(
                         entryName = entries[position],
                         targetWidth = targetWidth,
                         targetHeight = targetHeight
                     )
                 } else {
-                    session.decodeImageForWidth(
+                    decodeSessionForCurrentThread().decodeImageForWidth(
                         entries[position],
                         targetWidth
                     )
@@ -1470,7 +1560,7 @@ internal class MangaPageAdapter(
                     targetHeight = targetHeight
                 ) {
                     runCatching {
-                        session.decodeRegionForWidth(
+                            decodeSessionForCurrentThread().decodeRegionForWidth(
                             entries[position],
                             tile.sourceRect,
                             tileDecodeWidth
@@ -1692,6 +1782,9 @@ internal class MangaPageAdapter(
             cancelable = cancelable,
             tileKey = tileKey,
             sequence = taskSequence.getAndIncrement(),
+            enqueuedAtNanos = SystemClock.elapsedRealtimeNanos(),
+            pendingBefore = decodeExecutor.queue.size + decodeExecutor.activeCount,
+            logPdfTiming = isPdfSource,
             block = block
         )
         runCatching {
@@ -1918,6 +2011,24 @@ internal class MangaPageAdapter(
         }
     }
 
+    private fun updateQueuedPdfPreviewPriority(position: Int, priority: Int) {
+        val queue = decodeExecutor.queue
+        queue.toList().forEach { runnable ->
+            val task = runnable as? DecodeTask ?: return@forEach
+            if (task.kind != DecodeTaskKind.PREVIEW ||
+                !task.cancelable ||
+                task.position != position ||
+                task.priority == priority
+            ) {
+                return@forEach
+            }
+            if (queue.remove(task)) {
+                task.priority = priority
+                queue.add(task)
+            }
+        }
+    }
+
     private fun clearLoadingForCanceledTask(task: DecodeTask) {
         when (task.kind) {
             DecodeTaskKind.PREVIEW -> loadingPreviewPages.remove(task.position)
@@ -2046,14 +2157,14 @@ internal class MangaPageAdapter(
         return baseDisplayWidth
     }
 
-    private fun previewDecodeWidth(): Int {
+    private fun previewDecodeWidth(isPreload: Boolean = false): Int {
         if (isPdfSource) {
             val regularWidth = calculatePdfPreviewWidth(
                 baseDisplayWidth = baseDisplayWidth,
                 minimumWidth = PDF_MIN_PREVIEW_DECODE_WIDTH,
                 maximumWidth = PDF_MAX_PREVIEW_DECODE_WIDTH
             )
-            return if (pdfFastScrollMode) {
+            return if (pdfFastScrollMode || (isPreload && pdfIdlePreviewPreloadMode)) {
                 minOf(regularWidth, PDF_FAST_PREVIEW_DECODE_WIDTH)
             } else {
                 regularWidth
@@ -2284,13 +2395,16 @@ internal class MangaPageAdapter(
     }
 
     private class DecodeTask(
-        private val priority: Int,
+        var priority: Int,
         val position: Int,
         val generation: Int,
         val kind: DecodeTaskKind,
         val cancelable: Boolean,
         val tileKey: TileKey?,
         private val sequence: Long,
+        private val enqueuedAtNanos: Long,
+        private val pendingBefore: Int,
+        private val logPdfTiming: Boolean,
         private val block: () -> Unit
     ) : Runnable, Comparable<DecodeTask> {
 
@@ -2300,6 +2414,18 @@ internal class MangaPageAdapter(
         override fun run() {
             if (cancelled) {
                 return
+            }
+            val startedAtNanos = SystemClock.elapsedRealtimeNanos()
+            if (logPdfTiming) {
+                Log.i(
+                    PDF_TIMING_LOG_TAG,
+                    formatReaderDecodeQueueTiming(
+                        position = position,
+                        kind = kind.name,
+                        queueWaitNanos = startedAtNanos - enqueuedAtNanos,
+                        pendingBefore = pendingBefore
+                    )
+                )
             }
             try {
                 block()
@@ -2312,6 +2438,16 @@ internal class MangaPageAdapter(
                         READER_ADAPTER_LOG_TAG,
                         "decode task failed kind=$kind position=$position",
                         throwable
+                    )
+                }
+            } finally {
+                if (logPdfTiming) {
+                    val elapsedNanos = SystemClock.elapsedRealtimeNanos() - startedAtNanos
+                    Log.i(
+                        PDF_TIMING_LOG_TAG,
+                        "event=decode_task_complete page=${position + 1} position=$position " +
+                            "kind=${kind.name} elapsedMs=" +
+                            String.format(java.util.Locale.ROOT, "%.1f", elapsedNanos / 1_000_000.0)
                     )
                 }
             }
@@ -2336,6 +2472,7 @@ internal class MangaPageAdapter(
         private const val MAX_PREVIEW_DECODE_WIDTH = 720
         private const val PDF_MIN_PREVIEW_DECODE_WIDTH = 360
         private const val PDF_FAST_PREVIEW_DECODE_WIDTH = 180
+        private const val PDF_FAST_SCROLL_DECODE_THREAD_COUNT = 2
         private const val PDF_IDLE_FULL_DECODE_DELAY_MS = 250L
         private const val PDF_MAX_PREVIEW_DECODE_WIDTH = 1080
         private const val FULL_CACHE_TRIM_THRESHOLD_PERCENT = 88
@@ -2343,7 +2480,6 @@ internal class MangaPageAdapter(
         private const val UI_REFRESH_RETRY_MS = 48L
         private const val PRIORITY_VISIBLE = 100
         private const val PRIORITY_VISIBLE_PREVIEW = 90
-        private const val PRIORITY_FAST_PRELOAD_PREVIEW = PRIORITY_VISIBLE_PREVIEW - 1
         private const val PRIORITY_TILE = 80
         private const val PRIORITY_ZOOM_FULL = 95
         private const val PRIORITY_PRELOAD = 30
@@ -2364,6 +2500,7 @@ internal class MangaPageAdapter(
         private const val PDF_DOUBLE_PAGE_ZOOM_RENDER_PIXELS = 3_000_000L
         private const val PDF_TILED_RENDER_PIXEL_THRESHOLD = 8_000_000L
         private const val READER_ADAPTER_LOG_TAG = "ComicLabReader"
+        private const val PDF_TIMING_LOG_TAG = "ComicLabPdfTiming"
 
         private fun previewBitmapCacheSizeKb(isPdfSource: Boolean): Int {
             val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()

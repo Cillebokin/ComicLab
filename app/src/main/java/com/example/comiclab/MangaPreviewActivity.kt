@@ -9,6 +9,8 @@ import android.graphics.Bitmap
 import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
 import android.content.Intent
+import android.content.SharedPreferences
+import com.example.comiclab.core.store.ReaderProgressStore
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -61,6 +63,9 @@ class MangaPreviewActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
 
     private var archiveFile: File? = null
+    private val readingProgressListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        updateReadingProgress()
+    }
     private var imageEntries: List<String> = emptyList()
     private var renderedEntryNames: List<String> = emptyList()
     private var renderedPreviewCount = 0
@@ -136,6 +141,16 @@ class MangaPreviewActivity : AppCompatActivity() {
         }
 
         loadArchive(file)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        ReaderProgressStore.registerChangeListener(this, readingProgressListener)
+    }
+
+    override fun onStop() {
+        ReaderProgressStore.unregisterChangeListener(this, readingProgressListener)
+        super.onStop()
     }
 
     override fun onResume() {

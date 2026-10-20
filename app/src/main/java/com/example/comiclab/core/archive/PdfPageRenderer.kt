@@ -6,6 +6,9 @@ import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
+import android.util.Log
+import com.example.comiclab.core.diagnostics.formatPdfPageRenderTiming
 import java.io.File
 import java.util.Locale
 
@@ -13,8 +16,12 @@ internal class PdfRendererLifecycleGate {
     private val lock = Any()
     private var closed = false
 
-    fun <T> withOpen(block: () -> T): T? {
+    fun <T> withOpen(block: () -> T): T? = withOpenTimed({}, block)
+
+    fun <T> withOpenTimed(onLockAcquired: (waitNanos: Long) -> Unit, block: () -> T): T? {
+        val waitStartedAtNanos = System.nanoTime()
         return synchronized(lock) {
+            onLockAcquired(System.nanoTime() - waitStartedAtNanos)
             if (closed) {
                 null
             } else {
@@ -33,6 +40,12 @@ internal class PdfRendererLifecycleGate {
         }
     }
 }
+
+private data class PdfPageRenderTimingContext(
+    val position: Int,
+    val kind: String,
+    val gateWaitNanos: Long
+)
 
 internal fun <T> createPdfRendererOrCloseDescriptor(
     createRenderer: () -> T,
@@ -174,14 +187,20 @@ internal object PdfPageRenderer {
             targetWidth: Int
         ): Bitmap? {
             val pageIndex = pdfPageIndex(entryName) ?: return null
-            return pdfLifecycleGate.withOpen {
+            var gateWaitNanos = 0L
+            return pdfLifecycleGate.withOpenTimed(onLockAcquired = { gateWaitNanos = it }) {
                 if (pageIndex !in 0 until pdfRenderer.pageCount) {
-                    return@withOpen null
+                    return@withOpenTimed null
                 }
 
                 val page = pdfRenderer.openPage(pageIndex)
                 try {
-                    renderPageRegion(page, sourceRect, targetWidth)
+                    renderPageRegion(
+                        page,
+                        sourceRect,
+                        targetWidth,
+                        PdfPageRenderTimingContext(pageIndex, "TILE", gateWaitNanos)
+                    )
                 } finally {
                     page.close()
                 }
@@ -205,20 +224,45 @@ internal object PdfPageRenderer {
             mode: RenderMode
         ): Bitmap? {
             val pageIndex = pdfPageIndex(entryName) ?: return null
-            return pdfLifecycleGate.withOpen {
-                if (pageIndex !in 0 until pdfRenderer.pageCount) {
-                    return@withOpen null
-                }
-
-                val page = pdfRenderer.openPage(pageIndex)
-                try {
-                    when (mode) {
-                        RenderMode.WIDTH -> renderPageForWidth(page, targetWidth)
-                        RenderMode.FIT_BOUNDS -> renderPageFitBounds(page, targetWidth, targetHeight)
+            var gateWaitNanos = 0L
+            val operationStartedAtNanos = SystemClock.elapsedRealtimeNanos()
+            return try {
+                pdfLifecycleGate.withOpenTimed(onLockAcquired = { gateWaitNanos = it }) {
+                    if (pageIndex !in 0 until pdfRenderer.pageCount) {
+                        return@withOpenTimed null
                     }
-                } finally {
-                    page.close()
+
+                    val page = pdfRenderer.openPage(pageIndex)
+                    try {
+                        val timing = PdfPageRenderTimingContext(
+                            position = pageIndex,
+                            kind = mode.name,
+                            gateWaitNanos = gateWaitNanos
+                        )
+                        when (mode) {
+                            RenderMode.WIDTH -> renderPageForWidth(page, targetWidth, timing)
+                            RenderMode.FIT_BOUNDS -> renderPageFitBounds(
+                                page,
+                                targetWidth,
+                                targetHeight,
+                                timing
+                            )
+                        }
+                    } finally {
+                        page.close()
+                    }
                 }
+            } finally {
+                val operationElapsedNanos = SystemClock.elapsedRealtimeNanos() - operationStartedAtNanos
+                Log.i(
+                    PDF_TIMING_LOG_TAG,
+                    "event=page_operation page=${pageIndex + 1} position=$pageIndex " +
+                        "kind=${mode.name} gateWaitMs=" +
+                        String.format(Locale.ROOT, "%.1f", gateWaitNanos / 1_000_000.0) +
+                        " elapsedMs=" +
+                        String.format(Locale.ROOT, "%.1f", operationElapsedNanos / 1_000_000.0) +
+                        " target=${targetWidth}x${targetHeight.takeIf { it > 0 }?.toString() ?: "?"}"
+                )
             }
         }
 
@@ -236,7 +280,11 @@ internal object PdfPageRenderer {
         return renderPageFitBounds(page, maxSize, maxSize)
     }
 
-    private fun renderPageForWidth(page: PdfRenderer.Page, targetWidth: Int): Bitmap? {
+    private fun renderPageForWidth(
+        page: PdfRenderer.Page,
+        targetWidth: Int,
+        timing: PdfPageRenderTimingContext? = null
+    ): Bitmap? {
         if (targetWidth <= 0 || page.width <= 0 || page.height <= 0) {
             return null
         }
@@ -250,13 +298,14 @@ internal object PdfPageRenderer {
             maxPixels = PdfRenderSizePolicy.MAX_PREVIEW_PIXELS
         ) ?: return null
         val scale = size.width.toFloat() / page.width.toFloat()
-        return renderPage(page, size.width, size.height, scale)
+        return renderPage(page, size.width, size.height, scale, timing)
     }
 
     private fun renderPageFitBounds(
         page: PdfRenderer.Page,
         targetWidth: Int,
-        targetHeight: Int
+        targetHeight: Int,
+        timing: PdfPageRenderTimingContext? = null
     ): Bitmap? {
         if (targetWidth <= 0 || targetHeight <= 0 || page.width <= 0 || page.height <= 0) {
             return null
@@ -269,13 +318,14 @@ internal object PdfPageRenderer {
         )
         val bitmapWidth = (page.width * scale).toInt().coerceAtLeast(1)
         val bitmapHeight = (page.height * scale).toInt().coerceAtLeast(1)
-        return renderPage(page, bitmapWidth, bitmapHeight, scale)
+        return renderPage(page, bitmapWidth, bitmapHeight, scale, timing)
     }
 
     private fun renderPageRegion(
         page: PdfRenderer.Page,
         sourceRect: Rect,
-        targetWidth: Int
+        targetWidth: Int,
+        timing: PdfPageRenderTimingContext? = null
     ): Bitmap? {
         if (targetWidth <= 0 || page.width <= 0 || page.height <= 0) {
             return null
@@ -299,7 +349,24 @@ internal object PdfPageRenderer {
             postScale(scale, scale)
             postTranslate(-boundedRect.left * scale, -boundedRect.top * scale)
         }
-        page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+        val renderStartedAtNanos = SystemClock.elapsedRealtimeNanos()
+        try {
+            page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+        } finally {
+            timing?.let {
+                Log.i(
+                    PDF_TIMING_LOG_TAG,
+                    formatPdfPageRenderTiming(
+                        position = it.position,
+                        kind = it.kind,
+                        gateWaitNanos = it.gateWaitNanos,
+                        renderNanos = SystemClock.elapsedRealtimeNanos() - renderStartedAtNanos,
+                        targetWidth = targetWidth,
+                        targetHeight = bitmapHeight
+                    )
+                )
+            }
+        }
         return bitmap
     }
 
@@ -307,7 +374,8 @@ internal object PdfPageRenderer {
         page: PdfRenderer.Page,
         bitmapWidth: Int,
         bitmapHeight: Int,
-        scale: Float
+        scale: Float,
+        timing: PdfPageRenderTimingContext? = null
     ): Bitmap? {
         if (bitmapWidth <= 0 || bitmapHeight <= 0 || scale <= 0f) {
             return null
@@ -318,7 +386,24 @@ internal object PdfPageRenderer {
         val matrix = Matrix().apply {
             setScale(scale, scale)
         }
-        page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+        val renderStartedAtNanos = SystemClock.elapsedRealtimeNanos()
+        try {
+            page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+        } finally {
+            timing?.let {
+                Log.i(
+                    PDF_TIMING_LOG_TAG,
+                    formatPdfPageRenderTiming(
+                        position = it.position,
+                        kind = it.kind,
+                        gateWaitNanos = it.gateWaitNanos,
+                        renderNanos = SystemClock.elapsedRealtimeNanos() - renderStartedAtNanos,
+                        targetWidth = bitmapWidth,
+                        targetHeight = bitmapHeight
+                    )
+                )
+            }
+        }
         return bitmap
     }
 
@@ -347,4 +432,6 @@ internal object PdfPageRenderer {
             .toIntOrNull()
             ?.takeIf { it >= 0 }
     }
+
+    private const val PDF_TIMING_LOG_TAG = "ComicLabPdfTiming"
 }

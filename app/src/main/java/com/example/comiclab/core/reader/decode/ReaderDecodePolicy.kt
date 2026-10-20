@@ -36,6 +36,23 @@ internal fun visiblePreviewPriorityForReader(
     }
 }
 
+internal fun pdfDecodeThreadCountForScroll(
+    isPdfSource: Boolean,
+    isFastScroll: Boolean,
+    hasIndependentSessions: Boolean
+): Int {
+    return if (isPdfSource && isFastScroll && hasIndependentSessions) 2 else 1
+}
+
+internal fun fastPdfPreviewPreloadPriorityForReader(
+    distanceFromViewport: Int,
+    visiblePriority: Int,
+    backgroundPriority: Int
+): Int {
+    return (visiblePriority - 1 - distanceFromViewport.coerceAtLeast(0))
+        .coerceAtLeast(backgroundPriority + 1)
+}
+
 internal fun shouldScheduleImmediateFullDecodeForReader(
     isPdfSource: Boolean,
     isDiscreteJump: Boolean = false

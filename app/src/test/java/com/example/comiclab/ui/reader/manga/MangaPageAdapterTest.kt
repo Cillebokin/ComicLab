@@ -10,6 +10,8 @@ import com.example.comiclab.AppSettings
 import com.example.comiclab.ComicArchive
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.PriorityBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -334,11 +336,11 @@ class MangaPageAdapterTest {
     }
 
     @Test
-    fun fastPdfScrollUsesCompactPreviewAndIdleRestoresRegularPreviewWidth() {
+    fun queuedPdfPreviewUsesTheCurrentScrollModeWhenDecodingStarts() {
         val firstPreviewStarted = CountDownLatch(1)
         val releaseFirstPreview = CountDownLatch(1)
         val decodedBitmaps = CopyOnWriteArrayList<Bitmap>()
-        val entries = (0..8).map { "page-$it.pdf" }
+        val entries = (0..40).map { "page-$it.pdf" }
         val session = FakeReaderSession(pdfSource = true, previewDecoder = { entryName ->
             if (entryName == entries[0]) {
                 firstPreviewStarted.countDown()
@@ -362,9 +364,21 @@ class MangaPageAdapterTest {
                 firstVisiblePosition = 0,
                 visibleItemCount = 1,
                 scrollDirection = 1,
+                isFastScroll = false,
+                isIdle = false
+            )
+            adapter.preloadAround(
+                firstVisiblePosition = 0,
+                visibleItemCount = 1,
+                scrollDirection = 1,
                 isFastScroll = true,
                 isIdle = false
             )
+            releaseFirstPreview.countDown()
+            assertTrue("a queued PDF preview should use the current compact target width", awaitCondition {
+                session.previewWidths.contains(entries[1] to 180)
+            })
+
             setScrollStateForTest(recyclerView, RecyclerView.SCROLL_STATE_IDLE)
             adapter.preloadAround(
                 firstVisiblePosition = 0,
@@ -373,15 +387,144 @@ class MangaPageAdapterTest {
                 isFastScroll = false,
                 isIdle = true
             )
-            releaseFirstPreview.countDown()
-            assertTrue("queued fast-scroll previews should retain their compact target width", awaitCondition {
-                session.previewWidths.contains(entries[1] to 180)
-            })
-
-            bind(adapter, holder, 8)
+            bind(adapter, holder, 40)
             assertTrue("idle reading should restore the regular PDF preview width", awaitCondition {
-                session.previewWidths.contains(entries[8] to 1_080)
+                session.previewWidths.contains(entries[40] to 1_080)
             })
+        } finally {
+            releaseFirstPreview.countDown()
+            closeAndAwait(adapter, session)
+            decodedBitmaps.forEach { bitmap -> bitmap.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
+    @Test
+    fun idlePdfPreloadsUseCompactWidthButVisiblePreviewKeepsRegularWidth() {
+        val firstPreviewStarted = CountDownLatch(1)
+        val releaseFirstPreview = CountDownLatch(1)
+        val decodedBitmaps = CopyOnWriteArrayList<Bitmap>()
+        val entries = (0..20).map { "page-$it.pdf" }
+        val session = FakeReaderSession(pdfSource = true, previewDecoder = { entryName ->
+            if (entryName == entries[0]) {
+                firstPreviewStarted.countDown()
+                awaitUninterruptibly(releaseFirstPreview)
+            }
+            Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).also(decodedBitmaps::add)
+        })
+        val recyclerView = RecyclerView(RuntimeEnvironment.getApplication())
+        setScrollStateForTest(recyclerView, RecyclerView.SCROLL_STATE_SETTLING)
+        val adapter = newAdapter(session, entries, recyclerView = recyclerView)
+        val holder = createHolder(adapter, recyclerView)
+
+        try {
+            bind(adapter, holder, 0)
+            assertTrue("the active PDF preview should block the worker", firstPreviewStarted.await(5, TimeUnit.SECONDS))
+            adapter.preloadAround(0, 1, 1, isFastScroll = false, isIdle = true)
+            adapter.ensurePreviewForTest(20, priority = 90, generation = 0, isPreload = false)
+
+            releaseFirstPreview.countDown()
+            assertTrue("idle preloads should use the compact width while visible pages stay regular", awaitCondition {
+                session.previewWidths.contains(entries[2] to 180) &&
+                    session.previewWidths.contains(entries[20] to 1_080)
+            })
+        } finally {
+            releaseFirstPreview.countDown()
+            closeAndAwait(adapter, session)
+            decodedBitmaps.forEach { bitmap -> bitmap.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
+    @Test
+    fun activePdfPreviewIsNotRenderedAgainWhenASecondWorkerRequestsTheSamePage() {
+        val firstPreviewStarted = CountDownLatch(1)
+        val releaseFirstPreview = CountDownLatch(1)
+        val duplicatePreviewStarted = CountDownLatch(1)
+        val previewCalls = AtomicInteger(0)
+        val decodedBitmaps = CopyOnWriteArrayList<Bitmap>()
+        val session = FakeReaderSession(pdfSource = true, previewDecoder = {
+            if (previewCalls.incrementAndGet() == 1) {
+                firstPreviewStarted.countDown()
+                awaitUninterruptibly(releaseFirstPreview)
+            } else {
+                duplicatePreviewStarted.countDown()
+            }
+            Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).also(decodedBitmaps::add)
+        })
+        val adapter = newAdapter(session, listOf("page.pdf"))
+        adapter.decodeExecutorForTest.shutdownNow()
+        adapter.decodeExecutorForTest = ThreadPoolExecutor(
+            2,
+            2,
+            0L,
+            TimeUnit.MILLISECONDS,
+            PriorityBlockingQueue<Runnable>()
+        )
+
+        try {
+            adapter.requestPreviewForTest(0)
+            assertTrue("the first preview should begin", firstPreviewStarted.await(5, TimeUnit.SECONDS))
+            adapter.requestPreviewForTest(0)
+            assertFalse(
+                "a second worker must not render a page that is already being decoded",
+                duplicatePreviewStarted.await(150, TimeUnit.MILLISECONDS)
+            )
+
+            releaseFirstPreview.countDown()
+            assertTrue("the active preview should finish", awaitCondition {
+                previewCalls.get() == 1 && cachedPreview(adapter, 0) != null
+            })
+            assertEquals(1, previewCalls.get())
+        } finally {
+            releaseFirstPreview.countDown()
+            closeAndAwait(adapter, session)
+            decodedBitmaps.forEach { bitmap -> bitmap.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
+    @Test
+    fun queuedFastPdfPreviewsArePromotedAsTheyApproachTheViewport() {
+        val firstPreviewStarted = CountDownLatch(1)
+        val releaseFirstPreview = CountDownLatch(1)
+        val decodeOrder = CopyOnWriteArrayList<String>()
+        val decodedBitmaps = CopyOnWriteArrayList<Bitmap>()
+        val entries = (0..40).map { "page-$it.pdf" }
+        val session = FakeReaderSession(pdfSource = true, previewDecoder = { entryName ->
+            if (entryName == entries[0]) {
+                firstPreviewStarted.countDown()
+                awaitUninterruptibly(releaseFirstPreview)
+            } else {
+                decodeOrder.add(entryName)
+            }
+            Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).also(decodedBitmaps::add)
+        })
+        val recyclerView = RecyclerView(RuntimeEnvironment.getApplication())
+        setScrollStateForTest(recyclerView, RecyclerView.SCROLL_STATE_SETTLING)
+        val adapter = newAdapter(session, entries, recyclerView = recyclerView)
+        adapter.decodeExecutorForTest.shutdownNow()
+        adapter.decodeExecutorForTest = ThreadPoolExecutor(
+            1,
+            1,
+            0L,
+            TimeUnit.MILLISECONDS,
+            PriorityBlockingQueue<Runnable>()
+        )
+        val holder = createHolder(adapter, recyclerView)
+
+        try {
+            bind(adapter, holder, 0)
+            assertTrue("the active preview should block the single worker", firstPreviewStarted.await(5, TimeUnit.SECONDS))
+            adapter.preloadAround(0, 1, 1, isFastScroll = true, isIdle = false)
+            adapter.preloadAround(4, 1, 1, isFastScroll = true, isIdle = false)
+            adapter.ensurePreviewForTest(4, priority = 90, generation = 0, isPreload = false)
+
+            releaseFirstPreview.countDown()
+            assertTrue("both approaching-page previews should finish", awaitCondition {
+                entries[15] in decodeOrder && entries[17] in decodeOrder
+            })
+            assertTrue(
+                "the preview that moved closer should be promoted ahead of the next distant page",
+                decodeOrder.indexOf(entries[15]) < decodeOrder.indexOf(entries[17])
+            )
         } finally {
             releaseFirstPreview.countDown()
             closeAndAwait(adapter, session)
