@@ -19,6 +19,7 @@ import java.nio.file.Files
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -177,6 +178,28 @@ class ComicLabConfigurationStoreRobolectricTest {
         assertEquals(1, result.restoredEntries)
         assertEquals(0, result.skippedEntries)
         assertFalse(AppSettings.isDarkModeEnabled(context))
+    }
+
+    @Test
+    fun importRejectsCorruptLocalCollectionsAndPreservesTheirOriginalJson() {
+        val stores = listOf(
+            "favorite_comic_prefs" to "favorite_comics",
+            "favorite_path_prefs" to "favorite_paths",
+            "reading_history_prefs" to "reading_history"
+        )
+        stores.forEach { (name, key) ->
+            preferenceNames.forEach { context.getSharedPreferences(it, 0).edit().clear().commit() }
+            val preferences = context.getSharedPreferences(name, 0)
+            preferences.edit().putString(key, "[{broken").commit()
+            assertThrows(IllegalStateException::class.java) {
+                ComicLabConfigurationStore.importAndMerge(
+                    context,
+                    ComicLabConfiguration(appSettings = ComicLabAppSettings(darkModeEnabled = true))
+                )
+            }
+            assertEquals("[{broken", preferences.getString(key, null))
+            assertFalse(AppSettings.isDarkModeEnabled(context))
+        }
     }
 
     private fun tempDirectory(prefix: String): File = Files.createTempDirectory(prefix).toFile()

@@ -894,6 +894,10 @@ class MainActivity : AppCompatActivity() {
                 FavoritePathStore.RecordResult.INVALID -> {
                     showMessage(getString(R.string.message_invalid_directory))
                 }
+
+                FavoritePathStore.RecordResult.STORAGE_ERROR -> {
+                    showMessage(getString(R.string.stored_collection_unreadable))
+                }
             }
             dialog.dismiss()
         }
@@ -1385,6 +1389,10 @@ class MainActivity : AppCompatActivity() {
 
                 FavoriteComicStore.RecordResult.INVALID -> {
                     showMessage(getString(R.string.unsupported_archive_format))
+                }
+
+                FavoriteComicStore.RecordResult.STORAGE_ERROR -> {
+                    showMessage(getString(R.string.stored_collection_unreadable))
                 }
             }
             dialog.dismiss()

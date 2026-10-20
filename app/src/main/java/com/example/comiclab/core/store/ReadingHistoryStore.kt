@@ -20,6 +20,8 @@ object ReadingHistoryStore {
             return
         }
 
+        val storedItems = readStoredItems(context) ?: return
+
         val path = file.absolutePath
         val updatedItems = mutableListOf(
             StoredItem(
@@ -29,7 +31,7 @@ object ReadingHistoryStore {
                 modifiedAt = file.lastModified()
             )
         )
-        readStoredItems(context)
+        storedItems
             .asSequence()
             .filterNot { it.path == path }
             .take(MAX_HISTORY_COUNT - 1)
@@ -39,8 +41,9 @@ object ReadingHistoryStore {
     }
 
     fun merge(context: Context, items: Collection<Item>): Int {
+        val storedItems = checkNotNull(readStoredItems(context)) { "无法读取阅读历史，已保留原数据" }
         val mergedItems = LinkedHashMap<String, StoredItem>()
-        validStoredItems(readStoredItems(context)).forEach { item ->
+        storedItems.forEach { item ->
             mergedItems[item.path] = item
         }
 
@@ -77,29 +80,19 @@ object ReadingHistoryStore {
     }
 
     fun items(context: Context): List<Item> {
-        val storedItems = readStoredItems(context)
-        val validStoredItems = mutableListOf<StoredItem>()
+        val storedItems = readStoredItems(context) ?: return emptyList()
         val visibleItems = storedItems.mapNotNull { storedItem ->
             val file = File(storedItem.path)
             if (!file.isFile || !ReaderFileDetector.isSupported(file)) {
                 return@mapNotNull null
             }
 
-            validStoredItems.add(storedItem)
             Item(
                 file = file,
                 lastReadAt = storedItem.lastReadAt,
                 fileSize = storedItem.fileSize.takeIf { it > 0L } ?: file.length(),
                 modifiedAt = storedItem.modifiedAt.takeIf { it > 0L } ?: file.lastModified()
             )
-        }
-
-        if (validStoredItems.size != storedItems.size) {
-            if (validStoredItems.isEmpty()) {
-                clear(context)
-            } else {
-                saveStoredItems(context, validStoredItems)
-            }
         }
 
         return visibleItems
@@ -113,7 +106,7 @@ object ReadingHistoryStore {
 
     fun remove(context: Context, file: File) {
         val path = file.absolutePath
-        val updatedItems = readStoredItems(context)
+        val updatedItems = (readStoredItems(context) ?: return)
             .filterNot { it.path == path }
 
         if (updatedItems.isEmpty()) {
@@ -132,8 +125,9 @@ object ReadingHistoryStore {
     }
 
     fun moveDirectory(context: Context, oldDirectory: File, newDirectory: File) {
+        val storedItems = readStoredItems(context) ?: return
         val movedItems = LinkedHashMap<String, StoredItem>()
-        readStoredItems(context).forEach { item ->
+        storedItems.forEach { item ->
             val movedPath = BookcaseFolderPaths.remapPath(
                 item.path,
                 oldDirectory.absolutePath,
@@ -161,35 +155,15 @@ object ReadingHistoryStore {
         }
     }
 
-    private fun validStoredItems(items: List<StoredItem>): List<StoredItem> {
-        return items.filter { item ->
-            val file = File(item.path)
-            file.isFile && ReaderFileDetector.isSupported(file)
+    private fun readStoredItems(context: Context): List<StoredItem>? =
+        readStoredCollection(context, PREFS_NAME, KEY_READING_HISTORY) { obj ->
+            StoredItem(
+                path = obj.storedPath(),
+                lastReadAt = obj.optLong(FIELD_LAST_READ_AT, 0L),
+                fileSize = obj.optLong(FIELD_FILE_SIZE, 0L),
+                modifiedAt = obj.optLong(FIELD_MODIFIED_AT, 0L)
+            )
         }
-    }
-
-    private fun readStoredItems(context: Context): List<StoredItem> {
-        val rawValue = prefs(context).getString(KEY_READING_HISTORY, null)
-            ?: return emptyList()
-
-        return runCatching {
-            val array = JSONArray(rawValue)
-            buildList {
-                for (index in 0 until array.length()) {
-                    val obj = array.optJSONObject(index) ?: continue
-                    val path = obj.optString(FIELD_PATH).takeIf { it.isNotBlank() } ?: continue
-                    add(
-                        StoredItem(
-                            path = path,
-                            lastReadAt = obj.optLong(FIELD_LAST_READ_AT, 0L),
-                            fileSize = obj.optLong(FIELD_FILE_SIZE, 0L),
-                            modifiedAt = obj.optLong(FIELD_MODIFIED_AT, 0L)
-                        )
-                    )
-                }
-            }
-        }.getOrDefault(emptyList())
-    }
 
     private fun saveStoredItems(context: Context, items: List<StoredItem>) {
         val array = JSONArray()
