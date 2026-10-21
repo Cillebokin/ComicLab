@@ -255,7 +255,7 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="delete_archive_image_success">Image deleted. A backup of the original file was created</string>
     <string name="delete_archive_image_failed">Could not delete image</string>
     <string name="delete_archive_image_unsupported">Images can only be deleted from ZIP/CBZ archives. This format is read-only.</string>
-    <string name="archive_recovery_pending">Archive recovery is pending or a file conflicts with it. Keep the original folder and .ComicLabBackups folder; do not clean related files.</string>
+    <string name="archive_recovery_pending">Recovery pending. Keep original and .ComicLabBackups.</string>
     <string name="delete_pdf_page_unsupported">Deleting pages from PDF files is not supported yet</string>
     <string name="no_preview_images">No images or pages to preview in this file</string>
     <string name="no_reading_images">No images or pages to read in this file</string>
@@ -323,7 +323,7 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="preparing_fast_reading_progress">Preparing fast reader %1$d / %2$d  %3$d%%</string>
     <string name="about">About</string>
     <string name="app_author">Author: Cillebokin / swcillebokin@gmail.com</string>
-    <string name="app_version">Version: V1.0.9.1006</string>
+    <string name="app_version">Version: V1.0.10.1022</string>
     <string name="app_link_open_failed">No browser available to open this link</string>
     <string name="check_updates">Check for updates</string>
     <string name="checking_updates">Checking for updates…</string>
