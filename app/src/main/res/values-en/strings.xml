@@ -52,6 +52,7 @@
     <string name="favorite_comic_added">Comic added to favorites</string>
     <string name="favorite_comic_removed">Comic removed from favorites</string>
     <string name="favorite_comic_limit_reached">Favorite limit reached</string>
+    <string name="stored_collection_unreadable">Saved records could not be read. This operation was not saved; existing data was preserved.</string>
     <string name="delete_comic">Delete comic</string>
     <string name="favorite_comic_item_options">Favorite comic options</string>
     <string name="clear_favorite_comics_title">Clear favorite comics</string>
@@ -250,10 +251,11 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="loading_reading">Loading...</string>
     <string name="deleting_archive_image">Deleting image...</string>
     <string name="delete_archive_image_title">Delete image</string>
-    <string name="delete_archive_image_message">Delete this image from the archive?\n(This cannot be undone!)</string>
+    <string name="delete_archive_image_message">Delete this image from the archive?\nA complete original copy is kept in:\n%1$s\nBackups are retained indefinitely and are not automatically cleaned. Once recovery is no longer needed, manually delete complete backups using a file manager that shows hidden files. Keep the entire backup folder while recovery is pending.</string>
     <string name="delete_archive_image_success">Image deleted. A backup of the original file was created</string>
     <string name="delete_archive_image_failed">Could not delete image</string>
-    <string name="delete_archive_image_unsupported">This file does not support editing its contents</string>
+    <string name="delete_archive_image_unsupported">Images can only be deleted from ZIP/CBZ archives. This format is read-only.</string>
+    <string name="archive_recovery_pending">Recovery pending. Keep original and .ComicLabBackups.</string>
     <string name="delete_pdf_page_unsupported">Deleting pages from PDF files is not supported yet</string>
     <string name="no_preview_images">No images or pages to preview in this file</string>
     <string name="no_reading_images">No images or pages to read in this file</string>
@@ -311,7 +313,7 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="import_configuration">Load configuration</string>
     <string name="configuration_exported">Configuration exported</string>
     <string name="configuration_export_failed">Configuration export failed: %1$s</string>
-    <string name="configuration_imported">Configuration loaded: restored %1$d, skipped %2$d</string>
+    <string name="configuration_imported">Configuration loaded: restored %1$d, skipped %2$d; kept local progress for %3$d conflict(s)</string>
     <string name="configuration_import_failed">Configuration load failed: %1$s</string>
     <string name="debug_stress_scanning">Scanning for a large comic file…</string>
     <string name="debug_stress_no_comic_found">No comic file to test was found in the current path</string>
@@ -321,7 +323,7 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="preparing_fast_reading_progress">Preparing fast reader %1$d / %2$d  %3$d%%</string>
     <string name="about">About</string>
     <string name="app_author">Author: Cillebokin / swcillebokin@gmail.com</string>
-    <string name="app_version">Version: V1.0.9.1006</string>
+    <string name="app_version">Version: V1.0.10.1022</string>
     <string name="app_link_open_failed">No browser available to open this link</string>
     <string name="check_updates">Check for updates</string>
     <string name="checking_updates">Checking for updates…</string>

@@ -10,9 +10,9 @@ import org.junit.Test
 class ReaderPreviewPolicyTest {
 
     @Test
-    fun pdfPreviewUsesAboutThreeQuartersOfDisplayWidth() {
+    fun pdfPreviewUsesHalfDisplayWidthWithinDecodeLimits() {
         assertEquals(
-            540,
+            360,
             calculatePdfPreviewWidth(
                 baseDisplayWidth = 720,
                 minimumWidth = 360,
@@ -20,7 +20,7 @@ class ReaderPreviewPolicyTest {
             )
         )
         assertEquals(
-            810,
+            540,
             calculatePdfPreviewWidth(
                 baseDisplayWidth = 1080,
                 minimumWidth = 360,
@@ -38,24 +38,21 @@ class ReaderPreviewPolicyTest {
     }
 
     @Test
-    fun onlyDiscreteJumpsCanStartPdfFullDecodeBeforeIdle() {
+    fun onlyDiscreteJumpsStartPdfFullDecodeImmediately() {
         assertFalse(
             shouldScheduleImmediateFullDecodeForReader(
-                isPdfSource = true,
-                isReaderIdle = false
+                isPdfSource = true
             )
         )
         assertTrue(
             shouldScheduleImmediateFullDecodeForReader(
                 isPdfSource = true,
-                isReaderIdle = false,
                 isDiscreteJump = true
             )
         )
         assertTrue(
             shouldScheduleImmediateFullDecodeForReader(
-                isPdfSource = true,
-                isReaderIdle = true
+                isPdfSource = false
             )
         )
     }

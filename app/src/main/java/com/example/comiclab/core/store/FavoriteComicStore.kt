@@ -19,7 +19,8 @@ object FavoriteComicStore {
         ADDED,
         ALREADY_EXISTS,
         LIMIT_REACHED,
-        INVALID
+        INVALID,
+        STORAGE_ERROR
     }
 
     fun record(context: Context, file: File): RecordResult {
@@ -28,14 +29,12 @@ object FavoriteComicStore {
         }
 
         val path = file.absolutePath
-        val storedItems = validStoredItems(readStoredItems(context))
+        val storedItems = readStoredItems(context) ?: return RecordResult.STORAGE_ERROR
         if (storedItems.any { it.path == path }) {
-            saveStoredItems(context, storedItems.sortedBy { it.addedAt })
             return RecordResult.ALREADY_EXISTS
         }
 
         if (storedItems.size >= MAX_FAVORITE_COMIC_COUNT) {
-            saveStoredItems(context, storedItems.sortedBy { it.addedAt })
             return RecordResult.LIMIT_REACHED
         }
 
@@ -53,13 +52,15 @@ object FavoriteComicStore {
         return RecordResult.ADDED
     }
 
+    /** 返回本次导入中最终保留的唯一路径数，不计重复项与容量淘汰项。 */
     fun merge(context: Context, items: Collection<Item>): Int {
+        val storedItems = checkNotNull(readStoredItems(context)) { "无法读取漫画收藏，已保留原数据" }
         val mergedItems = LinkedHashMap<String, StoredItem>()
-        validStoredItems(readStoredItems(context)).forEach { item ->
+        storedItems.forEach { item ->
             mergedItems[item.path] = item
         }
 
-        var restoredCount = 0
+        val importedPaths = mutableSetOf<String>()
         items.forEach { item ->
             val file = item.file
             if (!file.isFile || !ReaderFileDetector.isSupported(file)) {
@@ -73,44 +74,36 @@ object FavoriteComicStore {
                 fileSize = item.fileSize.takeIf { it > 0L } ?: file.length(),
                 modifiedAt = item.modifiedAt.takeIf { it > 0L } ?: file.lastModified()
             )
-            restoredCount++
+            importedPaths.add(path)
         }
 
-        if (mergedItems.isEmpty()) {
+        val retainedItems = mergedItems.values.sortedBy { it.addedAt }.take(MAX_FAVORITE_COMIC_COUNT)
+        if (retainedItems.isEmpty()) {
             clear(context)
         } else {
-            saveStoredItems(context, mergedItems.values.sortedBy { it.addedAt })
+            saveStoredItems(context, retainedItems)
         }
-        return restoredCount
+        return retainedItems.count { it.path in importedPaths }
+    }
+
+    internal fun validateReadable(context: Context) {
+        checkNotNull(readStoredItems(context)) { "无法读取漫画收藏，已保留原数据" }
     }
 
     fun items(context: Context): List<Item> {
-        val storedItems = readStoredItems(context)
-        val validStoredItems = mutableListOf<StoredItem>()
+        val storedItems = readStoredItems(context) ?: return emptyList()
         val visibleItems = storedItems.mapNotNull { storedItem ->
             val file = File(storedItem.path)
             if (!file.isFile || !ReaderFileDetector.isSupported(file)) {
                 return@mapNotNull null
             }
 
-            validStoredItems.add(storedItem)
             Item(
                 file = file,
                 addedAt = storedItem.addedAt,
                 fileSize = storedItem.fileSize.takeIf { it > 0L } ?: file.length(),
                 modifiedAt = storedItem.modifiedAt.takeIf { it > 0L } ?: file.lastModified()
             )
-        }
-
-        val sortedStoredItems = validStoredItems
-            .sortedBy { it.addedAt }
-            .take(MAX_FAVORITE_COMIC_COUNT)
-        if (validStoredItems.size != storedItems.size || validStoredItems != sortedStoredItems) {
-            if (validStoredItems.isEmpty()) {
-                clear(context)
-            } else {
-                saveStoredItems(context, sortedStoredItems)
-            }
         }
 
         return visibleItems
@@ -138,7 +131,7 @@ object FavoriteComicStore {
 
     fun remove(context: Context, file: File) {
         val path = file.absolutePath
-        val updatedItems = readStoredItems(context)
+        val updatedItems = (readStoredItems(context) ?: return)
             .filterNot { it.path == path }
 
         if (updatedItems.isEmpty()) {
@@ -149,8 +142,9 @@ object FavoriteComicStore {
     }
 
     fun moveDirectory(context: Context, oldDirectory: File, newDirectory: File) {
+        val storedItems = readStoredItems(context) ?: return
         val movedItems = LinkedHashMap<String, StoredItem>()
-        readStoredItems(context).forEach { item ->
+        storedItems.forEach { item ->
             val movedPath = BookcaseFolderPaths.remapPath(
                 item.path,
                 oldDirectory.absolutePath,
@@ -175,28 +169,15 @@ object FavoriteComicStore {
         }
     }
 
-    private fun readStoredItems(context: Context): List<StoredItem> {
-        val rawValue = prefs(context).getString(KEY_FAVORITE_COMICS, null)
-            ?: return emptyList()
-
-        return runCatching {
-            val array = JSONArray(rawValue)
-            buildList {
-                for (index in 0 until array.length()) {
-                    val obj = array.optJSONObject(index) ?: continue
-                    val path = obj.optString(FIELD_PATH).takeIf { it.isNotBlank() } ?: continue
-                    add(
-                        StoredItem(
-                            path = path,
-                            addedAt = obj.optLong(FIELD_ADDED_AT, 0L),
-                            fileSize = obj.optLong(FIELD_FILE_SIZE, 0L),
-                            modifiedAt = obj.optLong(FIELD_MODIFIED_AT, 0L)
-                        )
-                    )
-                }
-            }
-        }.getOrDefault(emptyList())
-    }
+    private fun readStoredItems(context: Context): List<StoredItem>? =
+        readStoredCollection(context, PREFS_NAME, KEY_FAVORITE_COMICS) { obj ->
+            StoredItem(
+                path = obj.storedPath(),
+                addedAt = obj.optLong(FIELD_ADDED_AT, 0L),
+                fileSize = obj.optLong(FIELD_FILE_SIZE, 0L),
+                modifiedAt = obj.optLong(FIELD_MODIFIED_AT, 0L)
+            )
+        }
 
     private fun saveStoredItems(context: Context, items: List<StoredItem>) {
         val array = JSONArray()
@@ -217,13 +198,6 @@ object FavoriteComicStore {
 
     private fun prefs(context: Context) =
         PrefsGateway.open(context, PREFS_NAME)
-
-    private fun validStoredItems(items: List<StoredItem>): List<StoredItem> {
-        return items.filter { item ->
-            val file = File(item.path)
-            file.isFile && ReaderFileDetector.isSupported(file)
-        }
-    }
 
     private data class StoredItem(
         val path: String,

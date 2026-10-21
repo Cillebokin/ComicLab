@@ -3,6 +3,8 @@ package com.example.comiclab.core.diagnostics
 import com.example.comiclab.core.diagnostics.formatReaderCheckpoint
 import com.example.comiclab.core.diagnostics.formatReaderRender
 import com.example.comiclab.core.diagnostics.formatReaderSessionMarker
+import com.example.comiclab.core.diagnostics.formatPdfPageRenderTiming
+import com.example.comiclab.core.diagnostics.formatReaderDecodeQueueTiming
 import com.example.comiclab.core.diagnostics.isReaderSessionMarkerActive
 import com.example.comiclab.core.diagnostics.isSameReaderSessionMarker
 import com.example.comiclab.core.diagnostics.shouldPersistReaderRenderStart
@@ -68,6 +70,35 @@ class ReaderDiagnosticsPolicyTest {
                 bitmapBytes = 33177600,
                 usedHeapKb = 512000,
                 maxHeapKb = 1048576
+            )
+        )
+    }
+
+    @Test
+    fun pdfQueueTimingReportsPageKindWaitAndPendingTasks() {
+        assertEquals(
+            "event=decode_queue page=9 position=8 kind=PREVIEW queueWaitMs=123.5 pendingBefore=4",
+            formatReaderDecodeQueueTiming(
+                position = 8,
+                kind = "PREVIEW",
+                queueWaitNanos = 123_456_789L,
+                pendingBefore = 4
+            )
+        )
+    }
+
+    @Test
+    fun pdfPageTimingSeparatesGateWaitFromPageRenderTime() {
+        assertEquals(
+            "event=page_render page=9 position=8 kind=WIDTH gateWaitMs=2.5 " +
+                "renderMs=87.3 target=1080x1560",
+            formatPdfPageRenderTiming(
+                position = 8,
+                kind = "WIDTH",
+                gateWaitNanos = 2_500_000L,
+                renderNanos = 87_345_678L,
+                targetWidth = 1080,
+                targetHeight = 1560
             )
         )
     }

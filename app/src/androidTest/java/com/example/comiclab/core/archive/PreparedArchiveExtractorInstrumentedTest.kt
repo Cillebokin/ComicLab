@@ -57,7 +57,7 @@ class PreparedArchiveExtractorInstrumentedTest {
     }
 
     @Test
-    fun realSevenZipExtractorReusesSlotsSkipsMissingAndReleasesNativeArchiveOnClose() {
+    fun realSevenZipExtractorRebuildsCorruptSlotsSkipsMissingAndReleasesNativeArchiveOnClose() {
         val archive = copyFixture()
         val output = File(temporaryFolder.root, "slots")
         val extractor = ComicArchive.openPreparedImageExtractor(archive, output)
@@ -66,8 +66,8 @@ class PreparedArchiveExtractorInstrumentedTest {
             val extracted = checkNotNull(extractor.extract(3, "folder/1.gif"))
             val bytes = extracted.readBytes()
             assertTrue(bytes.isNotEmpty())
-            extracted.writeText("cached")
-            assertEquals("cached", checkNotNull(extractor.extract(3, "folder/1.gif")).readText())
+            extracted.writeBytes(ByteArray(bytes.size) { 'x'.code.toByte() })
+            assertTrue(checkNotNull(extractor.extract(3, "folder/1.gif")).readBytes().contentEquals(bytes))
             assertNull(extractor.extract(4, "missing.jpg"))
             assertTrue(output.listFiles().orEmpty().none { it.name.endsWith(".part") })
             assertFalse(File(output, "reader_manifest.json").exists())

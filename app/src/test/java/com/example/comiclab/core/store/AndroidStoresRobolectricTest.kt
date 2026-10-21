@@ -11,6 +11,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -74,11 +75,12 @@ class AndroidStoresRobolectricTest {
             assertEquals(1001L, loaded.first().modifiedAt)
             assertEquals(setOf("favorite_comics"), preferences.all.keys)
 
-            val normalizedRows = JSONArray(preferences.getString("favorite_comics", null))
-            assertEquals(oldComic.absolutePath, normalizedRows.getJSONObject(0).getString("path"))
+            assertEquals(legacyRows.toString(), preferences.getString("favorite_comics", null))
+            val storedRows = JSONArray(preferences.getString("favorite_comics", null))
+            assertEquals(newerComic.absolutePath, storedRows.getJSONObject(0).getString("path"))
             assertEquals(
                 setOf("path", "addedAt", "fileSize", "modifiedAt"),
-                normalizedRows.getJSONObject(0).keys().asSequence().toSet()
+                storedRows.getJSONObject(0).keys().asSequence().toSet()
             )
             assertEquals(
                 FavoriteComicStore.RecordResult.ALREADY_EXISTS,
@@ -305,7 +307,7 @@ class AndroidStoresRobolectricTest {
             assertEquals(listOf(newer, older), ReadingHistoryStore.items(context).map { it.file })
 
             assertEquals(
-                2,
+                1, // 较旧的 older 导入版本未采用，只有 newer 的导入版本保留。
                 ReadingHistoryStore.merge(
                     context,
                     listOf(
@@ -327,7 +329,7 @@ class AndroidStoresRobolectricTest {
     }
 
     @Test
-    fun storesRecoverFromCorruptPersistedJsonAndRemapDirectoryMoves() {
+    fun storesRequireExplicitClearToRecoverFromCorruptJsonAndThenRemapMoves() {
         val root = tempDirectory("comiclab-store-recovery")
         try {
             val oldDirectory = File(root, "old").apply { mkdirs() }
@@ -345,6 +347,22 @@ class AndroidStoresRobolectricTest {
             assertTrue(FavoriteComicStore.items(context).isEmpty())
             assertTrue(FavoritePathStore.items(context).isEmpty())
             assertTrue(ReadingHistoryStore.items(context).isEmpty())
+
+            assertThrows(IllegalStateException::class.java) {
+                FavoriteComicStore.merge(context, listOf(FavoriteComicStore.Item(oldFile, 1L, 0L, 0L)))
+            }
+            assertThrows(IllegalStateException::class.java) {
+                FavoritePathStore.merge(context, listOf(FavoritePathStore.Item(oldDirectory, 2L)))
+            }
+            assertThrows(IllegalStateException::class.java) {
+                ReadingHistoryStore.merge(context, listOf(ReadingHistoryStore.Item(oldFile, 3L, 0L, 0L)))
+            }
+            assertEquals("{broken", context.getSharedPreferences("favorite_comic_prefs", 0).getString("favorite_comics", null))
+            assertEquals("{broken", context.getSharedPreferences("favorite_path_prefs", 0).getString("favorite_paths", null))
+            assertEquals("{broken", context.getSharedPreferences("reading_history_prefs", 0).getString("reading_history", null))
+            FavoriteComicStore.clear(context)
+            FavoritePathStore.clear(context)
+            ReadingHistoryStore.clear(context)
 
             FavoriteComicStore.merge(context, listOf(FavoriteComicStore.Item(oldFile, 1L, 0L, 0L)))
             FavoritePathStore.merge(context, listOf(FavoritePathStore.Item(oldDirectory, 2L)))

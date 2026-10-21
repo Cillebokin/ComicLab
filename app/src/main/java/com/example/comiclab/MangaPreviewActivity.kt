@@ -9,6 +9,8 @@ import android.graphics.Bitmap
 import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
 import android.content.Intent
+import android.content.SharedPreferences
+import com.example.comiclab.core.store.ReaderProgressStore
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -61,6 +63,9 @@ class MangaPreviewActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
 
     private var archiveFile: File? = null
+    private val readingProgressListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        updateReadingProgress()
+    }
     private var imageEntries: List<String> = emptyList()
     private var renderedEntryNames: List<String> = emptyList()
     private var renderedPreviewCount = 0
@@ -113,7 +118,7 @@ class MangaPreviewActivity : AppCompatActivity() {
 
         val path = intent.getStringExtra(EXTRA_ARCHIVE_PATH)
         val file = path?.let(::File)
-        if (file == null || !file.isFile) {
+        if (file == null || (!file.isFile && !ComicArchive.hasPendingArchiveReplacement(file))) {
             showError(getString(R.string.message_invalid_file))
             return
         }
@@ -136,6 +141,16 @@ class MangaPreviewActivity : AppCompatActivity() {
         }
 
         loadArchive(file)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        ReaderProgressStore.registerChangeListener(this, readingProgressListener)
+    }
+
+    override fun onStop() {
+        ReaderProgressStore.unregisterChangeListener(this, readingProgressListener)
+        super.onStop()
     }
 
     override fun onResume() {
@@ -187,6 +202,7 @@ class MangaPreviewActivity : AppCompatActivity() {
                 }
 
                 imageEntries = entries
+                tvComicFileSize.text = CommonFunc.formatFileSize(file.length())
                 tvStatus.visibility = View.INVISIBLE
                 updateReadingProgress()
                 loadCover(entries.first())
@@ -441,6 +457,12 @@ class MangaPreviewActivity : AppCompatActivity() {
                             R.string.delete_pdf_page_unsupported,
                             Toast.LENGTH_SHORT
                         ).show()
+                    } else if (!ComicArchive.canDeleteEntry(file)) {
+                        Toast.makeText(
+                            this@MangaPreviewActivity,
+                            R.string.delete_archive_image_unsupported,
+                            Toast.LENGTH_SHORT
+                        ).show()
                     } else {
                         confirmDeletePreviewImage(file, entryName)
                     }
@@ -452,7 +474,7 @@ class MangaPreviewActivity : AppCompatActivity() {
     private fun confirmDeletePreviewImage(file: File, entryName: String) {
         AlertDialog.Builder(this)
             .setTitle(R.string.delete_archive_image_title)
-            .setMessage(R.string.delete_archive_image_message)
+            .setMessage(getString(R.string.delete_archive_image_message, ComicArchive.deleteBackupDirectory(file).absolutePath))
             .setPositiveButton(R.string.yes) { _, _ ->
                 deletePreviewImage(file, entryName)
             }

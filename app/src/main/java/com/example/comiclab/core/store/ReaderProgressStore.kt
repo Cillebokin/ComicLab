@@ -8,6 +8,14 @@ import java.util.WeakHashMap
 
 object ReaderProgressStore {
 
+    internal fun registerChangeListener(context: Context, listener: SharedPreferences.OnSharedPreferenceChangeListener) {
+        preferences(context).registerOnSharedPreferenceChangeListener(listener)
+    }
+
+    internal fun unregisterChangeListener(context: Context, listener: SharedPreferences.OnSharedPreferenceChangeListener) {
+        preferences(context).unregisterOnSharedPreferenceChangeListener(listener)
+    }
+
     private val writeLock = Any()
     private val pendingWrites = WeakHashMap<PreparedWrite, Unit>()
 

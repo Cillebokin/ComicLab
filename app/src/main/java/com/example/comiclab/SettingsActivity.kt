@@ -66,6 +66,15 @@ class SettingsActivity : AppCompatActivity() {
     private val debugToolExecutor = Executors.newSingleThreadExecutor()
     private val configurationExecutor = Executors.newSingleThreadExecutor()
     private val releaseCheckExecutor = Executors.newSingleThreadExecutor()
+    private val configurationImportListener = object : ConfigurationImportCoordinator.Listener {
+        override fun onImportRunningChanged(running: Boolean) {
+            this@SettingsActivity.onImportRunningChanged(running)
+        }
+
+        override fun onImportCompleted(completion: ConfigurationImportCompletion) {
+            this@SettingsActivity.onImportCompleted(completion)
+        }
+    }
     private val exportConfigurationLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
@@ -77,12 +86,24 @@ class SettingsActivity : AppCompatActivity() {
         uri?.let(::importConfiguration)
     }
     private var isUpdatingBrightnessControls = false
+    private var configurationImportRunning = false
+    private var configurationExportRunning = false
     @Volatile
     private var destroyed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         renderSettingsContent()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        ProcessConfigurationImportCoordinator.addListener(configurationImportListener)
+    }
+
+    override fun onStop() {
+        ProcessConfigurationImportCoordinator.removeListener(configurationImportListener)
+        super.onStop()
     }
 
     private fun renderSettingsContent() {
@@ -130,6 +151,8 @@ class SettingsActivity : AppCompatActivity() {
         bindConfigurationManagement()
         bindProjectReleaseLink()
         bindUpdateCheck()
+        configurationImportRunning = ProcessConfigurationImportCoordinator.isRunning()
+        updateConfigurationButtons()
     }
 
     override fun onDestroy() {
@@ -138,6 +161,36 @@ class SettingsActivity : AppCompatActivity() {
         configurationExecutor.shutdownNow()
         releaseCheckExecutor.shutdownNow()
         super.onDestroy()
+    }
+
+    private fun onImportRunningChanged(running: Boolean) {
+        if (!destroyed) {
+            configurationImportRunning = running
+            updateConfigurationButtons()
+        }
+    }
+
+    private fun onImportCompleted(completion: ConfigurationImportCompletion) {
+        if (destroyed) {
+            return
+        }
+        updateConfigurationButtons()
+        when (completion) {
+            is ConfigurationImportCompletion.Success -> {
+                refreshSettingsControlsAfterImport()
+                showMessage(
+                    getString(
+                        R.string.configuration_imported,
+                        completion.summary.restoredEntries + completion.appliedSettings,
+                        completion.summary.skippedEntries,
+                        completion.summary.preservedReadingProgressEntries
+                    )
+                )
+            }
+            is ConfigurationImportCompletion.Failure -> {
+                showMessage(getString(R.string.configuration_import_failed, completion.message))
+            }
+        }
     }
 
     private fun bindReadingDirection() {
@@ -435,7 +488,8 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun exportConfiguration(uri: Uri) {
-        setConfigurationButtonsEnabled(false)
+        configurationExportRunning = true
+        updateConfigurationButtons()
         val appContext = applicationContext
         configurationExecutor.execute {
             try {
@@ -453,7 +507,8 @@ class SettingsActivity : AppCompatActivity() {
                     if (destroyed) {
                         return@runOnUiThread
                     }
-                    setConfigurationButtonsEnabled(true)
+                    configurationExportRunning = false
+                    updateConfigurationButtons()
                     showMessage(getString(R.string.configuration_exported))
                 }
             } catch (error: Exception) {
@@ -461,7 +516,8 @@ class SettingsActivity : AppCompatActivity() {
                     if (destroyed) {
                         return@runOnUiThread
                     }
-                    setConfigurationButtonsEnabled(true)
+                    configurationExportRunning = false
+                    updateConfigurationButtons()
                     showMessage(
                         getString(
                             R.string.configuration_export_failed,
@@ -474,57 +530,14 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun importConfiguration(uri: Uri) {
-        setConfigurationButtonsEnabled(false)
-        val appContext = applicationContext
-        configurationExecutor.execute {
-            try {
-                val inputStream = appContext.contentResolver.openInputStream(uri)
-                    ?: error("无法打开配置文件")
-                val rawJson = inputStream.use { stream ->
-                    stream.reader(Charsets.UTF_8).use { reader ->
-                        reader.readText()
-                    }
-                }
-                val decoded = ComicLabConfigurationJson.decode(rawJson)
-                val summary = ComicLabConfigurationStore.importAndMerge(
-                    appContext,
-                    decoded.configuration,
-                    decoded.skippedEntries,
-                    applyAppSettings = false
-                )
-                runOnUiThread {
-                    if (destroyed) {
-                        return@runOnUiThread
-                    }
-                    setConfigurationButtonsEnabled(true)
-                    AppSettings.applySnapshot(this, decoded.configuration.appSettings)
-                    refreshSettingsControlsAfterImport()
-                    showMessage(
-                        getString(
-                            R.string.configuration_imported,
-                            summary.restoredEntries,
-                            summary.skippedEntries
-                        )
-                    )
-                }
-            } catch (error: Exception) {
-                runOnUiThread {
-                    if (destroyed) {
-                        return@runOnUiThread
-                    }
-                    setConfigurationButtonsEnabled(true)
-                    showMessage(
-                        getString(
-                            R.string.configuration_import_failed,
-                            error.message.orEmpty().ifBlank { error::class.java.simpleName }
-                        )
-                    )
-                }
-            }
+        if (ProcessConfigurationImportCoordinator.start(applicationContext, uri)) {
+            configurationImportRunning = true
+            updateConfigurationButtons()
         }
     }
 
-    private fun setConfigurationButtonsEnabled(enabled: Boolean) {
+    private fun updateConfigurationButtons() {
+        val enabled = !configurationImportRunning && !configurationExportRunning
         btnExportConfiguration.isEnabled = enabled
         btnImportConfiguration.isEnabled = enabled
     }

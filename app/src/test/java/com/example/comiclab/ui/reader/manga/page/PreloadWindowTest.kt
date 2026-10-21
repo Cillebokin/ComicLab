@@ -64,6 +64,27 @@ class PreloadWindowTest {
     }
 
     @Test
+    fun fastPdfForwardScrollPreloadsSixteenPagesAheadWithoutFullPreloads() {
+        val window = PreloadWindow.from(
+            firstVisible = 10,
+            lastVisible = 11,
+            lastIndex = 30,
+            scrollDirection = 1,
+            isFastScroll = true,
+            isIdle = false,
+            isPdfSource = true
+        )
+
+        assertEquals(9, window.previewStart)
+        assertEquals(27, window.previewEnd)
+        assertEquals(
+            listOf(12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 9),
+            window.previewPositions
+        )
+        assertEquals(emptyList<Int>(), window.fullPositions)
+    }
+
+    @Test
     fun fastPdfBackwardScrollUsesPdfFastWindowAndKeepsFullPreloadsDisabled() {
         val window = PreloadWindow.from(
             firstVisible = 10,
@@ -75,11 +96,11 @@ class PreloadWindowTest {
             isPdfSource = true
         )
 
-        assertEquals(5, window.previewStart)
+        assertEquals(0, window.previewStart)
         assertEquals(12, window.previewEnd)
         assertEquals(9, window.protectedStart)
         assertEquals(13, window.protectedEnd)
-        assertEquals(listOf(9, 8, 7, 6, 5, 12), window.previewPositions)
+        assertEquals(listOf(9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 12), window.previewPositions)
         assertEquals(emptyList<Int>(), window.fullPositions)
     }
 
@@ -96,10 +117,10 @@ class PreloadWindowTest {
         )
 
         assertEquals(8, window.previewStart)
-        assertEquals(15, window.previewEnd)
+        assertEquals(27, window.previewEnd)
         assertEquals(9, window.protectedStart)
         assertEquals(13, window.protectedEnd)
-        assertEquals(listOf(12, 13, 14, 15, 9, 8), window.previewPositions)
+        assertEquals(listOf(12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 9, 8), window.previewPositions)
         assertEquals(listOf(12, 9), window.fullPositions)
     }
 

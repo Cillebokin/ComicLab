@@ -1,6 +1,7 @@
 package com.example.comiclab.ui.browser
 
 import com.example.comiclab.core.diagnostics.ComicLabPerformance
+import com.example.comiclab.core.archive.ArchiveReplacementRecovery
 import com.example.comiclab.core.concurrent.LatestTaskDispatcher
 import com.example.comiclab.ui.browser.model.FileItem
 import java.io.File
@@ -22,7 +23,8 @@ internal class DirectoryBrowserController(
         data class Loaded(
             val resolvedPath: String,
             val items: List<FileItem>,
-            val scrollState: FileListScrollState?
+            val scrollState: FileListScrollState?,
+            val archiveRecoveryComplete: Boolean = true
         ) : Result
         data object PermissionRequired : Result
     }
@@ -58,6 +60,7 @@ internal class DirectoryBrowserController(
             if (generation != loadGeneration.get() || !isActive()) return@executeLatest
             val directory = File(requestedPath).takeIf { it.isDirectory } ?: File(storageRootPath)
             val resolvedPath = directory.absolutePath
+            val archiveRecoveryComplete = ArchiveReplacementRecovery.recoverDirectory(directory)
             val listStartedAtNanos = ComicLabPerformance.nowNanos()
             val listedFiles = ComicLabPerformance.trace("comiclab.directory.list_files") {
                 try {
@@ -106,7 +109,7 @@ internal class DirectoryBrowserController(
             )
             postResult {
                 if (generation == loadGeneration.get()) {
-                    onResult(Result.Loaded(resolvedPath, items, scrollState))
+                    onResult(Result.Loaded(resolvedPath, items, scrollState, archiveRecoveryComplete))
                 }
             }
         }

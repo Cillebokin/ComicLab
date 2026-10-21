@@ -54,9 +54,8 @@ class MangaReaderCacheLifecycleRobolectricTest {
         val application = RuntimeEnvironment.getApplication()
         val archive = temporaryFolder.newFile("shared-reader.cbz")
         val preparedCache = temporaryFolder.newFolder("shared-prepared-cache")
-        ComicArchive.writePreparedReaderManifest(preparedCache, listOf("page.png"))
+        populatePreparedCache(archive, preparedCache, listOf("page.png"))
         val pageFile = ComicArchive.preparedImageFile(preparedCache, 0, "page.png")
-        pageFile.writeBytes(createPng())
 
         val oldExecutor = ManualExecutorService()
         val controller = buildReaderController(application, archive, preparedCache, oldExecutor)
@@ -759,13 +758,17 @@ class MangaReaderCacheLifecycleRobolectricTest {
         val archive = temporaryFolder.newFile(archiveName)
         val preparedCache = temporaryFolder.newFolder(cacheName)
         val entries = (0 until pageCount).map { "page-$it.png" }
-        ComicArchive.writePreparedReaderManifest(preparedCache, entries)
-        entries.forEachIndexed { index, name ->
-            val pageFile = ComicArchive.preparedImageFile(preparedCache, index, name)
-            pageFile.parentFile?.mkdirs()
-            pageFile.writeBytes(createPng())
-        }
+        populatePreparedCache(archive, preparedCache, entries)
         return archive to preparedCache
+    }
+
+    private fun populatePreparedCache(archive: File, preparedCache: File, entries: List<String>) {
+        val imageBytes = createPng()
+        writeZip(archive, *entries.map { it to imageBytes }.toTypedArray())
+        ComicArchive.writePreparedReaderManifest(preparedCache, entries)
+        val preparedEntries = entries.mapIndexed { index, name -> ComicArchive.PreparedImageEntry(index, name) }
+        val files = ComicArchive.extractPreparedImagesToDirectory(archive, preparedEntries, preparedCache) { _, _ -> }
+        assertEquals(entries.size, files.size)
     }
 
     private fun currentReaderPosition(activity: MangaReaderActivity): Int =

@@ -36,12 +36,28 @@ internal fun visiblePreviewPriorityForReader(
     }
 }
 
+internal fun pdfDecodeThreadCountForScroll(
+    isPdfSource: Boolean,
+    isFastScroll: Boolean,
+    hasIndependentSessions: Boolean
+): Int {
+    return if (isPdfSource && isFastScroll && hasIndependentSessions) 2 else 1
+}
+
+internal fun fastPdfPreviewPreloadPriorityForReader(
+    distanceFromViewport: Int,
+    visiblePriority: Int,
+    backgroundPriority: Int
+): Int {
+    return (visiblePriority - 1 - distanceFromViewport.coerceAtLeast(0))
+        .coerceAtLeast(backgroundPriority + 1)
+}
+
 internal fun shouldScheduleImmediateFullDecodeForReader(
     isPdfSource: Boolean,
-    isReaderIdle: Boolean,
     isDiscreteJump: Boolean = false
 ): Boolean {
-    return !isPdfSource || isReaderIdle || isDiscreteJump
+    return !isPdfSource || isDiscreteJump
 }
 
 internal fun calculatePdfPreviewWidth(
@@ -51,7 +67,7 @@ internal fun calculatePdfPreviewWidth(
 ): Int {
     val safeMinimumWidth = minimumWidth.coerceAtLeast(1)
     val safeMaximumWidth = maximumWidth.coerceAtLeast(safeMinimumWidth)
-    val preferredWidth = (baseDisplayWidth.coerceAtLeast(1).toLong() * 3L / 4L)
+    val preferredWidth = (baseDisplayWidth.coerceAtLeast(1).toLong() / 2L)
         .coerceAtMost(Int.MAX_VALUE.toLong())
         .toInt()
     return preferredWidth.coerceIn(safeMinimumWidth, safeMaximumWidth)

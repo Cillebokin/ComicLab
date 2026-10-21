@@ -1,6 +1,7 @@
 package com.example.comiclab
 
 import android.content.Context
+import android.content.Intent
 import android.os.Environment
 import android.os.Looper
 import android.view.View
@@ -32,7 +33,7 @@ import org.robolectric.shadows.ShadowEnvironment
 class MainActivityNavigationTest {
 
     companion object {
-        // MainActivity's storage-root constant survives between tests in the same sandbox.
+        // The root is read from the current environment for each Activity instance.
         @ClassRule @JvmField val temporaryFolder = TemporaryFolder()
     }
 
@@ -106,6 +107,142 @@ class MainActivityNavigationTest {
             assertEquals(storageRoot.absolutePath, preferences.getString("current_path", null))
             assertEquals(2, activity.findViewById<ListView>(R.id.listFiles).adapter.count)
         } finally { controller.pause().stop().destroy() }
+    }
+
+    @Test
+    fun externalCenterTargetCannotNavigateOutsideSharedStorageRoot() {
+        val storageRoot = temporaryFolder.newFolder("storage")
+        val privateDirectory = File(
+            RuntimeEnvironment.getApplication().filesDir,
+            "p8-private-fixture"
+        ).apply { mkdirs() }
+        File(privateDirectory, "private.txt").writeText("private")
+        val siblingDirectory = File(temporaryFolder.root, "storage-private").apply { mkdirs() }
+        File(siblingDirectory, "private.txt").writeText("private")
+        ShadowEnvironment.setExternalStorageDirectory(storageRoot.toPath())
+        val preferences = RuntimeEnvironment.getApplication()
+            .getSharedPreferences("saf_prefs", Context.MODE_PRIVATE)
+        preferences.edit()
+            .putString("current_path", storageRoot.absolutePath)
+            .putBoolean("storage_permission_prompted", true)
+            .apply()
+
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        try {
+            val activity = controller.get()
+            awaitDirectoryLoad(activity)
+
+            listOf(
+                File(privateDirectory, "private.txt").absolutePath,
+                File(siblingDirectory, "private.txt").absolutePath,
+                File(storageRoot, "../${siblingDirectory.name}/private.txt").path
+            ).forEach { targetPath ->
+                deliverCenterTarget(activity, targetPath)
+                awaitDirectoryLoad(activity)
+                assertEquals(
+                    storageRoot.canonicalPath,
+                    File(activity.currentPathForTest).canonicalPath
+                )
+            }
+        } finally {
+            controller.pause().stop().destroy()
+            privateDirectory.deleteRecursively()
+            siblingDirectory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun externalCenterTargetInsideSharedStorageRemainsSupported() {
+        val preferences = RuntimeEnvironment.getApplication()
+            .getSharedPreferences("saf_prefs", Context.MODE_PRIVATE)
+        preferences
+            .edit()
+            .remove("current_path")
+            .putBoolean("storage_permission_prompted", true)
+            .apply()
+
+        var targetDirectory: File? = null
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        try {
+            val activity = controller.get()
+            awaitDirectoryLoad(activity)
+            val storageRoot = File(activity.currentPathForTest).apply { mkdirs() }
+            val createdTargetDirectory = File(storageRoot, "P8_Comics").apply { mkdirs() }
+            targetDirectory = createdTargetDirectory
+            val targetFile = File(createdTargetDirectory, "comic.cbz").apply { writeText("fixture") }
+
+            deliverCenterTarget(activity, targetFile.absolutePath)
+            awaitDirectoryLoad(activity)
+
+            assertEquals(
+                createdTargetDirectory.canonicalPath,
+                File(activity.currentPathForTest).canonicalPath
+            )
+        } finally {
+            controller.pause().stop().destroy()
+            targetDirectory?.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun coldStartCenterTargetCannotNavigateToAppPrivateDirectory() {
+        val storageRoot = temporaryFolder.newFolder("storage")
+        val appContext = RuntimeEnvironment.getApplication()
+        val privateDirectory = File(appContext.filesDir, "p8-cold-start-private").apply { mkdirs() }
+        File(privateDirectory, "private.txt").writeText("private")
+        ShadowEnvironment.setExternalStorageDirectory(storageRoot.toPath())
+        appContext.getSharedPreferences("saf_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("current_path", storageRoot.absolutePath)
+            .putBoolean("storage_permission_prompted", true)
+            .apply()
+
+        val launchIntent = Intent(appContext, MainActivity::class.java).putExtra(
+            MainActivity.EXTRA_CENTER_TARGET_PATH,
+            File(privateDirectory, "private.txt").absolutePath
+        )
+        val controller = Robolectric.buildActivity(MainActivity::class.java, launchIntent).setup()
+        try {
+            val activity = controller.get()
+            awaitDirectoryLoad(activity)
+            assertEquals(storageRoot.canonicalPath, File(activity.currentPathForTest).canonicalPath)
+        } finally {
+            controller.pause().stop().destroy()
+            privateDirectory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun savedPathFromEarlierExternalIntentCannotRestoreAppPrivateDirectory() {
+        val appContext = RuntimeEnvironment.getApplication()
+        val privateDirectory = File(appContext.filesDir, "p8-saved-private").apply { mkdirs() }
+        File(privateDirectory, "private.txt").writeText("private")
+        appContext.getSharedPreferences("saf_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("current_path", privateDirectory.absolutePath)
+            .putBoolean("storage_permission_prompted", true)
+            .apply()
+
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        try {
+            val activity = controller.get()
+            awaitDirectoryLoad(activity)
+            assertTrue(
+                File(activity.currentPathForTest).canonicalPath != privateDirectory.canonicalPath
+            )
+        } finally {
+            controller.pause().stop().destroy()
+            privateDirectory.deleteRecursively()
+        }
+    }
+
+    private fun deliverCenterTarget(activity: MainActivity, targetPath: String) {
+        MainActivity::class.java.getDeclaredMethod("onNewIntent", Intent::class.java).apply {
+            isAccessible = true
+        }.invoke(
+            activity,
+            Intent().putExtra(MainActivity.EXTRA_CENTER_TARGET_PATH, targetPath)
+        )
     }
 
     @Test

@@ -10,6 +10,8 @@ import com.example.comiclab.core.archive.ArchiveImageDecoder.scaleToFitMaxSize
 import com.example.comiclab.core.archive.ArchiveImageDecoder.scaleToWidthIfLarger
 import com.example.comiclab.core.archive.ArchiveFormatDetector
 import com.example.comiclab.core.archive.ArchiveEntryDeleter
+import com.example.comiclab.core.archive.ArchiveBackupManager
+import com.example.comiclab.core.archive.ArchiveReplacementRecovery
 import com.example.comiclab.core.archive.ArchiveEntryLister
 import com.example.comiclab.core.archive.ArchiveReaderSession
 import com.example.comiclab.core.archive.ArchiveReaderSessionBounds
@@ -18,17 +20,12 @@ import com.example.comiclab.core.archive.PreparedArchiveExtractor
 import com.example.comiclab.core.archive.PdfPageRenderer
 import com.example.comiclab.core.archive.SharedArchiveReaderSession
 import android.graphics.Rect
-import net.sf.sevenzipjbinding.ExtractAskMode
-import net.sf.sevenzipjbinding.ExtractOperationResult
-import net.sf.sevenzipjbinding.IArchiveExtractCallback
 import net.sf.sevenzipjbinding.IInArchive
-import net.sf.sevenzipjbinding.ISequentialOutStream
 import net.sf.sevenzipjbinding.PropID
 import com.example.comiclab.core.archive.cache.ArchiveEntryFileCache
 import java.io.Closeable
 import java.io.File
 import java.io.InputStream
-import java.io.OutputStream
 import java.util.Locale
 
 object ComicArchive {
@@ -135,14 +132,17 @@ object ComicArchive {
 
     fun canDeleteEntry(file: File): Boolean = ArchiveEntryDeleter.canDeleteEntry(file)
 
+    fun hasPendingArchiveReplacement(file: File): Boolean = ArchiveReplacementRecovery.hasPending(file)
+
+    fun deleteBackupDirectory(file: File): File = ArchiveBackupManager.backupDirectory(file)
+
     fun deleteEntry(file: File, entryName: String): Boolean = ArchiveEntryDeleter.deleteEntry(
         file = file,
-        entryName = entryName,
-        withSevenZipArchive = { archiveFile, block -> withSevenZipArchive(archiveFile, block) },
-        extractSevenZipEntryToStream = ::extractSevenZipEntryToStream
+        entryName = entryName
     )
 
     fun decodeImage(file: File, entryName: String, maxSize: Int, cacheRoot: File): Bitmap? {
+        ArchiveReplacementRecovery.recover(file)
         if (isPdf(file)) {
             return PdfPageRenderer.renderPageFitMaxSize(file, entryName, maxSize)
         }
@@ -163,6 +163,7 @@ object ComicArchive {
     }
 
     fun decodeImageForWidth(file: File, entryName: String, targetWidth: Int, cacheRoot: File): Bitmap? {
+        ArchiveReplacementRecovery.recover(file)
         if (isPdf(file)) {
             return PdfPageRenderer.renderPageForWidth(file, entryName, targetWidth)
         }
@@ -189,6 +190,7 @@ object ComicArchive {
         cacheRoot: File,
         onDecoded: (entryName: String, bitmap: Bitmap?) -> Boolean
     ) {
+        ArchiveReplacementRecovery.recover(file)
         when (file.extension.lowercase(Locale.ROOT)) {
             in zipArchiveExtensions -> decodeZipImages(file, entryNames, maxSize, onDecoded)
             in sevenZipArchiveExtensions -> decodeSevenZipImages(file, entryNames, maxSize, cacheRoot, onDecoded)
@@ -201,6 +203,7 @@ object ComicArchive {
         PreparedArchiveExtractor.extractImageEntryToFile(file, entryName, targetFile)
 
     fun openReaderSession(file: File, cacheRoot: File): ImageReaderSession {
+        ArchiveReplacementRecovery.recover(file)
         return if (isPdf(file)) {
             ArchiveSessionFacadeAdapter(PdfPageRenderer.openReaderSession(file))
         } else {
@@ -225,6 +228,12 @@ object ComicArchive {
 
     fun imageFileBounds(file: File): ImageBounds? =
         PreparedArchiveExtractor.imageFileBounds(file)?.let { ImageBounds(it.width, it.height) }
+
+    fun validatePreparedImageFile(file: File): Boolean =
+        PreparedArchiveExtractor.validatePreparedImageFile(file)
+
+    fun discardPreparedImageFile(file: File) =
+        PreparedArchiveExtractor.discardPreparedImageFile(file)
 
     fun extractPreparedImagesToDirectory(
         file: File,
@@ -315,40 +324,6 @@ object ComicArchive {
         entryIndex: Int,
         targetFile: File
     ): Boolean = PreparedArchiveExtractor.extractSevenZipEntryToFile(archive, entryIndex, targetFile)
-
-    private fun extractSevenZipEntryToStream(
-        archive: IInArchive,
-        entryIndex: Int,
-        output: OutputStream
-    ): Boolean {
-        var extractResult = ExtractOperationResult.OK
-        archive.extract(intArrayOf(entryIndex), false, object : IArchiveExtractCallback {
-            override fun setTotal(total: Long) = Unit
-
-            override fun setCompleted(completeValue: Long) = Unit
-
-            override fun getStream(index: Int, extractAskMode: ExtractAskMode): ISequentialOutStream? {
-                if (index != entryIndex || extractAskMode != ExtractAskMode.EXTRACT) {
-                    return null
-                }
-
-                return object : ISequentialOutStream {
-                    override fun write(data: ByteArray): Int {
-                        output.write(data)
-                        return data.size
-                    }
-                }
-            }
-
-            override fun prepareOperation(extractAskMode: ExtractAskMode) = Unit
-
-            override fun setOperationResult(extractOperationResult: ExtractOperationResult) {
-                extractResult = extractOperationResult
-            }
-        })
-
-        return extractResult == ExtractOperationResult.OK
-    }
 
     internal fun decodeImageFromStreamFactory(
         openInputStream: () -> InputStream,

@@ -14,6 +14,7 @@ internal object ArchiveEntryLister {
     }
 
     fun imageEntries(file: File, sevenZipImages: (File) -> List<String>, pdfImages: (File) -> List<String>): List<String> {
+        ArchiveReplacementRecovery.recover(file)
         if (!file.isFile) {
             return emptyList()
         }
@@ -29,6 +30,7 @@ internal object ArchiveEntryLister {
     }
 
     fun firstImageEntryIfFirstFileIsImage(file: File, sevenZipFiles: (File) -> List<String>, pdfImages: (File) -> List<String>, isPdfPage: (String) -> Boolean): String? {
+        ArchiveReplacementRecovery.recover(file)
         if (!file.isFile) {
             return null
         }

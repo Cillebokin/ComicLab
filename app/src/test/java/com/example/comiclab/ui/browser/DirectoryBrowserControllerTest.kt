@@ -24,6 +24,42 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class DirectoryBrowserControllerTest {
+    @Test fun loadingDirectoryRecoversInterruptedArchiveBeforeBuildingRows() {
+        val archive = File(root, "comic.cbz")
+        java.util.zip.ZipOutputStream(archive.outputStream()).use { output ->
+            for (name in listOf("001.png", "002.png")) {
+                output.putNextEntry(java.util.zip.ZipEntry(name))
+                output.write(byteArrayOf(1))
+                output.closeEntry()
+            }
+        }
+        class Interrupted : Error()
+        assertThrows(Interrupted::class.java) {
+            com.example.comiclab.core.archive.ArchiveEntryDeleter.deleteEntry(archive, "002.png") { source, destination ->
+                val moved = source.renameTo(destination)
+                if (moved && source == archive && destination.extension == "bak") throw Interrupted()
+                moved
+            }
+        }
+        assertFalse(archive.exists())
+        load(root.absolutePath)
+        drainLoad()
+        val result = results.single() as DirectoryBrowserController.Result.Loaded
+        assertTrue(result.archiveRecoveryComplete)
+        assertEquals(listOf("comic.cbz"), result.items.map { it.file!!.name })
+        assertTrue(archive.isFile)
+    }
+
+    @Test fun loadingDirectoryReportsMalformedRecoveryWithoutDeletingEvidence() {
+        val backup = File(root, ".ComicLabBackups").apply { mkdirs() }
+        val marker = File(backup, "comic.cbz.replace.properties").apply { writeText("broken") }
+        load(root.absolutePath)
+        drainLoad()
+        val result = results.single() as DirectoryBrowserController.Result.Loaded
+        assertFalse(result.archiveRecoveryComplete)
+        assertEquals("broken", marker.readText())
+    }
+
     @get:Rule val temporaryFolder = TemporaryFolder()
     private val executor = ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS, LinkedBlockingQueue())
     private val generation = AtomicInteger()

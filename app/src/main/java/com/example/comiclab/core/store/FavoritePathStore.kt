@@ -16,7 +16,8 @@ object FavoritePathStore {
         ADDED,
         ALREADY_EXISTS,
         LIMIT_REACHED,
-        INVALID
+        INVALID,
+        STORAGE_ERROR
     }
 
     fun record(context: Context, directory: File): RecordResult {
@@ -25,14 +26,12 @@ object FavoritePathStore {
         }
 
         val path = directory.absolutePath
-        val storedItems = validStoredItems(readStoredItems(context))
+        val storedItems = readStoredItems(context) ?: return RecordResult.STORAGE_ERROR
         if (storedItems.any { it.path == path }) {
-            saveStoredItems(context, storedItems.sortedBy { it.addedAt })
             return RecordResult.ALREADY_EXISTS
         }
 
         if (storedItems.size >= MAX_FAVORITE_PATH_COUNT) {
-            saveStoredItems(context, storedItems.sortedBy { it.addedAt })
             return RecordResult.LIMIT_REACHED
         }
 
@@ -43,13 +42,15 @@ object FavoritePathStore {
         return RecordResult.ADDED
     }
 
+    /** 返回本次导入中最终保留的唯一路径数，不计重复项与容量淘汰项。 */
     fun merge(context: Context, items: Collection<Item>): Int {
+        val storedItems = checkNotNull(readStoredItems(context)) { "无法读取目录收藏，已保留原数据" }
         val mergedItems = LinkedHashMap<String, StoredItem>()
-        validStoredItems(readStoredItems(context)).forEach { item ->
+        storedItems.forEach { item ->
             mergedItems[item.path] = item
         }
 
-        var restoredCount = 0
+        val importedPaths = mutableSetOf<String>()
         items.forEach { item ->
             val directory = item.directory
             if (!directory.isDirectory) {
@@ -61,42 +62,34 @@ object FavoritePathStore {
                 path = path,
                 addedAt = item.addedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
             )
-            restoredCount++
+            importedPaths.add(path)
         }
 
-        if (mergedItems.isEmpty()) {
+        val retainedItems = mergedItems.values.sortedBy { it.addedAt }.take(MAX_FAVORITE_PATH_COUNT)
+        if (retainedItems.isEmpty()) {
             clear(context)
         } else {
-            saveStoredItems(context, mergedItems.values.sortedBy { it.addedAt })
+            saveStoredItems(context, retainedItems)
         }
-        return restoredCount
+        return retainedItems.count { it.path in importedPaths }
+    }
+
+    internal fun validateReadable(context: Context) {
+        checkNotNull(readStoredItems(context)) { "无法读取目录收藏，已保留原数据" }
     }
 
     fun items(context: Context): List<Item> {
-        val storedItems = readStoredItems(context)
-        val validStoredItems = mutableListOf<StoredItem>()
+        val storedItems = readStoredItems(context) ?: return emptyList()
         val visibleItems = storedItems.mapNotNull { storedItem ->
             val directory = File(storedItem.path)
             if (!directory.isDirectory) {
                 return@mapNotNull null
             }
 
-            validStoredItems.add(storedItem)
             Item(
                 directory = directory,
                 addedAt = storedItem.addedAt
             )
-        }
-
-        val sortedStoredItems = validStoredItems
-            .sortedBy { it.addedAt }
-            .take(MAX_FAVORITE_PATH_COUNT)
-        if (validStoredItems.size != storedItems.size || validStoredItems != sortedStoredItems) {
-            if (validStoredItems.isEmpty()) {
-                clear(context)
-            } else {
-                saveStoredItems(context, sortedStoredItems)
-            }
         }
 
         return visibleItems
@@ -123,7 +116,7 @@ object FavoritePathStore {
 
     fun remove(context: Context, directory: File) {
         val path = directory.absolutePath
-        val updatedItems = readStoredItems(context)
+        val updatedItems = (readStoredItems(context) ?: return)
             .filterNot { it.path == path }
 
         if (updatedItems.isEmpty()) {
@@ -134,10 +127,11 @@ object FavoritePathStore {
     }
 
     fun moveDirectory(context: Context, oldDirectory: File, newDirectory: File) {
+        val storedItems = readStoredItems(context) ?: return
         val oldPath = oldDirectory.absolutePath
         val newPath = newDirectory.absolutePath
         val movedItems = LinkedHashMap<String, StoredItem>()
-        readStoredItems(context).forEach { item ->
+        storedItems.forEach { item ->
             val movedPath = BookcaseFolderPaths.remapPath(item.path, oldPath, newPath)
             val movedItem = item.copy(path = movedPath)
             val current = movedItems[movedPath]
@@ -153,26 +147,13 @@ object FavoritePathStore {
         }
     }
 
-    private fun readStoredItems(context: Context): List<StoredItem> {
-        val rawValue = prefs(context).getString(KEY_FAVORITE_PATHS, null)
-            ?: return emptyList()
-
-        return runCatching {
-            val array = JSONArray(rawValue)
-            buildList {
-                for (index in 0 until array.length()) {
-                    val obj = array.optJSONObject(index) ?: continue
-                    val path = obj.optString(FIELD_PATH).takeIf { it.isNotBlank() } ?: continue
-                    add(
-                        StoredItem(
-                            path = path,
-                            addedAt = obj.optLong(FIELD_ADDED_AT, 0L)
-                        )
-                    )
-                }
-            }
-        }.getOrDefault(emptyList())
-    }
+    private fun readStoredItems(context: Context): List<StoredItem>? =
+        readStoredCollection(context, PREFS_NAME, KEY_FAVORITE_PATHS) { obj ->
+            StoredItem(
+                path = obj.storedPath(),
+                addedAt = obj.optLong(FIELD_ADDED_AT, 0L)
+            )
+        }
 
     private fun saveStoredItems(context: Context, items: List<StoredItem>) {
         val array = JSONArray()
@@ -191,12 +172,6 @@ object FavoritePathStore {
 
     private fun prefs(context: Context) =
         PrefsGateway.open(context, PREFS_NAME)
-
-    private fun validStoredItems(items: List<StoredItem>): List<StoredItem> {
-        return items.filter { item ->
-            File(item.path).isDirectory
-        }
-    }
 
     private data class StoredItem(
         val path: String,

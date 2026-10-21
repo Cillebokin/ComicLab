@@ -108,12 +108,13 @@ class ComicArchivePreparedImagesTest {
     }
 
     @Test
-    fun extractorReusesExistingNonEmptyPreparedSlotWithoutOverwritingIt() {
+    fun extractorReplacesCorruptNonEmptyPreparedSlotWithArchiveBytes() {
         val archive = File(temporaryFolder.root, "cached.cbz")
-        writeZip(archive, "1.jpg" to "archive bytes".toByteArray())
+        val archiveBytes = "archive bytes".toByteArray()
+        writeZip(archive, "1.jpg" to archiveBytes)
         val output = File(temporaryFolder.root, "cached-prepared").apply { mkdirs() }
         val cachedSlot = ComicArchive.preparedImageFile(output, 0, "1.jpg").apply {
-            writeText("already prepared")
+            writeBytes(ByteArray(archiveBytes.size) { 'x'.code.toByte() })
         }
 
         val extracted = ComicArchive.openPreparedImageExtractor(archive, output).use {
@@ -121,7 +122,49 @@ class ComicArchivePreparedImagesTest {
         }
 
         assertEquals(cachedSlot, extracted)
-        assertEquals("already prepared", cachedSlot.readText())
+        assertTrue(cachedSlot.readBytes().contentEquals(archiveBytes))
+    }
+
+    @Test
+    fun extractorRemovesInterruptedPartFilesBeforeReusingAnIntactSlot() {
+        val archive = File(temporaryFolder.root, "interrupted.cbz")
+        val archiveBytes = "archive bytes".toByteArray()
+        writeZip(archive, "1.jpg" to archiveBytes)
+        val output = File(temporaryFolder.root, "interrupted-prepared")
+        val cachedSlot = checkNotNull(ComicArchive.openPreparedImageExtractor(archive, output).use {
+            it.extract(0, "1.jpg")
+        })
+        val partFile = File(output, "${cachedSlot.name}.part").apply { writeText("unfinished") }
+        val integrityPartFile = File(output, "${cachedSlot.name}.sha256.part").apply { writeText("unfinished") }
+
+        val extracted = ComicArchive.openPreparedImageExtractor(archive, output).use {
+            it.extract(0, "1.jpg")
+        }
+
+        assertEquals(cachedSlot, extracted)
+        assertTrue(cachedSlot.readBytes().contentEquals(archiveBytes))
+        assertFalse(partFile.exists())
+        assertFalse(integrityPartFile.exists())
+    }
+
+    @Test
+    fun extractorReplacesTamperedCachedSlotEvenWhenLengthIsUnchanged() {
+        val archive = File(temporaryFolder.root, "tampered.cbz")
+        val archiveBytes = "archive bytes".toByteArray()
+        writeZip(archive, "1.jpg" to archiveBytes)
+        val output = File(temporaryFolder.root, "tampered-prepared")
+        val cachedSlot = checkNotNull(ComicArchive.openPreparedImageExtractor(archive, output).use {
+            it.extract(0, "1.jpg")
+        })
+        cachedSlot.writeBytes(ByteArray(archiveBytes.size) { 'x'.code.toByte() })
+        assertFalse(ComicArchive.validatePreparedImageFile(cachedSlot))
+
+        val extracted = ComicArchive.openPreparedImageExtractor(archive, output).use {
+            it.extract(0, "1.jpg")
+        }
+
+        assertEquals(cachedSlot, extracted)
+        assertTrue(cachedSlot.readBytes().contentEquals(archiveBytes))
     }
 
     @Test
@@ -350,7 +393,11 @@ class ComicArchivePreparedImagesTest {
     }
 
     private fun preparedFileAt(directory: File, index: Int): File =
-        directory.listFiles().orEmpty().single { it.isFile && it.name.startsWith("%06d_".format(index)) }
+        directory.listFiles().orEmpty().single {
+            it.isFile &&
+                it.name.startsWith("%06d_".format(index)) &&
+                it.extension.lowercase() in setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
+        }
 
     private fun writeZip(file: File, vararg entries: Pair<String, ByteArray>) {
         ZipOutputStream(file.outputStream()).use { zip ->

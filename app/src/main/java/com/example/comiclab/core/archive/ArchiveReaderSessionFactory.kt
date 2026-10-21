@@ -102,7 +102,10 @@ internal object ArchiveReaderSessionFactory {
         file: File,
         cacheRoot: File,
         extractSevenZipEntryToFile: (archive: IInArchive, entryIndex: Int, targetFile: File) -> Boolean
-    ): ArchiveReaderSession = ReaderSession(file, cacheRoot, extractSevenZipEntryToFile)
+    ): ArchiveReaderSession {
+        ArchiveReplacementRecovery.recover(file)
+        return ReaderSession(file, cacheRoot, extractSevenZipEntryToFile)
+    }
 
     internal fun <T> withSevenZipArchive(file: File, block: (IInArchive) -> T): T {
         val randomAccessFile = RandomAccessFile(file, "r")

@@ -14,6 +14,41 @@ import java.util.zip.ZipOutputStream
 
 class ArchiveEntryDeleterTest {
     @Test
+    fun nonZipFormatsRejectDeletionBeforeCreatingBackupsOrChangingBytes() = withTempDirectory { root ->
+        for (extension in listOf("rar", "cbr", "7z", "cb7", "RAR", "CBR", "7Z", "CB7", "pdf")) {
+            val archive = File(root, "comic.$extension")
+            writeZip(archive, "001.jpg" to "one", "002.jpg" to "two")
+            val original = archive.readBytes()
+            assertFalse(extension, ComicArchive.canDeleteEntry(archive))
+            assertFalse(extension, deleteEntryWithRename(archive, "001.jpg") { _, _ ->
+                error("Unsupported formats must not rename any files")
+            })
+            assertArrayEquals(extension, original, archive.readBytes())
+            assertFalse(extension, File(root, ".ComicLabBackups").exists())
+            assertFalse(root.listFiles().orEmpty().any { ".delete_" in it.name || ".restore_" in it.name })
+        }
+    }
+
+    @Test
+    fun zipAndCbzKeepTheirFormatNameAndRemainReadableAfterDeletion() = withTempDirectory { root ->
+        for (extension in listOf("zip", "cbz", "ZIP", "CBZ")) {
+            val archive = File(root, "comic.$extension")
+            writeZip(archive, "001.jpg" to "one", "002.jpg" to "two", "notes.txt" to "note")
+            val originalPath = archive.absolutePath
+            assertTrue(extension, ComicArchive.canDeleteEntry(archive))
+            assertTrue(extension, ComicArchive.deleteEntry(archive, "002.jpg"))
+            assertEquals(originalPath, archive.absolutePath)
+            assertEquals(extension, archive.extension)
+            assertArrayEquals(byteArrayOf(0x50, 0x4b, 0x03, 0x04), archive.readBytes().take(4).toByteArray())
+            assertEquals(listOf("001.jpg"), ComicArchive.imageEntries(archive))
+            java.util.zip.ZipFile(archive).use { zip ->
+                assertEquals("one", zip.getInputStream(zip.getEntry("001.jpg")).bufferedReader().use { it.readText() })
+                assertEquals("note", zip.getInputStream(zip.getEntry("notes.txt")).bufferedReader().use { it.readText() })
+            }
+        }
+    }
+
+    @Test
     fun canDeleteEntry_doesNotCreateBackupDirectory() = withTempDirectory { root ->
         val archive = File(root, "comic.cbz")
         writeZip(archive, "001.jpg" to "one")
@@ -111,8 +146,7 @@ class ArchiveEntryDeleterTest {
         assertArrayEquals(originalBytes, archive.readBytes())
         val persistentBackup = persistentBackups(root).single()
         assertArrayEquals(originalBytes, persistentBackup.readBytes())
-        val rollbackBackup = siblingRollbackFiles(archive).single()
-        assertArrayEquals(originalBytes, rollbackBackup.readBytes())
+        assertTrue(siblingRollbackFiles(archive).isEmpty())
         assertTrue(siblingTemporaryFiles(archive).isEmpty())
     }
 
@@ -192,8 +226,6 @@ class ArchiveEntryDeleterTest {
     ): Boolean = ArchiveEntryDeleter.deleteEntry(
         file = archive,
         entryName = entryName,
-        withSevenZipArchive = { _, _ -> error("ZIP test must not open a SevenZip archive") },
-        extractSevenZipEntryToStream = { _, _, _ -> error("ZIP test must not extract a SevenZip entry") },
         renameTo = renameTo
     )
 

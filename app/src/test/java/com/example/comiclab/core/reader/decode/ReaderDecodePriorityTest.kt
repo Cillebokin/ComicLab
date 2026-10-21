@@ -4,6 +4,8 @@ import com.example.comiclab.core.reader.decode.shouldPreloadBackgroundFullPagesF
 import com.example.comiclab.core.reader.decode.shouldRefreshBoundReaderPageImmediately
 import com.example.comiclab.core.reader.decode.shouldScheduleImmediateFullDecodeForReader
 import com.example.comiclab.core.reader.decode.visiblePreviewPriorityForReader
+import com.example.comiclab.core.reader.decode.pdfDecodeThreadCountForScroll
+import com.example.comiclab.core.reader.decode.fastPdfPreviewPreloadPriorityForReader
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -29,19 +31,18 @@ class ReaderDecodePriorityTest {
     }
 
     @Test
-    fun pdfFullDecodeWaitsUntilReaderIsIdle() {
+    fun pdfFullDecodeStartsImmediatelyOnlyForDiscreteJump() {
         assertEquals(
             false,
             shouldScheduleImmediateFullDecodeForReader(
-                isPdfSource = true,
-                isReaderIdle = false
+                isPdfSource = true
             )
         )
         assertEquals(
             true,
             shouldScheduleImmediateFullDecodeForReader(
                 isPdfSource = true,
-                isReaderIdle = true
+                isDiscreteJump = true
             )
         )
     }
@@ -77,6 +78,70 @@ class ReaderDecodePriorityTest {
                 isPdfSource = false,
                 previewPriority = 90,
                 fullPriority = 100
+            )
+        )
+    }
+
+    @Test
+    fun fastPdfPreviewPriorityDecreasesWithDistanceButStaysAboveBackground() {
+        assertEquals(
+            89,
+            fastPdfPreviewPreloadPriorityForReader(
+                distanceFromViewport = 0,
+                visiblePriority = 90,
+                backgroundPriority = 20
+            )
+        )
+        assertEquals(
+            82,
+            fastPdfPreviewPreloadPriorityForReader(
+                distanceFromViewport = 7,
+                visiblePriority = 90,
+                backgroundPriority = 20
+            )
+        )
+        assertEquals(
+            21,
+            fastPdfPreviewPreloadPriorityForReader(
+                distanceFromViewport = 100,
+                visiblePriority = 90,
+                backgroundPriority = 20
+            )
+        )
+    }
+
+    @Test
+    fun onlyFastPdfScrollingUsesTwoIndependentDecodeWorkers() {
+        assertEquals(
+            2,
+            pdfDecodeThreadCountForScroll(
+                isPdfSource = true,
+                isFastScroll = true,
+                hasIndependentSessions = true
+            )
+        )
+        assertEquals(
+            1,
+            pdfDecodeThreadCountForScroll(
+                isPdfSource = true,
+                isFastScroll = false,
+                hasIndependentSessions = true
+            )
+        )
+        assertEquals(
+            1,
+            pdfDecodeThreadCountForScroll(
+                isPdfSource = true,
+                isFastScroll = true,
+                hasIndependentSessions = false
+            )
+        )
+        assertEquals(
+            1,
+            pdfDecodeThreadCountForScroll(
+                isPdfSource = false,
+                isFastScroll = true,
+                hasIndependentSessions = true
             )
         )
     }
