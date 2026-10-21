@@ -164,7 +164,7 @@ class ComicLabConfigurationStoreRobolectricTest {
     }
 
     @Test
-    fun importCanCountButSkipApplyingAppSettings() {
+    fun importDoesNotCountDeferredSettingsBeforeTheyAreApplied() {
         val configuration = ComicLabConfiguration(
             appSettings = ComicLabAppSettings(darkModeEnabled = true)
         )
@@ -175,9 +175,214 @@ class ComicLabConfigurationStoreRobolectricTest {
             applyAppSettings = false
         )
 
-        assertEquals(1, result.restoredEntries)
+        assertEquals(0, result.restoredEntries)
         assertEquals(0, result.skippedEntries)
         assertFalse(AppSettings.isDarkModeEnabled(context))
+    }
+
+    @Test
+    fun importCountsOnlyEntriesRetainedAfterAllThreeCollectionLimits() {
+        val root = tempDirectory("comiclab-count-limits")
+        try {
+            val files = (0..101).map { File(root, "$it.cbz").apply { writeText("comic") } }
+            val directories = (0..21).map { File(root, "shelf-$it").apply { mkdir() } }
+            val result = ComicLabConfigurationStore.importAndMerge(context, ComicLabConfiguration(
+                favoriteComics = files.mapIndexed { index, f -> ComicLabFavoriteComic(f.absolutePath, index + 1L, f.length(), f.lastModified()) },
+                favoritePaths = directories.mapIndexed { index, f -> ComicLabFavoritePath(f.absolutePath, index + 1L) },
+                readingHistory = files.take(32).mapIndexed { index, f -> ComicLabHistoryEntry(f.absolutePath, index + 1L, f.length(), f.lastModified()) }
+            ), initiallySkippedEntries = 3)
+            val retained = FavoriteComicStore.items(context).size + FavoritePathStore.items(context).size + ReadingHistoryStore.items(context).size
+            assertEquals(150, retained)
+            assertEquals(retained, result.restoredEntries)
+            assertEquals(9, result.skippedEntries)
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test
+    fun duplicatePathsCountOncePerCategoryAndKeepExistingMergeRules() {
+        val root = tempDirectory("comiclab-count-duplicates")
+        try {
+            val comic = File(root, "comic.cbz").apply { writeText("comic") }
+            val ebook = File(root, "novel.epub").apply { writeText("ebook") }
+            val shelf = File(root, "shelf").apply { mkdir() }
+            val result = ComicLabConfigurationStore.importAndMerge(context, ComicLabConfiguration(
+                favoriteComics = listOf(10L, 20L).map { ComicLabFavoriteComic(comic.absolutePath, it, 5L, 1L) },
+                favoritePaths = listOf(10L, 20L).map { ComicLabFavoritePath(shelf.absolutePath, it) },
+                readingHistory = listOf(20L, 10L).map { ComicLabHistoryEntry(comic.absolutePath, it, 5L, 1L) },
+                bookcasePaths = listOf(shelf.absolutePath, shelf.absolutePath),
+                mangaReadingProgress = listOf(ComicLabMangaProgress(comic.absolutePath, 4, 1), ComicLabMangaProgress(comic.absolutePath, 2, 3)),
+                ebookReadingProgress = listOf(ComicLabEbookProgress(ebook.absolutePath, 4, 0.8f), ComicLabEbookProgress(ebook.absolutePath, 2, 0.3f))
+            ))
+            assertEquals(6, result.restoredEntries)
+            assertEquals(6, result.skippedEntries)
+            assertEquals(20L, FavoriteComicStore.items(context).single().addedAt)
+            assertEquals(20L, FavoritePathStore.items(context).single().addedAt)
+            assertEquals(20L, ReadingHistoryStore.items(context).single().lastReadAt)
+            assertEquals(ComicLabMangaProgress(comic.absolutePath, 2, 3), MangaReaderActivity.savedReadingProgress(context, comic))
+            assertEquals(com.example.comiclab.ebook.EbookProgress(2, 0.3f), com.example.comiclab.core.store.EbookProgressStore.load(context, ebook))
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test
+    fun importPreservesExistingMangaAndEbookProgressInsteadOfRollingBack() {
+        val root = tempDirectory("comiclab-progress-local-wins")
+        try {
+            val comic = File(root, "comic.cbz").apply { writeText("comic") }
+            val ebook = File(root, "novel.epub").apply { writeText("ebook") }
+            val localManga = ComicLabMangaProgress(comic.absolutePath, 14, 256)
+            val localEbook = com.example.comiclab.ebook.EbookProgress(8, 0.75f)
+            MangaReaderActivity.restoreReadingProgress(context, comic, localManga)
+            com.example.comiclab.core.store.EbookProgressStore.save(context, ebook, localEbook)
+
+            val result = ComicLabConfigurationStore.importAndMerge(
+                context,
+                ComicLabConfiguration(
+                    mangaReadingProgress = listOf(ComicLabMangaProgress(comic.absolutePath, 2, 0)),
+                    ebookReadingProgress = listOf(ComicLabEbookProgress(ebook.absolutePath, 1, 0.2f))
+                ),
+                applyAppSettings = false
+            )
+
+            assertEquals(0, result.restoredEntries)
+            assertEquals(2, result.skippedEntries)
+            assertEquals(2, result.preservedReadingProgressEntries)
+            assertEquals(localManga, MangaReaderActivity.savedReadingProgress(context, comic))
+            assertEquals(localEbook, com.example.comiclab.core.store.EbookProgressStore.load(context, ebook))
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test
+    fun explicitFirstPageProgressAlsoWinsOverBackup() {
+        val root = tempDirectory("comiclab-progress-first-page")
+        try {
+            val comic = File(root, "comic.cbz").apply { writeText("comic") }
+            val ebook = File(root, "novel.epub").apply { writeText("ebook") }
+            val localManga = ComicLabMangaProgress(comic.absolutePath, 0, 0)
+            val localEbook = com.example.comiclab.ebook.EbookProgress(0, 0f)
+            MangaReaderActivity.restoreReadingProgress(context, comic, localManga)
+            com.example.comiclab.core.store.EbookProgressStore.save(context, ebook, localEbook)
+
+            val result = ComicLabConfigurationStore.importAndMerge(
+                context,
+                ComicLabConfiguration(
+                    mangaReadingProgress = listOf(ComicLabMangaProgress(comic.absolutePath, 6, 128)),
+                    ebookReadingProgress = listOf(ComicLabEbookProgress(ebook.absolutePath, 4, 0.6f))
+                ),
+                applyAppSettings = false
+            )
+
+            assertEquals(0, result.restoredEntries)
+            assertEquals(2, result.skippedEntries)
+            assertEquals(2, result.preservedReadingProgressEntries)
+            assertEquals(localManga, MangaReaderActivity.savedReadingProgress(context, comic))
+            assertEquals(localEbook, com.example.comiclab.core.store.EbookProgressStore.load(context, ebook))
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test
+    fun ebookProgressAliasesKeepLastBackupEntryAndCountOneStoredItem() {
+        val root = tempDirectory("comiclab-ebook-progress-alias")
+        try {
+            val ebook = File(root, "novel.epub").apply { writeText("ebook") }
+            val alias = File(root, "./novel.epub")
+            assertTrue(ebook.absolutePath != alias.absolutePath)
+            assertEquals(
+                com.example.comiclab.core.store.EbookProgressStore.fileIdentity(ebook),
+                com.example.comiclab.core.store.EbookProgressStore.fileIdentity(alias)
+            )
+
+            val result = ComicLabConfigurationStore.importAndMerge(
+                context,
+                ComicLabConfiguration(ebookReadingProgress = listOf(
+                    ComicLabEbookProgress(ebook.absolutePath, 1, 0.2f),
+                    ComicLabEbookProgress(alias.absolutePath, 4, 0.8f)
+                )),
+                applyAppSettings = false
+            )
+
+            assertEquals(1, result.restoredEntries)
+            assertEquals(1, result.skippedEntries)
+            assertEquals(0, result.preservedReadingProgressEntries)
+            assertEquals(
+                com.example.comiclab.ebook.EbookProgress(4, 0.8f),
+                com.example.comiclab.core.store.EbookProgressStore.load(context, ebook)
+            )
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test
+    fun ebookProgressAliasesReportOnePreservedLocalConflict() {
+        val root = tempDirectory("comiclab-ebook-progress-alias-conflict")
+        try {
+            val ebook = File(root, "novel.epub").apply { writeText("ebook") }
+            val alias = File(root, "./novel.epub")
+            assertTrue(ebook.absolutePath != alias.absolutePath)
+            val local = com.example.comiclab.ebook.EbookProgress(7, 0.65f)
+            com.example.comiclab.core.store.EbookProgressStore.save(context, ebook, local)
+
+            val result = ComicLabConfigurationStore.importAndMerge(
+                context,
+                ComicLabConfiguration(ebookReadingProgress = listOf(
+                    ComicLabEbookProgress(ebook.absolutePath, 1, 0.2f),
+                    ComicLabEbookProgress(alias.absolutePath, 4, 0.8f)
+                )),
+                applyAppSettings = false
+            )
+
+            assertEquals(0, result.restoredEntries)
+            assertEquals(2, result.skippedEntries)
+            assertEquals(1, result.preservedReadingProgressEntries)
+            assertEquals(local, com.example.comiclab.core.store.EbookProgressStore.load(context, ebook))
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test
+    fun olderImportedHistoryIsSkippedWhenLocalRecordWins() {
+        val root = tempDirectory("comiclab-count-history")
+        try {
+            val comic = File(root, "comic.cbz").apply { writeText("comic") }
+            ReadingHistoryStore.merge(context, listOf(ReadingHistoryStore.Item(comic, 200L, 5L, 1L)))
+            val result = ComicLabConfigurationStore.importAndMerge(context, ComicLabConfiguration(
+                readingHistory = listOf(ComicLabHistoryEntry(comic.absolutePath, 100L, 1L, 1L))
+            ))
+            assertEquals(0, result.restoredEntries)
+            assertEquals(1, result.skippedEntries)
+            assertEquals(200L, ReadingHistoryStore.items(context).single().lastReadAt)
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test
+    fun alreadyExistingFavoritesAndBookcaseSelectionsStillCountAsRetained() {
+        val root = tempDirectory("comiclab-count-existing")
+        try {
+            val comic = File(root, "comic.cbz").apply { writeText("comic") }
+            val shelf = File(root, "shelf").apply { mkdir() }
+            FavoriteComicStore.record(context, comic)
+            AppSettings.setBookcaseDirectory(context, shelf, true)
+            val result = ComicLabConfigurationStore.importAndMerge(context, ComicLabConfiguration(
+                favoriteComics = listOf(ComicLabFavoriteComic(comic.absolutePath, 10L, 5L, 1L)),
+                bookcasePaths = listOf(shelf.absolutePath)
+            ))
+            assertEquals(2, result.restoredEntries)
+            assertEquals(0, result.skippedEntries)
+            assertTrue(AppSettings.isBookcaseDirectory(context, shelf))
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test
+    fun decodeSkipsAndDuplicateSkipsAreAccountedExactlyOnce() {
+        val root = tempDirectory("comiclab-count-decode")
+        try {
+            val comic = File(root, "comic.cbz").apply { writeText("comic") }
+            val configuration = ComicLabConfiguration(favoriteComics = List(2) { ComicLabFavoriteComic(comic.absolutePath, 1L, 5L, 1L) })
+            val json = org.json.JSONObject(ComicLabConfigurationJson.encode(configuration))
+            json.getJSONArray("favoriteComics").put(7)
+            val decoded = ComicLabConfigurationJson.decode(json.toString())
+            assertEquals(1, decoded.skippedEntries)
+            val result = ComicLabConfigurationStore.importAndMerge(context, decoded.configuration, decoded.skippedEntries)
+            assertEquals(1, result.restoredEntries)
+            assertEquals(2, result.skippedEntries)
+        } finally { root.deleteRecursively() }
     }
 
     @Test
@@ -200,6 +405,103 @@ class ComicLabConfigurationStoreRobolectricTest {
             assertEquals("[{broken", preferences.getString(key, null))
             assertFalse(AppSettings.isDarkModeEnabled(context))
         }
+    }
+
+    @Test
+    fun corruptLaterStoreAbortsBeforeEarlierImportDataIsWritten() {
+        val root = tempDirectory("comiclab-config-preflight")
+        try {
+            val comic = File(root, "comic.cbz").apply { writeText("comic") }
+            val favoritePreferences = context.getSharedPreferences("favorite_comic_prefs", 0)
+            context.getSharedPreferences("reading_history_prefs", 0)
+                .edit().putString("reading_history", "[{broken").commit()
+
+            assertThrows(IllegalStateException::class.java) {
+                ComicLabConfigurationStore.importAndMerge(
+                    context,
+                    ComicLabConfiguration(
+                        favoriteComics = listOf(
+                            ComicLabFavoriteComic(comic.absolutePath, 1L, comic.length(), comic.lastModified())
+                        ),
+                        appSettings = ComicLabAppSettings(darkModeEnabled = true)
+                    )
+                )
+            }
+
+            assertFalse(favoritePreferences.contains("favorite_comics"))
+            assertFalse(AppSettings.isDarkModeEnabled(context))
+            assertEquals("[{broken", context.getSharedPreferences("reading_history_prefs", 0)
+                .getString("reading_history", null))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun corruptBrightnessPreferenceAbortsBeforeEarlierImportDataIsWritten() {
+        val root = tempDirectory("comiclab-config-settings-preflight")
+        try {
+            val comic = File(root, "comic.cbz").apply { writeText("comic") }
+            val favoritePreferences = context.getSharedPreferences("favorite_comic_prefs", 0)
+            context.getSharedPreferences("app_settings", 0).edit()
+                .putString("custom_reader_brightness", "broken")
+                .commit()
+
+            assertThrows(ClassCastException::class.java) {
+                ComicLabConfigurationStore.importAndMerge(
+                    context,
+                    ComicLabConfiguration(
+                        favoriteComics = listOf(
+                            ComicLabFavoriteComic(comic.absolutePath, 1L, comic.length(), comic.lastModified())
+                        ),
+                        appSettings = ComicLabAppSettings(customReaderBrightness = 100)
+                    )
+                )
+            }
+
+            assertFalse(favoritePreferences.contains("favorite_comics"))
+            assertEquals("broken", context.getSharedPreferences("app_settings", 0)
+                .getString("custom_reader_brightness", null))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun existingOfflineFavoritesUseCapacityButDoNotCountAsImported() {
+        val root = tempDirectory("comiclab-count-offline")
+        try {
+            val rows = org.json.JSONArray()
+            repeat(100) { index -> rows.put(org.json.JSONObject()
+                .put("path", File(root, "offline-$index.cbz").absolutePath)
+                .put("addedAt", index + 1L).put("fileSize", 5L).put("modifiedAt", 1L)) }
+            val preferences = context.getSharedPreferences("favorite_comic_prefs", 0)
+            preferences.edit().putString("favorite_comics", rows.toString()).commit()
+            val file = File(root, "new.cbz").apply { writeText("comic") }
+            val result = ComicLabConfigurationStore.importAndMerge(context, ComicLabConfiguration(
+                favoriteComics = listOf(ComicLabFavoriteComic(file.absolutePath, 1000L, 5L, 1L))
+            ))
+            assertEquals(0, result.restoredEntries)
+            assertEquals(1, result.skippedEntries)
+            assertEquals(100, org.json.JSONArray(preferences.getString("favorite_comics", null)).length())
+            assertTrue(FavoriteComicStore.items(context).isEmpty())
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test
+    fun olderNewHistoryOutsideFinalWindowIsCountedAsSkipped() {
+        val root = tempDirectory("comiclab-count-history-window")
+        try {
+            val current = (0 until 30).map { File(root, "current-$it.cbz").apply { writeText("comic") } }
+            ReadingHistoryStore.merge(context, current.mapIndexed { index, f -> ReadingHistoryStore.Item(f, 1000L + index, 5L, 1L) })
+            val imported = File(root, "old.cbz").apply { writeText("comic") }
+            val result = ComicLabConfigurationStore.importAndMerge(context, ComicLabConfiguration(
+                readingHistory = listOf(ComicLabHistoryEntry(imported.absolutePath, 1L, 5L, 1L))
+            ))
+            assertEquals(0, result.restoredEntries)
+            assertEquals(1, result.skippedEntries)
+            assertEquals(current.toSet(), ReadingHistoryStore.items(context).map { it.file }.toSet())
+        } finally { root.deleteRecursively() }
     }
 
     private fun tempDirectory(prefix: String): File = Files.createTempDirectory(prefix).toFile()

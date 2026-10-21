@@ -76,7 +76,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
             MangaReaderActivity.EXTRA_START_PAGE_INDEX,
             NO_EXPLICIT_START_PAGE
         )
-        if (file == null || !file.isFile) {
+        if (file == null || (!file.isFile && !ComicArchive.hasPendingArchiveReplacement(file))) {
             showError(R.string.reader_prepare_invalid_file)
             return
         }

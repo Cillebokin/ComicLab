@@ -251,6 +251,15 @@ internal object AppSettingsStore {
             .apply()
     }
 
+    fun validateSnapshotApply(context: Context, settings: ComicLabAppSettings) {
+        if (settings.customReaderBrightness == null) {
+            return
+        }
+        val preferences = PrefsGateway.open(context, PREFS_NAME)
+        preferences.getBoolean(KEY_CUSTOM_READER_BRIGHTNESS_ZERO_MIN_MIGRATED, false)
+        preferences.getInt(KEY_CUSTOM_READER_BRIGHTNESS, DEFAULT_READER_BRIGHTNESS)
+    }
+
     private fun migrateLegacyReaderBrightnessMinimum(preferences: SharedPreferences) {
         if (preferences.getBoolean(KEY_CUSTOM_READER_BRIGHTNESS_ZERO_MIN_MIGRATED, false)) {
             return

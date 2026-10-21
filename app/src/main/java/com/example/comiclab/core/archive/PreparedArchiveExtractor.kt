@@ -23,6 +23,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
 import java.io.RandomAccessFile
+import java.security.DigestOutputStream
+import java.security.MessageDigest
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.Locale
@@ -31,6 +33,8 @@ import java.util.zip.ZipFile
 /** Prepared archive files, manifest mapping and extraction. */
 internal object PreparedArchiveExtractor {
     private const val PREPARED_READER_MANIFEST_FILE = "reader_manifest.json"
+    private const val PREPARED_IMAGE_INTEGRITY_SUFFIX = ".sha256"
+    private const val PREPARED_IMAGE_INTEGRITY_VERSION = "1"
     private val zipArchiveExtensions get() = ArchiveFormatDetector.zipArchiveExtensions
     private val sevenZipArchiveExtensions get() = ArchiveFormatDetector.sevenZipArchiveExtensions
     private val imageExtensions get() = ArchiveEntryLister.imageExtensions
@@ -38,6 +42,7 @@ internal object PreparedArchiveExtractor {
     data class PreparedImageEntry(val index: Int, val entryName: String)
 
     fun extractImageEntryToFile(file: File, entryName: String, targetFile: File): Boolean {
+        ArchiveReplacementRecovery.recover(file)
         if (!file.isFile || entryName.isBlank() || !entryName.isImageEntryName() || isPdf(file)) {
             return false
         }
@@ -107,6 +112,32 @@ internal object PreparedArchiveExtractor {
 
     fun imageFileBounds(file: File): ArchiveReaderSessionBounds? {
         return decodeFileBounds(file)
+    }
+
+    fun validatePreparedImageFile(file: File): Boolean {
+        clearInterruptedWriteFiles(file)
+        val valid = runCatching {
+            if (!file.isFile || file.length() <= 0L) {
+                return@runCatching false
+            }
+
+            val fields = integrityFile(file).readText(Charsets.US_ASCII).split(':')
+            fields.size == 3 &&
+                fields[0] == PREPARED_IMAGE_INTEGRITY_VERSION &&
+                fields[1].toLongOrNull() == file.length() &&
+                fields[2].equals(sha256(file), ignoreCase = true)
+        }.getOrDefault(false)
+
+        if (!valid) {
+            discardPreparedImageFile(file)
+        }
+        return valid
+    }
+
+    fun discardPreparedImageFile(file: File) {
+        file.delete()
+        integrityFile(file).delete()
+        clearInterruptedWriteFiles(file)
     }
 
     fun extractPreparedImagesToDirectory(
@@ -185,6 +216,9 @@ internal object PreparedArchiveExtractor {
         private val file: File,
         private val outputDir: File
     ) : Closeable {
+        init {
+            ArchiveReplacementRecovery.recover(file)
+        }
 
         private val extension = file.extension.lowercase(Locale.ROOT)
         private val zipFile = if (extension in zipArchiveExtensions) ZipFile(file) else null
@@ -210,7 +244,7 @@ internal object PreparedArchiveExtractor {
                 writerLease.withWriteLock {
                     synchronized(this) {
                         val targetFile = preparedImageFile(outputDir, index, entryName)
-                        if (targetFile.isFile && targetFile.length() > 0L) {
+                        if (validatePreparedImageFile(targetFile)) {
                             return@synchronized targetFile
                         }
 
@@ -236,7 +270,7 @@ internal object PreparedArchiveExtractor {
             val zip = zipFile ?: return null
             val entry = zip.getEntry(entryName) ?: return null
             val copied = runCatching {
-                writeAtomic(targetFile) { output ->
+                writeAtomic(targetFile, writeIntegrity = true) { output ->
                     zip.getInputStream(entry).use { input ->
                         input.copyTo(output)
                     }
@@ -248,7 +282,7 @@ internal object PreparedArchiveExtractor {
         private fun extractSevenZipEntry(entryName: String, targetFile: File): File? {
             val archive = sevenZipArchive ?: return null
             val entryIndex = sevenZipEntryIndexes[entryName] ?: return null
-            val copied = extractSevenZipEntryToFile(archive, entryIndex, targetFile)
+            val copied = extractSevenZipEntryToFile(archive, entryIndex, targetFile, writeIntegrity = true)
             return targetFile.takeIf { copied && it.isFile && it.length() > 0L }
         }
     }
@@ -347,7 +381,7 @@ internal object PreparedArchiveExtractor {
                 val entry = zipFile.getEntry(entryName)
                 if (entry != null) {
                     val copied = runCatching {
-                        writeAtomic(targetFile) { output ->
+                        writeAtomic(targetFile, writeIntegrity = true) { output ->
                             zipFile.getInputStream(entry).use { input ->
                                 input.copyTo(output)
                             }
@@ -356,7 +390,7 @@ internal object PreparedArchiveExtractor {
                     if (copied && targetFile.isFile && targetFile.length() > 0L) {
                         extractedFiles.add(targetFile)
                     } else {
-                        targetFile.delete()
+                        discardPreparedImageFile(targetFile)
                     }
                 }
                 onProgress(index + 1, entryNames.size)
@@ -387,10 +421,16 @@ internal object PreparedArchiveExtractor {
 
                 val targetFile = preparedImageFile(outputDir, index, entryName)
                 val entryIndex = entryIndexesByPath[entryName]
-                if (entryIndex != null && extractSevenZipEntryToFile(archive, entryIndex, targetFile)) {
+                if (entryIndex != null && extractSevenZipEntryToFile(
+                        archive,
+                        entryIndex,
+                        targetFile,
+                        writeIntegrity = true
+                    )
+                ) {
                     extractedFiles.add(targetFile)
                 } else {
-                    targetFile.delete()
+                    discardPreparedImageFile(targetFile)
                 }
                 onProgress(index + 1, entryNames.size)
             }
@@ -402,10 +442,11 @@ internal object PreparedArchiveExtractor {
     internal fun extractSevenZipEntryToFile(
         archive: IInArchive,
         entryIndex: Int,
-        targetFile: File
+        targetFile: File,
+        writeIntegrity: Boolean = false
     ): Boolean {
         var extractResult = ExtractOperationResult.OK
-        val wroteFile = writeAtomic(targetFile) { output ->
+        val wroteFile = writeAtomic(targetFile, writeIntegrity) { output ->
             archive.extract(intArrayOf(entryIndex), false, object : IArchiveExtractCallback {
                 override fun setTotal(total: Long) = Unit
 
@@ -437,7 +478,11 @@ internal object PreparedArchiveExtractor {
             targetFile.isFile &&
             targetFile.length() > 0L
         if (!success) {
-            targetFile.delete()
+            if (writeIntegrity) {
+                discardPreparedImageFile(targetFile)
+            } else {
+                targetFile.delete()
+            }
         }
         return success
     }
@@ -472,32 +517,116 @@ internal object PreparedArchiveExtractor {
         return String.format(Locale.ROOT, "%06d_%s.%s", index, hash, extension)
     }
 
-    private fun writeAtomic(targetFile: File, writeBlock: (OutputStream) -> Unit): Boolean {
-        targetFile.parentFile?.mkdirs()
-        val tempFile = File(targetFile.parentFile, "${targetFile.name}.part")
-        tempFile.delete()
+    private fun writeAtomic(
+        targetFile: File,
+        writeIntegrity: Boolean = false,
+        writeBlock: (OutputStream) -> Unit
+    ): Boolean {
+        val parent = targetFile.parentFile ?: File(".")
+        if (!parent.isDirectory && !parent.mkdirs()) {
+            return false
+        }
+        val tempFile = File(parent, "${targetFile.name}.part")
+        val metadataFile = integrityFile(targetFile).takeIf { writeIntegrity }
+        val metadataTempFile = metadataFile?.let { File(parent, "${it.name}.part") }
+        clearInterruptedWriteFiles(targetFile)
+        val digest = if (writeIntegrity) MessageDigest.getInstance("SHA-256") else null
         val wrote = runCatching {
-            tempFile.outputStream().use { output ->
-                writeBlock(output)
+            FileOutputStream(tempFile).use { output ->
+                val writeOutput = digest?.let { DigestOutputStream(output, it) } ?: output
+                writeBlock(writeOutput)
+                writeOutput.flush()
+                output.fd.sync()
             }
             tempFile.isFile && tempFile.length() > 0L
         }.getOrDefault(false)
 
         if (!wrote) {
             tempFile.delete()
+            metadataTempFile?.delete()
             return false
         }
 
-        if (targetFile.exists()) {
-            targetFile.delete()
+        if (digest == null || metadataFile == null || metadataTempFile == null) {
+            if (!replaceAtomically(tempFile, targetFile)) {
+                tempFile.delete()
+                return false
+            }
+            return true
         }
 
-        val renamed = tempFile.renameTo(targetFile)
-        if (!renamed) {
+        val metadata = "$PREPARED_IMAGE_INTEGRITY_VERSION:${tempFile.length()}:${digest.digest().toHexString()}"
+        val metadataWrote = runCatching {
+            FileOutputStream(metadataTempFile).use { output ->
+                output.write(metadata.toByteArray(Charsets.US_ASCII))
+                output.fd.sync()
+            }
+            metadataTempFile.isFile && metadataTempFile.length() > 0L
+        }.getOrDefault(false)
+        if (!metadataWrote) {
             tempFile.delete()
+            metadataTempFile.delete()
+            return false
         }
-        return renamed
+
+        if (!replaceAtomically(tempFile, targetFile)) {
+            tempFile.delete()
+            metadataTempFile.delete()
+            return false
+        }
+        if (!replaceAtomically(metadataTempFile, metadataFile)) {
+            targetFile.delete()
+            metadataFile.delete()
+            metadataTempFile.delete()
+            return false
+        }
+        return true
     }
+
+    private fun integrityFile(file: File): File {
+        val parent = file.parentFile ?: File(".")
+        return File(parent, "${file.name}$PREPARED_IMAGE_INTEGRITY_SUFFIX")
+    }
+
+    private fun clearInterruptedWriteFiles(file: File) {
+        val parent = file.parentFile ?: File(".")
+        File(parent, "${file.name}.part").delete()
+        File(parent, "${integrityFile(file).name}.part").delete()
+    }
+
+    private fun sha256(file: File): String? = runCatching {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(8 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count > 0) digest.update(buffer, 0, count)
+            }
+        }
+        digest.digest().toHexString()
+    }.getOrNull()
+
+    private fun ByteArray.toHexString(): String {
+        val bytes = this
+        return buildString(bytes.size * 2) {
+            bytes.forEach { byte ->
+                val value = byte.toInt() and 0xFF
+                append("0123456789abcdef"[value ushr 4])
+                append("0123456789abcdef"[value and 0x0F])
+            }
+        }
+    }
+
+    private fun replaceAtomically(source: File, destination: File): Boolean = runCatching {
+        Files.move(
+            source.toPath(),
+            destination.toPath(),
+            StandardCopyOption.ATOMIC_MOVE,
+            StandardCopyOption.REPLACE_EXISTING
+        )
+        true
+    }.getOrDefault(false)
 
     private fun isPdf(file: File): Boolean = ArchiveFormatDetector.isPdf(file)
 

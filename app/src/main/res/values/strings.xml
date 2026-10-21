@@ -250,10 +250,11 @@
     <string name="loading_reading">正在加载阅读...</string>
     <string name="deleting_archive_image">正在删除图片...</string>
     <string name="delete_archive_image_title">删除图片</string>
-    <string name="delete_archive_image_message">是否从压缩包中删除该图片？\n（删除后无法恢复！）</string>
+    <string name="delete_archive_image_message">是否从压缩包中删除该图片？\n删除前的完整副本保存在：\n%1$s\n备份长期保留，不会自动清理。确认不再需要恢复后，可用支持显示隐藏文件的文件管理器手动删除完整备份；若仍有恢复待处理，请保留整个备份目录。</string>
     <string name="delete_archive_image_success">已删除图片，原文件已自动备份</string>
     <string name="delete_archive_image_failed">删除图片失败</string>
-    <string name="delete_archive_image_unsupported">当前文件不支持修改源文件</string>
+    <string name="delete_archive_image_unsupported">仅支持从ZIP/CBZ压缩包中删除图片，当前格式仅支持阅读</string>
+    <string name="archive_recovery_pending">有归档恢复未完成或存在文件冲突，请保留原目录及.ComicLabBackups备份目录，勿清理相关文件</string>
     <string name="delete_pdf_page_unsupported">当前文件为PDF，暂不支持删除页面</string>
     <string name="no_preview_images">文件中没有可预览的图片或页面</string>
     <string name="no_reading_images">文件中没有可阅读的图片或页面</string>
@@ -311,7 +312,7 @@
     <string name="import_configuration">加载配置</string>
     <string name="configuration_exported">配置已导出</string>
     <string name="configuration_export_failed">配置导出失败：%1$s</string>
-    <string name="configuration_imported">配置已加载：恢复 %1$d 项，跳过 %2$d 项</string>
+    <string name="configuration_imported">配置已加载：恢复 %1$d 项，跳过 %2$d 项；进度冲突时保留本地版本（%3$d 项）</string>
     <string name="configuration_import_failed">配置加载失败：%1$s</string>
     <string name="debug_stress_scanning">正在扫描较大的漫画文件…</string>
     <string name="debug_stress_no_comic_found">当前路径下没有找到可测试的漫画文件</string>

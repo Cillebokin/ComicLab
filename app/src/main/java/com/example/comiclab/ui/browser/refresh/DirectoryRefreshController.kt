@@ -4,6 +4,7 @@ import android.os.Environment
 import android.view.ViewTreeObserver
 import android.widget.ListView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.example.comiclab.core.diagnostics.ComicLabPerformance
 import com.example.comiclab.ui.browser.DirectorySortOrder
@@ -70,6 +71,9 @@ internal class DirectoryRefreshController(
                     notifyListChanged()
                 }
                 is DirectoryBrowserController.Result.Loaded -> {
+                    if (!result.archiveRecoveryComplete) {
+                        Toast.makeText(activity, R.string.archive_recovery_pending, Toast.LENGTH_LONG).show()
+                    }
                     val resolvedPath = result.resolvedPath
                     val items = result.items
                     val applyStartedAtNanos = ComicLabPerformance.nowNanos()

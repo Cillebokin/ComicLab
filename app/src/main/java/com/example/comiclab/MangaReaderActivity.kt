@@ -225,7 +225,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
         val path = intent.getStringExtra(EXTRA_ARCHIVE_PATH)
         val file = path?.let(::File)
-        if (file == null || !file.isFile) {
+        if (file == null || (!file.isFile && !ComicArchive.hasPendingArchiveReplacement(file))) {
             showError(getString(R.string.message_invalid_file))
             return
         }
@@ -816,9 +816,12 @@ class MangaReaderActivity : AppCompatActivity() {
             val pageFiles = entries.mapIndexed { index, entryName ->
                 ComicArchive.preparedImageFile(preparedCacheDir, index, entryName)
             }
-            val hasPreparedPage = pageFiles.any { it.isFile && it.length() > 0L }
+            val intactPreparedFiles = pageFiles.map { imageFile ->
+                imageFile.isFile && ComicArchive.validatePreparedImageFile(imageFile)
+            }
+            val hasPreparedPage = intactPreparedFiles.any { it }
             val boundsByPosition = pageFiles.mapIndexedNotNull { index, imageFile ->
-                if (imageFile.isFile && imageFile.length() > 0L) {
+                if (intactPreparedFiles[index]) {
                     ComicArchive.imageFileBounds(imageFile)?.let { index to it }
                 } else {
                     null

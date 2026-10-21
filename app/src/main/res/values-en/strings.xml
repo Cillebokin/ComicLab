@@ -251,10 +251,11 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="loading_reading">Loading...</string>
     <string name="deleting_archive_image">Deleting image...</string>
     <string name="delete_archive_image_title">Delete image</string>
-    <string name="delete_archive_image_message">Delete this image from the archive?\n(This cannot be undone!)</string>
+    <string name="delete_archive_image_message">Delete this image from the archive?\nA complete original copy is kept in:\n%1$s\nBackups are retained indefinitely and are not automatically cleaned. Once recovery is no longer needed, manually delete complete backups using a file manager that shows hidden files. Keep the entire backup folder while recovery is pending.</string>
     <string name="delete_archive_image_success">Image deleted. A backup of the original file was created</string>
     <string name="delete_archive_image_failed">Could not delete image</string>
-    <string name="delete_archive_image_unsupported">This file does not support editing its contents</string>
+    <string name="delete_archive_image_unsupported">Images can only be deleted from ZIP/CBZ archives. This format is read-only.</string>
+    <string name="archive_recovery_pending">Archive recovery is pending or a file conflicts with it. Keep the original folder and .ComicLabBackups folder; do not clean related files.</string>
     <string name="delete_pdf_page_unsupported">Deleting pages from PDF files is not supported yet</string>
     <string name="no_preview_images">No images or pages to preview in this file</string>
     <string name="no_reading_images">No images or pages to read in this file</string>
@@ -312,7 +313,7 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="import_configuration">Load configuration</string>
     <string name="configuration_exported">Configuration exported</string>
     <string name="configuration_export_failed">Configuration export failed: %1$s</string>
-    <string name="configuration_imported">Configuration loaded: restored %1$d, skipped %2$d</string>
+    <string name="configuration_imported">Configuration loaded: restored %1$d, skipped %2$d; kept local progress for %3$d conflict(s)</string>
     <string name="configuration_import_failed">Configuration load failed: %1$s</string>
     <string name="debug_stress_scanning">Scanning for a large comic file…</string>
     <string name="debug_stress_no_comic_found">No comic file to test was found in the current path</string>

@@ -1,14 +1,15 @@
 package com.example.comiclab.core.archive
 
 import java.io.File
+import java.io.FileOutputStream
 import java.util.Locale
 
 internal object ArchiveBackupManager {
     private const val DELETE_BACKUP_DIR_NAME = ".ComicLabBackups"
     private const val DELETE_BACKUP_COPY_BUFFER_SIZE = 1024 * 1024
-    private val defaultRenameTo: (File, File) -> Boolean = { source, destination ->
-        source.renameTo(destination)
-    }
+    private val defaultRenameTo: (File, File) -> Boolean = ArchiveReplacementRecovery::moveWithoutReplacing
+
+    fun backupDirectory(file: File): File = File(file.parentFile, DELETE_BACKUP_DIR_NAME)
 
     fun createDeleteBackup(
         file: File,
@@ -19,7 +20,9 @@ internal object ArchiveBackupManager {
             return null
         }
 
-        val backupDir = File(parent, DELETE_BACKUP_DIR_NAME)
+        val backupDir = backupDirectory(file)
+        if (runCatching { file.canonicalFile != File(parent.canonicalFile, file.name) }.getOrDefault(true)) return null
+        if (runCatching { backupDir.canonicalFile != File(parent.canonicalFile, DELETE_BACKUP_DIR_NAME) }.getOrDefault(true)) return null
         if (!backupDir.exists() && !backupDir.mkdirs()) {
             return null
         }
@@ -30,8 +33,9 @@ internal object ArchiveBackupManager {
 
         val copied = runCatching {
             file.inputStream().buffered().use { input ->
-                tempFile.outputStream().buffered().use { output ->
+                FileOutputStream(tempFile).use { output ->
                     input.copyTo(output, DELETE_BACKUP_COPY_BUFFER_SIZE)
+                    output.fd.sync()
                 }
             }
             tempFile.isFile && tempFile.length() == file.length()
@@ -48,41 +52,6 @@ internal object ArchiveBackupManager {
 
         tempFile.delete()
         return null
-    }
-
-    fun restoreOriginalFromDeleteBackupIfNeeded(
-        originalFile: File,
-        backupFile: File,
-        renameTo: (File, File) -> Boolean = defaultRenameTo
-    ) {
-        if (originalFile.isFile && originalFile.length() > 0L) {
-            return
-        }
-
-        val parent = originalFile.parentFile ?: return
-        val restoreTempFile = File(parent, "${originalFile.name}.restore_${System.currentTimeMillis()}.tmp")
-        restoreTempFile.delete()
-
-        val copied = runCatching {
-            backupFile.inputStream().buffered().use { input ->
-                restoreTempFile.outputStream().buffered().use { output ->
-                    input.copyTo(output, DELETE_BACKUP_COPY_BUFFER_SIZE)
-                }
-            }
-            restoreTempFile.isFile && restoreTempFile.length() == backupFile.length()
-        }.getOrDefault(false)
-
-        if (!copied) {
-            restoreTempFile.delete()
-            return
-        }
-
-        if (originalFile.exists()) {
-            originalFile.delete()
-        }
-        if (!renameTo(restoreTempFile, originalFile)) {
-            restoreTempFile.delete()
-        }
     }
 
     private fun uniqueDeleteBackupFile(backupDir: File, file: File): File {

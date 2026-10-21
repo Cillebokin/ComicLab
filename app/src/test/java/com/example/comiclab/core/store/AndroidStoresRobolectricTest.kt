@@ -307,7 +307,7 @@ class AndroidStoresRobolectricTest {
             assertEquals(listOf(newer, older), ReadingHistoryStore.items(context).map { it.file })
 
             assertEquals(
-                2,
+                1, // 较旧的 older 导入版本未采用，只有 newer 的导入版本保留。
                 ReadingHistoryStore.merge(
                     context,
                     listOf(

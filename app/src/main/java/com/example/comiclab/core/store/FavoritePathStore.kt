@@ -42,6 +42,7 @@ object FavoritePathStore {
         return RecordResult.ADDED
     }
 
+    /** 返回本次导入中最终保留的唯一路径数，不计重复项与容量淘汰项。 */
     fun merge(context: Context, items: Collection<Item>): Int {
         val storedItems = checkNotNull(readStoredItems(context)) { "无法读取目录收藏，已保留原数据" }
         val mergedItems = LinkedHashMap<String, StoredItem>()
@@ -49,7 +50,7 @@ object FavoritePathStore {
             mergedItems[item.path] = item
         }
 
-        var restoredCount = 0
+        val importedPaths = mutableSetOf<String>()
         items.forEach { item ->
             val directory = item.directory
             if (!directory.isDirectory) {
@@ -61,15 +62,20 @@ object FavoritePathStore {
                 path = path,
                 addedAt = item.addedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
             )
-            restoredCount++
+            importedPaths.add(path)
         }
 
-        if (mergedItems.isEmpty()) {
+        val retainedItems = mergedItems.values.sortedBy { it.addedAt }.take(MAX_FAVORITE_PATH_COUNT)
+        if (retainedItems.isEmpty()) {
             clear(context)
         } else {
-            saveStoredItems(context, mergedItems.values.sortedBy { it.addedAt })
+            saveStoredItems(context, retainedItems)
         }
-        return restoredCount
+        return retainedItems.count { it.path in importedPaths }
+    }
+
+    internal fun validateReadable(context: Context) {
+        checkNotNull(readStoredItems(context)) { "无法读取目录收藏，已保留原数据" }
     }
 
     fun items(context: Context): List<Item> {

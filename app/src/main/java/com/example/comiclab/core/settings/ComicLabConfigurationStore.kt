@@ -12,8 +12,11 @@ import com.example.comiclab.ebook.ReaderFileDetector
 import java.io.File
 
 data class ComicLabConfigurationImportSummary(
+    // 不含 applyAppSettings=false 时尚未应用的设置，UI 应在应用后追加实际数量。
     val restoredEntries: Int,
-    val skippedEntries: Int
+    val skippedEntries: Int,
+    // 备份包含该路径进度且本地已有进度时，按唯一文件路径统计。
+    val preservedReadingProgressEntries: Int = 0
 )
 
 object ComicLabConfigurationStore {
@@ -80,8 +83,11 @@ object ComicLabConfigurationStore {
         initiallySkippedEntries: Int = 0,
         applyAppSettings: Boolean = true
     ): ComicLabConfigurationImportSummary {
+        validateImportDestinations(context, configuration)
+
         var skippedEntries = initiallySkippedEntries
         var restoredEntries = 0
+        var preservedReadingProgressEntries = 0
 
         val favoriteComics = configuration.favoriteComics.mapNotNull { item ->
             val file = File(item.path)
@@ -96,7 +102,9 @@ object ComicLabConfigurationStore {
                 modifiedAt = item.modifiedAt
             )
         }
-        restoredEntries += FavoriteComicStore.merge(context, favoriteComics)
+        val retainedComics = FavoriteComicStore.merge(context, favoriteComics)
+        restoredEntries += retainedComics
+        skippedEntries += favoriteComics.size - retainedComics
 
         val favoritePaths = configuration.favoritePaths.mapNotNull { item ->
             val directory = File(item.path)
@@ -106,7 +114,9 @@ object ComicLabConfigurationStore {
             }
             FavoritePathStore.Item(directory = directory, addedAt = item.addedAt)
         }
-        restoredEntries += FavoritePathStore.merge(context, favoritePaths)
+        val retainedPaths = FavoritePathStore.merge(context, favoritePaths)
+        restoredEntries += retainedPaths
+        skippedEntries += favoritePaths.size - retainedPaths
 
         val history = configuration.readingHistory.mapNotNull { item ->
             val file = File(item.path)
@@ -121,7 +131,9 @@ object ComicLabConfigurationStore {
                 modifiedAt = item.modifiedAt
             )
         }
-        restoredEntries += ReadingHistoryStore.merge(context, history)
+        val retainedHistory = ReadingHistoryStore.merge(context, history)
+        restoredEntries += retainedHistory
+        skippedEntries += history.size - retainedHistory
 
         val bookcaseDirectories = configuration.bookcasePaths.mapNotNull { path ->
             val directory = File(path)
@@ -130,26 +142,54 @@ object ComicLabConfigurationStore {
                 return@mapNotNull null
             }
             directory
-        }.distinctBy { it.absolutePath }
-        restoredEntries += AppSettings.setBookcaseDirectories(
+        }
+        AppSettings.setBookcaseDirectories(
             context,
             bookcaseDirectories,
             enabled = true
         )
+        val savedBookcasePaths = AppSettings.bookcaseDirectoryPaths(context)
+        val retainedBookcases = bookcaseDirectories.distinctBy { it.absolutePath }
+            .count { it.absolutePath in savedBookcasePaths }
+        restoredEntries += retainedBookcases
+        skippedEntries += bookcaseDirectories.size - retainedBookcases
 
+        // 配置没有单本进度更新时间，导入只补本地空缺，避免旧备份回退当前进度。
+        val mangaPaths = mutableSetOf<String>()
+        val mangaPathHadLocalProgress = mutableMapOf<String, Boolean>()
         configuration.mangaReadingProgress.forEach { item ->
             val file = File(item.path)
             if (!file.isFile || !ReaderFileDetector.isSupported(file) || ReaderFileDetector.isEbook(file)) {
                 skippedEntries++
                 return@forEach
             }
+            val path = file.absolutePath
+            val hadLocalProgress = mangaPathHadLocalProgress.getOrPut(path) {
+                MangaReaderActivity.savedReadingProgress(context, file) != null
+            }
+            if (hadLocalProgress) {
+                if (mangaPaths.add(path)) preservedReadingProgressEntries++
+                skippedEntries++
+                return@forEach
+            }
             MangaReaderActivity.restoreReadingProgress(context, file, item)
-            restoredEntries++
+            if (mangaPaths.add(path)) restoredEntries++ else skippedEntries++
         }
 
+        val ebookIdentities = mutableSetOf<String>()
+        val ebookIdentityHadLocalProgress = mutableMapOf<String, Boolean>()
         configuration.ebookReadingProgress.forEach { item ->
             val file = File(item.path)
             if (!file.isFile || !ReaderFileDetector.isEbook(file)) {
+                skippedEntries++
+                return@forEach
+            }
+            val identity = EbookProgressStore.fileIdentity(file)
+            val hadLocalProgress = ebookIdentityHadLocalProgress.getOrPut(identity) {
+                EbookProgressStore.load(context, file) != null
+            }
+            if (hadLocalProgress) {
+                if (ebookIdentities.add(identity)) preservedReadingProgressEntries++
                 skippedEntries++
                 return@forEach
             }
@@ -161,32 +201,44 @@ object ComicLabConfigurationStore {
                     scrollFraction = item.scrollFraction
                 )
             )
-            restoredEntries++
+            if (ebookIdentities.add(identity)) restoredEntries++ else skippedEntries++
         }
 
-        restoredEntries += if (applyAppSettings) {
-            AppSettings.applySnapshot(context, configuration.appSettings)
-        } else {
-            configuration.appSettings.entryCount()
-        }
+        if (applyAppSettings) restoredEntries += AppSettings.applySnapshot(context, configuration.appSettings)
         return ComicLabConfigurationImportSummary(
             restoredEntries = restoredEntries,
-            skippedEntries = skippedEntries
+            skippedEntries = skippedEntries,
+            preservedReadingProgressEntries = preservedReadingProgressEntries
         )
     }
 
-    private fun ComicLabAppSettings.entryCount(): Int {
-        return listOf(
-            darkModeEnabled,
-            languageTag,
-            readingDirection,
-            doublePageReadingEnabled,
-            doublePageCoverSingle,
-            volumeKeyPageTurn,
-            autoHideSystemBars,
-            startMarkerErrorTags,
-            customReaderBrightnessEnabled,
-            customReaderBrightness
-        ).count { it != null }
+    /**
+     * 在任何导入写入前读取所有将参与合并的本地数据，避免后续 Store 的损坏值
+     * 在前序集合已经落盘后才暴露。
+     */
+    private fun validateImportDestinations(
+        context: Context,
+        configuration: ComicLabConfiguration
+    ) {
+        FavoriteComicStore.validateReadable(context)
+        FavoritePathStore.validateReadable(context)
+        ReadingHistoryStore.validateReadable(context)
+        AppSettings.bookcaseDirectoryPaths(context)
+        AppSettingsStore.validateSnapshotApply(context, configuration.appSettings)
+
+        configuration.mangaReadingProgress
+            .asSequence()
+            .map { File(it.path) }
+            .filter { it.isFile && ReaderFileDetector.isSupported(it) && !ReaderFileDetector.isEbook(it) }
+            .distinctBy { it.absolutePath }
+            .forEach { MangaReaderActivity.savedReadingProgress(context, it) }
+
+        configuration.ebookReadingProgress
+            .asSequence()
+            .map { File(it.path) }
+            .filter { it.isFile && ReaderFileDetector.isEbook(it) }
+            .distinctBy { EbookProgressStore.fileIdentity(it) }
+            .forEach { EbookProgressStore.load(context, it) }
     }
+
 }

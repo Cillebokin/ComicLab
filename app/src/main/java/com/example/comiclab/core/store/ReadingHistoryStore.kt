@@ -40,6 +40,7 @@ object ReadingHistoryStore {
         saveStoredItems(context, updatedItems)
     }
 
+    /** 仅统计被采用且留在最终窗口中的导入记录，同路径计一次。 */
     fun merge(context: Context, items: Collection<Item>): Int {
         val storedItems = checkNotNull(readStoredItems(context)) { "无法读取阅读历史，已保留原数据" }
         val mergedItems = LinkedHashMap<String, StoredItem>()
@@ -47,7 +48,7 @@ object ReadingHistoryStore {
             mergedItems[item.path] = item
         }
 
-        var restoredCount = 0
+        val importedPaths = mutableSetOf<String>()
         items.forEach { item ->
             val file = item.file
             if (!file.isFile || !ReaderFileDetector.isSupported(file)) {
@@ -64,19 +65,24 @@ object ReadingHistoryStore {
             val currentItem = mergedItems[path]
             if (currentItem == null || importedItem.lastReadAt >= currentItem.lastReadAt) {
                 mergedItems[path] = importedItem
+                importedPaths.add(path)
             }
-            restoredCount++
         }
 
-        if (mergedItems.isEmpty()) {
+        val retainedItems = mergedItems.values.sortedByDescending { it.lastReadAt }.take(MAX_HISTORY_COUNT)
+        if (retainedItems.isEmpty()) {
             clear(context)
         } else {
             saveStoredItems(
                 context,
-                mergedItems.values.sortedByDescending { it.lastReadAt }
+                retainedItems
             )
         }
-        return restoredCount
+        return retainedItems.count { it.path in importedPaths }
+    }
+
+    internal fun validateReadable(context: Context) {
+        checkNotNull(readStoredItems(context)) { "无法读取阅读历史，已保留原数据" }
     }
 
     fun items(context: Context): List<Item> {

@@ -3,7 +3,7 @@
     <external-path
         name="external_storage"
         path="." />
-    <root-path
-        name="root"
-        path="/" />
+    <cache-path
+        name="crash_exports"
+        path="crash_exports/" />
 </paths>

@@ -522,17 +522,28 @@ class MainActivity : AppCompatActivity() {
     private fun openPendingCenteredTargetIfPresent(): Boolean {
         val targetPath = pendingCenterTargetPath?.takeIf { it.isNotBlank() } ?: return false
         pendingCenterTargetPath = null
+        val target = canonicalPathWithinStorageRoot(targetPath) ?: return false
+
         browserInitialized = true
-        openDirectoryContainingTarget(targetPath)
+        openDirectoryContainingTarget(target.absolutePath)
         return true
     }
 
+    private fun canonicalPathWithinStorageRoot(path: String): File? {
+        val storageRoot = runCatching { File(STORAGE_ROOT_PATH).canonicalFile.toPath() }
+            .getOrNull()
+            ?: return null
+        return runCatching {
+            File(path).canonicalFile.takeIf { it.toPath().startsWith(storageRoot) }
+        }.getOrNull()
+    }
+
     private fun openDirectoryContainingTarget(targetPath: String) {
-        val storageRoot = File(STORAGE_ROOT_PATH)
-        val target = File(targetPath)
+        val storageRoot = File(STORAGE_ROOT_PATH).canonicalFile
+        val target = File(targetPath).canonicalFile
         val targetAbsolutePath = target.absolutePath
         if (targetAbsolutePath == storageRoot.absolutePath) {
-            setCurrentPath(storageRoot.absolutePath)
+            setCurrentPath(STORAGE_ROOT_PATH)
             loadCurrentDirectory()
             return
         }
@@ -541,7 +552,14 @@ class MainActivity : AppCompatActivity() {
             ?.takeIf { it.isDirectory }
             ?: target.takeIf { it.isDirectory }
             ?: storageRoot
-        setCurrentPath(parentDirectory.absolutePath)
+        val parentPath = if (
+            runCatching { parentDirectory.canonicalFile == storageRoot }.getOrDefault(false)
+        ) {
+            STORAGE_ROOT_PATH
+        } else {
+            parentDirectory.absolutePath
+        }
+        setCurrentPath(parentPath)
         loadCurrentDirectory(targetAbsolutePath)
     }
 
@@ -1720,12 +1738,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun savedCurrentPath(): String {
+        val originalStorageRoot = File(STORAGE_ROOT_PATH)
+        val canonicalStorageRoot = runCatching { originalStorageRoot.canonicalFile }
+            .getOrNull()
         val savedPath = prefs.getString(KEY_CURRENT_PATH, null)
             ?.takeIf { it.isNotBlank() }
             ?.let(::File)
+            ?.let { canonicalPathWithinStorageRoot(it.path) }
             ?.takeIf { it.isDirectory }
-            ?.absolutePath
-        return savedPath ?: STORAGE_ROOT_PATH
+        if (savedPath == null || savedPath == canonicalStorageRoot) {
+            return originalStorageRoot.absolutePath
+        }
+        return savedPath.absolutePath
     }
 
     private fun Bundle.readFileListScrollState(): FileListScrollState? {
@@ -1782,6 +1806,10 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_FIND_SIMILAR_DIRECTORY_NAMES = 2
         private const val MENU_MERGE_COMICS_NON_RECURSIVE = 3
         private const val MENU_MERGE_FILES_NON_RECURSIVE = 4
-        private val STORAGE_ROOT_PATH = Environment.getExternalStorageDirectory().absolutePath
+        private val STORAGE_ROOT_PATH: String
+            get() {
+                val root = Environment.getExternalStorageDirectory()
+                return runCatching { root.canonicalPath }.getOrDefault(root.absolutePath)
+            }
     }
 }
