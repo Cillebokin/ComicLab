@@ -385,6 +385,13 @@ class MangaReaderActivity : AppCompatActivity() {
         layoutReaderPreviewPanel = findViewById(R.id.layoutReaderPreviewPanel)
         listReaderPreview = findViewById(R.id.listReaderPreview)
         sliderReaderProgress = findViewById(R.id.sliderReaderProgress)
+        sliderReaderProgress.layoutDirection = if (
+            readingDirection == AppSettings.READING_DIRECTION_RIGHT_TO_LEFT
+        ) {
+            View.LAYOUT_DIRECTION_RTL
+        } else {
+            View.LAYOUT_DIRECTION_LTR
+        }
         sliderScreenBrightness = findViewById(R.id.sliderScreenBrightness)
         checkboxCustomBrightness = findViewById(R.id.checkboxCustomBrightness)
         btnReaderPreview = findViewById(R.id.btnReaderPreview)
