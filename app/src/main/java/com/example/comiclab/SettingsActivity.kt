@@ -3,7 +3,6 @@ package com.example.comiclab
 import com.example.comiclab.core.settings.ComicLabConfigurationStore
 import com.example.comiclab.core.settings.ComicLabConfigurationJson
 import com.example.comiclab.core.update.GitHubReleaseApi
-import com.example.comiclab.core.update.ReleaseVersionComparator
 import com.example.comiclab.core.diagnostics.CrashLogManager
 import com.example.comiclab.core.store.PrefsGateway
 import com.example.comiclab.ui.common.createRounded
@@ -417,8 +416,7 @@ class SettingsActivity : AppCompatActivity() {
         val localVersion = BuildConfig.VERSION_NAME
         releaseCheckExecutor.execute {
             val result = runCatching {
-                val latestTag = GitHubReleaseApi.fetchLatestReleaseTag()
-                latestTag to ReleaseVersionComparator.compare(localVersion, latestTag)
+                GitHubReleaseApi.fetchLatestReleaseTag()
             }
             runOnUiThread {
                 if (destroyed) {
@@ -427,8 +425,8 @@ class SettingsActivity : AppCompatActivity() {
                 btnCheckUpdates.isEnabled = true
                 btnCheckUpdates.setText(R.string.check_updates)
                 result
-                    .onSuccess { (latestTag, comparison) ->
-                        showUpdateCheckResult(localVersion, latestTag, comparison)
+                    .onSuccess { remoteVersion ->
+                        showUpdateVersionInfo(localVersion, remoteVersion)
                     }
                     .onFailure {
                         showMessage(getString(R.string.update_check_failed))
@@ -437,22 +435,15 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun showUpdateCheckResult(
+    private fun showUpdateVersionInfo(
         localVersion: String,
-        latestTag: String,
-        comparison: ReleaseVersionComparator.Result
+        remoteVersion: String
     ) {
-        val statusMessage = when (comparison) {
-            ReleaseVersionComparator.Result.UP_TO_DATE -> R.string.update_status_up_to_date
-            ReleaseVersionComparator.Result.UPDATE_AVAILABLE -> R.string.update_status_available
-            ReleaseVersionComparator.Result.LOCAL_NEWER -> R.string.update_status_local_newer
-            ReleaseVersionComparator.Result.UNCOMPARABLE -> R.string.update_status_uncomparable
-        }
-        val message = buildString {
-            append(getString(statusMessage))
-            append("\n\n")
-            append(getString(R.string.update_version_comparison, localVersion, latestTag))
-        }
+        val message = getString(
+            R.string.update_version_info,
+            displayVersion(localVersion),
+            displayVersion(remoteVersion)
+        )
         AlertDialog.Builder(this)
             .setTitle(R.string.update_check_title)
             .setMessage(message)
@@ -461,6 +452,15 @@ class SettingsActivity : AppCompatActivity() {
             }
             .setNegativeButton(android.R.string.ok, null)
             .show()
+    }
+
+    private fun displayVersion(rawVersion: String): String {
+        val withoutSuffix = rawVersion.trim().substringBefore('_')
+        return if (withoutSuffix.startsWith("V", ignoreCase = true)) {
+            withoutSuffix.drop(1)
+        } else {
+            withoutSuffix
+        }
     }
 
     private fun openProjectReleasePage() {
