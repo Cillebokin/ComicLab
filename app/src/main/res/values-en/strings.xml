@@ -251,11 +251,11 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="loading_reading">Loading...</string>
     <string name="deleting_archive_image">Deleting image...</string>
     <string name="delete_archive_image_title">Delete image</string>
-    <string name="delete_archive_image_message">Delete this image from the archive?\nA complete original copy is kept in:\n%1$s\nBackups are retained indefinitely and are not automatically cleaned. Once recovery is no longer needed, manually delete complete backups using a file manager that shows hidden files. Keep the entire backup folder while recovery is pending.</string>
-    <string name="delete_archive_image_success">Image deleted. A backup of the original file was created</string>
+    <string name="delete_archive_image_message">Delete this image from the archive?\nThe archive will be rewritten in place. The app will not keep a full backup, and this deletion cannot be undone in the app.</string>
+    <string name="delete_archive_image_success">Image deleted</string>
     <string name="delete_archive_image_failed">Could not delete image</string>
     <string name="delete_archive_image_unsupported">Images can only be deleted from ZIP/CBZ archives. This format is read-only.</string>
-    <string name="archive_recovery_pending">Recovery pending. Keep original and .ComicLabBackups.</string>
+    <string name="archive_recovery_pending">Recovery pending. Keep the archive, adjacent recovery temporary files, and .ComicLabBackups.</string>
     <string name="delete_pdf_page_unsupported">Deleting pages from PDF files is not supported yet</string>
     <string name="no_preview_images">No images or pages to preview in this file</string>
     <string name="no_reading_images">No images or pages to read in this file</string>

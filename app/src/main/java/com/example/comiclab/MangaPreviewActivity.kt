@@ -474,7 +474,7 @@ class MangaPreviewActivity : AppCompatActivity() {
     private fun confirmDeletePreviewImage(file: File, entryName: String) {
         AlertDialog.Builder(this)
             .setTitle(R.string.delete_archive_image_title)
-            .setMessage(getString(R.string.delete_archive_image_message, ComicArchive.deleteBackupDirectory(file).absolutePath))
+            .setMessage(getString(R.string.delete_archive_image_message))
             .setPositiveButton(R.string.yes) { _, _ ->
                 deletePreviewImage(file, entryName)
             }

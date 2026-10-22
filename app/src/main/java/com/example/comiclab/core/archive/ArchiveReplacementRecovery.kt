@@ -8,13 +8,15 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.Properties
 
-/** 只处理有持久记录的替换；完整备份不在自动清理范围内。 */
+/** 通过短期回滚文件和持久日志恢复压缩包替换；兼容读取旧版完整备份日志。 */
 internal object ArchiveReplacementRecovery {
     private const val SUFFIX = ".replace.properties"
+    private const val LEGACY_VERSION = "1"
+    private const val VERSION = "2"
 
     internal data class Pending(
         val original: File,
-        val backup: File,
+        val backup: File?,
         val temporary: File,
         val rollback: File,
         val originalHash: String,
@@ -36,17 +38,20 @@ internal object ArchiveReplacementRecovery {
     }.getOrDefault(false)
 
     @Synchronized
-    fun begin(file: File, backup: File, temporary: File, rollback: File): Pending {
+    fun begin(file: File, temporary: File, rollback: File): Pending {
         check(!journalFile(file).exists()) { "Archive recovery is still pending" }
         check(file.extension.lowercase(java.util.Locale.ROOT) in ArchiveFormatDetector.zipArchiveExtensions)
         val parent = requireNotNull(file.parentFile).canonicalFile
         check(file.canonicalFile == File(parent, file.name))
-        val backupDirectory = requireNotNull(backup.parentFile)
-        check(backupDirectory.canonicalFile == File(parent, ".ComicLabBackups"))
-        check(backup.canonicalFile == File(backupDirectory.canonicalFile, backup.name))
-        val hash = digest(backup)
-        check(digest(file) == hash) { "Archive changed while backing up" }
-        return Pending(file, backup, temporary, rollback, hash, file.lastModified()).also(::write)
+        check(temporary.canonicalFile == File(parent, temporary.name))
+        check(rollback.canonicalFile == File(parent, rollback.name))
+        val journalDirectory = requireNotNull(journalFile(file).parentFile)
+        check(journalDirectory.canonicalFile == File(parent, ".ComicLabBackups"))
+        if (!journalDirectory.exists() && !journalDirectory.mkdirs()) {
+            error("Could not create archive recovery directory")
+        }
+        check(journalDirectory.isDirectory)
+        return Pending(file, null, temporary, rollback, digest(file), file.lastModified()).also(::write)
     }
 
     @Synchronized
@@ -85,11 +90,12 @@ internal object ArchiveReplacementRecovery {
             } else {
                 val rollbackValid = matches(pending.rollback, pending.originalHash)
                 if (!rollbackValid || !renameTo(pending.rollback, file)) {
-                    if (!matches(pending.backup, pending.originalHash)) return false
+                    val legacyBackup = pending.backup ?: return false
+                    if (!matches(legacyBackup, pending.originalHash)) return false
                     val restore = pending.restore
                     try {
                         FileOutputStream(restore).use { output ->
-                            pending.backup.inputStream().use { it.copyTo(output) }
+                            legacyBackup.inputStream().use { it.copyTo(output) }
                             output.fd.sync()
                         }
                         if (!matches(restore, pending.originalHash) ||
@@ -113,15 +119,18 @@ internal object ArchiveReplacementRecovery {
         val part = File(pending.journal.path + ".part")
         check(part.canonicalFile == File(requireNotNull(pending.journal.parentFile).canonicalFile, part.name))
         if (part.exists() && !part.delete()) return false
-        return pending.journal.delete()
+        if (!pending.journal.delete()) return false
+        // 仅删除空的恢复目录；旧版完整备份或其他文件存在时一律保留。
+        pending.journal.parentFile?.delete()
+        return true
     }
 
     private fun write(pending: Pending) {
         check(pending.journal.canonicalFile == File(requireNotNull(pending.journal.parentFile).canonicalFile, pending.journal.name))
         val properties = Properties().apply {
-            setProperty("version", "1")
+            setProperty("version", VERSION)
             setProperty("original", pending.original.name)
-            setProperty("backup", pending.backup.name)
+            pending.backup?.let { setProperty("backup", it.name) }
             setProperty("temporary", pending.temporary.name)
             setProperty("rollback", pending.rollback.name)
             setProperty("originalHash", pending.originalHash)
@@ -151,7 +160,8 @@ internal object ArchiveReplacementRecovery {
         check(file.canonicalFile == File(parent, file.name))
         check(marker.length() <= 16 * 1024)
         val properties = Properties().apply { marker.inputStream().use(::load) }
-        check(properties.getProperty("version") == "1")
+        val version = requireNotNull(properties.getProperty("version"))
+        check(version == LEGACY_VERSION || version == VERSION)
         check(properties.getProperty("original") == file.name)
         fun child(key: String, directory: File, prefix: String, suffix: String): File {
             val name = requireNotNull(properties.getProperty(key))
@@ -162,7 +172,11 @@ internal object ArchiveReplacementRecovery {
         val replacement = properties.getProperty("replacementHash", "")
         check(hash.matches(Regex("[0-9a-f]{64}")))
         check(replacement.isEmpty() || replacement.matches(Regex("[0-9a-f]{64}")))
-        val backup = child("backup", backupDirectory, "${file.nameWithoutExtension}.delete_backup_", ".${file.extension}")
+        val backup = if (version == LEGACY_VERSION) {
+            child("backup", backupDirectory, "${file.nameWithoutExtension}.delete_backup_", ".${file.extension}")
+        } else {
+            null
+        }
         val temporary = child("temporary", parent, "${file.name}.delete_", ".tmp")
         val rollback = child("rollback", parent, "${file.name}.delete_", ".bak")
         return Pending(file, backup, temporary, rollback, hash, properties.getProperty("modifiedAt").toLong(), replacement).also {

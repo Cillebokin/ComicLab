@@ -27,8 +27,7 @@ internal object ArchiveEntryDeleter {
                 return false
             }
 
-            val backupFile = ArchiveBackupManager.createDeleteBackup(file, renameTo) ?: return false
-            val deleted = deleteZipEntry(file, entryName, backupFile, renameTo)
+            val deleted = deleteZipEntry(file, entryName, renameTo)
             ArchiveReplacementRecovery.recover(file, renameTo)
             return deleted
         }
@@ -37,15 +36,14 @@ internal object ArchiveEntryDeleter {
     private fun deleteZipEntry(
         file: File,
         entryName: String,
-        persistentBackup: File,
         renameTo: (File, File) -> Boolean
     ): Boolean {
         val parent = file.parentFile ?: return false
         val token = UUID.randomUUID()
         val tempFile = File(parent, "${file.name}.delete_$token.tmp")
-        val backupFile = File(parent, "${file.name}.delete_$token.bak")
+        val rollbackFile = File(parent, "${file.name}.delete_$token.bak")
         val pending = runCatching {
-            ArchiveReplacementRecovery.begin(file, persistentBackup, tempFile, backupFile)
+            ArchiveReplacementRecovery.begin(file, tempFile, rollbackFile)
         }.getOrNull() ?: return false
 
         val wroteReplacement = runCatching {
@@ -92,25 +90,25 @@ internal object ArchiveEntryDeleter {
                 ArchiveReplacementRecovery.seal(pending)
             }.isFailure) return false
 
-        return replaceOriginalFileWithTemp(file, tempFile, backupFile, pending, renameTo)
+        return replaceOriginalFileWithTemp(file, tempFile, rollbackFile, pending, renameTo)
     }
 
     private fun replaceOriginalFileWithTemp(
         originalFile: File,
         tempFile: File,
-        backupFile: File,
+        rollbackFile: File,
         pending: ArchiveReplacementRecovery.Pending,
         renameTo: (File, File) -> Boolean
     ): Boolean {
         if (!ArchiveReplacementRecovery.matchesOriginal(pending, originalFile)) return false
-        if (!renameTo(originalFile, backupFile)) {
+        if (!renameTo(originalFile, rollbackFile)) {
             tempFile.delete()
             return false
         }
 
-        if (!ArchiveReplacementRecovery.matchesOriginal(pending, backupFile)) {
-            // 刚移出的内容已变化，先原样放回；不能用旧备份覆盖这份新内容。
-            renameTo(backupFile, originalFile)
+        if (!ArchiveReplacementRecovery.matchesOriginal(pending, rollbackFile)) {
+            // 刚移出的内容已变化，先原样放回；不能覆盖这份新内容。
+            renameTo(rollbackFile, originalFile)
             return false
         }
 
@@ -119,7 +117,7 @@ internal object ArchiveEntryDeleter {
         }
 
         tempFile.delete()
-        renameTo(backupFile, originalFile)
+        renameTo(rollbackFile, originalFile)
         return false
     }
 
