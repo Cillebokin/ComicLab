@@ -51,6 +51,7 @@ import com.example.comiclab.ui.reader.common.ReaderControlsController
 import com.example.comiclab.ui.reader.manga.ReaderDoublePageSnapHelper
 import com.example.comiclab.ui.reader.manga.ReaderPageZoomLayout
 import com.example.comiclab.ui.reader.manga.MangaPageAdapter
+import com.example.comiclab.ui.reader.manga.PageEnhancementDialog
 import com.example.comiclab.ui.reader.manga.MangaReaderProgressController
 import com.example.comiclab.ui.reader.manga.MangaReaderViewModel
 import com.example.comiclab.ui.reader.manga.ReaderPageAdapterController
@@ -134,6 +135,7 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private var archiveFile: File? = null
+    private var pageEnhancementDialog: PageEnhancementDialog? = null
     private var readerSessionMarker: String? = null
     private var imageEntries: List<String> = emptyList()
     private var readerLoadStartedAtNanos: Long? = null
@@ -311,6 +313,8 @@ class MangaReaderActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         destroyed = true
+        pageEnhancementDialog?.close()
+        pageEnhancementDialog = null
         clearReaderContinuityOverlay()
         readerLoadGeneration.incrementAndGet()
         readerLoadExecutor.shutdownNow().forEach { task ->
@@ -710,6 +714,19 @@ class MangaReaderActivity : AppCompatActivity() {
             } else {
                 showReaderPreviewPanel()
             }
+        }
+
+        findViewById<Button>(R.id.btnReaderEnhance).setOnClickListener {
+            val archive = archiveFile ?: return@setOnClickListener
+            if (pageEnhancementDialog != null || imageEntries.isEmpty()) return@setOnClickListener
+            val position = currentReaderPosition.coerceIn(imageEntries.indices)
+            pageEnhancementDialog = PageEnhancementDialog.open(
+                this, archive, imageEntries[position], position + 1
+            ) {
+                pageEnhancementDialog = null
+                if (!destroyed) showReaderControlsTemporarily()
+            }
+            if (pageEnhancementDialog != null) readerControlsController.cancelAutoHide()
         }
 
         btnReaderDirectionTopToBottom.setOnClickListener {

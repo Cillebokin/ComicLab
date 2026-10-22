@@ -41,6 +41,26 @@
             android:textSize="@dimen/text_value" />
 
         <Button
+            android:id="@+id/btnReaderEnhance"
+            android:layout_width="@dimen/reader_toolbar_preview_button_width"
+            android:layout_height="@dimen/reader_toolbar_preview_button_height"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_preview_action_button"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:paddingStart="6dp"
+            android:paddingTop="0dp"
+            android:paddingEnd="6dp"
+            android:paddingBottom="0dp"
+            android:singleLine="true"
+            android:text="@string/reader_enhance"
+            android:textAllCaps="false"
+            android:textColor="@color/white"
+            android:textSize="@dimen/text_caption" />
+
+        <Button
             android:id="@+id/btnReaderPreview"
             android:layout_width="@dimen/reader_toolbar_preview_button_width"
             android:layout_height="@dimen/reader_toolbar_preview_button_height"

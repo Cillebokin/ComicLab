@@ -42,7 +42,7 @@ object ReadingHistoryStore {
 
     /** 仅统计被采用且留在最终窗口中的导入记录，同路径计一次。 */
     fun merge(context: Context, items: Collection<Item>): Int {
-        val storedItems = checkNotNull(readStoredItems(context)) { "无法读取阅读历史，已保留原数据" }
+        val storedItems = checkNotNull(readStoredItems(context)) { context.getString(com.example.comiclab.R.string.reading_history_read_failed) }
         val mergedItems = LinkedHashMap<String, StoredItem>()
         storedItems.forEach { item ->
             mergedItems[item.path] = item
@@ -82,7 +82,7 @@ object ReadingHistoryStore {
     }
 
     internal fun validateReadable(context: Context) {
-        checkNotNull(readStoredItems(context)) { "无法读取阅读历史，已保留原数据" }
+        checkNotNull(readStoredItems(context)) { context.getString(com.example.comiclab.R.string.reading_history_read_failed) }
     }
 
     fun items(context: Context): List<Item> {

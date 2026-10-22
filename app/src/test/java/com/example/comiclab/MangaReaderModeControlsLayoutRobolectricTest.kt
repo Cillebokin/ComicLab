@@ -22,6 +22,35 @@ import org.robolectric.annotation.Config
 class MangaReaderModeControlsLayoutRobolectricTest {
 
     @Test
+    fun enhancementToolbarMatchesPreviewAndExportButtonsHaveSpace() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val content = LayoutInflater.from(activity).inflate(R.layout.activity_manga_reader, null, false)
+        val enhance = content.findViewById<android.widget.Button>(R.id.btnReaderEnhance)
+        val preview = content.findViewById<android.widget.Button>(R.id.btnReaderPreview)
+        assertEquals(preview.layoutParams.width, enhance.layoutParams.width)
+        assertEquals(preview.layoutParams.height, enhance.layoutParams.height)
+        assertEquals(preview.paddingTop, enhance.paddingTop)
+        val dialog = LayoutInflater.from(activity).inflate(R.layout.dialog_page_enhancement, null, false)
+        val original = dialog.findViewById<android.widget.Button>(R.id.btnEnhancementOriginal)
+        val result = dialog.findViewById<android.widget.Button>(R.id.btnEnhancementResult)
+        for (button in listOf(original, result)) {
+            button.isEnabled = false
+            button.isSelected = true
+            assertEquals(Color.rgb(34, 197, 94), button.currentTextColor)
+            button.isEnabled = true
+            button.isSelected = false
+            assertEquals(Color.WHITE, button.currentTextColor)
+        }
+        val row = original.parent as ViewGroup
+        assertEquals(listOf(R.id.btnEnhancementOriginal, R.id.btnEnhancementResult,
+            R.id.btnEnhancementSave, R.id.btnEnhancementClose), (0 until row.childCount).map { row.getChildAt(it).id })
+        for (index in 1 until row.childCount) {
+            assertTrue((row.getChildAt(index).layoutParams as ViewGroup.MarginLayoutParams).marginStart > 0)
+            assertEquals(original.layoutParams.height, row.getChildAt(index).layoutParams.height)
+        }
+    }
+
+    @Test
     fun readerBrightnessRowDoesNotContainAnImageEnhancementToggle() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         val content = LayoutInflater.from(activity)

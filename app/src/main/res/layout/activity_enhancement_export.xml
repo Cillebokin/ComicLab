@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/enhancementExportRoot" android:layout_width="match_parent"
+    android:layout_height="match_parent" android:orientation="vertical"
+    android:background="@color/black" android:padding="24dp" android:gravity="center_vertical">
+    <TextView android:id="@+id/tvExportTitle" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:textSize="20sp" android:textColor="@color/white" />
+    <TextView android:id="@+id/tvExportStatus" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:textSize="16sp" android:textColor="@color/white"
+        android:layout_marginTop="24dp" />
+    <ProgressBar android:id="@+id/progressExport" style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="16dp" android:max="100" />
+    <Button android:id="@+id/btnExportCancel" android:layout_width="wrap_content"
+        android:layout_height="wrap_content" android:layout_marginTop="24dp"
+        android:text="@android:string/cancel" />
+</LinearLayout>

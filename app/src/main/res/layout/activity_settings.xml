@@ -261,6 +261,30 @@
                     android:textSize="@dimen/text_body" />
             </LinearLayout>
 
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="10dp" android:background="@drawable/bg_file_picker_card"
+                android:elevation="@dimen/card_elevation" android:orientation="vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingTop="14dp" android:paddingBottom="14dp">
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="@string/enhancement_scale" android:textColor="@color/comiclab_text_primary"
+                    android:textSize="@dimen/text_section" android:textStyle="bold" />
+                <RadioGroup android:id="@+id/radioEnhancementScale" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="horizontal">
+                    <RadioButton android:id="@+id/radioEnhancement2" android:layout_width="0dp"
+                        android:layout_height="48dp" android:layout_weight="1" android:buttonTint="@color/comiclab_accent"
+                        android:text="@string/enhancement_scale_2" android:textColor="@color/comiclab_text_secondary"
+                        android:textSize="@dimen/text_body" />
+                    <RadioButton android:id="@+id/radioEnhancement3" android:layout_width="0dp"
+                        android:layout_height="48dp" android:layout_weight="1" android:buttonTint="@color/comiclab_accent"
+                        android:text="@string/enhancement_scale_3" android:textColor="@color/comiclab_text_secondary"
+                        android:textSize="@dimen/text_body" />
+                    <RadioButton android:id="@+id/radioEnhancement4" android:layout_width="0dp"
+                        android:layout_height="48dp" android:layout_weight="1" android:buttonTint="@color/comiclab_accent"
+                        android:text="@string/enhancement_scale_4" android:textColor="@color/comiclab_text_secondary"
+                        android:textSize="@dimen/text_body" />
+                </RadioGroup>
+            </LinearLayout>
+
             <LinearLayout
                 android:id="@+id/cardReaderControls"
                 android:layout_width="match_parent"

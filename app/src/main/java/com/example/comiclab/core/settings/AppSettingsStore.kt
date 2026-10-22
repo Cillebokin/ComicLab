@@ -45,6 +45,16 @@ internal object AppSettingsStore {
             .apply()
     }
 
+    fun getEnhancementScale(context: Context): Int =
+        PrefsGateway.open(context, PREFS_NAME).getInt("enhancement_scale", 2).let {
+            if (it in 2..4) it else 2
+        }
+
+    fun setEnhancementScale(context: Context, scale: Int) {
+        require(scale in 2..4)
+        PrefsGateway.open(context, PREFS_NAME).edit().putInt("enhancement_scale", scale).apply()
+    }
+
     fun getReadingDirection(context: Context): String {
         return PrefsGateway.open(context, PREFS_NAME)
             .getString(KEY_READING_DIRECTION, READING_DIRECTION_TOP_TO_BOTTOM)

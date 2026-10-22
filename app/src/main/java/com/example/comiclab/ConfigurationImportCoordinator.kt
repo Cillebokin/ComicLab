@@ -127,7 +127,7 @@ internal object ProcessConfigurationImportCoordinator {
         dispatchToMain = { action -> mainHandler.post(action) },
         importWork = { context, uri ->
             val inputStream = context.contentResolver.openInputStream(uri)
-                ?: error("无法打开配置文件")
+                ?: error(context.getString(R.string.configuration_open_input_failed))
             val rawJson = inputStream.use { stream ->
                 stream.reader(Charsets.UTF_8).use { reader -> reader.readText() }
             }

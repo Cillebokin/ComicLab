@@ -141,6 +141,7 @@ class SettingsActivity : AppCompatActivity() {
         bindLanguageSetting()
         bindDarkModeSetting()
         bindReadingDirection()
+        bindEnhancementScale()
         bindDoublePageCoverSingle()
         bindStartMarkerErrorTags()
         bindVolumeKeyPageTurn()
@@ -189,6 +190,23 @@ class SettingsActivity : AppCompatActivity() {
             is ConfigurationImportCompletion.Failure -> {
                 showMessage(getString(R.string.configuration_import_failed, completion.message))
             }
+        }
+    }
+
+    private fun bindEnhancementScale() {
+        val group = findViewById<RadioGroup>(R.id.radioEnhancementScale)
+        group.setOnCheckedChangeListener(null)
+        group.check(when (AppSettings.getEnhancementScale(this)) {
+            3 -> R.id.radioEnhancement3
+            4 -> R.id.radioEnhancement4
+            else -> R.id.radioEnhancement2
+        })
+        group.setOnCheckedChangeListener { _, id ->
+            AppSettings.setEnhancementScale(this, when (id) {
+                R.id.radioEnhancement3 -> 3
+                R.id.radioEnhancement4 -> 4
+                else -> 2
+            })
         }
     }
 
@@ -497,7 +515,7 @@ class SettingsActivity : AppCompatActivity() {
                     ComicLabConfigurationStore.export(appContext)
                 )
                 val outputStream = appContext.contentResolver.openOutputStream(uri)
-                    ?: error("无法打开导出文件")
+                    ?: error(appContext.getString(R.string.configuration_open_output_failed))
                 outputStream.use { stream ->
                     stream.writer(Charsets.UTF_8).use { writer ->
                         writer.write(json)
@@ -545,6 +563,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun refreshSettingsControlsAfterImport() {
         switchDarkMode.isChecked = AppSettings.isDarkModeEnabled(this)
         bindReadingDirection()
+        bindEnhancementScale()
         switchDoublePageCoverSingle.isChecked = AppSettings.isDoublePageCoverSingleEnabled(this)
         inputStartMarkerErrorTags.setText(AppSettings.getStartMarkerErrorTags(this))
         switchVolumeKeyPageTurn.isChecked = AppSettings.isVolumeKeyPageTurnEnabled(this)

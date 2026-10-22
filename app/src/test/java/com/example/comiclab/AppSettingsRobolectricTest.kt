@@ -20,6 +20,35 @@ import org.robolectric.annotation.Config
 @Config(sdk = [36])
 class AppSettingsRobolectricTest {
 
+    @Test fun enhancementScalePersistsAndSurvivesConfigurationExport() {
+        assertEquals(2, AppSettings.getEnhancementScale(context))
+        AppSettings.setEnhancementScale(context, 3)
+        val snapshot = AppSettings.snapshot(context)
+        val configuration = com.example.comiclab.core.settings.ComicLabConfiguration(
+            appSettings = snapshot)
+        val json = com.example.comiclab.core.settings.ComicLabConfigurationJson
+        val decoded = json.decode(json.encode(configuration)).configuration.appSettings
+        AppSettings.setEnhancementScale(context, 4)
+        AppSettings.applySnapshot(context, decoded)
+        assertEquals(3, AppSettings.getEnhancementScale(context))
+        context.getSharedPreferences("app_settings", 0).edit().putInt("enhancement_scale", 99).commit()
+        assertEquals(2, AppSettings.getEnhancementScale(context))
+    }
+
+    @Test fun settingsRadioGroupReadsAndUpdatesSharedEnhancementScale() {
+        AppSettings.setEnhancementScale(context, 3)
+        val controller = org.robolectric.Robolectric.buildActivity(SettingsActivity::class.java).setup()
+        try {
+            val group = controller.get().findViewById<android.widget.RadioGroup>(R.id.radioEnhancementScale)
+            assertEquals(R.id.radioEnhancement3, group.checkedRadioButtonId)
+            group.check(R.id.radioEnhancement4)
+            assertEquals(4, AppSettings.getEnhancementScale(context))
+            controller.recreate()
+            assertEquals(R.id.radioEnhancement4, controller.get()
+                .findViewById<android.widget.RadioGroup>(R.id.radioEnhancementScale).checkedRadioButtonId)
+        } finally { controller.pause().stop().destroy() }
+    }
+
     private val context = RuntimeEnvironment.getApplication()
 
     @Before

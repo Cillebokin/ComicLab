@@ -39,6 +39,10 @@ object AppSettings {
         )
     }
 
+    fun getEnhancementScale(context: Context): Int = AppSettingsStore.getEnhancementScale(context)
+
+    fun setEnhancementScale(context: Context, scale: Int) = AppSettingsStore.setEnhancementScale(context, scale)
+
     fun getReadingDirection(context: Context): String =
         AppSettingsStore.getReadingDirection(context)
 
@@ -95,6 +99,7 @@ object AppSettings {
             autoHideSystemBars = isAutoHideSystemBarsEnabled(context),
             startMarkerErrorTags = getStartMarkerErrorTags(context),
             customReaderBrightnessEnabled = isCustomReaderBrightnessEnabled(context),
+            enhancementScale = getEnhancementScale(context),
             customReaderBrightness = getCustomReaderBrightness(context)
         )
     }
@@ -139,6 +144,10 @@ object AppSettings {
         }
         settings.customReaderBrightness?.let {
             setCustomReaderBrightness(context, it)
+            appliedCount++
+        }
+        settings.enhancementScale?.let {
+            setEnhancementScale(context, it)
             appliedCount++
         }
         return appliedCount

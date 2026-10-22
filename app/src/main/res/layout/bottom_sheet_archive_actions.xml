@@ -48,6 +48,22 @@
         app:drawableStartCompat="@drawable/png_read_icon" />
 
     <TextView
+        android:id="@+id/btnEnhanceComic"
+        android:drawableTint="@color/comiclab_icon"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/bottom_sheet_action_height"
+        android:background="@drawable/bg_bottom_sheet_action_item"
+        android:drawablePadding="@dimen/space_lg"
+        android:gravity="center_vertical"
+        android:includeFontPadding="false"
+        android:paddingStart="@dimen/space_xl"
+        android:paddingEnd="@dimen/space_xl"
+        android:text="@string/enhancement_book_menu"
+        android:textColor="@color/comiclab_text_primary"
+        android:textSize="@dimen/text_body"
+        app:drawableStartCompat="@drawable/png_enhance_comic_icon" />
+
+    <TextView
         android:id="@+id/btnFavoriteComicAction"
         android:drawableTint="@color/comiclab_icon"
         android:layout_width="match_parent"

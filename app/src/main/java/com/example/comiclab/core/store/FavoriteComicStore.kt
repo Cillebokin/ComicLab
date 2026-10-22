@@ -54,7 +54,7 @@ object FavoriteComicStore {
 
     /** 返回本次导入中最终保留的唯一路径数，不计重复项与容量淘汰项。 */
     fun merge(context: Context, items: Collection<Item>): Int {
-        val storedItems = checkNotNull(readStoredItems(context)) { "无法读取漫画收藏，已保留原数据" }
+        val storedItems = checkNotNull(readStoredItems(context)) { context.getString(com.example.comiclab.R.string.favorite_comics_read_failed) }
         val mergedItems = LinkedHashMap<String, StoredItem>()
         storedItems.forEach { item ->
             mergedItems[item.path] = item
@@ -87,7 +87,7 @@ object FavoriteComicStore {
     }
 
     internal fun validateReadable(context: Context) {
-        checkNotNull(readStoredItems(context)) { "无法读取漫画收藏，已保留原数据" }
+        checkNotNull(readStoredItems(context)) { context.getString(com.example.comiclab.R.string.favorite_comics_read_failed) }
     }
 
     fun items(context: Context): List<Item> {

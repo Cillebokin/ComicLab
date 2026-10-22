@@ -44,6 +44,7 @@ data class ComicLabAppSettings(
     val autoHideSystemBars: Boolean? = null,
     val startMarkerErrorTags: String? = null,
     val customReaderBrightnessEnabled: Boolean? = null,
+    val enhancementScale: Int? = null,
     val customReaderBrightness: Int? = null
 )
 
@@ -133,6 +134,7 @@ object ComicLabConfigurationJson {
         configuration.appSettings.languageTag?.let {
             settings.put("languageTag", it)
         }
+        configuration.appSettings.enhancementScale?.let { settings.put("enhancementScale", it) }
         configuration.appSettings.readingDirection?.let { settings.put("readingDirection", it) }
         configuration.appSettings.doublePageReadingEnabled?.let {
             settings.put("doublePageReadingEnabled", it)
@@ -288,6 +290,9 @@ object ComicLabConfigurationJson {
                             skippedEntries++
                         }
                     },
+                enhancementScale = settingsObject.optionalInt("enhancementScale")
+                    ?.takeIf { it in 2..4 }
+                    .also { if (settingsObject.has("enhancementScale") && it == null) skippedEntries++ },
                 customReaderBrightness = settingsObject.optionalInt("customReaderBrightness")
                     .also {
                         if (settingsObject.has("customReaderBrightness") && it == null) skippedEntries++
@@ -441,6 +446,7 @@ object ComicLabConfigurationMerger {
         return ComicLabAppSettings(
             darkModeEnabled = imported.darkModeEnabled ?: current.darkModeEnabled,
             languageTag = imported.languageTag ?: current.languageTag,
+            enhancementScale = imported.enhancementScale ?: current.enhancementScale,
             readingDirection = imported.readingDirection ?: current.readingDirection,
             doublePageReadingEnabled = imported.doublePageReadingEnabled
                 ?: current.doublePageReadingEnabled,

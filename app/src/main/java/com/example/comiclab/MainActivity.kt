@@ -44,6 +44,7 @@ import com.example.comiclab.core.store.ReadingHistoryStore
 import com.example.comiclab.ebook.ReaderFileDetector
 import com.example.comiclab.ebook.ReaderFileType
 import com.example.comiclab.ui.browser.FileListAdapter
+import com.example.comiclab.ui.reader.enhance.ArchiveEnhancementDialog
 import com.example.comiclab.ui.browser.DirectoryBrowserController
 import com.example.comiclab.ui.browser.DirectoryChildCountCache
 import com.example.comiclab.ui.browser.DirectoryScrollStateCache
@@ -1319,12 +1320,14 @@ class MainActivity : AppCompatActivity() {
         val btnCutFile = content.findViewById<TextView>(R.id.btnCutFile)
         val btnFavoriteComic = content.findViewById<TextView>(R.id.btnFavoriteComicAction)
         val btnRead = content.findViewById<TextView>(R.id.btnReadComic)
+        val btnEnhance = content.findViewById<TextView>(R.id.btnEnhanceComic)
         val btnDeleteFile = content.findViewById<TextView>(R.id.btnDeleteFile)
         val isFavorite = FavoriteComicStore.isFavorite(this, file)
 
         tvArchiveActionTitle.text = file.name
         sizeBottomSheetActionIcons(
             btnRead,
+            btnEnhance,
             btnFavoriteComic,
             btnCopyFileName,
             btnRenameFileName,
@@ -1334,6 +1337,8 @@ class MainActivity : AppCompatActivity() {
             btnDeleteFile
         )
         val canStartTransfer = pendingFileTransfer == null && !isFileTransferInProgress
+        btnEnhance.visibility = if (ComicArchive.isSupportedArchive(file) &&
+            !file.extension.equals("pdf", true)) View.VISIBLE else View.GONE
         val isPendingSource = pendingFileTransfer?.sourcePath == file.absolutePath
         btnCopyFile.isEnabled = canStartTransfer
         btnCutFile.isEnabled = canStartTransfer
@@ -1419,6 +1424,11 @@ class MainActivity : AppCompatActivity() {
         btnRead.setOnClickListener {
             dialog.dismiss()
             openMangaPreview(file)
+        }
+
+        btnEnhance.setOnClickListener {
+            dialog.dismiss()
+            ArchiveEnhancementDialog.show(this, file)
         }
 
         btnCopyFile.setOnClickListener {
