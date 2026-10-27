@@ -139,6 +139,16 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         bindLanguageSetting()
+        findViewById<Button>(R.id.btnTranslationSettings).setOnClickListener {
+            com.example.comiclab.ui.reader.translation.TranslationSettingsDialog.show(this)
+        }
+        findViewById<Button>(R.id.btnTranslationLicenses).setOnClickListener {
+            val text = assets.open("translation/NOTICE.txt").bufferedReader().use { it.readText() } + "\n\n" +
+                assets.open("translation/LICENSE-GPL-3.0.txt").bufferedReader().use { it.readText() }
+            val view = TextView(this).apply { this.text = text; setPadding(24, 12, 24, 12); textSize = 12f }
+            AlertDialog.Builder(this).setTitle(R.string.translation_licenses)
+                .setView(android.widget.ScrollView(this).apply { addView(view) }).setPositiveButton(android.R.string.ok, null).show()
+        }
         bindDarkModeSetting()
         bindReadingDirection()
         bindEnhancementScale()

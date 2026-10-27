@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="translation_settings">AI翻译设置</string>
+    <string name="translation_address">AI服务地址（HTTPS Base URL）</string>
+    <string name="translation_model">模型名称</string>
+    <string name="translation_key">API Key</string>
+    <string name="translation_api_help">支持OpenAI兼容Chat Completions接口。Key加密保存在本机，不参与配置导出。测试连接会发起一次小额请求。\n识字、擦字和排版来自Yakuyomi-engine适配代码（GPL-3.0）；设置中可查看第三方许可。</string>
+    <string name="translation_save_settings">保存</string>
+    <string name="translation_test">测试连接</string>
+    <string name="translation_test_ok">连接及译文格式正常</string>
+    <string name="translation_test_failed">连接或译文格式异常，请检查地址、模型、Key及账户权限</string>
+    <string name="translation_invalid_settings">请填写有效HTTPS地址、模型和Key（地址不能含查询参数或凭证）</string>
+    <string name="translation_start">翻译</string>
+    <string name="translation_font_size">译文字号比例</string>
+    <string name="translation_first_use">单页翻译 · 首次自动下载约247.5MB本地模型（可取消续传）\n仅将识别文字发送给所填AI服务，按服务计费；原漫画不修改。局部修补效果需人工检查</string>
+    <string name="translation_compare">原图/译图</string>
+    <string name="translation_edit">编辑译文</string>
+    <string name="translation_render">重新排版</string>
+    <string name="translation_stage_models">准备本地模型</string>
+    <string name="translation_stage_extract">提取原始页面</string>
+    <string name="translation_stage_detect">检测文字</string>
+    <string name="translation_stage_ocr">局部识字</string>
+    <string name="translation_stage_translate">请求AI翻译</string>
+    <string name="translation_stage_inpaint">局部擦字</string>
+    <string name="translation_stage_render">合成并写入图片</string>
+    <string name="translation_done">翻译完成，可对比、编辑及保存</string>
+    <string name="translation_cancelled">已取消，已完成的排版素材可继续使用</string>
+    <string name="translation_cancelling">正在取消，等待当前解码或推理安全结束</string>
+    <string name="translation_failed">处理未完成，原漫画未修改</string>
+    <string name="translation_ready">选择目标语言，点击翻译；字体和字号变化后点击重新排版</string>
+    <string name="translation_no_text">没有检测到可识别的文字</string>
+    <string name="translation_overflow">译文放不进文字框，请缩短译文或减小字号</string>
+    <string name="translation_memory">内存不足，请关闭其他重型任务后重试</string>
+    <string name="translation_storage">可用存储空间不足</string>
+    <string name="translation_limit">该页面格式、方向或局部区域超出当前处理范围</string>
+    <string name="translation_error_help">请检查模型下载、网络、AI配置及译文格式后重试</string>
+    <string name="translation_licenses">翻译第三方许可</string>
+    <string-array name="translation_languages"><item>简体中文</item><item>繁體中文</item><item>English</item><item>日本語</item><item>한국어</item></string-array>
+    <string-array name="translation_fonts"><item>无衬线字体</item><item>衬线字体</item></string-array>
+</resources>

@@ -74,6 +74,13 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+            <Button android:id="@+id/btnTranslationSettings" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:text="@string/translation_settings"
+                android:textAllCaps="false" />
+            <Button android:id="@+id/btnTranslationLicenses" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:text="@string/translation_licenses"
+                android:textAllCaps="false" />
+
             <LinearLayout
                 android:id="@+id/cardAppearance"
                 android:layout_width="match_parent"

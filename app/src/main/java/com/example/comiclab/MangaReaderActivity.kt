@@ -716,6 +716,14 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         }
 
+        findViewById<Button>(R.id.btnReaderTranslate).setOnClickListener {
+            val archive = archiveFile ?: return@setOnClickListener
+            if (imageEntries.isEmpty()) return@setOnClickListener
+            val position = currentReaderPosition.coerceIn(imageEntries.indices)
+            com.example.comiclab.ui.reader.translation.PageTranslationActivity.launch(
+                this, archive, imageEntries[position], position + 1)
+        }
+
         findViewById<Button>(R.id.btnReaderEnhance).setOnClickListener {
             val archive = archiveFile ?: return@setOnClickListener
             if (pageEnhancementDialog != null || imageEntries.isEmpty()) return@setOnClickListener

@@ -1,0 +1,26 @@
+ComicLab single-page translation incorporates adapted source from:
+https://github.com/joyeli/yakuyomi-engine/tree/f990b451bdb4b42d1946868a18c15937a3053b09
+Copyright: upstream contributors, including joyeli. License: GPL-3.0
+Adapted components: DBNet postprocessing, geometry, grouping, OCR preprocessing
+and CTC decoding, and NCNN JNI bridge. Changes: shared ComicLab NCNN runtime,
+serial CPU inference, bounded local decoding and local inpainting, stage-owned
+models, stream composition, separate settings and UI. See LICENSE-GPL-3.0.txt.
+These components are based in part on zyddnys/manga-image-translator (GPL-3.0).
+https://github.com/zyddnys/manga-image-translator
+
+Translation model conversions downloaded from joyeli/yakuyomi-engine:
+DBNet models-v3; 48px CTC OCR models-v4; AOT-GAN models-v2.
+The distributor declares these conversion artifacts GPL-3.0, with attribution
+to manga-image-translator. Pinned URLs, hashes and sizes: models.json.
+Models provided by zyddnys. Original checkpoint permission statements:
+https://github.com/zyddnys/manga-image-translator/issues/444#issuecomment-1694864040
+https://github.com/zyddnys/manga-image-translator/issues/1163#issuecomment-6109076421
+This notice does not relicense the conversions as MIT.
+
+NCNN runtime: Tencent, BSD 3-Clause; shared with ComicLab superresolution.
+See ../superresolution/LICENSE-ncnn.txt.
+Fonts: Android system fonts, not bundled third-party font files.
+
+Distribution of an APK incorporating the GPL-covered components must satisfy
+the applicable GPL source and notice requirements. This notice does not by
+itself grant a license for unrelated ComicLab source or third-party assets.
