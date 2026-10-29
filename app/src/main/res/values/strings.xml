@@ -1,5 +1,10 @@
 <resources>
     <string name="app_name">ComicLab</string>
+    <string name="source_nas">NAS</string>
+    <string name="source_local">本机</string>
+    <string name="nas_not_connected_path">NAS / 未连接</string>
+    <string name="nas_not_connected_title">NAS尚未连接</string>
+    <string name="nas_not_connected_message">Windows共享连接功能尚未接入</string>
     <string name="path_placeholder">当前路径</string>
     <string name="open_with">打开方式</string>
     <string name="message_no_directory_selected">未选择目录</string>

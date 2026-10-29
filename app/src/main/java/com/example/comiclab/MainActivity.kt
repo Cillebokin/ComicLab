@@ -24,10 +24,12 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.text.format.Formatter
 import android.view.View
+import android.view.animation.DecelerateInterpolator
 import android.webkit.MimeTypeMap
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.ListView
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -96,6 +98,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnExitFileTransfer: ImageButton
     private lateinit var btnTransferParent: ImageButton
     private lateinit var readingHistoryScrim: View
+    private lateinit var nasPathStateSink: TextView
+    private lateinit var nasEmptyState: View
+    private lateinit var sourceSwitchTrack: View
+    private lateinit var sourceSwitchThumb: View
+    private lateinit var sourceNasButton: View
+    private lateinit var sourceLocalButton: View
+    private lateinit var sourceNasIcon: ImageView
+    private lateinit var sourceLocalIcon: ImageView
+    private lateinit var sourceNasLabel: TextView
+    private lateinit var sourceLocalLabel: TextView
     private lateinit var fileListAdapter: FileListAdapter
 
     private val fileItems = mutableListOf<FileItem>()
@@ -157,7 +169,7 @@ class MainActivity : AppCompatActivity() {
     private val directoryRefreshController = DirectoryRefreshController(
         activity = this,
         listViewOrNull = { if (::listView.isInitialized) listView else null },
-        pathInputProvider = { etPath },
+        pathInputProvider = { if (isNasSourceSelected) nasPathStateSink else etPath },
         fileItems = fileItems,
         fileListAdapterProvider = { fileListAdapter },
         directoryBrowserController = directoryBrowserController,
@@ -173,6 +185,8 @@ class MainActivity : AppCompatActivity() {
     private var browserInitialized = false
     private var skipNextResumeDirectoryReload = false
     private var pendingCenterTargetPath: String? = null
+    private var isNasSourceSelected = false
+    private var sourceTransitionGeneration = 0
     private var currentPath = STORAGE_ROOT_PATH
     private val fileTransferController = FileTransferController()
     private val pendingFileTransfer: PendingFileTransfer?
@@ -232,6 +246,16 @@ class MainActivity : AppCompatActivity() {
         btnExitFileTransfer = findViewById(R.id.btnExitFileTransfer)
         btnTransferParent = findViewById(R.id.btnTransferParent)
         readingHistoryScrim = findViewById(R.id.readingHistoryScrim)
+        nasPathStateSink = findViewById(R.id.nasPathStateSink)
+        nasEmptyState = findViewById(R.id.nasEmptyState)
+        sourceSwitchTrack = findViewById(R.id.sourceSwitchTrack)
+        sourceSwitchThumb = findViewById(R.id.sourceSwitchThumb)
+        sourceNasButton = findViewById(R.id.btnSourceNas)
+        sourceLocalButton = findViewById(R.id.btnSourceLocal)
+        sourceNasIcon = findViewById(R.id.ivSourceNasIcon)
+        sourceLocalIcon = findViewById(R.id.ivSourceLocalIcon)
+        sourceNasLabel = findViewById(R.id.tvSourceNasLabel)
+        sourceLocalLabel = findViewById(R.id.tvSourceLocalLabel)
         restorePendingFileTransfer(savedInstanceState)
 
         fileListAdapter = FileListAdapter(
@@ -248,6 +272,9 @@ class MainActivity : AppCompatActivity() {
             onDirectoryChildCountRequested = directoryRefreshController::requestDirectoryChildCount
         )
         listView.adapter = fileListAdapter
+        sourceNasButton.setOnClickListener { selectFileSource(isNas = true) }
+        sourceLocalButton.setOnClickListener { selectFileSource(isNas = false) }
+        updateSourceSwitchAppearance(isNas = false, animate = false)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 handleSystemBack()
@@ -1125,6 +1152,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateFileTransferToolbar() {
         val isActive = pendingFileTransfer != null
+        val canUseLocalSourceActions = !isNasSourceSelected
         val normalToolbarButtons = arrayOf(
             btnFavoritePaths,
             btnFavoriteComics,
@@ -1136,7 +1164,13 @@ class MainActivity : AppCompatActivity() {
         )
         normalToolbarButtons.forEach { button ->
             button.visibility = if (isActive) View.GONE else View.VISIBLE
+            button.isEnabled = !isActive && canUseLocalSourceActions
+            button.alpha = if (!isActive && canUseLocalSourceActions) 1f else 0.38f
         }
+
+        sourceNasButton.isEnabled = !isActive
+        sourceLocalButton.isEnabled = !isActive
+        sourceSwitchTrack.alpha = if (isActive) 0.45f else 1f
 
         btnHelp.isEnabled = !isActive
         btnOptions.isEnabled = !isActive
@@ -1163,7 +1197,97 @@ class MainActivity : AppCompatActivity() {
         btnCreateTransferDirectory.isEnabled = canInteract
         btnExitFileTransfer.isEnabled = canInteract
         btnTransferParent.isEnabled = canInteract
-        listView.isEnabled = !isFileTransferInProgress
+        listView.isEnabled = !isFileTransferInProgress && canUseLocalSourceActions
+    }
+
+    private fun selectFileSource(isNas: Boolean) {
+        if (isNas == isNasSourceSelected || pendingFileTransfer != null) {
+            return
+        }
+
+        val wasNas = isNasSourceSelected
+        val generation = ++sourceTransitionGeneration
+        listView.animate().cancel()
+        nasEmptyState.animate().cancel()
+        listView.translationX = 0f
+        listView.alpha = 1f
+        nasEmptyState.translationX = 0f
+        nasEmptyState.alpha = 1f
+        listView.visibility = if (wasNas) View.GONE else View.VISIBLE
+        nasEmptyState.visibility = if (wasNas) View.VISIBLE else View.GONE
+
+        isNasSourceSelected = isNas
+        updateSourcePathDisplay()
+        updateSourceSwitchAppearance(isNas)
+        updateFileTransferToolbar()
+
+        val width = findViewById<View>(R.id.fileListPanel).width.toFloat()
+        if (width <= 0f) {
+            listView.visibility = if (isNas) View.GONE else View.VISIBLE
+            nasEmptyState.visibility = if (isNas) View.VISIBLE else View.GONE
+            return
+        }
+
+        val outgoing = if (wasNas) nasEmptyState else listView
+        val incoming = if (isNas) nasEmptyState else listView
+        incoming.translationX = if (isNas) width else -width
+        incoming.alpha = 0.96f
+        incoming.visibility = View.VISIBLE
+
+        outgoing.animate()
+            .translationX(if (isNas) -width else width)
+            .alpha(0.96f)
+            .setDuration(280L)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction {
+                if (generation == sourceTransitionGeneration) {
+                    outgoing.visibility = View.GONE
+                    outgoing.translationX = 0f
+                    outgoing.alpha = 1f
+                }
+            }
+            .start()
+        incoming.animate()
+            .translationX(0f)
+            .alpha(1f)
+            .setDuration(280L)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+    }
+
+    private fun updateSourceSwitchAppearance(isNas: Boolean, animate: Boolean = true) {
+        val activeColor = getColor(R.color.comiclab_text_on_accent)
+        val inactiveColor = getColor(R.color.comiclab_text_secondary)
+        val nasColor = if (isNas) activeColor else inactiveColor
+        val localColor = if (isNas) inactiveColor else activeColor
+        sourceNasLabel.setTextColor(nasColor)
+        sourceNasIcon.setColorFilter(nasColor)
+        sourceLocalLabel.setTextColor(localColor)
+        sourceLocalIcon.setColorFilter(localColor)
+
+        val targetTranslationX = if (isNas) 0f else resources.getDimension(
+            R.dimen.file_source_switch_segment_width
+        )
+        sourceSwitchThumb.animate().cancel()
+        if (animate) {
+            sourceSwitchThumb.animate()
+                .translationX(targetTranslationX)
+                .setDuration(240L)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+        } else {
+            sourceSwitchThumb.translationX = targetTranslationX
+        }
+    }
+
+    private fun updateSourcePathDisplay() {
+        if (isNasSourceSelected) {
+            etPath.setText(R.string.nas_not_connected_path)
+        } else if (Environment.isExternalStorageManager()) {
+            etPath.setText(currentPath)
+        } else {
+            etPath.setText(R.string.storage_permission_required)
+        }
     }
 
     private fun pastePendingFile() {

@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ComicLab</string>
+    <string name="source_nas">NAS</string>
+    <string name="source_local">Local</string>
+    <string name="nas_not_connected_path">NAS / Not connected</string>
+    <string name="nas_not_connected_title">NAS not connected</string>
+    <string name="nas_not_connected_message">Windows share browsing is not available yet</string>
     <string name="path_placeholder">Current path</string>
     <string name="open_with">Open with</string>
     <string name="message_no_directory_selected">No folder selected</string>
