@@ -21,6 +21,13 @@
     <string name="directory_item">目录</string>
     <string name="choose_directory">存储权限</string>
     <string name="settings">设置</string>
+    <string name="settings_contents">设置目录</string>
+    <string name="settings_contents_expand">展开设置目录</string>
+    <string name="settings_contents_collapse">收起设置目录</string>
+    <string name="settings_section_appearance">外观</string>
+    <string name="settings_section_reading">阅读</string>
+    <string name="settings_section_configuration">配置</string>
+    <string name="settings_section_diagnostics">诊断工具</string>
     <string name="help">帮助</string>
     <string name="help_title">使用说明</string>
     <string name="help_contents_expand">展开说明目录</string>

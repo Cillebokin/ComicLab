@@ -7,25 +7,35 @@ import com.example.comiclab.core.diagnostics.CrashLogManager
 import com.example.comiclab.core.store.PrefsGateway
 import com.example.comiclab.ui.common.createRounded
 import com.example.comiclab.ui.common.SystemBars
+import com.example.comiclab.ui.settings.SettingsSection
+import com.example.comiclab.ui.settings.SettingsSectionAdapter
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.graphics.Paint
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.os.SystemClock
 import android.text.Editable
 import android.text.TextWatcher
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.PopupWindow
 import android.widget.RadioGroup
+import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.ViewFlipper
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
@@ -34,10 +44,13 @@ import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.core.os.LocaleListCompat
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import java.io.File
 import java.util.ArrayDeque
 import java.util.Locale
 import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
 internal const val COMICLAB_RELEASES_URL =
     "https://github.com/Cillebokin/ComicLab/releases"
@@ -45,9 +58,16 @@ internal const val COMICLAB_RELEASES_URL =
 class SettingsActivity : AppCompatActivity() {
 
     private lateinit var btnBack: ImageButton
-    private lateinit var layoutDebugTools: View
-    private lateinit var btnExportCrashLog: Button
-    private lateinit var btnRunReaderStressTest: Button
+    private lateinit var btnContents: ImageButton
+    private lateinit var tvCurrentSettingsSectionTitle: TextView
+    private lateinit var settingsContentsScrim: View
+    private lateinit var settingsSectionFlipper: ViewFlipper
+    private var settingsContentsPopupWindow: PopupWindow? = null
+    private var settingsSections: List<SettingsSection> = emptyList()
+    private var currentSettingsSectionIndex = 0
+    private var layoutDebugTools: View? = null
+    private var btnExportCrashLog: Button? = null
+    private var btnRunReaderStressTest: Button? = null
     private lateinit var btnExportConfiguration: Button
     private lateinit var btnImportConfiguration: Button
     private lateinit var btnCheckUpdates: Button
@@ -92,7 +112,17 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        renderSettingsContent()
+        val initialSectionIndex = savedInstanceState?.getInt(STATE_SETTINGS_SECTION_INDEX) ?: 0
+        renderSettingsContent(initialSectionIndex)
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (settingsContentsPopupWindow != null) {
+                    dismissSettingsContentsPanel()
+                } else {
+                    finish()
+                }
+            }
+        })
     }
 
     override fun onStart() {
@@ -105,7 +135,12 @@ class SettingsActivity : AppCompatActivity() {
         super.onStop()
     }
 
-    private fun renderSettingsContent() {
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putInt(STATE_SETTINGS_SECTION_INDEX, currentSettingsSectionIndex)
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun renderSettingsContent(initialSectionIndex: Int) {
         setContentView(R.layout.activity_settings)
         SystemBars.fitContentBelowSystemBars(
             this,
@@ -116,6 +151,12 @@ class SettingsActivity : AppCompatActivity() {
         )
 
         btnBack = findViewById(R.id.btnBack)
+        btnContents = findViewById(R.id.btnContents)
+        tvCurrentSettingsSectionTitle = findViewById(R.id.tvCurrentSettingsSectionTitle)
+        settingsContentsScrim = findViewById(R.id.settingsContentsScrim)
+        settingsSectionFlipper = findViewById(R.id.settingsSectionFlipper)
+        bindSettingsNavigation(initialSectionIndex)
+
         layoutDebugTools = findViewById(R.id.layoutDebugTools)
         btnExportCrashLog = findViewById(R.id.btnExportCrashLog)
         btnRunReaderStressTest = findViewById(R.id.btnRunReaderStressTest)
@@ -135,7 +176,11 @@ class SettingsActivity : AppCompatActivity() {
         tvSettingsBrightnessValue = findViewById(R.id.tvSettingsBrightnessValue)
 
         btnBack.setOnClickListener {
-            finish()
+            if (settingsContentsPopupWindow != null) {
+                dismissSettingsContentsPanel()
+            } else {
+                finish()
+            }
         }
 
         bindLanguageSetting()
@@ -155,7 +200,147 @@ class SettingsActivity : AppCompatActivity() {
         updateConfigurationButtons()
     }
 
+    private fun bindSettingsNavigation(initialSectionIndex: Int) {
+        settingsSections = createSettingsSections()
+        settingsSections.forEach { section ->
+            settingsSectionFlipper.addView(
+                layoutInflater.inflate(section.layoutResId, settingsSectionFlipper, false)
+            )
+        }
+        showSettingsSection(initialSectionIndex)
+
+        btnContents.setOnClickListener {
+            if (settingsContentsPopupWindow == null) {
+                showSettingsContentsPanel()
+            } else {
+                dismissSettingsContentsPanel()
+            }
+        }
+        settingsContentsScrim.setOnClickListener {
+            dismissSettingsContentsPanel()
+        }
+    }
+
+    private fun createSettingsSections(): List<SettingsSection> = buildList {
+        add(SettingsSection(R.string.settings_section_appearance, R.layout.settings_section_appearance))
+        add(SettingsSection(R.string.file_browser, R.layout.settings_section_file_browser))
+        add(SettingsSection(R.string.settings_section_reading, R.layout.settings_section_reading))
+        add(SettingsSection(R.string.settings_section_configuration, R.layout.settings_section_configuration))
+        add(SettingsSection(R.string.source_nas, R.layout.settings_section_nas))
+        add(SettingsSection(R.string.about, R.layout.settings_section_about))
+        if (isDebuggableBuild()) {
+            add(SettingsSection(R.string.settings_section_diagnostics, R.layout.settings_section_diagnostics))
+        }
+    }
+
+    private fun showSettingsSection(index: Int) {
+        if (settingsSections.isEmpty()) {
+            return
+        }
+
+        currentSettingsSectionIndex = index.coerceIn(settingsSections.indices)
+        settingsSectionFlipper.displayedChild = currentSettingsSectionIndex
+        tvCurrentSettingsSectionTitle.setText(
+            settingsSections[currentSettingsSectionIndex].titleResId
+        )
+        (settingsSectionFlipper.getChildAt(currentSettingsSectionIndex) as? ScrollView)
+            ?.scrollTo(0, 0)
+    }
+
+    private fun showSettingsContentsPanel() {
+        if (settingsContentsPopupWindow != null) {
+            return
+        }
+
+        val rootView = findViewById<View>(R.id.main)
+        val screenWidth = rootView.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels
+        val panelWidth = (screenWidth * 0.75f).roundToInt()
+            .coerceAtLeast(dpToPx(280))
+            .coerceAtMost(screenWidth)
+        val content = layoutInflater.inflate(R.layout.panel_settings_contents, null)
+        val listSettingsSections = content.findViewById<RecyclerView>(R.id.listSettingsSections)
+        listSettingsSections.layoutManager = LinearLayoutManager(this)
+        listSettingsSections.adapter = SettingsSectionAdapter(settingsSections) { index ->
+            dismissSettingsContentsPanel()
+            showSettingsSection(index)
+        }
+
+        showSettingsContentsScrim()
+        val popupWindow = PopupWindow(
+            content,
+            panelWidth,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            true
+        )
+        popupWindow.isOutsideTouchable = true
+        popupWindow.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        popupWindow.animationStyle = R.style.Animation_ComicLab_HelpContentsPanel
+        popupWindow.elevation = dpToPx(8).toFloat()
+        popupWindow.setOnDismissListener {
+            if (settingsContentsPopupWindow === popupWindow) {
+                settingsContentsPopupWindow = null
+                hideSettingsContentsScrim()
+                updateContentsButtonDescription(false)
+            }
+        }
+
+        settingsContentsPopupWindow = popupWindow
+        updateContentsButtonDescription(true)
+        popupWindow.showAtLocation(rootView, Gravity.START or Gravity.TOP, 0, 0)
+    }
+
+    private fun dismissSettingsContentsPanel() {
+        val popupWindow = settingsContentsPopupWindow ?: return
+        settingsContentsPopupWindow = null
+        popupWindow.dismiss()
+        hideSettingsContentsScrim()
+        updateContentsButtonDescription(false)
+    }
+
+    private fun showSettingsContentsScrim() {
+        settingsContentsScrim.animate().cancel()
+        settingsContentsScrim.alpha = 0f
+        settingsContentsScrim.visibility = View.VISIBLE
+        settingsContentsScrim.animate()
+            .alpha(1f)
+            .setDuration(180L)
+            .start()
+    }
+
+    private fun hideSettingsContentsScrim() {
+        if (settingsContentsScrim.visibility != View.VISIBLE) {
+            return
+        }
+
+        settingsContentsScrim.animate().cancel()
+        settingsContentsScrim.animate()
+            .alpha(0f)
+            .setDuration(150L)
+            .withEndAction {
+                settingsContentsScrim.visibility = View.GONE
+                settingsContentsScrim.alpha = 1f
+            }
+            .start()
+    }
+
+    private fun updateContentsButtonDescription(expanded: Boolean) {
+        btnContents.contentDescription = getString(
+            if (expanded) {
+                R.string.settings_contents_collapse
+            } else {
+                R.string.settings_contents_expand
+            }
+        )
+    }
+
+    private fun dpToPx(dp: Int): Int {
+        return (dp * resources.displayMetrics.density).roundToInt()
+    }
+
     override fun onDestroy() {
+        settingsContentsPopupWindow?.dismiss()
+        settingsContentsPopupWindow = null
         destroyed = true
         debugToolExecutor.shutdownNow()
         configurationExecutor.shutdownNow()
@@ -271,7 +456,7 @@ class SettingsActivity : AppCompatActivity() {
         switchDarkMode.setOnCheckedChangeListener { _, enabled ->
             AppSettings.setDarkModeEnabled(this, enabled)
             window.decorView.post {
-                renderSettingsContent()
+                renderSettingsContent(currentSettingsSectionIndex)
             }
         }
     }
@@ -394,17 +579,15 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun bindDebugTools() {
         val showDebugTools = isDebuggableBuild()
-        layoutDebugTools.visibility = if (showDebugTools) View.VISIBLE else View.GONE
-        btnExportCrashLog.visibility = if (showDebugTools) View.VISIBLE else View.GONE
-        btnRunReaderStressTest.visibility = if (showDebugTools) View.VISIBLE else View.GONE
         if (!showDebugTools) {
             return
         }
 
-        btnExportCrashLog.setOnClickListener {
+        layoutDebugTools?.visibility = View.VISIBLE
+        btnExportCrashLog?.setOnClickListener {
             exportCrashLog()
         }
-        btnRunReaderStressTest.setOnClickListener {
+        btnRunReaderStressTest?.setOnClickListener {
             runReaderStressTest()
         }
     }
@@ -699,6 +882,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val STATE_SETTINGS_SECTION_INDEX = "settings_section_index"
         private const val CHINESE_LANGUAGE_INDEX = 0
         private const val ENGLISH_LANGUAGE_INDEX = 1
         private const val SIMPLIFIED_CHINESE_LANGUAGE_TAG = "zh-CN"
