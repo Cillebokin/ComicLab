@@ -81,6 +81,7 @@ dependencies {
     implementation(libs.androidx.recyclerview)
     implementation(libs.sevenzipjbinding.android)
     implementation(libs.subsampling.scale.image.view)
+    implementation(libs.smbj)
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation("org.json:json:20231013")

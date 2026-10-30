@@ -14,7 +14,11 @@ internal object ArchiveFormatDetector {
     }
 
     fun isSupportedArchive(file: File): Boolean {
-        return file.isFile && file.extension.lowercase(Locale.ROOT) in supportedArchiveExtensions
+        return file.isFile && isSupportedArchiveExtension(file.extension)
+    }
+
+    fun isSupportedArchiveExtension(extension: String): Boolean {
+        return extension.lowercase(Locale.ROOT) in supportedArchiveExtensions
     }
 
     fun isPdf(file: File): Boolean {

@@ -43,9 +43,14 @@ import com.example.comiclab.core.store.FavoritePathStore
 import com.example.comiclab.core.store.PrefsGateway
 import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
+import com.example.comiclab.core.nas.NasDirectoryEntry
+import com.example.comiclab.core.nas.NasShareDirectoryBrowser
+import com.example.comiclab.core.nas.NasShareProfile
+import com.example.comiclab.core.nas.NasShareStore
 import com.example.comiclab.ebook.ReaderFileDetector
 import com.example.comiclab.ebook.ReaderFileType
 import com.example.comiclab.ui.browser.FileListAdapter
+import com.example.comiclab.ui.browser.NasFileListAdapter
 import com.example.comiclab.ui.reader.enhance.ArchiveEnhancementDialog
 import com.example.comiclab.ui.browser.DirectoryBrowserController
 import com.example.comiclab.ui.browser.DirectoryChildCountCache
@@ -100,6 +105,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var readingHistoryScrim: View
     private lateinit var nasPathStateSink: TextView
     private lateinit var nasEmptyState: View
+    private lateinit var nasEmptyPlaceholder: View
+    private lateinit var nasBrowserContent: View
+    private lateinit var nasEmptyTitle: TextView
+    private lateinit var nasEmptyMessage: TextView
+    private lateinit var btnNasManageShares: Button
+    private lateinit var nasDirectoryListView: ListView
+    private lateinit var nasLoadingPanel: View
+    private lateinit var nasStatusPanel: View
+    private lateinit var tvNasBrowserStatus: TextView
+    private lateinit var tvNasEmptyHint: TextView
+    private lateinit var btnNasRetry: Button
+    private lateinit var tvNasCurrentPath: TextView
+    private lateinit var btnNasSwitchShare: TextView
     private lateinit var sourceSwitchTrack: View
     private lateinit var sourceSwitchThumb: View
     private lateinit var sourceNasButton: View
@@ -109,8 +127,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var sourceNasLabel: TextView
     private lateinit var sourceLocalLabel: TextView
     private lateinit var fileListAdapter: FileListAdapter
+    private lateinit var nasFileListAdapter: NasFileListAdapter
 
     private val fileItems = mutableListOf<FileItem>()
+    private val nasDirectoryItems = mutableListOf<NasDirectoryEntry>()
     private val directoryLoadExecutor = ThreadPoolExecutor(
         1,
         1,
@@ -125,7 +145,9 @@ class MainActivity : AppCompatActivity() {
     private val pendingDirectoryChildCountPaths = Collections.synchronizedSet(mutableSetOf<String>())
     private val classifyExecutor = Executors.newSingleThreadExecutor()
     private val fileTransferExecutor = Executors.newSingleThreadExecutor()
+    private val nasDirectoryExecutor = Executors.newSingleThreadExecutor()
     private val directoryLoadGeneration = AtomicInteger(0)
+    private val nasDirectoryLoadGeneration = AtomicInteger(0)
     private val directoryBrowserController = DirectoryBrowserController(
         STORAGE_ROOT_PATH,
         latestDirectoryLoadDispatcher,
@@ -188,6 +210,20 @@ class MainActivity : AppCompatActivity() {
     private var isNasSourceSelected = false
     private var sourceTransitionGeneration = 0
     private var currentPath = STORAGE_ROOT_PATH
+    private var currentNasRelativePath = ""
+    private var selectedNasProfile: NasShareProfile? = null
+    private var availableNasProfiles: List<NasShareProfile> = emptyList()
+    private var nasDirectoryLoadInProgress = false
+    private var isNasProfileChooserShowing = false
+
+    private sealed interface NasDirectoryLoadResult {
+        data class Loaded(val entries: List<NasDirectoryEntry>) : NasDirectoryLoadResult
+        data object PasswordUnavailable : NasDirectoryLoadResult
+        data object Failed : NasDirectoryLoadResult
+    }
+
+    private class NasSavedPasswordUnavailableException : Exception()
+
     private val fileTransferController = FileTransferController()
     private val pendingFileTransfer: PendingFileTransfer?
         get() = fileTransferController.pendingTransfer
@@ -248,6 +284,19 @@ class MainActivity : AppCompatActivity() {
         readingHistoryScrim = findViewById(R.id.readingHistoryScrim)
         nasPathStateSink = findViewById(R.id.nasPathStateSink)
         nasEmptyState = findViewById(R.id.nasEmptyState)
+        nasEmptyPlaceholder = findViewById(R.id.nasEmptyPlaceholder)
+        nasBrowserContent = findViewById(R.id.nasBrowserContent)
+        nasEmptyTitle = findViewById(R.id.tvNasEmptyTitle)
+        nasEmptyMessage = findViewById(R.id.tvNasEmptyMessage)
+        btnNasManageShares = findViewById(R.id.btnNasManageShares)
+        nasDirectoryListView = findViewById(R.id.listNasFiles)
+        nasLoadingPanel = findViewById(R.id.nasLoadingPanel)
+        nasStatusPanel = findViewById(R.id.nasStatusPanel)
+        tvNasBrowserStatus = findViewById(R.id.tvNasBrowserStatus)
+        tvNasEmptyHint = findViewById(R.id.tvNasEmptyHint)
+        btnNasRetry = findViewById(R.id.btnNasRetry)
+        tvNasCurrentPath = findViewById(R.id.tvNasCurrentPath)
+        btnNasSwitchShare = findViewById(R.id.btnNasSwitchShare)
         sourceSwitchTrack = findViewById(R.id.sourceSwitchTrack)
         sourceSwitchThumb = findViewById(R.id.sourceSwitchThumb)
         sourceNasButton = findViewById(R.id.btnSourceNas)
@@ -272,8 +321,34 @@ class MainActivity : AppCompatActivity() {
             onDirectoryChildCountRequested = directoryRefreshController::requestDirectoryChildCount
         )
         listView.adapter = fileListAdapter
+        nasFileListAdapter = NasFileListAdapter(this, nasDirectoryItems)
+        nasDirectoryListView.adapter = nasFileListAdapter
+        nasDirectoryListView.setOnItemClickListener { _, view, position, _ ->
+            val entry = nasDirectoryItems.getOrNull(position)
+                ?: return@setOnItemClickListener
+            when {
+                entry.isParent -> goParent()
+                entry.isDirectory -> {
+                    currentNasRelativePath = entry.relativePath
+                    loadNasDirectory()
+                }
+                else -> showMessage(R.string.nas_archive_open_later)
+            }
+            clearNasListTouchState(view)
+        }
         sourceNasButton.setOnClickListener { selectFileSource(isNas = true) }
         sourceLocalButton.setOnClickListener { selectFileSource(isNas = false) }
+        btnNasManageShares.setOnClickListener {
+            if (availableNasProfiles.size > 1 && selectedNasProfile == null) {
+                showNasProfilePicker(availableNasProfiles)
+            } else {
+                openNasShareSettings()
+            }
+        }
+        btnNasSwitchShare.setOnClickListener {
+            showNasProfilePicker(availableNasProfiles)
+        }
+        btnNasRetry.setOnClickListener { loadNasDirectory() }
         updateSourceSwitchAppearance(isNas = false, animate = false)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -344,6 +419,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         etPath.setOnLongClickListener {
+            if (isNasSourceSelected) {
+                val profile = selectedNasProfile ?: return@setOnLongClickListener true
+                val relativePath = currentNasRelativePath
+                    .takeIf(String::isNotBlank)
+                    ?.let { "\\$it" }
+                    .orEmpty()
+                copyToClipboard(
+                    label = getString(R.string.path_placeholder),
+                    text = listOf("\\\\", profile.host, "\\", profile.shareName, relativePath)
+                        .joinToString(""),
+                    copiedMessage = getString(R.string.copied_path)
+                )
+                return@setOnLongClickListener true
+            }
             copyToClipboard(
                 label = getString(R.string.path_placeholder),
                 text = currentPath,
@@ -420,6 +509,9 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         clearFileListTouchState()
+        if (isNasSourceSelected) {
+            updateNasEmptyState()
+        }
         if (skipNextResumeDirectoryReload) {
             skipNextResumeDirectoryReload = false
             return
@@ -458,6 +550,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         directoryLoadGeneration.incrementAndGet()
+        nasDirectoryLoadGeneration.incrementAndGet()
         directoryRefreshController.removePendingFirstPreDrawListener()
         classifyGeneration.incrementAndGet()
         directoryLoadExecutor.shutdownNow()
@@ -465,6 +558,7 @@ class MainActivity : AppCompatActivity() {
         pendingDirectoryChildCountPaths.clear()
         classifyExecutor.shutdownNow()
         fileTransferExecutor.shutdownNow()
+        nasDirectoryExecutor.shutdownNow()
         fileListAdapter.close()
         super.onDestroy()
     }
@@ -592,6 +686,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun goParent() {
+        if (isNasSourceSelected) {
+            if (currentNasRelativePath.isNotEmpty()) {
+                currentNasRelativePath =
+                    NasShareDirectoryBrowser.parentPath(currentNasRelativePath)
+                updateNasPathDisplay()
+                loadNasDirectory()
+            }
+            return
+        }
+
         if (!Environment.isExternalStorageManager()) {
             openManageAllFilesAccessSettings()
             return
@@ -626,6 +730,14 @@ class MainActivity : AppCompatActivity() {
         }
         if (pendingFileTransfer != null) {
             goParent()
+            return
+        }
+        if (isNasSourceSelected) {
+            if (currentNasRelativePath.isNotEmpty()) {
+                goParent()
+            } else {
+                finish()
+            }
             return
         }
         if (!Environment.isExternalStorageManager() || isAtStorageRoot()) {
@@ -1159,14 +1271,17 @@ class MainActivity : AppCompatActivity() {
             btnReadingHistory,
             btnSort,
             btnClassify,
-            btnSearch,
-            btnBack
+            btnSearch
         )
         normalToolbarButtons.forEach { button ->
             button.visibility = if (isActive) View.GONE else View.VISIBLE
             button.isEnabled = !isActive && canUseLocalSourceActions
             button.alpha = if (!isActive && canUseLocalSourceActions) 1f else 0.38f
         }
+        val canNavigateBack = !isNasSourceSelected || currentNasRelativePath.isNotEmpty()
+        btnBack.visibility = if (isActive) View.GONE else View.VISIBLE
+        btnBack.isEnabled = !isActive && canNavigateBack && !nasDirectoryLoadInProgress
+        btnBack.alpha = if (btnBack.isEnabled) 1f else 0.38f
 
         sourceNasButton.isEnabled = !isActive
         sourceLocalButton.isEnabled = !isActive
@@ -1198,6 +1313,7 @@ class MainActivity : AppCompatActivity() {
         btnExitFileTransfer.isEnabled = canInteract
         btnTransferParent.isEnabled = canInteract
         listView.isEnabled = !isFileTransferInProgress && canUseLocalSourceActions
+        nasDirectoryListView.isEnabled = !isFileTransferInProgress && !nasDirectoryLoadInProgress
     }
 
     private fun selectFileSource(isNas: Boolean) {
@@ -1206,6 +1322,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         val wasNas = isNasSourceSelected
+        if (wasNas && !isNas) {
+            nasDirectoryLoadGeneration.incrementAndGet()
+            nasDirectoryLoadInProgress = false
+        }
         val generation = ++sourceTransitionGeneration
         listView.animate().cancel()
         nasEmptyState.animate().cancel()
@@ -1218,6 +1338,7 @@ class MainActivity : AppCompatActivity() {
 
         isNasSourceSelected = isNas
         updateSourcePathDisplay()
+        if (isNas) updateNasEmptyState()
         updateSourceSwitchAppearance(isNas)
         updateFileTransferToolbar()
 
@@ -1282,12 +1403,272 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateSourcePathDisplay() {
         if (isNasSourceSelected) {
-            etPath.setText(R.string.nas_not_connected_path)
+            val profile = selectedNasProfile
+            if (profile == null) {
+                etPath.setText(R.string.nas_not_connected_path)
+            } else {
+                val remotePathParts = currentNasRelativePath
+                    .split('\\', '/')
+                    .filter(String::isNotBlank)
+                etPath.setText(
+                    (listOf("NAS", profile.name) + remotePathParts)
+                        .joinToString(" / ")
+                )
+            }
         } else if (Environment.isExternalStorageManager()) {
             etPath.setText(currentPath)
         } else {
             etPath.setText(R.string.storage_permission_required)
         }
+    }
+
+    private fun updateNasEmptyState() {
+        val profiles = runCatching { NasShareStore.load(this) }.getOrNull()
+        if (profiles == null) {
+            availableNasProfiles = emptyList()
+            selectedNasProfile = null
+            showNasPlaceholder(
+                R.string.nas_share_config_read_failed,
+                R.string.nas_share_config_read_failed,
+                R.string.nas_manage_shares
+            )
+            return
+        }
+
+        availableNasProfiles = profiles
+        if (profiles.isEmpty()) {
+            selectedNasProfile = null
+            currentNasRelativePath = ""
+            showNasPlaceholder(
+                R.string.nas_not_connected_title,
+                R.string.nas_not_connected_message,
+                R.string.nas_manage_shares
+            )
+            updateSourcePathDisplay()
+            return
+        }
+
+        val previousProfile = selectedNasProfile
+        val profile = previousProfile?.let { previous ->
+            profiles.firstOrNull { it.id == previous.id }
+        } ?: profiles.singleOrNull()
+        if (profile != null) {
+            if (previousProfile == null ||
+                previousProfile.host != profile.host ||
+                previousProfile.shareName != profile.shareName
+            ) {
+                currentNasRelativePath = ""
+            }
+            selectedNasProfile = profile
+            showNasBrowserContent(profiles)
+            updateNasPathDisplay()
+            loadNasDirectory()
+            return
+        }
+
+        currentNasRelativePath = ""
+        showNasPlaceholder(
+            R.string.nas_choose_share_title,
+            R.string.nas_choose_share_message,
+            R.string.nas_choose_share
+        )
+        showNasProfilePicker(profiles)
+    }
+
+    private fun showNasPlaceholder(titleResId: Int, messageResId: Int, actionResId: Int) {
+        nasBrowserContent.visibility = View.GONE
+        nasEmptyPlaceholder.visibility = View.VISIBLE
+        nasEmptyTitle.setText(titleResId)
+        nasEmptyMessage.setText(messageResId)
+        btnNasManageShares.setText(actionResId)
+        btnNasManageShares.visibility = View.VISIBLE
+        btnNasSwitchShare.visibility = View.GONE
+        nasDirectoryLoadInProgress = false
+        updateSourcePathDisplay()
+        updateFileTransferToolbar()
+    }
+
+    private fun showNasBrowserContent(profiles: List<NasShareProfile>) {
+        nasEmptyPlaceholder.visibility = View.GONE
+        nasBrowserContent.visibility = View.VISIBLE
+        btnNasSwitchShare.visibility = if (profiles.size > 1) View.VISIBLE else View.GONE
+    }
+
+    private fun showNasProfilePicker(profiles: List<NasShareProfile>) {
+        if (profiles.isEmpty()) {
+            openNasShareSettings()
+            return
+        }
+        if (profiles.size == 1) {
+            selectNasProfile(profiles.single())
+            return
+        }
+        if (isNasProfileChooserShowing || isFinishing || isDestroyed) {
+            return
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.nas_choose_share_title)
+            .setItems(profiles.map(NasShareProfile::name).toTypedArray()) { _, index ->
+                profiles.getOrNull(index)?.let(::selectNasProfile)
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .create()
+        isNasProfileChooserShowing = true
+        dialog.setOnDismissListener {
+            isNasProfileChooserShowing = false
+        }
+        dialog.show()
+    }
+
+    private fun selectNasProfile(profile: NasShareProfile) {
+        val targetChanged = selectedNasProfile?.let {
+            it.host != profile.host || it.shareName != profile.shareName
+        } ?: true
+        selectedNasProfile = profile
+        if (targetChanged) {
+            currentNasRelativePath = ""
+        }
+        showNasBrowserContent(availableNasProfiles)
+        updateNasPathDisplay()
+        loadNasDirectory()
+    }
+
+    private fun updateNasPathDisplay() {
+        val profile = selectedNasProfile
+        val remotePath = currentNasRelativePath.replace('\\', '/')
+        tvNasCurrentPath.text = profile?.let {
+            listOf(it.name, remotePath)
+                .filter(String::isNotBlank)
+                .joinToString(" / ")
+        }.orEmpty()
+        nasPathStateSink.text = currentNasRelativePath
+        updateSourcePathDisplay()
+    }
+
+    private fun loadNasDirectory() {
+        val profile = selectedNasProfile ?: return
+        val requestedPath = currentNasRelativePath
+        val generation = nasDirectoryLoadGeneration.incrementAndGet()
+        nasDirectoryLoadInProgress = true
+        nasDirectoryListView.visibility = View.GONE
+        nasStatusPanel.visibility = View.GONE
+        tvNasEmptyHint.visibility = View.GONE
+        nasLoadingPanel.visibility = View.VISIBLE
+        updateNasPathDisplay()
+        updateFileTransferToolbar()
+
+        nasDirectoryExecutor.execute {
+            if (generation != nasDirectoryLoadGeneration.get() || isDestroyed) {
+                return@execute
+            }
+            val result = try {
+                val password = if (profile.username.isBlank()) {
+                    ""
+                } else {
+                    try {
+                        NasShareStore.rememberedPassword(profile)
+                            ?.takeIf(String::isNotEmpty)
+                            ?: throw NasSavedPasswordUnavailableException()
+                    } catch (exception: NasSavedPasswordUnavailableException) {
+                        throw exception
+                    } catch (_: Exception) {
+                        throw NasSavedPasswordUnavailableException()
+                    }
+                }
+                NasDirectoryLoadResult.Loaded(
+                    NasShareDirectoryBrowser.list(profile, password, requestedPath)
+                )
+            } catch (_: NasSavedPasswordUnavailableException) {
+                NasDirectoryLoadResult.PasswordUnavailable
+            } catch (_: Exception) {
+                NasDirectoryLoadResult.Failed
+            }
+
+            runOnUiThread {
+                if (isDestroyed || !isNasSourceSelected ||
+                    generation != nasDirectoryLoadGeneration.get() ||
+                    selectedNasProfile?.id != profile.id
+                ) {
+                    return@runOnUiThread
+                }
+                nasDirectoryLoadInProgress = false
+                nasLoadingPanel.visibility = View.GONE
+                when (result) {
+                    is NasDirectoryLoadResult.Loaded -> {
+                        tvNasEmptyHint.visibility = if (
+                            requestedPath.isNotEmpty() && result.entries.isEmpty()
+                        ) {
+                            View.VISIBLE
+                        } else {
+                            View.GONE
+                        }
+                        val visibleEntries = buildList {
+                            if (requestedPath.isNotEmpty()) {
+                                add(
+                                    NasDirectoryEntry(
+                                        name = "..",
+                                        relativePath = NasShareDirectoryBrowser.parentPath(requestedPath),
+                                        isDirectory = true,
+                                        sizeBytes = 0L,
+                                        modifiedAt = 0L,
+                                        isParent = true
+                                    )
+                                )
+                            }
+                            addAll(result.entries)
+                        }
+                        nasFileListAdapter.replaceItems(visibleEntries)
+                        if (visibleEntries.isEmpty()) {
+                            nasDirectoryListView.visibility = View.GONE
+                            tvNasBrowserStatus.setText(R.string.nas_empty_directory)
+                            btnNasRetry.visibility = View.GONE
+                            nasStatusPanel.visibility = View.VISIBLE
+                        } else {
+                            nasStatusPanel.visibility = View.GONE
+                            nasDirectoryListView.visibility = View.VISIBLE
+                            nasDirectoryListView.setSelection(0)
+                        }
+                    }
+                    NasDirectoryLoadResult.PasswordUnavailable -> {
+                        showNasDirectoryError(
+                            R.string.nas_directory_password_required,
+                            canRetry = false
+                        )
+                    }
+                    NasDirectoryLoadResult.Failed -> {
+                        showNasDirectoryError(
+                            R.string.nas_directory_load_failed,
+                            canRetry = true
+                        )
+                    }
+                }
+                updateFileTransferToolbar()
+            }
+        }
+    }
+
+    private fun showNasDirectoryError(messageResId: Int, canRetry: Boolean) {
+        nasDirectoryListView.visibility = View.GONE
+        tvNasEmptyHint.visibility = View.GONE
+        tvNasBrowserStatus.setText(messageResId)
+        btnNasRetry.visibility = if (canRetry) View.VISIBLE else View.GONE
+        nasStatusPanel.visibility = View.VISIBLE
+    }
+
+    private fun clearNasListTouchState(view: View) {
+        view.isPressed = false
+        view.isSelected = false
+        view.isActivated = false
+        nasDirectoryListView.isPressed = false
+        nasDirectoryListView.isSelected = false
+    }
+
+    private fun openNasShareSettings() {
+        startActivity(
+            Intent(this, SettingsActivity::class.java)
+                .putExtra(SettingsActivity.EXTRA_SETTINGS_SECTION, SettingsActivity.SETTINGS_SECTION_NAS)
+        )
     }
 
     private fun pastePendingFile() {
