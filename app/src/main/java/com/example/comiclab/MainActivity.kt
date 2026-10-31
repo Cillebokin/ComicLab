@@ -230,6 +230,9 @@ class MainActivity : AppCompatActivity() {
     private var nasDownloadLastProgressUpdateAt = 0L
     private var nasCacheManagementInProgress = false
     private var nasCacheClearDialog: AlertDialog? = null
+    private var nasCachedArchivePickerDialog: AlertDialog? = null
+    private var nasCachedArchiveActionDialog: AlertDialog? = null
+    private var nasCacheDeleteConfirmDialog: AlertDialog? = null
     private var isNasProfileChooserShowing = false
 
     private sealed interface NasDirectoryLoadResult {
@@ -248,6 +251,11 @@ class MainActivity : AppCompatActivity() {
     private sealed interface NasCacheClearOutcome {
         data class Completed(val result: NasShareArchiveDownloader.CacheClearResult) : NasCacheClearOutcome
         data class Failed(val exception: Exception) : NasCacheClearOutcome
+    }
+
+    private sealed interface NasCachedArchiveDeleteOutcome {
+        data class Completed(val bytesFreed: Long) : NasCachedArchiveDeleteOutcome
+        data class Failed(val exception: Exception) : NasCachedArchiveDeleteOutcome
     }
 
     private class NasSavedPasswordUnavailableException : Exception()
@@ -590,6 +598,12 @@ class MainActivity : AppCompatActivity() {
         dismissNasDownloadProgress()
         nasCacheClearDialog?.dismiss()
         nasCacheClearDialog = null
+        nasCachedArchivePickerDialog?.dismiss()
+        nasCachedArchivePickerDialog = null
+        nasCachedArchiveActionDialog?.dismiss()
+        nasCachedArchiveActionDialog = null
+        nasCacheDeleteConfirmDialog?.dismiss()
+        nasCacheDeleteConfirmDialog = null
         directoryRefreshController.removePendingFirstPreDrawListener()
         classifyGeneration.incrementAndGet()
         directoryLoadExecutor.shutdownNow()
@@ -1958,6 +1972,7 @@ class MainActivity : AppCompatActivity() {
 
         val dialog = builder
             .setPositiveButton(R.string.nas_cache_clear, null)
+            .setNeutralButton(R.string.nas_cache_manage_archives, null)
             .setNegativeButton(android.R.string.cancel, null)
             .setCancelable(false)
             .createRounded()
@@ -1968,6 +1983,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
         dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
+                if (nasCacheManagementInProgress) return@setOnClickListener
+                dialog.dismiss()
+                showNasCachedArchivePickerDialog()
+            }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
                 if (nasCacheManagementInProgress) return@setOnClickListener
                 nasCacheManagementInProgress = true
@@ -2028,6 +2048,177 @@ class MainActivity : AppCompatActivity() {
                                     outcome.exception
                                 )
                                 showMessage(R.string.nas_cache_clear_error)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun showNasCachedArchivePickerDialog() {
+        if (nasCacheManagementInProgress || nasDownloadInProgress || isDestroyed || isFinishing) {
+            return
+        }
+        val archives = try {
+            NasShareArchiveDownloader.cachedArchives(cacheDir)
+        } catch (exception: Exception) {
+            android.util.Log.e("ComicLabNAS", "Could not list cached NAS archives", exception)
+            showMessage(R.string.nas_cache_read_failed)
+            return
+        }
+        if (archives.isEmpty()) {
+            updateNasCacheSummary()
+            showMessage(R.string.nas_cache_empty_message)
+            return
+        }
+
+        val duplicateNames = archives.groupingBy { it.name }.eachCount()
+        val labels = archives.map { archive ->
+            val duplicateIdentity = if ((duplicateNames[archive.name] ?: 0) > 1) {
+                " · ${archive.cacheIdentity.take(8)}"
+            } else {
+                ""
+            }
+            "${archive.name} · ${Formatter.formatShortFileSize(this, archive.sizeBytes)}$duplicateIdentity"
+        }
+        var selectedArchive: NasShareArchiveDownloader.CachedArchive? = null
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.nas_cache_archive_picker_title)
+            .setItems(labels.toTypedArray()) { _, index ->
+                selectedArchive = archives.getOrNull(index)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .createRounded()
+        nasCachedArchivePickerDialog = dialog
+        dialog.setOnDismissListener {
+            if (nasCachedArchivePickerDialog === dialog) {
+                nasCachedArchivePickerDialog = null
+            }
+            selectedArchive?.let { archive ->
+                window.decorView.post {
+                    if (!isDestroyed && !isFinishing) {
+                        showNasCachedArchiveActionDialog(archive)
+                    }
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun showNasCachedArchiveActionDialog(
+        archive: NasShareArchiveDownloader.CachedArchive
+    ) {
+        if (nasCacheManagementInProgress || nasDownloadInProgress || isDestroyed || isFinishing) {
+            return
+        }
+        var selectedAction: Int? = null
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(archive.name)
+            .setItems(
+                arrayOf(
+                    getString(R.string.nas_cache_archive_read_action),
+                    getString(R.string.nas_cache_archive_delete_action)
+                )
+            ) { _, index ->
+                selectedAction = index
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .createRounded()
+        nasCachedArchiveActionDialog = dialog
+        dialog.setOnDismissListener {
+            if (nasCachedArchiveActionDialog === dialog) {
+                nasCachedArchiveActionDialog = null
+            }
+            selectedAction?.let { action ->
+                window.decorView.post {
+                    if (isDestroyed || isFinishing) return@post
+                    when (action) {
+                        0 -> {
+                            if (archive.file.isFile && archive.file.length() > 0L) {
+                                openMangaPreview(archive.file)
+                            } else {
+                                updateNasCacheSummary()
+                                showMessage(R.string.nas_cache_archive_open_failed)
+                            }
+                        }
+
+                        1 -> showNasCachedArchiveDeleteConfirmationDialog(archive)
+                    }
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun showNasCachedArchiveDeleteConfirmationDialog(
+        archive: NasShareArchiveDownloader.CachedArchive
+    ) {
+        if (nasCacheManagementInProgress || nasDownloadInProgress || isDestroyed || isFinishing) {
+            return
+        }
+        val message = getString(
+            R.string.nas_cache_delete_confirm_message,
+            archive.name,
+            Formatter.formatShortFileSize(this, archive.sizeBytes)
+        )
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.nas_cache_delete_confirm_title)
+            .setMessage(message)
+            .setPositiveButton(R.string.nas_cache_delete_action, null)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setCancelable(false)
+            .createRounded()
+        nasCacheDeleteConfirmDialog = dialog
+        dialog.setOnDismissListener {
+            if (nasCacheDeleteConfirmDialog === dialog) {
+                nasCacheDeleteConfirmDialog = null
+            }
+        }
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
+                if (nasCacheManagementInProgress) return@setOnClickListener
+                nasCacheManagementInProgress = true
+                updateNasCacheSummary()
+                dialog.setMessage(getString(R.string.nas_cache_deleting, archive.name))
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = false
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.isEnabled = false
+                nasCacheExecutor.execute {
+                    val outcome = try {
+                        NasCachedArchiveDeleteOutcome.Completed(
+                            NasShareArchiveDownloader.deleteCachedArchive(cacheDir, archive)
+                        )
+                    } catch (exception: Exception) {
+                        NasCachedArchiveDeleteOutcome.Failed(exception)
+                    }
+                    runOnUiThread {
+                        nasCacheManagementInProgress = false
+                        if (isDestroyed || isFinishing) {
+                            if (dialog.isShowing) dialog.dismiss()
+                            return@runOnUiThread
+                        }
+                        updateNasCacheSummary()
+                        if (nasCacheDeleteConfirmDialog === dialog) {
+                            nasCacheDeleteConfirmDialog = null
+                        }
+                        if (dialog.isShowing) dialog.dismiss()
+                        when (outcome) {
+                            is NasCachedArchiveDeleteOutcome.Completed -> showMessage(
+                                getString(
+                                    R.string.nas_cache_delete_success,
+                                    archive.name,
+                                    Formatter.formatShortFileSize(this, outcome.bytesFreed)
+                                )
+                            )
+
+                            is NasCachedArchiveDeleteOutcome.Failed -> {
+                                android.util.Log.e(
+                                    "ComicLabNAS",
+                                    "Could not delete cached NAS archive: ${archive.name}",
+                                    outcome.exception
+                                )
+                                showMessage(R.string.nas_cache_delete_error)
                             }
                         }
                     }

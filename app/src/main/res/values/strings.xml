@@ -37,6 +37,17 @@
     <string name="nas_cache_read_failed">读取NAS缓存信息失败</string>
     <string name="nas_cache_clear_failed">清理NAS缓存失败，仍有%1$s未能清理</string>
     <string name="nas_cache_clear_error">清理NAS缓存时发生错误，请重试</string>
+    <string name="nas_cache_manage_archives">管理缓存</string>
+    <string name="nas_cache_archive_picker_title">选择本机缓存</string>
+    <string name="nas_cache_archive_read_action">阅读</string>
+    <string name="nas_cache_archive_delete_action">删除</string>
+    <string name="nas_cache_archive_open_failed">本机缓存不可用，请重新从NAS目录下载</string>
+    <string name="nas_cache_delete_confirm_title">删除本机缓存？</string>
+    <string name="nas_cache_delete_confirm_message">将从手机删除%1$s（%2$s）。不会删除Windows共享中的原文件</string>
+    <string name="nas_cache_delete_action">删除本机副本</string>
+    <string name="nas_cache_deleting">正在删除：%1$s</string>
+    <string name="nas_cache_delete_success">已删除%1$s，释放%2$s</string>
+    <string name="nas_cache_delete_error">删除缓存失败，请重试</string>
     <string name="nas_choose_share_title">选择要浏览的共享</string>
     <string name="nas_choose_share_message">选择一个已保存的Windows共享</string>
     <string name="nas_no_saved_shares_title">还没有保存共享</string>

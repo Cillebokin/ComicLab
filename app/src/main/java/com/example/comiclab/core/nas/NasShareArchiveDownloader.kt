@@ -11,6 +11,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.EnumSet
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -36,6 +37,14 @@ internal object NasShareArchiveDownloader {
         val completed: Boolean
     )
 
+    data class CachedArchive(val file: File, val sizeBytes: Long) {
+        val name: String
+            get() = file.name
+
+        val cacheIdentity: String
+            get() = file.parentFile?.name.orEmpty()
+    }
+
     fun cacheDirectory(appCacheDirectory: File): File =
         File(appCacheDirectory, CACHE_DIRECTORY_NAME)
 
@@ -57,6 +66,40 @@ internal object NasShareArchiveDownloader {
                 }
             }
         return CacheSummary(fileCount, totalBytes)
+    }
+
+    fun cachedArchives(appCacheDirectory: File): List<CachedArchive> {
+        val root = checkedCacheRoot(appCacheDirectory)
+        if (!root.isDirectory) return emptyList()
+
+        return root.walkTopDown()
+            .filter { it.isFile && !it.name.endsWith(".part", ignoreCase = true) }
+            .map { CachedArchive(it, it.length()) }
+            .sortedWith(
+                compareBy<CachedArchive> { it.name.lowercase(Locale.ROOT) }
+                    .thenBy { it.name }
+                    .thenBy { it.cacheIdentity }
+            )
+            .toList()
+    }
+
+    fun deleteCachedArchive(appCacheDirectory: File, archive: CachedArchive): Long {
+        val canonicalRoot = checkedCacheRoot(appCacheDirectory)
+        val file = archive.file.canonicalFile
+        check(file.parentFile?.parentFile == canonicalRoot) {
+            "NAS cache file resolves outside the cache directory"
+        }
+        require(!file.name.endsWith(".part", ignoreCase = true)) {
+            "Cannot delete an incomplete NAS download as a cached archive"
+        }
+        if (!file.isFile) throw IOException("NAS cache file no longer exists")
+
+        val bytesFreed = file.length()
+        if (!file.delete()) throw IOException("Could not delete NAS cache file")
+        file.parentFile?.takeIf { directory ->
+            directory.isDirectory && directory.list()?.isEmpty() == true
+        }?.delete()
+        return bytesFreed
     }
 
     fun cleanupInterruptedPartialFiles(appCacheDirectory: File): Int {

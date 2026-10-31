@@ -38,6 +38,17 @@
     <string name="nas_cache_read_failed">Could not read NAS cache information</string>
     <string name="nas_cache_clear_failed">Could not clear the NAS cache; %1$s remains</string>
     <string name="nas_cache_clear_error">An error occurred while clearing the NAS cache. Please try again</string>
+    <string name="nas_cache_manage_archives">Manage cache</string>
+    <string name="nas_cache_archive_picker_title">Choose a cached comic</string>
+    <string name="nas_cache_archive_read_action">Read</string>
+    <string name="nas_cache_archive_delete_action">Delete</string>
+    <string name="nas_cache_archive_open_failed">This local cache is unavailable. Download it again from the NAS</string>
+    <string name="nas_cache_delete_confirm_title">Delete local cache?</string>
+    <string name="nas_cache_delete_confirm_message">Remove %1$s (%2$s) from this phone. The original file on the Windows share will remain</string>
+    <string name="nas_cache_delete_action">Delete phone copy</string>
+    <string name="nas_cache_deleting">Deleting: %1$s</string>
+    <string name="nas_cache_delete_success">Deleted %1$s; freed %2$s</string>
+    <string name="nas_cache_delete_error">Could not delete the cache. Please try again</string>
     <string name="nas_choose_share_title">Choose a share to browse</string>
     <string name="nas_choose_share_message">Choose a saved Windows share</string>
     <string name="nas_no_saved_shares_title">No saved shares</string>
