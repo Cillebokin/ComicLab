@@ -44,6 +44,8 @@ import com.example.comiclab.core.store.PrefsGateway
 import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
 import com.example.comiclab.core.nas.NasDirectoryEntry
+import com.example.comiclab.core.nas.NasFailureClassifier
+import com.example.comiclab.core.nas.NasFailureDetails
 import com.example.comiclab.core.nas.NasShareArchiveDownloader
 import com.example.comiclab.core.nas.NasShareDirectoryBrowser
 import com.example.comiclab.core.nas.NasShareProfile
@@ -238,14 +240,17 @@ class MainActivity : AppCompatActivity() {
     private sealed interface NasDirectoryLoadResult {
         data class Loaded(val entries: List<NasDirectoryEntry>) : NasDirectoryLoadResult
         data object PasswordUnavailable : NasDirectoryLoadResult
-        data object Failed : NasDirectoryLoadResult
+        data class Failed(val failure: NasFailureDetails) : NasDirectoryLoadResult
     }
 
     private sealed interface NasDownloadResult {
         data class Completed(val file: File, val openForReading: Boolean) : NasDownloadResult
         data class InsufficientSpace(val requiredBytes: Long, val availableBytes: Long) : NasDownloadResult
         data object Cancelled : NasDownloadResult
-        data class Failed(val exception: Exception) : NasDownloadResult
+        data class Failed(
+            val exception: Exception,
+            val failure: NasFailureDetails
+        ) : NasDownloadResult
     }
 
     private sealed interface NasCacheClearOutcome {
@@ -1684,8 +1689,8 @@ class MainActivity : AppCompatActivity() {
                 )
             } catch (_: NasSavedPasswordUnavailableException) {
                 NasDirectoryLoadResult.PasswordUnavailable
-            } catch (_: Exception) {
-                NasDirectoryLoadResult.Failed
+            } catch (exception: Exception) {
+                NasDirectoryLoadResult.Failed(NasFailureClassifier.classify(exception))
             }
 
             runOnUiThread {
@@ -1735,13 +1740,13 @@ class MainActivity : AppCompatActivity() {
                     }
                     NasDirectoryLoadResult.PasswordUnavailable -> {
                         showNasDirectoryError(
-                            R.string.nas_directory_password_required,
+                            getString(R.string.nas_directory_password_required),
                             canRetry = false
                         )
                     }
-                    NasDirectoryLoadResult.Failed -> {
+                    is NasDirectoryLoadResult.Failed -> {
                         showNasDirectoryError(
-                            R.string.nas_directory_load_failed,
+                            NasFailureClassifier.format(this@MainActivity, result.failure),
                             canRetry = true
                         )
                     }
@@ -1801,9 +1806,9 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (exception: Exception) {
             android.util.Log.e("ComicLabNAS", "Invalid NAS local download directory", exception)
-            showMessage(
-                if (saveToLocal) R.string.nas_download_to_local_failed
-                else R.string.nas_download_failed
+            showNasFailureDialog(
+                if (saveToLocal) NasFailureClassifier.localPathFailure(exception)
+                else NasFailureClassifier.classify(exception)
             )
             return
         }
@@ -1818,10 +1823,7 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (exception: Exception) {
             android.util.Log.e("ComicLabNAS", "Invalid NAS archive path", exception)
-            showMessage(
-                if (saveToLocal) R.string.nas_download_to_local_failed
-                else R.string.nas_download_failed
-            )
+            showNasFailureDialog(NasFailureClassifier.classify(exception))
             return
         }
         if (!saveToLocal && destination.isFile && destination.length() == entry.sizeBytes) {
@@ -1835,9 +1837,9 @@ class MainActivity : AppCompatActivity() {
             return
         } catch (exception: Exception) {
             android.util.Log.e("ComicLabNAS", "Could not prepare NAS download directory", exception)
-            showMessage(
-                if (saveToLocal) R.string.nas_download_to_local_failed
-                else R.string.nas_download_failed
+            showNasFailureDialog(
+                if (saveToLocal) NasFailureClassifier.localPathFailure(exception)
+                else NasFailureClassifier.classify(exception)
             )
             return
         }
@@ -1877,7 +1879,13 @@ class MainActivity : AppCompatActivity() {
             } catch (_: NasShareArchiveDownloader.DownloadCancelledException) {
                 NasDownloadResult.Cancelled
             } catch (exception: Exception) {
-                NasDownloadResult.Failed(exception)
+                NasDownloadResult.Failed(
+                    exception = exception,
+                    failure = NasFailureClassifier.classify(
+                        exception,
+                        localDownload = saveToLocal
+                    )
+                )
             }
 
             runOnUiThread {
@@ -1912,10 +1920,7 @@ class MainActivity : AppCompatActivity() {
                             "NAS archive download failed: ${entry.relativePath}",
                             result.exception
                         )
-                        showMessage(
-                            if (saveToLocal) R.string.nas_download_to_local_failed
-                            else R.string.nas_download_failed
-                        )
+                        showNasFailureDialog(result.failure)
                     }
                 }
             }
@@ -2324,12 +2329,22 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    private fun showNasDirectoryError(messageResId: Int, canRetry: Boolean) {
+    private fun showNasDirectoryError(message: CharSequence, canRetry: Boolean) {
         nasDirectoryListView.visibility = View.GONE
         tvNasEmptyHint.visibility = View.GONE
-        tvNasBrowserStatus.setText(messageResId)
+        tvNasBrowserStatus.text = message
         btnNasRetry.visibility = if (canRetry) View.VISIBLE else View.GONE
         nasStatusPanel.visibility = View.VISIBLE
+    }
+
+    private fun showNasFailureDialog(failure: NasFailureDetails) {
+        if (isFinishing || isDestroyed) return
+        AlertDialog.Builder(this)
+            .setTitle(R.string.nas_failure_title)
+            .setMessage(NasFailureClassifier.format(this, failure))
+            .setPositiveButton(R.string.confirm, null)
+            .createRounded()
+            .show()
     }
 
     private fun clearNasListTouchState(view: View) {

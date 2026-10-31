@@ -3,6 +3,8 @@ package com.example.comiclab
 import com.example.comiclab.core.settings.ComicLabConfigurationStore
 import com.example.comiclab.core.settings.ComicLabConfigurationJson
 import com.example.comiclab.core.nas.NasShareConnectionTester
+import com.example.comiclab.core.nas.NasFailureClassifier
+import com.example.comiclab.core.nas.NasFailureDetails
 import com.example.comiclab.core.nas.NasShareProfile
 import com.example.comiclab.core.nas.NasShareStore
 import com.example.comiclab.core.update.GitHubReleaseApi
@@ -578,7 +580,7 @@ class SettingsActivity : AppCompatActivity() {
         actionButton.isEnabled = false
         saveButton?.isEnabled = false
         nasConnectionExecutor.execute {
-            val result = try {
+            val result: NasConnectionTestOutcome = try {
                 val password = if (useRememberedPassword) {
                     try {
                         NasShareStore.rememberedPassword(profile)
@@ -595,18 +597,26 @@ class SettingsActivity : AppCompatActivity() {
                     throw NasPasswordUnavailableException()
                 }
                 NasShareConnectionTester.test(profile, password)
-                R.string.nas_test_success
+                NasConnectionTestOutcome.Success
             } catch (_: NasPasswordUnavailableException) {
-                R.string.nas_password_unavailable
-            } catch (_: Exception) {
-                R.string.nas_test_failure
+                NasConnectionTestOutcome.PasswordUnavailable
+            } catch (exception: Exception) {
+                NasConnectionTestOutcome.Failed(NasFailureClassifier.classify(exception))
             }
 
             runOnUiThread {
                 if (destroyed || (dialog != null && !dialog.isShowing)) {
                     return@runOnUiThread
                 }
-                status.setText(result)
+                when (result) {
+                    NasConnectionTestOutcome.Success -> status.setText(R.string.nas_test_success)
+                    NasConnectionTestOutcome.PasswordUnavailable -> {
+                        status.setText(R.string.nas_password_unavailable)
+                    }
+                    is NasConnectionTestOutcome.Failed -> {
+                        status.text = NasFailureClassifier.format(this@SettingsActivity, result.failure)
+                    }
+                }
                 actionButton.isEnabled = true
                 saveButton?.isEnabled = true
             }
@@ -628,6 +638,12 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
             .show()
+    }
+
+    private sealed interface NasConnectionTestOutcome {
+        data object Success : NasConnectionTestOutcome
+        data object PasswordUnavailable : NasConnectionTestOutcome
+        data class Failed(val failure: NasFailureDetails) : NasConnectionTestOutcome
     }
 
     private class NasPasswordUnavailableException : Exception()
