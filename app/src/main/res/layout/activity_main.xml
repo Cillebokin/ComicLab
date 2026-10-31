@@ -348,6 +348,21 @@
                     android:text="@string/nas_manage_shares"
                     android:textColor="@color/white"
                     android:textSize="@dimen/text_value" />
+
+                <TextView
+                    android:id="@+id/btnNasCacheManagementEmpty"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="8dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:gravity="center"
+                    android:minWidth="100dp"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:text="@string/nas_cache_button_manage"
+                    android:textColor="@color/comiclab_accent"
+                    android:textSize="@dimen/text_value"
+                    android:visibility="gone" />
             </LinearLayout>
 
             <LinearLayout
@@ -376,6 +391,20 @@
                         android:maxLines="1"
                         android:textColor="@color/comiclab_text_secondary"
                         android:textSize="@dimen/text_caption" />
+
+                    <TextView
+                        android:id="@+id/btnNasCacheManagement"
+                        android:layout_width="wrap_content"
+                        android:layout_height="match_parent"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:gravity="center"
+                        android:minWidth="64dp"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:text="@string/nas_cache_button_empty"
+                        android:textColor="@color/comiclab_accent"
+                        android:textSize="@dimen/text_caption"
+                        android:visibility="gone" />
 
                     <TextView
                         android:id="@+id/btnNasSwitchShare"

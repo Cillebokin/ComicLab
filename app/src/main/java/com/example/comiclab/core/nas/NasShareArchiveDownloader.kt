@@ -15,6 +15,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal object NasShareArchiveDownloader {
+    private const val CACHE_DIRECTORY_NAME = "nas-comics"
     private const val FREE_SPACE_RESERVE_BYTES = 32L * 1024L * 1024L
     private const val BUFFER_SIZE_BYTES = 128 * 1024
     private const val PARTIAL_FILE_STALE_AGE_MS = 60L * 60L * 1000L
@@ -25,6 +26,51 @@ internal object NasShareArchiveDownloader {
     ) : IOException("Insufficient cache space")
 
     class DownloadCancelledException : IOException("NAS download cancelled")
+
+    data class CacheSummary(val fileCount: Int, val totalBytes: Long)
+
+    data class CacheClearResult(
+        val bytesFreed: Long,
+        val bytesRemaining: Long,
+        val filesRemaining: Int,
+        val completed: Boolean
+    )
+
+    fun cacheDirectory(appCacheDirectory: File): File =
+        File(appCacheDirectory, CACHE_DIRECTORY_NAME)
+
+    fun cacheSummary(appCacheDirectory: File): CacheSummary {
+        val root = checkedCacheRoot(appCacheDirectory)
+        if (!root.exists()) return CacheSummary(0, 0L)
+
+        var fileCount = 0
+        var totalBytes = 0L
+        root.walkTopDown()
+            .filter { it.isFile }
+            .forEach { file ->
+                fileCount++
+                val fileBytes = file.length()
+                totalBytes = if (fileBytes > Long.MAX_VALUE - totalBytes) {
+                    Long.MAX_VALUE
+                } else {
+                    totalBytes + fileBytes
+                }
+            }
+        return CacheSummary(fileCount, totalBytes)
+    }
+
+    fun clearCache(appCacheDirectory: File): CacheClearResult {
+        val root = checkedCacheRoot(appCacheDirectory)
+        val before = cacheSummary(appCacheDirectory)
+        val deleted = !root.exists() || root.deleteRecursively()
+        val after = cacheSummary(appCacheDirectory)
+        return CacheClearResult(
+            bytesFreed = (before.totalBytes - after.totalBytes).coerceAtLeast(0L),
+            bytesRemaining = after.totalBytes,
+            filesRemaining = after.fileCount,
+            completed = deleted && after.fileCount == 0
+        )
+    }
 
     fun cacheFile(
         cacheRoot: File,
@@ -164,6 +210,15 @@ internal object NasShareArchiveDownloader {
         if (availableBytes < requiredBytes) {
             throw InsufficientStorageException(requiredBytes, availableBytes)
         }
+    }
+
+    private fun checkedCacheRoot(appCacheDirectory: File): File {
+        val canonicalAppCacheDirectory = appCacheDirectory.canonicalFile
+        val canonicalRoot = cacheDirectory(canonicalAppCacheDirectory).canonicalFile
+        check(canonicalRoot.parentFile == canonicalAppCacheDirectory) {
+            "NAS cache directory resolves outside the app cache"
+        }
+        return canonicalRoot
     }
 
     private fun validateRemotePath(path: String) {
