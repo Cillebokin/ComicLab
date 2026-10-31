@@ -27,6 +27,55 @@ internal object NasShareDirectoryBrowser {
         relativePath: String
     ): List<NasDirectoryEntry> {
         val directoryPath = normalizeRelativePath(relativePath)
+        return withDiskShare(profile, password) { share ->
+            share.list(directoryPath)
+                .asSequence()
+                .mapNotNull { entry ->
+                    val name = entry.fileName
+                    if (name.isBlank() || name == "." || name == ".." ||
+                        name.startsWith(".") || name.contains('\\') || name.contains('/')
+                    ) {
+                        return@mapNotNull null
+                    }
+
+                    val attributes = entry.fileAttributes
+                    if ((attributes and FileAttributes.FILE_ATTRIBUTE_HIDDEN.value) != 0L ||
+                        (attributes and FileAttributes.FILE_ATTRIBUTE_SYSTEM.value) != 0L
+                    ) {
+                        return@mapNotNull null
+                    }
+
+                    val isDirectory = (attributes and
+                        FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value) != 0L
+                    if (!isDirectory && !ArchiveFormatDetector.isSupportedArchiveExtension(
+                            File(name).extension
+                        )
+                    ) {
+                        return@mapNotNull null
+                    }
+
+                    NasDirectoryEntry(
+                        name = name,
+                        relativePath = joinRelativePath(directoryPath, name),
+                        isDirectory = isDirectory,
+                        sizeBytes = if (isDirectory) 0L else entry.endOfFile,
+                        modifiedAt = entry.lastWriteTime.toEpochMillis()
+                    )
+                }
+                .sortedWith(
+                    compareByDescending<NasDirectoryEntry> { it.isDirectory }
+                        .thenBy { it.name.lowercase(Locale.ROOT) }
+                        .thenBy { it.name }
+                )
+                .toList()
+        }
+    }
+
+    internal fun <T> withDiskShare(
+        profile: NasShareProfile,
+        password: String,
+        action: (DiskShare) -> T
+    ): T {
         val config = SmbConfig.builder()
             .withTimeout(15, TimeUnit.SECONDS)
             .withSoTimeout(15, TimeUnit.SECONDS)
@@ -34,61 +83,11 @@ internal object NasShareDirectoryBrowser {
 
         return SMBClient(config).use { client ->
             client.connect(profile.host).use { connection ->
-                val username = profile.username.trim()
-                val separator = username.indexOf('\\')
-                val authentication = if (username.isEmpty()) {
-                    AuthenticationContext.anonymous()
-                } else {
-                    val domain = if (separator > 0) username.substring(0, separator) else null
-                    val account = if (separator > 0) username.substring(separator + 1) else username
-                    AuthenticationContext(account, password.toCharArray(), domain)
-                }
-                val session = connection.authenticate(authentication)
+                val session = connection.authenticate(authentication(profile, password))
                 try {
                     val share = session.connectShare(profile.shareName) as? DiskShare
                         ?: throw IllegalStateException("The SMB share is not a disk share")
-                    share.use {
-                        it.list(directoryPath)
-                            .asSequence()
-                            .mapNotNull { entry ->
-                                val name = entry.fileName
-                                if (name.isBlank() || name == "." || name == ".." ||
-                                    name.startsWith(".") || name.contains('\\') || name.contains('/')
-                                ) {
-                                    return@mapNotNull null
-                                }
-
-                                val attributes = entry.fileAttributes
-                                if ((attributes and FileAttributes.FILE_ATTRIBUTE_HIDDEN.value) != 0L ||
-                                    (attributes and FileAttributes.FILE_ATTRIBUTE_SYSTEM.value) != 0L
-                                ) {
-                                    return@mapNotNull null
-                                }
-
-                                val isDirectory = (attributes and
-                                    FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value) != 0L
-                                if (!isDirectory && !ArchiveFormatDetector.isSupportedArchiveExtension(
-                                        File(name).extension
-                                    )
-                                ) {
-                                    return@mapNotNull null
-                                }
-
-                                NasDirectoryEntry(
-                                    name = name,
-                                    relativePath = joinRelativePath(directoryPath, name),
-                                    isDirectory = isDirectory,
-                                    sizeBytes = if (isDirectory) 0L else entry.endOfFile,
-                                    modifiedAt = entry.lastWriteTime.toEpochMillis()
-                                )
-                            }
-                            .sortedWith(
-                                compareByDescending<NasDirectoryEntry> { it.isDirectory }
-                                    .thenBy { it.name.lowercase(Locale.ROOT) }
-                                    .thenBy { it.name }
-                            )
-                            .toList()
-                    }
+                    share.use(action)
                 } finally {
                     session.close()
                 }
@@ -112,4 +111,14 @@ internal object NasShareDirectoryBrowser {
 
     private fun joinRelativePath(parent: String, child: String): String =
         if (parent.isEmpty()) child else "$parent\\$child"
+
+    private fun authentication(profile: NasShareProfile, password: String): AuthenticationContext {
+        val username = profile.username.trim()
+        if (username.isEmpty()) return AuthenticationContext.anonymous()
+
+        val separator = username.indexOf('\\')
+        val domain = if (separator > 0) username.substring(0, separator) else null
+        val account = if (separator > 0) username.substring(separator + 1) else username
+        return AuthenticationContext(account, password.toCharArray(), domain)
+    }
 }

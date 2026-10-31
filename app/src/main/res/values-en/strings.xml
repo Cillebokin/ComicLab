@@ -16,7 +16,15 @@
     <string name="nas_directory_load_failed">Could not read this folder. Check the network, account, and share permissions, then retry</string>
     <string name="nas_directory_password_required">No saved password is available for this share. Save the password again in NAS settings</string>
     <string name="nas_directory">Folder</string>
-    <string name="nas_archive_open_later">Opening comics from NAS will be added later</string>
+    <string name="nas_download_title">Download NAS comic</string>
+    <string name="nas_download_connecting">Connecting and preparing to download: %1$s</string>
+    <string name="nas_download_progress_status">Downloading: %1$s</string>
+    <string name="nas_download_progress_count">%1$s / %2$s</string>
+    <string name="nas_download_cancelling">Cancelling and cleaning up the partial file…</string>
+    <string name="nas_download_cancel">Cancel download</string>
+    <string name="nas_download_cancelled">Download cancelled; the partial file was removed</string>
+    <string name="nas_download_failed">Download failed. Check the network, share access, and available storage</string>
+    <string name="nas_download_insufficient_space">Not enough free space: about %1$s is required (including reserve); %2$s is available</string>
     <string name="nas_choose_share_title">Choose a share to browse</string>
     <string name="nas_choose_share_message">Choose a saved Windows share</string>
     <string name="nas_no_saved_shares_title">No saved shares</string>

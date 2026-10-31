@@ -15,7 +15,15 @@
     <string name="nas_directory_load_failed">无法读取此目录，请检查网络、账号和共享权限后重试</string>
     <string name="nas_directory_password_required">此共享没有可用的已保存密码，请在NAS设置中重新保存密码</string>
     <string name="nas_directory">文件夹</string>
-    <string name="nas_archive_open_later">NAS漫画打开功能将在后续接入</string>
+    <string name="nas_download_title">下载NAS漫画</string>
+    <string name="nas_download_connecting">正在连接并准备下载：%1$s</string>
+    <string name="nas_download_progress_status">正在下载：%1$s</string>
+    <string name="nas_download_progress_count">%1$s / %2$s</string>
+    <string name="nas_download_cancelling">正在取消下载并清理临时文件…</string>
+    <string name="nas_download_cancel">取消下载</string>
+    <string name="nas_download_cancelled">已取消下载，未完成的临时文件已清理</string>
+    <string name="nas_download_failed">下载失败，请检查网络、共享权限和可用存储</string>
+    <string name="nas_download_insufficient_space">可用空间不足：需要约%1$s（含预留空间），当前可用%2$s</string>
     <string name="nas_choose_share_title">选择要浏览的共享</string>
     <string name="nas_choose_share_message">选择一个已保存的Windows共享</string>
     <string name="nas_no_saved_shares_title">还没有保存共享</string>

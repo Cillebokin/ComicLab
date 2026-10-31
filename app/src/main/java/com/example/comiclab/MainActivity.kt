@@ -44,6 +44,7 @@ import com.example.comiclab.core.store.PrefsGateway
 import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
 import com.example.comiclab.core.nas.NasDirectoryEntry
+import com.example.comiclab.core.nas.NasShareArchiveDownloader
 import com.example.comiclab.core.nas.NasShareDirectoryBrowser
 import com.example.comiclab.core.nas.NasShareProfile
 import com.example.comiclab.core.nas.NasShareStore
@@ -76,6 +77,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 class MainActivity : AppCompatActivity() {
@@ -146,6 +148,7 @@ class MainActivity : AppCompatActivity() {
     private val classifyExecutor = Executors.newSingleThreadExecutor()
     private val fileTransferExecutor = Executors.newSingleThreadExecutor()
     private val nasDirectoryExecutor = Executors.newSingleThreadExecutor()
+    private val nasDownloadExecutor = Executors.newSingleThreadExecutor()
     private val directoryLoadGeneration = AtomicInteger(0)
     private val nasDirectoryLoadGeneration = AtomicInteger(0)
     private val directoryBrowserController = DirectoryBrowserController(
@@ -214,12 +217,27 @@ class MainActivity : AppCompatActivity() {
     private var selectedNasProfile: NasShareProfile? = null
     private var availableNasProfiles: List<NasShareProfile> = emptyList()
     private var nasDirectoryLoadInProgress = false
+    private var nasDownloadInProgress = false
+    private var nasDownloadGeneration = 0
+    private var nasDownloadCancellation: AtomicBoolean? = null
+    private var nasDownloadProgressDialog: AlertDialog? = null
+    private var nasDownloadProgressStatus: TextView? = null
+    private var nasDownloadProgressBar: ProgressBar? = null
+    private var nasDownloadProgressCount: TextView? = null
+    private var nasDownloadLastProgressUpdateAt = 0L
     private var isNasProfileChooserShowing = false
 
     private sealed interface NasDirectoryLoadResult {
         data class Loaded(val entries: List<NasDirectoryEntry>) : NasDirectoryLoadResult
         data object PasswordUnavailable : NasDirectoryLoadResult
         data object Failed : NasDirectoryLoadResult
+    }
+
+    private sealed interface NasDownloadResult {
+        data class Completed(val file: File) : NasDownloadResult
+        data class InsufficientSpace(val requiredBytes: Long, val availableBytes: Long) : NasDownloadResult
+        data object Cancelled : NasDownloadResult
+        data class Failed(val exception: Exception) : NasDownloadResult
     }
 
     private class NasSavedPasswordUnavailableException : Exception()
@@ -332,7 +350,7 @@ class MainActivity : AppCompatActivity() {
                     currentNasRelativePath = entry.relativePath
                     loadNasDirectory()
                 }
-                else -> showMessage(R.string.nas_archive_open_later)
+                else -> startNasArchiveDownload(entry)
             }
             clearNasListTouchState(view)
         }
@@ -551,6 +569,9 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         directoryLoadGeneration.incrementAndGet()
         nasDirectoryLoadGeneration.incrementAndGet()
+        nasDownloadGeneration++
+        nasDownloadCancellation?.set(true)
+        dismissNasDownloadProgress()
         directoryRefreshController.removePendingFirstPreDrawListener()
         classifyGeneration.incrementAndGet()
         directoryLoadExecutor.shutdownNow()
@@ -559,6 +580,7 @@ class MainActivity : AppCompatActivity() {
         classifyExecutor.shutdownNow()
         fileTransferExecutor.shutdownNow()
         nasDirectoryExecutor.shutdownNow()
+        nasDownloadExecutor.shutdownNow()
         fileListAdapter.close()
         super.onDestroy()
     }
@@ -1280,17 +1302,18 @@ class MainActivity : AppCompatActivity() {
         }
         val canNavigateBack = !isNasSourceSelected || currentNasRelativePath.isNotEmpty()
         btnBack.visibility = if (isActive) View.GONE else View.VISIBLE
-        btnBack.isEnabled = !isActive && canNavigateBack && !nasDirectoryLoadInProgress
+        btnBack.isEnabled = !isActive && !nasDownloadInProgress && canNavigateBack &&
+            !nasDirectoryLoadInProgress
         btnBack.alpha = if (btnBack.isEnabled) 1f else 0.38f
 
-        sourceNasButton.isEnabled = !isActive
-        sourceLocalButton.isEnabled = !isActive
-        sourceSwitchTrack.alpha = if (isActive) 0.45f else 1f
+        sourceNasButton.isEnabled = !isActive && !nasDownloadInProgress
+        sourceLocalButton.isEnabled = !isActive && !nasDownloadInProgress
+        sourceSwitchTrack.alpha = if (isActive || nasDownloadInProgress) 0.45f else 1f
 
-        btnHelp.isEnabled = !isActive
-        btnOptions.isEnabled = !isActive
-        btnHelp.alpha = if (isActive) 0.38f else 1f
-        btnOptions.alpha = if (isActive) 0.38f else 1f
+        btnHelp.isEnabled = !isActive && !nasDownloadInProgress
+        btnOptions.isEnabled = !isActive && !nasDownloadInProgress
+        btnHelp.alpha = if (isActive || nasDownloadInProgress) 0.38f else 1f
+        btnOptions.alpha = if (isActive || nasDownloadInProgress) 0.38f else 1f
 
         btnPasteFile.visibility = if (isActive) View.VISIBLE else View.GONE
         btnCreateTransferDirectory.visibility = if (isActive) View.VISIBLE else View.GONE
@@ -1313,7 +1336,8 @@ class MainActivity : AppCompatActivity() {
         btnExitFileTransfer.isEnabled = canInteract
         btnTransferParent.isEnabled = canInteract
         listView.isEnabled = !isFileTransferInProgress && canUseLocalSourceActions
-        nasDirectoryListView.isEnabled = !isFileTransferInProgress && !nasDirectoryLoadInProgress
+        nasDirectoryListView.isEnabled = !isFileTransferInProgress &&
+            !nasDirectoryLoadInProgress && !nasDownloadInProgress
     }
 
     private fun selectFileSource(isNas: Boolean) {
@@ -1646,6 +1670,204 @@ class MainActivity : AppCompatActivity() {
                 updateFileTransferToolbar()
             }
         }
+    }
+
+    private fun startNasArchiveDownload(entry: NasDirectoryEntry) {
+        if (nasDownloadInProgress || entry.sizeBytes <= 0L) {
+            showMessage(R.string.nas_download_failed)
+            return
+        }
+        val profile = selectedNasProfile ?: run {
+            showMessage(R.string.nas_directory_password_required)
+            return
+        }
+        val password = if (profile.username.isBlank()) {
+            ""
+        } else {
+            try {
+                NasShareStore.rememberedPassword(profile)
+                    ?.takeIf(String::isNotEmpty)
+                    ?: throw NasSavedPasswordUnavailableException()
+            } catch (_: Exception) {
+                showMessage(R.string.nas_directory_password_required)
+                return
+            }
+        }
+        val cacheRoot = File(cacheDir, NAS_ARCHIVE_CACHE_DIRECTORY)
+        val destination = try {
+            NasShareArchiveDownloader.cacheFile(cacheRoot, profile, entry)
+        } catch (exception: Exception) {
+            android.util.Log.e("ComicLabNAS", "Invalid NAS archive path", exception)
+            showMessage(R.string.nas_download_failed)
+            return
+        }
+        if (destination.isFile && destination.length() == entry.sizeBytes) {
+            openMangaPreview(destination)
+            return
+        }
+        try {
+            NasShareArchiveDownloader.checkAvailableSpace(cacheRoot, entry.sizeBytes)
+        } catch (exception: NasShareArchiveDownloader.InsufficientStorageException) {
+            showNasDownloadInsufficientSpace(exception.requiredBytes, exception.availableBytes)
+            return
+        } catch (exception: Exception) {
+            android.util.Log.e("ComicLabNAS", "Could not prepare NAS cache", exception)
+            showMessage(R.string.nas_download_failed)
+            return
+        }
+
+        val cancelled = AtomicBoolean(false)
+        val generation = ++nasDownloadGeneration
+        nasDownloadCancellation = cancelled
+        nasDownloadInProgress = true
+        showNasDownloadProgress(entry, cancelled)
+        updateFileTransferToolbar()
+        nasDownloadExecutor.execute {
+            val result = try {
+                NasDownloadResult.Completed(
+                    NasShareArchiveDownloader.download(
+                        profile = profile,
+                        password = password,
+                        entry = entry,
+                        destination = destination,
+                        cancelled = cancelled
+                    ) { downloadedBytes, totalBytes ->
+                        reportNasDownloadProgress(
+                            generation,
+                            entry.name,
+                            downloadedBytes,
+                            totalBytes
+                        )
+                    }
+                )
+            } catch (exception: NasShareArchiveDownloader.InsufficientStorageException) {
+                NasDownloadResult.InsufficientSpace(
+                    exception.requiredBytes,
+                    exception.availableBytes
+                )
+            } catch (_: NasShareArchiveDownloader.DownloadCancelledException) {
+                NasDownloadResult.Cancelled
+            } catch (exception: Exception) {
+                NasDownloadResult.Failed(exception)
+            }
+
+            runOnUiThread {
+                if (generation != nasDownloadGeneration) return@runOnUiThread
+                nasDownloadInProgress = false
+                nasDownloadCancellation = null
+                dismissNasDownloadProgress()
+                updateFileTransferToolbar()
+                if (isDestroyed || isFinishing) return@runOnUiThread
+
+                when (result) {
+                    is NasDownloadResult.Completed -> {
+                        if (selectedNasProfile?.id == profile.id) {
+                            openMangaPreview(result.file)
+                        }
+                    }
+
+                    is NasDownloadResult.InsufficientSpace -> showNasDownloadInsufficientSpace(
+                        result.requiredBytes,
+                        result.availableBytes
+                    )
+
+                    NasDownloadResult.Cancelled -> showMessage(R.string.nas_download_cancelled)
+
+                    is NasDownloadResult.Failed -> {
+                        android.util.Log.e(
+                            "ComicLabNAS",
+                            "NAS archive download failed: ${entry.relativePath}",
+                            result.exception
+                        )
+                        showMessage(R.string.nas_download_failed)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun showNasDownloadProgress(entry: NasDirectoryEntry, cancelled: AtomicBoolean) {
+        val content = layoutInflater.inflate(R.layout.dialog_file_operation_progress, null)
+        nasDownloadProgressStatus = content.findViewById(R.id.tvFileOperationProgressStatus)
+        nasDownloadProgressBar = content.findViewById(R.id.progressFileOperation)
+        nasDownloadProgressCount = content.findViewById(R.id.tvFileOperationProgressCount)
+        nasDownloadProgressStatus?.text = getString(R.string.nas_download_connecting, entry.name)
+        nasDownloadProgressBar?.isIndeterminate = true
+        nasDownloadProgressCount?.text = getString(
+            R.string.nas_download_progress_count,
+            Formatter.formatShortFileSize(this, 0L),
+            Formatter.formatShortFileSize(this, entry.sizeBytes)
+        )
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.nas_download_title)
+            .setView(content)
+            .setNegativeButton(R.string.nas_download_cancel, null)
+            .setCancelable(false)
+            .createRounded()
+        nasDownloadProgressDialog = dialog
+        nasDownloadLastProgressUpdateAt = 0L
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setOnClickListener { button ->
+                cancelled.set(true)
+                button.isEnabled = false
+                nasDownloadProgressStatus?.setText(R.string.nas_download_cancelling)
+            }
+        }
+        dialog.show()
+    }
+
+    private fun reportNasDownloadProgress(
+        generation: Int,
+        fileName: String,
+        downloadedBytes: Long,
+        totalBytes: Long
+    ) {
+        val now = SystemClock.uptimeMillis()
+        val finished = totalBytes > 0L && downloadedBytes >= totalBytes
+        if (!finished && now - nasDownloadLastProgressUpdateAt < NAS_DOWNLOAD_PROGRESS_UPDATE_INTERVAL_MS) {
+            return
+        }
+        nasDownloadLastProgressUpdateAt = now
+        runOnUiThread {
+            if (generation != nasDownloadGeneration || isDestroyed || isFinishing ||
+                nasDownloadProgressDialog?.isShowing != true ||
+                nasDownloadCancellation?.get() == true
+            ) {
+                return@runOnUiThread
+            }
+            nasDownloadProgressStatus?.text = getString(R.string.nas_download_progress_status, fileName)
+            val progressBar = nasDownloadProgressBar ?: return@runOnUiThread
+            progressBar.isIndeterminate = totalBytes <= 0L
+            if (totalBytes > 0L) {
+                progressBar.progress = (
+                    downloadedBytes.coerceAtLeast(0L).toDouble() / totalBytes * 100.0
+                    ).toInt().coerceIn(0, 100)
+            }
+            nasDownloadProgressCount?.text = getString(
+                R.string.nas_download_progress_count,
+                Formatter.formatShortFileSize(this, downloadedBytes.coerceAtLeast(0L)),
+                Formatter.formatShortFileSize(this, totalBytes.coerceAtLeast(0L))
+            )
+        }
+    }
+
+    private fun dismissNasDownloadProgress() {
+        nasDownloadProgressDialog?.dismiss()
+        nasDownloadProgressDialog = null
+        nasDownloadProgressStatus = null
+        nasDownloadProgressBar = null
+        nasDownloadProgressCount = null
+    }
+
+    private fun showNasDownloadInsufficientSpace(requiredBytes: Long, availableBytes: Long) {
+        showMessage(
+            getString(
+                R.string.nas_download_insufficient_space,
+                Formatter.formatShortFileSize(this, requiredBytes),
+                Formatter.formatShortFileSize(this, availableBytes)
+            )
+        )
     }
 
     private fun showNasDirectoryError(messageResId: Int, canRetry: Boolean) {
@@ -2316,6 +2538,8 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_PENDING_FILE_TRANSFER_IS_DIRECTORY = "pending_file_transfer_is_directory"
         private const val CLEAR_CLICK_STATE_DELAY_MS = 240L
         private const val PROGRESS_UI_UPDATE_INTERVAL_MS = 120L
+        private const val NAS_DOWNLOAD_PROGRESS_UPDATE_INTERVAL_MS = 250L
+        private const val NAS_ARCHIVE_CACHE_DIRECTORY = "nas-comics"
         private val INVALID_FILE_NAME_CHARS = setOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')
         private const val MENU_CLASSIFY_BY_START_MARKER = 1
         private const val MENU_FIND_SIMILAR_DIRECTORY_NAMES = 2
