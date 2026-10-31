@@ -46,7 +46,7 @@ internal object NasShareArchiveDownloader {
         var fileCount = 0
         var totalBytes = 0L
         root.walkTopDown()
-            .filter { it.isFile }
+            .filter { it.isFile && !it.name.endsWith(".part", ignoreCase = true) }
             .forEach { file ->
                 fileCount++
                 val fileBytes = file.length()
@@ -57,6 +57,28 @@ internal object NasShareArchiveDownloader {
                 }
             }
         return CacheSummary(fileCount, totalBytes)
+    }
+
+    fun cleanupInterruptedPartialFiles(appCacheDirectory: File): Int {
+        val root = checkedCacheRoot(appCacheDirectory)
+        if (!root.isDirectory) return 0
+
+        var removedFiles = 0
+        var failedFiles = 0
+        root.walkTopDown()
+            .filter { it.isFile && it.name.endsWith(".part", ignoreCase = true) }
+            .forEach { file ->
+                if (file.delete() || !file.exists()) {
+                    removedFiles++
+                } else {
+                    failedFiles++
+                }
+            }
+
+        if (failedFiles > 0) {
+            throw IOException("Could not remove $failedFiles interrupted NAS partial file(s)")
+        }
+        return removedFiles
     }
 
     fun clearCache(appCacheDirectory: File): CacheClearResult {
