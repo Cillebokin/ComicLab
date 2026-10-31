@@ -2,6 +2,7 @@ package com.example.comiclab.core.nas
 
 import com.example.comiclab.core.archive.ArchiveFormatDetector
 import com.hierynomus.msfscc.FileAttributes
+import com.hierynomus.mssmb2.SMB2Dialect
 import com.hierynomus.smbj.SMBClient
 import com.hierynomus.smbj.SmbConfig
 import com.hierynomus.smbj.auth.AuthenticationContext
@@ -76,10 +77,13 @@ internal object NasShareDirectoryBrowser {
         password: String,
         action: (DiskShare) -> T
     ): T {
-        val config = SmbConfig.builder()
+        val configBuilder = SmbConfig.builder()
             .withTimeout(15, TimeUnit.SECONDS)
             .withSoTimeout(15, TimeUnit.SECONDS)
-            .build()
+        if (profile.username.isBlank()) {
+            configBuilder.withDialects(SMB2Dialect.SMB_2_1, SMB2Dialect.SMB_2_0_2)
+        }
+        val config = configBuilder.build()
 
         return SMBClient(config).use { client ->
             client.connect(profile.host).use { connection ->
