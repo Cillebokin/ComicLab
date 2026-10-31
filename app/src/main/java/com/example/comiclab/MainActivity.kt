@@ -1597,7 +1597,7 @@ class MainActivity : AppCompatActivity() {
                 profiles.getOrNull(index)?.let(::selectNasProfile)
             }
             .setNegativeButton(R.string.cancel, null)
-            .create()
+            .createRounded()
         isNasProfileChooserShowing = true
         dialog.setOnDismissListener {
             isNasProfileChooserShowing = false
@@ -2003,79 +2003,77 @@ class MainActivity : AppCompatActivity() {
                 nasCacheClearDialog = null
             }
         }
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
-                if (nasCacheManagementInProgress) return@setOnClickListener
-                dialog.dismiss()
-                showNasCachedArchivePickerDialog()
-            }
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
-                if (nasCacheManagementInProgress) return@setOnClickListener
-                nasCacheManagementInProgress = true
-                updateNasCacheSummary()
-                dialog.setMessage(getString(R.string.nas_cache_clearing))
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = false
-                dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.isEnabled = false
-                nasCacheExecutor.execute {
-                    val outcome = try {
-                        NasCacheClearOutcome.Completed(
-                            NasShareArchiveDownloader.clearCache(cacheDir)
-                        )
-                    } catch (exception: Exception) {
-                        NasCacheClearOutcome.Failed(exception)
-                    }
-                    runOnUiThread {
-                        nasCacheManagementInProgress = false
-                        if (isDestroyed || isFinishing) {
-                            if (dialog.isShowing) dialog.dismiss()
-                            return@runOnUiThread
-                        }
-                        updateNasCacheSummary()
-                        if (nasCacheClearDialog === dialog) nasCacheClearDialog = null
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
+            if (nasCacheManagementInProgress) return@setOnClickListener
+            dialog.dismiss()
+            showNasCachedArchivePickerDialog()
+        }
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
+            if (nasCacheManagementInProgress) return@setOnClickListener
+            nasCacheManagementInProgress = true
+            updateNasCacheSummary()
+            dialog.setMessage(getString(R.string.nas_cache_clearing))
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = false
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.isEnabled = false
+            nasCacheExecutor.execute {
+                val outcome = try {
+                    NasCacheClearOutcome.Completed(
+                        NasShareArchiveDownloader.clearCache(cacheDir)
+                    )
+                } catch (exception: Exception) {
+                    NasCacheClearOutcome.Failed(exception)
+                }
+                runOnUiThread {
+                    nasCacheManagementInProgress = false
+                    if (isDestroyed || isFinishing) {
                         if (dialog.isShowing) dialog.dismiss()
+                        return@runOnUiThread
+                    }
+                    updateNasCacheSummary()
+                    if (nasCacheClearDialog === dialog) nasCacheClearDialog = null
+                    if (dialog.isShowing) dialog.dismiss()
 
-                        when (outcome) {
-                            is NasCacheClearOutcome.Completed -> {
-                                val result = outcome.result
-                                if (result.completed) {
-                                    showMessage(
-                                        getString(
-                                            R.string.nas_cache_clear_success,
-                                            Formatter.formatShortFileSize(this, result.bytesFreed)
-                                        )
+                    when (outcome) {
+                        is NasCacheClearOutcome.Completed -> {
+                            val result = outcome.result
+                            if (result.completed) {
+                                showMessage(
+                                    getString(
+                                        R.string.nas_cache_clear_success,
+                                        Formatter.formatShortFileSize(this, result.bytesFreed)
                                     )
-                                } else if (result.bytesFreed > 0L) {
-                                    showMessage(
-                                        getString(
-                                            R.string.nas_cache_clear_partial,
-                                            Formatter.formatShortFileSize(this, result.bytesFreed),
-                                            Formatter.formatShortFileSize(this, result.bytesRemaining)
-                                        )
-                                    )
-                                } else {
-                                    showMessage(
-                                        getString(
-                                            R.string.nas_cache_clear_failed,
-                                            Formatter.formatShortFileSize(this, result.bytesRemaining)
-                                        )
-                                    )
-                                }
-                            }
-
-                            is NasCacheClearOutcome.Failed -> {
-                                android.util.Log.e(
-                                    "ComicLabNAS",
-                                    "Could not clear NAS cache",
-                                    outcome.exception
                                 )
-                                showMessage(R.string.nas_cache_clear_error)
+                            } else if (result.bytesFreed > 0L) {
+                                showMessage(
+                                    getString(
+                                        R.string.nas_cache_clear_partial,
+                                        Formatter.formatShortFileSize(this, result.bytesFreed),
+                                        Formatter.formatShortFileSize(this, result.bytesRemaining)
+                                    )
+                                )
+                            } else {
+                                showMessage(
+                                    getString(
+                                        R.string.nas_cache_clear_failed,
+                                        Formatter.formatShortFileSize(this, result.bytesRemaining)
+                                    )
+                                )
                             }
+                        }
+
+                        is NasCacheClearOutcome.Failed -> {
+                            android.util.Log.e(
+                                "ComicLabNAS",
+                                "Could not clear NAS cache",
+                                outcome.exception
+                            )
+                            showMessage(R.string.nas_cache_clear_error)
                         }
                     }
                 }
             }
         }
-        dialog.show()
     }
 
     private fun showNasCachedArchivePickerDialog() {
