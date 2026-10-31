@@ -304,6 +304,7 @@ class SettingsActivity : AppCompatActivity() {
         nasSettingsEmptyState.visibility = if (hasProfiles) View.GONE else View.VISIBLE
         nasShareListContainer.visibility = if (hasProfiles) View.VISIBLE else View.GONE
         btnNasAddShare.visibility = if (hasProfiles) View.VISIBLE else View.GONE
+        val activeShareId = runCatching { NasShareStore.activeShareId(this) }.getOrNull()
 
         profiles.forEach { profile ->
             val item = layoutInflater.inflate(
@@ -311,7 +312,33 @@ class SettingsActivity : AppCompatActivity() {
                 nasShareListContainer,
                 false
             )
+            val isActiveShare = profile.id == activeShareId
             item.findViewById<TextView>(R.id.tvNasShareName).text = profile.name
+            item.findViewById<View>(R.id.ivNasShareActiveBadge).visibility =
+                if (isActiveShare) View.VISIBLE else View.GONE
+            val enableButton = item.findViewById<TextView>(R.id.btnNasShareEnable)
+            enableButton.setText(
+                if (isActiveShare) {
+                    R.string.nas_share_enabled_button
+                } else {
+                    R.string.nas_share_enable_button
+                }
+            )
+            enableButton.isEnabled = !isActiveShare
+            enableButton.setTextColor(
+                getColor(
+                    if (isActiveShare) R.color.comiclab_text_tertiary
+                    else R.color.comiclab_accent
+                )
+            )
+            enableButton.setOnClickListener {
+                try {
+                    NasShareStore.setActiveShare(this, profile.id)
+                    renderNasShareSettings()
+                } catch (_: Exception) {
+                    showMessage(getString(R.string.nas_share_enable_failed))
+                }
+            }
             val status = item.findViewById<TextView>(R.id.tvNasShareTestStatus)
             val testButton = item.findViewById<TextView>(R.id.btnNasShareTest)
             testButton.setOnClickListener {

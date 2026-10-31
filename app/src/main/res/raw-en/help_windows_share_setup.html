@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root {
+            color-scheme: light dark;
+            --text: #111827;
+            --muted: #4B5563;
+            --accent: #2563EB;
+            --surface: transparent;
+            --soft: #EFF6FF;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --text: #F1F5F9;
+                --muted: #CBD5E1;
+                --accent: #60A5FA;
+                --surface: transparent;
+                --soft: #1E3A5F;
+            }
+        }
+
+        html, body { margin: 0; padding: 0; background: var(--surface); }
+        body {
+            color: var(--text);
+            font-family: sans-serif;
+            font-size: 16px;
+            line-height: 1.7;
+            padding: 20px 18px 28px;
+        }
+        h1 { font-size: 24px; margin: 0 0 12px; }
+        h2 { color: var(--accent); font-size: 18px; margin: 20px 0 6px; }
+        p, ol { color: var(--muted); }
+        p { margin: 8px 0; }
+        ol { padding-left: 24px; }
+        li { margin: 7px 0; }
+        code {
+            background: var(--soft);
+            border-radius: 4px;
+            color: var(--accent);
+            padding: 2px 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Set up a Windows share</h1>
+    <ol>
+        <li><strong>Share a folder:</strong> Right-click the comic folder, open <code>Properties → Sharing → Advanced Sharing</code>, select “Share this folder”, and note the share name.</li>
+        <li><strong>Check the network:</strong> Connect your phone and PC to the same Wi-Fi. In Windows 11, open <code>Settings → Network &amp; internet → Wi-Fi → connected network</code> and set Network profile type to Private. Then open <code>Settings → Network &amp; internet → Advanced network settings → Advanced sharing settings → Private networks</code> and turn on Network discovery and File and printer sharing.</li>
+        <li><strong>Find the IP address:</strong> Open <code>Settings → Network &amp; internet → Wi-Fi → connected network</code> and find the IPv4 address under Properties.</li>
+        <li><strong>Connect in ComicLab:</strong> Open <code>Settings → NAS</code>, enable NAS, add a Windows share, enter the PC’s IP address and share name, then tap “Test connection”.</li>
+    </ol>
+    <p><strong>Remember:</strong> The share name is not the full local path. If <code>D:\Comic</code> is shared as <code>Comic</code>, enter <code>Comic</code> on your phone. Fill in both username and password when required (the password is not your PIN); leave both empty for anonymous access.</p>
+</body>
+</html>

@@ -28,6 +28,7 @@ internal object NasShareStore {
     private const val PREFERENCES_NAME = "nas_share_settings"
     private const val KEY_SHARES = "shares_json"
     private const val KEY_NAS_ENABLED = "nas_enabled"
+    private const val KEY_ACTIVE_SHARE_ID = "active_share_id"
     private val lock = Any()
 
     fun isNasEnabled(context: Context): Boolean = synchronized(lock) {
@@ -40,6 +41,20 @@ internal object NasShareStore {
             .edit()
             .putBoolean(KEY_NAS_ENABLED, enabled)
             .apply()
+    }
+
+    fun activeShareId(context: Context): String? = synchronized(lock) {
+        PrefsGateway.open(context, PREFERENCES_NAME)
+            .getString(KEY_ACTIVE_SHARE_ID, null)
+    }
+
+    fun setActiveShare(context: Context, id: String) = synchronized(lock) {
+        require(load(context).any { it.id == id }) { "NAS share does not exist" }
+        val saved = PrefsGateway.open(context, PREFERENCES_NAME)
+            .edit()
+            .putString(KEY_ACTIVE_SHARE_ID, id)
+            .commit()
+        check(saved) { "Active NAS share could not be saved" }
     }
 
     fun load(context: Context): List<NasShareProfile> = synchronized(lock) {
@@ -92,7 +107,12 @@ internal object NasShareStore {
     }
 
     fun delete(context: Context, id: String) = synchronized(lock) {
-        persist(context, load(context).filterNot { it.id == id })
+        val wasActive = activeShareId(context) == id
+        persist(
+            context,
+            load(context).filterNot { it.id == id },
+            clearActiveShare = wasActive
+        )
     }
 
     fun rememberedPassword(profile: NasShareProfile): String? {
@@ -101,7 +121,11 @@ internal object NasShareStore {
         return NasPasswordCipher.decrypt(encrypted)
     }
 
-    private fun persist(context: Context, profiles: List<NasShareProfile>) {
+    private fun persist(
+        context: Context,
+        profiles: List<NasShareProfile>,
+        clearActiveShare: Boolean = false
+    ) {
         val json = JSONArray()
         profiles.forEach { profile ->
             json.put(JSONObject().apply {
@@ -114,10 +138,13 @@ internal object NasShareStore {
                 profile.encryptedPassword?.let { put("encryptedPassword", it) }
             })
         }
-        val saved = PrefsGateway.open(context, PREFERENCES_NAME)
+        val editor = PrefsGateway.open(context, PREFERENCES_NAME)
             .edit()
             .putString(KEY_SHARES, json.toString())
-            .commit()
+        if (clearActiveShare) {
+            editor.remove(KEY_ACTIVE_SHARE_ID)
+        }
+        val saved = editor.commit()
         check(saved) { "NAS share settings could not be saved" }
     }
 }

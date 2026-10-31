@@ -19,6 +19,7 @@ object HelpArticles {
     const val FILE_MERGE_ID = "file_merge"
     const val EXPORT_CONFIGURATION_ID = "export_configuration"
     const val LOAD_CONFIGURATION_ID = "load_configuration"
+    const val WINDOWS_SHARE_SETUP_ID = "windows_share_setup"
 
     val all: List<HelpArticle> = listOf(
         HelpArticle(
@@ -60,6 +61,11 @@ object HelpArticles {
             id = LOAD_CONFIGURATION_ID,
             titleResId = R.string.help_load_configuration,
             htmlResId = R.raw.help_load_configuration
+        ),
+        HelpArticle(
+            id = WINDOWS_SHARE_SETUP_ID,
+            titleResId = R.string.help_windows_share_setup,
+            htmlResId = R.raw.help_windows_share_setup
         )
     )
 

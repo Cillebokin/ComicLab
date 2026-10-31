@@ -11,13 +11,33 @@
     android:paddingEnd="16dp"
     android:paddingBottom="12dp">
 
-    <TextView
-        android:id="@+id/tvNasShareName"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:fontFamily="sans-serif-medium"
-        android:textColor="@color/comiclab_text_primary"
-        android:textSize="@dimen/text_body" />
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/tvNasShareName"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="middle"
+            android:fontFamily="sans-serif-medium"
+            android:maxLines="1"
+            android:textColor="@color/comiclab_text_primary"
+            android:textSize="@dimen/text_body" />
+
+        <ImageView
+            android:id="@+id/ivNasShareActiveBadge"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_marginStart="8dp"
+            android:contentDescription="@string/nas_share_active_badge"
+            android:importantForAccessibility="yes"
+            android:src="@drawable/ic_nas_share_active"
+            android:visibility="gone" />
+    </LinearLayout>
 
     <TextView
         android:id="@+id/tvNasShareTestStatus"
@@ -35,10 +55,23 @@
         android:orientation="horizontal">
 
         <TextView
+            android:id="@+id/btnNasShareEnable"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="?attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:text="@string/nas_share_enable_button"
+            android:textColor="@color/comiclab_accent"
+            android:textSize="@dimen/text_caption" />
+
+        <TextView
             android:id="@+id/btnNasShareTest"
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="1.3"
+            android:layout_weight="1.25"
             android:background="?attr/selectableItemBackground"
             android:clickable="true"
             android:focusable="true"

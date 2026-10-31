@@ -378,13 +378,7 @@ class MainActivity : AppCompatActivity() {
         }
         sourceNasButton.setOnClickListener { selectFileSource(isNas = true) }
         sourceLocalButton.setOnClickListener { selectFileSource(isNas = false) }
-        btnNasManageShares.setOnClickListener {
-            if (availableNasProfiles.size > 1 && selectedNasProfile == null) {
-                showNasProfilePicker(availableNasProfiles)
-            } else {
-                openNasShareSettings()
-            }
-        }
+        btnNasManageShares.setOnClickListener { openNasShareSettings() }
         btnNasSwitchShare.setOnClickListener {
             showNasProfilePicker(availableNasProfiles)
         }
@@ -1540,9 +1534,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         val previousProfile = selectedNasProfile
-        val profile = previousProfile?.let { previous ->
-            profiles.firstOrNull { it.id == previous.id }
-        } ?: profiles.singleOrNull()
+        val activeShareId = runCatching { NasShareStore.activeShareId(this) }.getOrNull()
+        val profile = profiles.firstOrNull { it.id == activeShareId }
         if (profile != null) {
             if (previousProfile == null ||
                 previousProfile.host != profile.host ||
@@ -1558,12 +1551,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         currentNasRelativePath = ""
+        selectedNasProfile = null
         showNasPlaceholder(
-            R.string.nas_choose_share_title,
-            R.string.nas_choose_share_message,
-            R.string.nas_choose_share
+            R.string.nas_no_active_share_title,
+            R.string.nas_no_active_share_message,
+            R.string.nas_manage_shares
         )
-        showNasProfilePicker(profiles)
     }
 
     private fun showNasPlaceholder(titleResId: Int, messageResId: Int, actionResId: Int) {
@@ -1615,6 +1608,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun selectNasProfile(profile: NasShareProfile) {
+        try {
+            NasShareStore.setActiveShare(this, profile.id)
+        } catch (_: Exception) {
+            showMessage(R.string.nas_share_enable_failed)
+            return
+        }
         val targetChanged = selectedNasProfile?.let {
             it.host != profile.host || it.shareName != profile.shareName
         } ?: true

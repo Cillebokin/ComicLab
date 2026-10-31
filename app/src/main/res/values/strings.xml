@@ -53,6 +53,12 @@
     <string name="nas_no_saved_shares_title">还没有保存共享</string>
     <string name="nas_no_saved_shares_message">添加 Windows电脑的共享文件夹</string>
     <string name="nas_add_share">添加 Windows共享</string>
+    <string name="nas_share_enable_button">启用</string>
+    <string name="nas_share_enabled_button">已启用</string>
+    <string name="nas_share_active_badge">当前启用的共享</string>
+    <string name="nas_share_enable_failed">启用共享失败，请重试</string>
+    <string name="nas_no_active_share_title">尚未启用共享</string>
+    <string name="nas_no_active_share_message">请在 NAS 设置中启用一个 Windows共享</string>
     <string name="nas_enable_title">启用NAS</string>
     <string name="nas_host_hint">IP地址</string>
     <string name="nas_share_folder_hint">Windows共享文件夹名</string>
@@ -119,6 +125,7 @@
     <string name="help_file_merge">文件整合</string>
     <string name="help_export_configuration">导出配置</string>
     <string name="help_load_configuration">加载配置</string>
+    <string name="help_windows_share_setup">Windows 共享设置</string>
     <string name="dark_mode">深色模式</string>
     <string name="reading_history">阅读历史</string>
     <string name="reading_history_empty">暂无阅读历史</string>

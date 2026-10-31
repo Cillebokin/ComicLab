@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root {
+            color-scheme: light dark;
+            --text: #111827;
+            --muted: #4B5563;
+            --accent: #2563EB;
+            --surface: transparent;
+            --soft: #EFF6FF;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --text: #F1F5F9;
+                --muted: #CBD5E1;
+                --accent: #60A5FA;
+                --surface: transparent;
+                --soft: #1E3A5F;
+            }
+        }
+
+        html, body { margin: 0; padding: 0; background: var(--surface); }
+        body {
+            color: var(--text);
+            font-family: sans-serif;
+            font-size: 16px;
+            line-height: 1.7;
+            padding: 20px 18px 28px;
+        }
+        h1 { font-size: 24px; margin: 0 0 12px; }
+        h2 { color: var(--accent); font-size: 18px; margin: 20px 0 6px; }
+        p, ol { color: var(--muted); }
+        p { margin: 8px 0; }
+        ol { padding-left: 24px; }
+        li { margin: 7px 0; }
+        code {
+            background: var(--soft);
+            border-radius: 4px;
+            color: var(--accent);
+            padding: 2px 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Windows 共享设置</h1>
+    <ol>
+        <li><strong>共享文件夹：</strong>右键漫画文件夹，进入<code>属性 → 共享 → 高级共享</code>，勾选“共享此文件夹”，记下共享名。</li>
+        <li><strong>确认网络：</strong>手机和电脑连接同一个 Wi-Fi。在 Windows 11 打开<code>设置 → 网络和 Internet → Wi-Fi → 已连接的网络</code>，将“网络配置文件类型”设为“专用”；再打开<code>设置 → 网络和 Internet → 高级网络设置 → 高级共享设置 → 专用网络</code>，开启“网络发现”和“文件和打印机共享”。</li>
+        <li><strong>获取 IP：</strong>打开<code>设置 → 网络和 Internet → Wi-Fi → 已连接的网络</code>，在属性中找到“IPv4 地址”。</li>
+        <li><strong>手机连接：</strong>ComicLab 进入<code>设置 → NAS</code>，启用 NAS 并添加 Windows 共享，填写电脑 IP 和共享名，点击“测试连接”。</li>
+    </ol>
+    <p><strong>填写提醒：</strong>共享名不是电脑上的完整路径。例如 <code>D:\Comic</code> 共享为 <code>Comic</code>，手机端填 <code>Comic</code>。需要账号时用户名和密码都填（密码不是 PIN）；匿名访问时两项留空。</p>
+</body>
+</html>
