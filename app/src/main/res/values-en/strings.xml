@@ -61,6 +61,14 @@
     <string name="nas_no_active_share_title">No share enabled</string>
     <string name="nas_no_active_share_message">Enable a Windows share in NAS settings first</string>
     <string name="nas_enable_title">Enable NAS</string>
+    <string name="nas_download_path_title">Download path</string>
+    <string name="nas_download_path_change">Change</string>
+    <string name="nas_download_path_dialog_title">Change download path</string>
+    <string name="nas_download_path_help">Enter a relative path within internal storage</string>
+    <string name="nas_download_path_hint">Download/ComicLab/NAS</string>
+    <string name="nas_download_path_invalid">Invalid path. Enter a relative path without “..”</string>
+    <string name="nas_download_path_saved">Download path saved</string>
+    <string name="nas_download_path_save_failed">Could not save the download path. Try again</string>
     <string name="nas_host_hint">IP address</string>
     <string name="nas_share_folder_hint">Windows shared folder name</string>
     <string name="nas_username_hint">Username (optional)</string>

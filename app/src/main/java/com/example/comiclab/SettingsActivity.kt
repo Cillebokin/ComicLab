@@ -89,6 +89,8 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var sliderSettingsReaderBrightness: SeekBar
     private lateinit var tvSettingsBrightnessValue: TextView
     private lateinit var switchNasEnabled: SwitchCompat
+    private lateinit var tvNasDownloadPath: TextView
+    private lateinit var btnNasDownloadPathChange: TextView
     private lateinit var nasSettingsEmptyState: View
     private lateinit var nasShareListContainer: LinearLayout
     private lateinit var tvNasShareConfigError: TextView
@@ -276,6 +278,10 @@ class SettingsActivity : AppCompatActivity() {
         switchNasEnabled.setOnCheckedChangeListener { _, isChecked ->
             NasShareStore.setNasEnabled(this, isChecked)
         }
+        tvNasDownloadPath = sectionView.findViewById(R.id.tvNasDownloadPath)
+        btnNasDownloadPathChange = sectionView.findViewById(R.id.btnNasDownloadPathChange)
+        tvNasDownloadPath.text = NasShareStore.downloadPath(this)
+        btnNasDownloadPathChange.setOnClickListener { showNasDownloadPathEditor() }
         nasSettingsEmptyState = sectionView.findViewById(R.id.nasSettingsEmptyState)
         nasShareListContainer = sectionView.findViewById(R.id.nasShareListContainer)
         tvNasShareConfigError = sectionView.findViewById(R.id.tvNasShareConfigError)
@@ -284,6 +290,51 @@ class SettingsActivity : AppCompatActivity() {
         btnNasAddFirstShare.setOnClickListener { showNasShareEditor(existing = null) }
         btnNasAddShare.setOnClickListener { showNasShareEditor(existing = null) }
         renderNasShareSettings()
+    }
+
+    private fun showNasDownloadPathEditor() {
+        val content = layoutInflater.inflate(R.layout.dialog_nas_download_path, null)
+        val input = content.findViewById<EditText>(R.id.inputNasDownloadPath)
+        val error = content.findViewById<TextView>(R.id.tvNasDownloadPathError)
+        input.setText(NasShareStore.downloadPath(this))
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.nas_download_path_dialog_title)
+            .setView(content)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.nas_save, null)
+            .createRounded()
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val path = normalizeNasDownloadPath(input.text.toString())
+            if (path == null) {
+                error.setText(R.string.nas_download_path_invalid)
+                error.visibility = View.VISIBLE
+                return@setOnClickListener
+            }
+
+            try {
+                NasShareStore.setDownloadPath(this, path)
+                tvNasDownloadPath.text = path
+                dialog.dismiss()
+                showMessage(getString(R.string.nas_download_path_saved))
+            } catch (_: Exception) {
+                error.setText(R.string.nas_download_path_save_failed)
+                error.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    private fun normalizeNasDownloadPath(value: String): String? {
+        val path = value.trim().replace('\\', '/')
+        if (path.isEmpty() || path.startsWith('/') || ':' in path || '\u0000' in path) {
+            return null
+        }
+        val segments = path.split('/')
+        if (segments.any { it.isBlank() || it == "." || it == ".." }) {
+            return null
+        }
+        return segments.joinToString("/")
     }
 
     private fun renderNasShareSettings() {

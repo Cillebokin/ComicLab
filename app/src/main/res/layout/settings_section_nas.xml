@@ -6,34 +6,95 @@
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="64dp"
+        android:layout_height="wrap_content"
         android:layout_marginStart="12dp"
         android:layout_marginTop="8dp"
         android:layout_marginEnd="12dp"
         android:layout_marginBottom="8dp"
         android:background="@drawable/bg_file_picker_card"
         android:elevation="@dimen/card_elevation"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
+        android:orientation="vertical"
         android:paddingStart="16dp"
-        android:paddingEnd="16dp">
+        android:paddingTop="8dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="12dp">
 
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:fontFamily="sans-serif-medium"
-            android:text="@string/nas_enable_title"
-            android:textColor="@color/comiclab_text_primary"
-            android:textSize="@dimen/text_section" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchNasEnabled"
-            style="@style/Widget.ComicLab.Switch"
-            android:layout_width="wrap_content"
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFamily="sans-serif-medium"
+                android:text="@string/nas_enable_title"
+                android:textColor="@color/comiclab_text_primary"
+                android:textSize="@dimen/text_section" />
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switchNasEnabled"
+                style="@style/Widget.ComicLab.Switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:contentDescription="@string/nas_enable_title"
+                android:importantForAccessibility="yes" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="4dp"
+            android:background="@color/comiclab_divider_subtle" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:contentDescription="@string/nas_enable_title"
-            android:importantForAccessibility="yes" />
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="@string/nas_download_path_title"
+                    android:textColor="@color/comiclab_text_primary"
+                    android:textSize="@dimen/text_section" />
+
+                <TextView
+                    android:id="@+id/btnNasDownloadPathChange"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:minWidth="48dp"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="4dp"
+                    android:text="@string/nas_download_path_change"
+                    android:textColor="@color/comiclab_accent"
+                    android:textSize="@dimen/text_value" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tvNasDownloadPath"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="middle"
+                android:maxLines="1"
+                android:paddingTop="4dp"
+                android:textColor="@color/comiclab_text_secondary"
+                android:textSize="@dimen/text_caption" />
+        </LinearLayout>
     </LinearLayout>
 
     <ScrollView

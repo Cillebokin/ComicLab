@@ -29,6 +29,8 @@ internal object NasShareStore {
     private const val KEY_SHARES = "shares_json"
     private const val KEY_NAS_ENABLED = "nas_enabled"
     private const val KEY_ACTIVE_SHARE_ID = "active_share_id"
+    private const val KEY_DOWNLOAD_PATH = "download_path"
+    const val DEFAULT_DOWNLOAD_PATH = "Download/ComicLab/NAS"
     private val lock = Any()
 
     fun isNasEnabled(context: Context): Boolean = synchronized(lock) {
@@ -41,6 +43,22 @@ internal object NasShareStore {
             .edit()
             .putBoolean(KEY_NAS_ENABLED, enabled)
             .apply()
+    }
+
+    fun downloadPath(context: Context): String = synchronized(lock) {
+        PrefsGateway.open(context, PREFERENCES_NAME)
+            .getString(KEY_DOWNLOAD_PATH, null)
+            ?.takeIf(String::isNotBlank)
+            ?: DEFAULT_DOWNLOAD_PATH
+    }
+
+    fun setDownloadPath(context: Context, path: String) = synchronized(lock) {
+        require(path.isNotBlank()) { "NAS download path cannot be empty" }
+        val saved = PrefsGateway.open(context, PREFERENCES_NAME)
+            .edit()
+            .putString(KEY_DOWNLOAD_PATH, path)
+            .commit()
+        check(saved) { "NAS download path could not be saved" }
     }
 
     fun activeShareId(context: Context): String? = synchronized(lock) {

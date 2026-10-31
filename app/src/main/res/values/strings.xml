@@ -60,6 +60,14 @@
     <string name="nas_no_active_share_title">尚未启用共享</string>
     <string name="nas_no_active_share_message">请在 NAS 设置中启用一个 Windows共享</string>
     <string name="nas_enable_title">启用NAS</string>
+    <string name="nas_download_path_title">下载路径</string>
+    <string name="nas_download_path_change">修改</string>
+    <string name="nas_download_path_dialog_title">修改下载路径</string>
+    <string name="nas_download_path_help">请填写手机内部存储中的相对路径</string>
+    <string name="nas_download_path_hint">Download/ComicLab/NAS</string>
+    <string name="nas_download_path_invalid">路径无效，请填写相对路径且不要包含“..”</string>
+    <string name="nas_download_path_saved">下载路径已保存</string>
+    <string name="nas_download_path_save_failed">下载路径保存失败，请重试</string>
     <string name="nas_host_hint">IP地址</string>
     <string name="nas_share_folder_hint">Windows共享文件夹名</string>
     <string name="nas_username_hint">用户名（可选）</string>

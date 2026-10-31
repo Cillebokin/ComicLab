@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="20dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="20dp"
+    android:paddingBottom="8dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/nas_download_path_help"
+        android:textColor="@color/comiclab_text_secondary"
+        android:textSize="@dimen/text_caption" />
+
+    <EditText
+        android:id="@+id/inputNasDownloadPath"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:hint="@string/nas_download_path_hint"
+        android:inputType="textUri"
+        android:maxLines="1"
+        android:selectAllOnFocus="true" />
+
+    <TextView
+        android:id="@+id/tvNasDownloadPathError"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:textColor="@color/comiclab_danger"
+        android:textSize="@dimen/text_caption"
+        android:visibility="gone" />
+</LinearLayout>
