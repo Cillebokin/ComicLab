@@ -125,7 +125,7 @@
     <string name="help_file_merge">文件整合</string>
     <string name="help_export_configuration">导出配置</string>
     <string name="help_load_configuration">加载配置</string>
-    <string name="help_windows_share_setup">Windows 共享设置</string>
+    <string name="help_windows_share_setup">Windows共享设置</string>
     <string name="dark_mode">深色模式</string>
     <string name="reading_history">阅读历史</string>
     <string name="reading_history_empty">暂无阅读历史</string>
