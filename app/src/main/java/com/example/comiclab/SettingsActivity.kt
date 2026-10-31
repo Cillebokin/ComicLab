@@ -88,6 +88,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var switchCustomReaderBrightness: SwitchCompat
     private lateinit var sliderSettingsReaderBrightness: SeekBar
     private lateinit var tvSettingsBrightnessValue: TextView
+    private lateinit var switchNasEnabled: SwitchCompat
     private lateinit var nasSettingsEmptyState: View
     private lateinit var nasShareListContainer: LinearLayout
     private lateinit var tvNasShareConfigError: TextView
@@ -270,6 +271,11 @@ class SettingsActivity : AppCompatActivity() {
         if (sectionIndex < 0) return
 
         val sectionView = settingsSectionFlipper.getChildAt(sectionIndex)
+        switchNasEnabled = sectionView.findViewById(R.id.switchNasEnabled)
+        switchNasEnabled.isChecked = NasShareStore.isNasEnabled(this)
+        switchNasEnabled.setOnCheckedChangeListener { _, isChecked ->
+            NasShareStore.setNasEnabled(this, isChecked)
+        }
         nasSettingsEmptyState = sectionView.findViewById(R.id.nasSettingsEmptyState)
         nasShareListContainer = sectionView.findViewById(R.id.nasShareListContainer)
         tvNasShareConfigError = sectionView.findViewById(R.id.tvNasShareConfigError)
@@ -306,11 +312,6 @@ class SettingsActivity : AppCompatActivity() {
                 false
             )
             item.findViewById<TextView>(R.id.tvNasShareName).text = profile.name
-            item.findViewById<TextView>(R.id.tvNasShareAddress).text = getString(
-                R.string.nas_share_address,
-                profile.host,
-                profile.shareName
-            )
             val status = item.findViewById<TextView>(R.id.tvNasShareTestStatus)
             val testButton = item.findViewById<TextView>(R.id.btnNasShareTest)
             testButton.setOnClickListener {
@@ -333,7 +334,6 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun showNasShareEditor(existing: NasShareProfile?) {
         val content = layoutInflater.inflate(R.layout.dialog_nas_share, null)
-        val nameInput = content.findViewById<EditText>(R.id.inputNasShareName)
         val hostInput = content.findViewById<EditText>(R.id.inputNasHost)
         val shareInput = content.findViewById<EditText>(R.id.inputNasShareFolder)
         val usernameInput = content.findViewById<EditText>(R.id.inputNasUsername)
@@ -343,7 +343,6 @@ class SettingsActivity : AppCompatActivity() {
         val status = content.findViewById<TextView>(R.id.tvNasFormStatus)
 
         existing?.let { profile ->
-            nameInput.setText(profile.name)
             hostInput.setText(profile.host)
             shareInput.setText(profile.shareName)
             usernameInput.setText(profile.username)
@@ -354,78 +353,73 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         val dialog = AlertDialog.Builder(this)
-            .setTitle(if (existing == null) R.string.nas_add_share_title else R.string.nas_edit_share_title)
+            .setTitle(R.string.nas_add_share_title)
             .setView(content)
             .setNegativeButton(R.string.cancel, null)
             .setNeutralButton(R.string.nas_test_connection, null)
             .setPositiveButton(R.string.nas_save, null)
-            .create()
+            .createRounded()
 
-        dialog.setOnShowListener {
-            val testButton = dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
-            val saveButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-            testButton.setOnClickListener {
-                val values = readNasShareForm(
-                    existing,
-                    nameInput,
-                    hostInput,
-                    shareInput,
-                    usernameInput,
-                    passwordInput,
-                    status
-                ) ?: return@setOnClickListener
-                val useRememberedPassword = values.password.isEmpty() &&
-                    rememberPassword.isChecked &&
-                    existing?.rememberPassword == true &&
-                    existing.encryptedPassword != null
-                if (values.profile.username.isNotEmpty() &&
-                    values.password.isEmpty() &&
-                    !useRememberedPassword
-                ) {
-                    status.setText(R.string.nas_test_password_required)
-                    return@setOnClickListener
-                }
-                startNasConnectionTest(
+        dialog.show()
+        val testButton = dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
+        val saveButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        testButton.setOnClickListener {
+            val values = readNasShareForm(
+                existing,
+                hostInput,
+                shareInput,
+                usernameInput,
+                passwordInput,
+                status
+            ) ?: return@setOnClickListener
+            val useRememberedPassword = values.password.isEmpty() &&
+                rememberPassword.isChecked &&
+                existing?.rememberPassword == true &&
+                existing.encryptedPassword != null
+            if (values.profile.username.isNotEmpty() &&
+                values.password.isEmpty() &&
+                !useRememberedPassword
+            ) {
+                status.setText(R.string.nas_test_password_required)
+                return@setOnClickListener
+            }
+            startNasConnectionTest(
+                values.profile,
+                values.password,
+                useRememberedPassword,
+                status,
+                testButton,
+                saveButton,
+                dialog
+            )
+        }
+        saveButton.setOnClickListener {
+            val values = readNasShareForm(
+                existing,
+                hostInput,
+                shareInput,
+                usernameInput,
+                passwordInput,
+                status
+            ) ?: return@setOnClickListener
+            try {
+                NasShareStore.save(
+                    this,
                     values.profile,
                     values.password,
-                    useRememberedPassword,
-                    status,
-                    testButton,
-                    saveButton,
-                    dialog
+                    rememberPassword.isChecked
                 )
-            }
-            saveButton.setOnClickListener {
-                val values = readNasShareForm(
-                    existing,
-                    nameInput,
-                    hostInput,
-                    shareInput,
-                    usernameInput,
-                    passwordInput,
-                    status
-                ) ?: return@setOnClickListener
-                try {
-                    NasShareStore.save(
-                        this,
-                        values.profile,
-                        values.password,
-                        rememberPassword.isChecked
-                    )
-                    dialog.dismiss()
-                    renderNasShareSettings()
-                    showMessage(getString(R.string.nas_share_saved))
-                } catch (_: Exception) {
-                    status.setText(R.string.nas_share_save_failed)
-                }
+                dialog.dismiss()
+                renderNasShareSettings()
+                showMessage(getString(R.string.nas_share_saved))
+            } catch (_: Exception) {
+                status.setText(R.string.nas_share_save_failed)
             }
         }
-        dialog.show()
     }
 
     private fun readNasShareForm(
         existing: NasShareProfile?,
-        nameInput: EditText,
         hostInput: EditText,
         shareInput: EditText,
         usernameInput: EditText,
@@ -459,12 +453,9 @@ class SettingsActivity : AppCompatActivity() {
             return null
         }
 
-        val displayName = nameInput.text.toString().trim().ifEmpty {
-            "$host / $shareName"
-        }
         val profile = NasShareProfile(
             id = existing?.id ?: UUID.randomUUID().toString(),
-            name = displayName,
+            name = "$host/$shareName",
             host = host,
             shareName = shareName,
             username = username,

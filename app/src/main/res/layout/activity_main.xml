@@ -518,7 +518,8 @@
             android:layout_height="76dp"
             android:layout_gravity="bottom|center_horizontal"
             android:background="@drawable/bg_file_source_dock"
-            android:focusable="false">
+            android:focusable="false"
+            android:visibility="gone">
 
             <FrameLayout
                 android:id="@+id/sourceSwitchTrack"

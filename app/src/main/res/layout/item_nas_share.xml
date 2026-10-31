@@ -20,16 +20,6 @@
         android:textSize="@dimen/text_body" />
 
     <TextView
-        android:id="@+id/tvNasShareAddress"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="5dp"
-        android:ellipsize="middle"
-        android:maxLines="1"
-        android:textColor="@color/comiclab_text_secondary"
-        android:textSize="@dimen/text_caption" />
-
-    <TextView
         android:id="@+id/tvNasShareTestStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

@@ -122,6 +122,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnNasCacheManagement: TextView
     private lateinit var btnNasCacheManagementEmpty: TextView
     private lateinit var btnNasSwitchShare: TextView
+    private lateinit var sourceSwitchDock: View
     private lateinit var sourceSwitchTrack: View
     private lateinit var sourceSwitchThumb: View
     private lateinit var sourceNasButton: View
@@ -335,6 +336,7 @@ class MainActivity : AppCompatActivity() {
         btnNasCacheManagement = findViewById(R.id.btnNasCacheManagement)
         btnNasCacheManagementEmpty = findViewById(R.id.btnNasCacheManagementEmpty)
         btnNasSwitchShare = findViewById(R.id.btnNasSwitchShare)
+        sourceSwitchDock = findViewById(R.id.sourceSwitchDock)
         sourceSwitchTrack = findViewById(R.id.sourceSwitchTrack)
         sourceSwitchThumb = findViewById(R.id.sourceSwitchThumb)
         sourceNasButton = findViewById(R.id.btnSourceNas)
@@ -391,6 +393,7 @@ class MainActivity : AppCompatActivity() {
         btnNasRetry.setOnClickListener { loadNasDirectory() }
         updateNasCacheSummary()
         updateSourceSwitchAppearance(isNas = false, animate = false)
+        refreshNasFeatureAvailability()
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 handleSystemBack()
@@ -549,6 +552,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        refreshNasFeatureAvailability()
         updateNasCacheSummary()
         clearFileListTouchState()
         if (isNasSourceSelected) {
@@ -1432,6 +1436,35 @@ class MainActivity : AppCompatActivity() {
             .setDuration(280L)
             .setInterpolator(DecelerateInterpolator())
             .start()
+    }
+
+    private fun refreshNasFeatureAvailability() {
+        val enabled = NasShareStore.isNasEnabled(this)
+        sourceSwitchDock.visibility = if (enabled) View.VISIBLE else View.GONE
+
+        val bottomPadding = if (enabled) sourceSwitchDock.layoutParams.height else 0
+        listView.setPadding(
+            listView.paddingLeft,
+            listView.paddingTop,
+            listView.paddingRight,
+            bottomPadding
+        )
+        nasEmptyPlaceholder.setPadding(
+            nasEmptyPlaceholder.paddingLeft,
+            nasEmptyPlaceholder.paddingTop,
+            nasEmptyPlaceholder.paddingRight,
+            bottomPadding
+        )
+        nasBrowserContent.setPadding(
+            nasBrowserContent.paddingLeft,
+            nasBrowserContent.paddingTop,
+            nasBrowserContent.paddingRight,
+            bottomPadding
+        )
+
+        if (!enabled && isNasSourceSelected) {
+            selectFileSource(isNas = false)
+        }
     }
 
     private fun updateSourceSwitchAppearance(isNas: Boolean, animate: Boolean = true) {

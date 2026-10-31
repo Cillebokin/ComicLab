@@ -1,12 +1,49 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:clipToPadding="true"
-    android:fillViewport="true"
-    android:paddingStart="12dp"
-    android:paddingEnd="12dp"
->
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:layout_marginStart="12dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="8dp"
+        android:background="@drawable/bg_file_picker_card"
+        android:elevation="@dimen/card_elevation"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:fontFamily="sans-serif-medium"
+            android:text="@string/nas_enable_title"
+            android:textColor="@color/comiclab_text_primary"
+            android:textSize="@dimen/text_section" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchNasEnabled"
+            style="@style/Widget.ComicLab.Switch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:contentDescription="@string/nas_enable_title"
+            android:importantForAccessibility="yes" />
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="true"
+        android:fillViewport="true"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -91,13 +128,6 @@
             android:textSize="@dimen/text_value"
             android:visibility="gone" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:gravity="center"
-            android:text="@string/nas_read_only_note"
-            android:textColor="@color/comiclab_text_tertiary"
-            android:textSize="@dimen/text_caption" />
     </LinearLayout>
 </ScrollView>
+</LinearLayout>

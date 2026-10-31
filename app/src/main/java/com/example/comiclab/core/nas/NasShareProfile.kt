@@ -27,7 +27,20 @@ internal data class NasShareProfile(
 internal object NasShareStore {
     private const val PREFERENCES_NAME = "nas_share_settings"
     private const val KEY_SHARES = "shares_json"
+    private const val KEY_NAS_ENABLED = "nas_enabled"
     private val lock = Any()
+
+    fun isNasEnabled(context: Context): Boolean = synchronized(lock) {
+        PrefsGateway.open(context, PREFERENCES_NAME)
+            .getBoolean(KEY_NAS_ENABLED, false)
+    }
+
+    fun setNasEnabled(context: Context, enabled: Boolean) = synchronized(lock) {
+        PrefsGateway.open(context, PREFERENCES_NAME)
+            .edit()
+            .putBoolean(KEY_NAS_ENABLED, enabled)
+            .apply()
+    }
 
     fun load(context: Context): List<NasShareProfile> = synchronized(lock) {
         val preferences = PrefsGateway.open(context, PREFERENCES_NAME)

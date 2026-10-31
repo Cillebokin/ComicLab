@@ -12,18 +12,6 @@
         android:orientation="vertical">
 
         <EditText
-            android:id="@+id/inputNasShareName"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:hint="@string/nas_share_name_hint"
-            android:inputType="textCapSentences"
-            android:maxLines="1"
-            android:singleLine="true"
-            android:textColor="@color/comiclab_text_primary"
-            android:textColorHint="@color/comiclab_text_tertiary"
-            android:textSize="@dimen/text_value" />
-
-        <EditText
             android:id="@+id/inputNasHost"
             android:layout_width="match_parent"
             android:layout_height="48dp"
@@ -84,15 +72,6 @@
             android:buttonTint="@color/comiclab_accent"
             android:text="@string/nas_remember_password"
             android:textColor="@color/comiclab_text_secondary"
-            android:textSize="@dimen/text_caption" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="32dp"
-            android:layout_marginTop="-4dp"
-            android:text="@string/nas_remember_password_note"
-            android:textColor="@color/comiclab_text_tertiary"
             android:textSize="@dimen/text_caption" />
 
         <TextView
