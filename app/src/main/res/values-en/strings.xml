@@ -17,6 +17,9 @@
     <string name="nas_directory_password_required">No saved password is available for this share. Save the password again in NAS settings</string>
     <string name="nas_directory">Folder</string>
     <string name="nas_download_title">Download NAS comic</string>
+    <string name="nas_download_to_local">Download to device</string>
+    <string name="nas_download_to_local_success">Saved locally: %1$s</string>
+    <string name="nas_download_to_local_failed">Could not save locally. Check the download path and available storage</string>
     <string name="nas_download_connecting">Connecting and preparing to download: %1$s</string>
     <string name="nas_download_progress_status">Downloading: %1$s</string>
     <string name="nas_download_progress_count">%1$s / %2$s</string>

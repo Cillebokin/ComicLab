@@ -242,7 +242,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private sealed interface NasDownloadResult {
-        data class Completed(val file: File) : NasDownloadResult
+        data class Completed(val file: File, val openForReading: Boolean) : NasDownloadResult
         data class InsufficientSpace(val requiredBytes: Long, val availableBytes: Long) : NasDownloadResult
         data object Cancelled : NasDownloadResult
         data class Failed(val exception: Exception) : NasDownloadResult
@@ -370,7 +370,7 @@ class MainActivity : AppCompatActivity() {
                     currentNasRelativePath = entry.relativePath
                     loadNasDirectory()
                 }
-                else -> startNasArchiveDownload(entry)
+                else -> showNasArchiveActions(entry)
             }
             clearNasListTouchState(view)
         }
@@ -1624,6 +1624,26 @@ class MainActivity : AppCompatActivity() {
         loadNasDirectory()
     }
 
+    private fun showNasArchiveActions(entry: NasDirectoryEntry) {
+        if (nasDownloadInProgress || isFinishing || isDestroyed) return
+
+        val dialog = BottomSheetDialog(this)
+        val content = layoutInflater.inflate(R.layout.bottom_sheet_nas_archive_actions, null)
+        content.findViewById<TextView>(R.id.tvNasArchiveActionTitle).text = entry.name
+        val btnRead = content.findViewById<TextView>(R.id.btnReadNasArchive)
+        val btnDownloadToLocal = content.findViewById<TextView>(R.id.btnDownloadNasArchiveToLocal)
+        sizeBottomSheetActionIcons(btnRead, btnDownloadToLocal)
+        btnRead.setOnClickListener {
+            dialog.dismiss()
+            startNasArchiveDownload(entry)
+        }
+        btnDownloadToLocal.setOnClickListener {
+            dialog.dismiss()
+            startNasArchiveDownload(entry, saveToLocal = true)
+        }
+        dialog.showRoundedContent(content)
+    }
+
     private fun updateNasPathDisplay() {
         nasPathStateSink.text = currentNasRelativePath
         updateSourcePathDisplay()
@@ -1731,9 +1751,26 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startNasArchiveDownload(entry: NasDirectoryEntry) {
+    private fun startNasArchiveDownload(
+        entry: NasDirectoryEntry,
+        saveToLocal: Boolean = false
+    ) {
         if (nasDownloadInProgress || entry.sizeBytes <= 0L) {
-            showMessage(R.string.nas_download_failed)
+            showMessage(
+                if (saveToLocal) R.string.nas_download_to_local_failed
+                else R.string.nas_download_failed
+            )
+            return
+        }
+        if (saveToLocal && !Environment.isExternalStorageManager()) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.storage_permission_title)
+                .setMessage(R.string.storage_permission_message)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.confirm) { _, _ ->
+                    openManageAllFilesAccessSettings()
+                }
+                .showRounded()
             return
         }
         val profile = selectedNasProfile ?: run {
@@ -1753,25 +1790,55 @@ class MainActivity : AppCompatActivity() {
             }
         }
         val cacheRoot = NasShareArchiveDownloader.cacheDirectory(cacheDir)
-        val destination = try {
-            NasShareArchiveDownloader.cacheFile(cacheRoot, profile, entry)
+        val destinationDirectory = try {
+            if (saveToLocal) {
+                NasShareArchiveDownloader.resolveLocalDownloadDirectory(
+                    Environment.getExternalStorageDirectory(),
+                    NasShareStore.downloadPath(this)
+                )
+            } else {
+                cacheRoot
+            }
         } catch (exception: Exception) {
-            android.util.Log.e("ComicLabNAS", "Invalid NAS archive path", exception)
-            showMessage(R.string.nas_download_failed)
+            android.util.Log.e("ComicLabNAS", "Invalid NAS local download directory", exception)
+            showMessage(
+                if (saveToLocal) R.string.nas_download_to_local_failed
+                else R.string.nas_download_failed
+            )
             return
         }
-        if (destination.isFile && destination.length() == entry.sizeBytes) {
+        val destination = try {
+            if (saveToLocal) {
+                NasShareArchiveDownloader.nonConflictingDestination(
+                    destinationDirectory,
+                    entry.name
+                )
+            } else {
+                NasShareArchiveDownloader.cacheFile(cacheRoot, profile, entry)
+            }
+        } catch (exception: Exception) {
+            android.util.Log.e("ComicLabNAS", "Invalid NAS archive path", exception)
+            showMessage(
+                if (saveToLocal) R.string.nas_download_to_local_failed
+                else R.string.nas_download_failed
+            )
+            return
+        }
+        if (!saveToLocal && destination.isFile && destination.length() == entry.sizeBytes) {
             openMangaPreview(destination)
             return
         }
         try {
-            NasShareArchiveDownloader.checkAvailableSpace(cacheRoot, entry.sizeBytes)
+            NasShareArchiveDownloader.checkAvailableSpace(destinationDirectory, entry.sizeBytes)
         } catch (exception: NasShareArchiveDownloader.InsufficientStorageException) {
             showNasDownloadInsufficientSpace(exception.requiredBytes, exception.availableBytes)
             return
         } catch (exception: Exception) {
-            android.util.Log.e("ComicLabNAS", "Could not prepare NAS cache", exception)
-            showMessage(R.string.nas_download_failed)
+            android.util.Log.e("ComicLabNAS", "Could not prepare NAS download directory", exception)
+            showMessage(
+                if (saveToLocal) R.string.nas_download_to_local_failed
+                else R.string.nas_download_failed
+            )
             return
         }
 
@@ -1789,7 +1856,9 @@ class MainActivity : AppCompatActivity() {
                         password = password,
                         entry = entry,
                         destination = destination,
-                        cancelled = cancelled
+                        cancelled = cancelled,
+                        cleanupRoot = destinationDirectory,
+                        replaceExisting = !saveToLocal
                     ) { downloadedBytes, totalBytes ->
                         reportNasDownloadProgress(
                             generation,
@@ -1797,7 +1866,8 @@ class MainActivity : AppCompatActivity() {
                             downloadedBytes,
                             totalBytes
                         )
-                    }
+                    },
+                    openForReading = !saveToLocal
                 )
             } catch (exception: NasShareArchiveDownloader.InsufficientStorageException) {
                 NasDownloadResult.InsufficientSpace(
@@ -1820,8 +1890,12 @@ class MainActivity : AppCompatActivity() {
 
                 when (result) {
                     is NasDownloadResult.Completed -> {
-                        if (selectedNasProfile?.id == profile.id) {
+                        if (result.openForReading && selectedNasProfile?.id == profile.id) {
                             openMangaPreview(result.file)
+                        } else if (!result.openForReading) {
+                            showMessage(
+                                getString(R.string.nas_download_to_local_success, result.file.name)
+                            )
                         }
                     }
 
@@ -1838,7 +1912,10 @@ class MainActivity : AppCompatActivity() {
                             "NAS archive download failed: ${entry.relativePath}",
                             result.exception
                         )
-                        showMessage(R.string.nas_download_failed)
+                        showMessage(
+                            if (saveToLocal) R.string.nas_download_to_local_failed
+                            else R.string.nas_download_failed
+                        )
                     }
                 }
             }

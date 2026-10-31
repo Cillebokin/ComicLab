@@ -16,6 +16,9 @@
     <string name="nas_directory_password_required">此共享没有可用的已保存密码，请在NAS设置中重新保存密码</string>
     <string name="nas_directory">文件夹</string>
     <string name="nas_download_title">下载NAS漫画</string>
+    <string name="nas_download_to_local">下载到本地</string>
+    <string name="nas_download_to_local_success">已下载到本地：%1$s</string>
+    <string name="nas_download_to_local_failed">下载到本地失败，请检查下载路径和存储空间</string>
     <string name="nas_download_connecting">正在连接并准备下载：%1$s</string>
     <string name="nas_download_progress_status">正在下载：%1$s</string>
     <string name="nas_download_progress_count">%1$s / %2$s</string>

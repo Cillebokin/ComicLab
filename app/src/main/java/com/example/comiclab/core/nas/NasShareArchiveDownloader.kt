@@ -144,12 +144,7 @@ internal object NasShareArchiveDownloader {
     ): File {
         require(!entry.isDirectory) { "Cannot cache a directory" }
         validateRemotePath(entry.relativePath)
-        require(entry.name.isNotBlank() && entry.name != "." && entry.name != "..") {
-            "Invalid NAS file name"
-        }
-        require(!entry.name.contains('/') && !entry.name.contains('\\') && '\u0000' !in entry.name) {
-            "Invalid NAS file name"
-        }
+        validateFileName(entry.name)
 
         val identity = listOf(
             profile.id,
@@ -165,12 +160,58 @@ internal object NasShareArchiveDownloader {
         return File(File(cacheRoot, directoryName), entry.name)
     }
 
-    fun checkAvailableSpace(cacheRoot: File, archiveSizeBytes: Long) {
-        require(archiveSizeBytes > 0L) { "Invalid archive size" }
-        if (!cacheRoot.isDirectory && !cacheRoot.mkdirs()) {
-            throw IOException("Could not prepare NAS cache directory")
+    fun resolveLocalDownloadDirectory(storageRoot: File, relativePath: String): File {
+        val normalizedPath = relativePath.trim().replace('\\', '/')
+        require(
+            normalizedPath.isNotEmpty() &&
+                !normalizedPath.startsWith('/') &&
+                ':' !in normalizedPath &&
+                '\u0000' !in normalizedPath
+        ) { "Invalid local download path" }
+        val segments = normalizedPath.split('/')
+        require(segments.none { it.isBlank() || it == "." || it == ".." }) {
+            "Invalid local download path"
         }
-        ensureAvailableSpace(cacheRoot, archiveSizeBytes)
+
+        val canonicalRoot = storageRoot.canonicalFile
+        val directory = File(canonicalRoot, normalizedPath).canonicalFile
+        check(directory != canonicalRoot && directory.toPath().startsWith(canonicalRoot.toPath())) {
+            "Local download path resolves outside shared storage"
+        }
+        return directory
+    }
+
+    fun nonConflictingDestination(directory: File, fileName: String): File {
+        validateFileName(fileName)
+        val original = File(directory, fileName)
+        if (!original.exists()) return original
+
+        val extensionSeparator = fileName.lastIndexOf('.').takeIf { it > 0 }
+        val baseName = if (extensionSeparator == null) {
+            fileName
+        } else {
+            fileName.substring(0, extensionSeparator)
+        }
+        val extension = if (extensionSeparator == null) {
+            ""
+        } else {
+            fileName.substring(extensionSeparator)
+        }
+        var suffix = 1
+        while (suffix < Int.MAX_VALUE) {
+            val candidate = File(directory, "$baseName ($suffix)$extension")
+            if (!candidate.exists()) return candidate
+            suffix++
+        }
+        throw IOException("Could not create a unique local download name")
+    }
+
+    fun checkAvailableSpace(directory: File, archiveSizeBytes: Long) {
+        require(archiveSizeBytes > 0L) { "Invalid archive size" }
+        if (!directory.isDirectory && !directory.mkdirs()) {
+            throw IOException("Could not prepare NAS download directory")
+        }
+        ensureAvailableSpace(directory, archiveSizeBytes)
     }
 
     fun download(
@@ -179,6 +220,8 @@ internal object NasShareArchiveDownloader {
         entry: NasDirectoryEntry,
         destination: File,
         cancelled: AtomicBoolean,
+        cleanupRoot: File?,
+        replaceExisting: Boolean,
         onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit
     ): File {
         require(!entry.isDirectory) { "Cannot download a directory" }
@@ -186,15 +229,17 @@ internal object NasShareArchiveDownloader {
         val parent = destination.parentFile
             ?: throw IOException("NAS cache destination has no parent")
         if (!parent.isDirectory && !parent.mkdirs()) {
-            throw IOException("Could not prepare NAS cache directory")
+            throw IOException("Could not prepare NAS download directory")
+        }
+        if (destination.exists() && !replaceExisting) {
+            throw IOException("NAS download destination already exists")
         }
         if (destination.isFile && destination.length() == entry.sizeBytes && entry.sizeBytes > 0L) {
             return destination
         }
 
-        val cacheRoot = parent.parentFile ?: parent
-        cleanupPartialFiles(cacheRoot)
-        val temporary = File(parent, ".${destination.name}.${UUID.randomUUID()}.part")
+        cleanupRoot?.let(::cleanupPartialFiles)
+        val temporary = File(parent, ".comiclab-nas-${UUID.randomUUID()}.part")
         var completed = false
         try {
             checkNotCancelled(cancelled)
@@ -238,8 +283,13 @@ internal object NasShareArchiveDownloader {
                     if (downloadedBytes != totalBytes) {
                         throw EOFException("NAS archive changed during download")
                     }
-                    if (destination.exists() && !destination.delete()) {
-                        throw IOException("Could not replace invalid NAS cache file")
+                    if (destination.exists()) {
+                        if (!replaceExisting) {
+                            throw IOException("NAS download destination already exists")
+                        }
+                        if (!destination.delete()) {
+                            throw IOException("Could not replace invalid NAS cache file")
+                        }
                     }
                     if (!temporary.renameTo(destination)) {
                         throw IOException("Could not finalize NAS cache file")
@@ -259,7 +309,7 @@ internal object NasShareArchiveDownloader {
         val staleBefore = System.currentTimeMillis() - PARTIAL_FILE_STALE_AGE_MS
         cacheRoot.walkTopDown()
             .filter {
-                it.isFile && it.name.endsWith(".part", ignoreCase = true) &&
+                it.isFile && isNasPartialFile(it) &&
                     it.lastModified() < staleBefore
             }
             .forEach(File::delete)
@@ -293,6 +343,18 @@ internal object NasShareArchiveDownloader {
             "Invalid path inside the SMB share"
         }
     }
+
+    private fun validateFileName(name: String) {
+        require(name.isNotBlank() && name != "." && name != "..") {
+            "Invalid NAS file name"
+        }
+        require(!name.contains('/') && !name.contains('\\') && '\u0000' !in name) {
+            "Invalid NAS file name"
+        }
+    }
+
+    private fun isNasPartialFile(file: File): Boolean =
+        file.name.startsWith(".comiclab-nas-") && file.name.endsWith(".part", ignoreCase = true)
 
     private fun checkNotCancelled(cancelled: AtomicBoolean) {
         if (cancelled.get() || Thread.currentThread().isInterrupted) {

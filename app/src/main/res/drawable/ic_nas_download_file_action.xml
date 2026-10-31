@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/png_download_file_streamline_core"
+    android:insetBottom="1.1dp"
+    android:insetLeft="1.1dp"
+    android:insetRight="1.1dp"
+    android:insetTop="1.1dp" />
