@@ -1439,26 +1439,6 @@ class MainActivity : AppCompatActivity() {
         val enabled = NasShareStore.isNasEnabled(this)
         sourceSwitchDock.visibility = if (enabled) View.VISIBLE else View.GONE
 
-        val bottomPadding = if (enabled) sourceSwitchDock.layoutParams.height else 0
-        listView.setPadding(
-            listView.paddingLeft,
-            listView.paddingTop,
-            listView.paddingRight,
-            bottomPadding
-        )
-        nasEmptyPlaceholder.setPadding(
-            nasEmptyPlaceholder.paddingLeft,
-            nasEmptyPlaceholder.paddingTop,
-            nasEmptyPlaceholder.paddingRight,
-            bottomPadding
-        )
-        nasBrowserContent.setPadding(
-            nasBrowserContent.paddingLeft,
-            nasBrowserContent.paddingTop,
-            nasBrowserContent.paddingRight,
-            bottomPadding
-        )
-
         if (!enabled && isNasSourceSelected) {
             selectFileSource(isNas = false)
         }
