@@ -118,7 +118,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvNasBrowserStatus: TextView
     private lateinit var tvNasEmptyHint: TextView
     private lateinit var btnNasRetry: Button
-    private lateinit var tvNasCurrentPath: TextView
     private lateinit var btnNasCacheManagement: TextView
     private lateinit var btnNasCacheManagementEmpty: TextView
     private lateinit var btnNasSwitchShare: TextView
@@ -332,7 +331,6 @@ class MainActivity : AppCompatActivity() {
         tvNasBrowserStatus = findViewById(R.id.tvNasBrowserStatus)
         tvNasEmptyHint = findViewById(R.id.tvNasEmptyHint)
         btnNasRetry = findViewById(R.id.btnNasRetry)
-        tvNasCurrentPath = findViewById(R.id.tvNasCurrentPath)
         btnNasCacheManagement = findViewById(R.id.btnNasCacheManagement)
         btnNasCacheManagementEmpty = findViewById(R.id.btnNasCacheManagementEmpty)
         btnNasSwitchShare = findViewById(R.id.btnNasSwitchShare)
@@ -1497,7 +1495,7 @@ class MainActivity : AppCompatActivity() {
                     .filter(String::isNotBlank)
                 etPath.setText(
                     (listOf("NAS", profile.name) + remotePathParts)
-                        .joinToString(" / ")
+                        .joinToString("/")
                 )
             }
         } else if (Environment.isExternalStorageManager()) {
@@ -1627,13 +1625,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateNasPathDisplay() {
-        val profile = selectedNasProfile
-        val remotePath = currentNasRelativePath.replace('\\', '/')
-        tvNasCurrentPath.text = profile?.let {
-            listOf(it.name, remotePath)
-                .filter(String::isNotBlank)
-                .joinToString(" / ")
-        }.orEmpty()
         nasPathStateSink.text = currentNasRelativePath
         updateSourcePathDisplay()
     }
