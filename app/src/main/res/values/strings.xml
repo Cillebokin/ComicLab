@@ -68,7 +68,7 @@
     <string name="nas_choose_share_message">选择一个已保存的Windows共享</string>
     <string name="nas_no_saved_shares_title">还没有保存共享</string>
     <string name="nas_no_saved_shares_message">添加 Windows电脑的共享文件夹</string>
-    <string name="nas_add_share">添加 Windows共享</string>
+    <string name="nas_add_share">添加共享</string>
     <string name="nas_share_enable_button">启用</string>
     <string name="nas_share_enabled_button">已启用</string>
     <string name="nas_share_active_badge">当前启用的共享</string>
@@ -85,13 +85,13 @@
     <string name="nas_download_path_saved">下载路径已保存</string>
     <string name="nas_download_path_save_failed">下载路径保存失败，请重试</string>
     <string name="nas_host_hint">IP地址</string>
-    <string name="nas_share_folder_hint">Windows共享文件夹名</string>
+    <string name="nas_share_folder_hint">共享文件夹名</string>
     <string name="nas_username_hint">用户名（可选）</string>
     <string name="nas_password_hint">密码（可选）</string>
     <string name="nas_remember_password">记住密码</string>
     <string name="nas_test_connection">测试连接</string>
     <string name="nas_share_not_tested">尚未测试</string>
-    <string name="nas_add_share_title">添加Windows共享</string>
+    <string name="nas_add_share_title">添加共享</string>
     <string name="nas_save">保存</string>
     <string name="nas_test_in_progress">正在验证 SMB连接和共享权限…</string>
     <string name="nas_test_success">连接成功，账号可以访问此共享</string>
@@ -149,7 +149,7 @@
     <string name="help_file_merge">文件整合</string>
     <string name="help_export_configuration">导出配置</string>
     <string name="help_load_configuration">加载配置</string>
-    <string name="help_windows_share_setup">Windows共享设置</string>
+    <string name="help_windows_share_setup">共享设置</string>
     <string name="dark_mode">深色模式</string>
     <string name="reading_history">阅读历史</string>
     <string name="reading_history_empty">暂无阅读历史</string>

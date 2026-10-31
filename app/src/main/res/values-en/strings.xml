@@ -69,7 +69,7 @@
     <string name="nas_choose_share_message">Choose a saved Windows share</string>
     <string name="nas_no_saved_shares_title">No saved shares</string>
     <string name="nas_no_saved_shares_message">Add a shared folder from a Windows PC</string>
-    <string name="nas_add_share">Add Windows share</string>
+    <string name="nas_add_share">Add share</string>
     <string name="nas_share_enable_button">Enable</string>
     <string name="nas_share_enabled_button">Enabled</string>
     <string name="nas_share_active_badge">Currently enabled share</string>
@@ -86,13 +86,13 @@
     <string name="nas_download_path_saved">Download path saved</string>
     <string name="nas_download_path_save_failed">Could not save the download path. Try again</string>
     <string name="nas_host_hint">IP address</string>
-    <string name="nas_share_folder_hint">Windows shared folder name</string>
+    <string name="nas_share_folder_hint">Share folder name</string>
     <string name="nas_username_hint">Username (optional)</string>
     <string name="nas_password_hint">Password (optional)</string>
     <string name="nas_remember_password">Remember password</string>
     <string name="nas_test_connection">Test connection</string>
     <string name="nas_share_not_tested">Not tested</string>
-    <string name="nas_add_share_title">Add Windows share</string>
+    <string name="nas_add_share_title">Add share</string>
     <string name="nas_save">Save</string>
     <string name="nas_test_in_progress">Checking the SMB connection and share access…</string>
     <string name="nas_test_success">Connected; this account can access the share</string>
@@ -150,7 +150,7 @@
     <string name="help_file_merge">Merge files</string>
     <string name="help_export_configuration">Export configuration</string>
     <string name="help_load_configuration">Load configuration</string>
-    <string name="help_windows_share_setup">Set up a Windows share</string>
+    <string name="help_windows_share_setup">Share settings</string>
     <string name="dark_mode">Dark mode</string>
     <string name="reading_history">Reading history</string>
     <string name="reading_history_empty">No reading history</string>
