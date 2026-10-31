@@ -1875,14 +1875,12 @@ class MainActivity : AppCompatActivity() {
             .createRounded()
         nasDownloadProgressDialog = dialog
         nasDownloadLastProgressUpdateAt = 0L
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setOnClickListener { button ->
-                cancelled.set(true)
-                button.isEnabled = false
-                nasDownloadProgressStatus?.setText(R.string.nas_download_cancelling)
-            }
-        }
         dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setOnClickListener { button ->
+            cancelled.set(true)
+            button.isEnabled = false
+            nasDownloadProgressStatus?.setText(R.string.nas_download_cancelling)
+        }
     }
 
     private fun reportNasDownloadProgress(
