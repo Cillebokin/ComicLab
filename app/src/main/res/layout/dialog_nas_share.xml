@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:fillViewport="false"
+    android:paddingStart="4dp"
+    android:paddingEnd="4dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <EditText
+            android:id="@+id/inputNasHost"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="4dp"
+            android:hint="@string/nas_host_hint"
+            android:inputType="textUri|textNoSuggestions"
+            android:maxLines="1"
+            android:singleLine="true"
+            android:textColor="@color/comiclab_text_primary"
+            android:textColorHint="@color/comiclab_text_tertiary"
+            android:textSize="@dimen/text_value" />
+
+        <EditText
+            android:id="@+id/inputNasShareFolder"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="4dp"
+            android:hint="@string/nas_share_folder_hint"
+            android:inputType="textNoSuggestions"
+            android:maxLines="1"
+            android:singleLine="true"
+            android:textColor="@color/comiclab_text_primary"
+            android:textColorHint="@color/comiclab_text_tertiary"
+            android:textSize="@dimen/text_value" />
+
+        <EditText
+            android:id="@+id/inputNasUsername"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="4dp"
+            android:autofillHints="username"
+            android:hint="@string/nas_username_hint"
+            android:inputType="textNoSuggestions"
+            android:maxLines="1"
+            android:singleLine="true"
+            android:textColor="@color/comiclab_text_primary"
+            android:textColorHint="@color/comiclab_text_tertiary"
+            android:textSize="@dimen/text_value" />
+
+        <EditText
+            android:id="@+id/inputNasPassword"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="4dp"
+            android:autofillHints="password"
+            android:hint="@string/nas_password_hint"
+            android:inputType="textPassword"
+            android:maxLines="1"
+            android:singleLine="true"
+            android:textColor="@color/comiclab_text_primary"
+            android:textColorHint="@color/comiclab_text_tertiary"
+            android:textSize="@dimen/text_value" />
+
+        <CheckBox
+            android:id="@+id/checkRememberNasPassword"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:buttonTint="@color/comiclab_accent"
+            android:text="@string/nas_remember_password"
+            android:textColor="@color/comiclab_text_secondary"
+            android:textSize="@dimen/text_caption" />
+
+        <TextView
+            android:id="@+id/tvNasFormStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:minHeight="24dp"
+            android:textColor="@color/comiclab_text_secondary"
+            android:textSize="@dimen/text_caption" />
+    </LinearLayout>
+</ScrollView>

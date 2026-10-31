@@ -2,30 +2,47 @@ package com.example.comiclab
 
 import com.example.comiclab.core.settings.ComicLabConfigurationStore
 import com.example.comiclab.core.settings.ComicLabConfigurationJson
+import com.example.comiclab.core.nas.NasShareConnectionTester
+import com.example.comiclab.core.nas.NasFailureClassifier
+import com.example.comiclab.core.nas.NasFailureDetails
+import com.example.comiclab.core.nas.NasShareProfile
+import com.example.comiclab.core.nas.NasShareStore
 import com.example.comiclab.core.update.GitHubReleaseApi
 import com.example.comiclab.core.diagnostics.CrashLogManager
 import com.example.comiclab.core.store.PrefsGateway
 import com.example.comiclab.ui.common.createRounded
 import com.example.comiclab.ui.common.SystemBars
+import com.example.comiclab.ui.settings.SettingsSection
+import com.example.comiclab.ui.settings.SettingsSectionAdapter
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.graphics.Paint
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.os.SystemClock
 import android.text.Editable
 import android.text.TextWatcher
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.RadioGroup
+import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.ViewFlipper
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
@@ -34,10 +51,14 @@ import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.core.os.LocaleListCompat
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import java.io.File
 import java.util.ArrayDeque
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
 internal const val COMICLAB_RELEASES_URL =
     "https://github.com/Cillebokin/ComicLab/releases"
@@ -45,9 +66,16 @@ internal const val COMICLAB_RELEASES_URL =
 class SettingsActivity : AppCompatActivity() {
 
     private lateinit var btnBack: ImageButton
-    private lateinit var layoutDebugTools: View
-    private lateinit var btnExportCrashLog: Button
-    private lateinit var btnRunReaderStressTest: Button
+    private lateinit var btnContents: ImageButton
+    private lateinit var tvCurrentSettingsSectionTitle: TextView
+    private lateinit var settingsContentsScrim: View
+    private lateinit var settingsSectionFlipper: ViewFlipper
+    private var settingsContentsPopupWindow: PopupWindow? = null
+    private var settingsSections: List<SettingsSection> = emptyList()
+    private var currentSettingsSectionIndex = 0
+    private var layoutDebugTools: View? = null
+    private var btnExportCrashLog: Button? = null
+    private var btnRunReaderStressTest: Button? = null
     private lateinit var btnExportConfiguration: Button
     private lateinit var btnImportConfiguration: Button
     private lateinit var btnCheckUpdates: Button
@@ -62,9 +90,18 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var switchCustomReaderBrightness: SwitchCompat
     private lateinit var sliderSettingsReaderBrightness: SeekBar
     private lateinit var tvSettingsBrightnessValue: TextView
+    private lateinit var switchNasEnabled: SwitchCompat
+    private lateinit var tvNasDownloadPath: TextView
+    private lateinit var btnNasDownloadPathChange: TextView
+    private lateinit var nasSettingsEmptyState: View
+    private lateinit var nasShareListContainer: LinearLayout
+    private lateinit var tvNasShareConfigError: TextView
+    private lateinit var btnNasAddFirstShare: Button
+    private lateinit var btnNasAddShare: Button
     private val debugToolExecutor = Executors.newSingleThreadExecutor()
     private val configurationExecutor = Executors.newSingleThreadExecutor()
     private val releaseCheckExecutor = Executors.newSingleThreadExecutor()
+    private val nasConnectionExecutor = Executors.newSingleThreadExecutor()
     private val configurationImportListener = object : ConfigurationImportCoordinator.Listener {
         override fun onImportRunningChanged(running: Boolean) {
             this@SettingsActivity.onImportRunningChanged(running)
@@ -92,7 +129,22 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        renderSettingsContent()
+        val initialSectionIndex = savedInstanceState?.getInt(STATE_SETTINGS_SECTION_INDEX) ?: 0
+        val requestedSection = if (savedInstanceState == null) {
+            intent.getStringExtra(EXTRA_SETTINGS_SECTION)
+        } else {
+            null
+        }
+        renderSettingsContent(initialSectionIndex, requestedSection)
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (settingsContentsPopupWindow != null) {
+                    dismissSettingsContentsPanel()
+                } else {
+                    finish()
+                }
+            }
+        })
     }
 
     override fun onStart() {
@@ -105,7 +157,15 @@ class SettingsActivity : AppCompatActivity() {
         super.onStop()
     }
 
-    private fun renderSettingsContent() {
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putInt(STATE_SETTINGS_SECTION_INDEX, currentSettingsSectionIndex)
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun renderSettingsContent(
+        initialSectionIndex: Int,
+        requestedSection: String? = null
+    ) {
         setContentView(R.layout.activity_settings)
         SystemBars.fitContentBelowSystemBars(
             this,
@@ -116,6 +176,12 @@ class SettingsActivity : AppCompatActivity() {
         )
 
         btnBack = findViewById(R.id.btnBack)
+        btnContents = findViewById(R.id.btnContents)
+        tvCurrentSettingsSectionTitle = findViewById(R.id.tvCurrentSettingsSectionTitle)
+        settingsContentsScrim = findViewById(R.id.settingsContentsScrim)
+        settingsSectionFlipper = findViewById(R.id.settingsSectionFlipper)
+        bindSettingsNavigation(initialSectionIndex, requestedSection)
+
         layoutDebugTools = findViewById(R.id.layoutDebugTools)
         btnExportCrashLog = findViewById(R.id.btnExportCrashLog)
         btnRunReaderStressTest = findViewById(R.id.btnRunReaderStressTest)
@@ -135,10 +201,15 @@ class SettingsActivity : AppCompatActivity() {
         tvSettingsBrightnessValue = findViewById(R.id.tvSettingsBrightnessValue)
 
         btnBack.setOnClickListener {
-            finish()
+            if (settingsContentsPopupWindow != null) {
+                dismissSettingsContentsPanel()
+            } else {
+                finish()
+            }
         }
 
         bindLanguageSetting()
+        bindNasShareSettings()
         bindDarkModeSetting()
         bindReadingDirection()
         bindEnhancementScale()
@@ -155,11 +226,541 @@ class SettingsActivity : AppCompatActivity() {
         updateConfigurationButtons()
     }
 
+    private fun bindSettingsNavigation(
+        initialSectionIndex: Int,
+        requestedSection: String?
+    ) {
+        settingsSections = createSettingsSections()
+        settingsSections.forEach { section ->
+            settingsSectionFlipper.addView(
+                layoutInflater.inflate(section.layoutResId, settingsSectionFlipper, false)
+            )
+        }
+        val requestedIndex = when (requestedSection) {
+            SETTINGS_SECTION_NAS -> settingsSections.indexOfFirst {
+                it.layoutResId == R.layout.settings_section_nas
+            }
+            else -> -1
+        }
+        showSettingsSection(if (requestedIndex >= 0) requestedIndex else initialSectionIndex)
+
+        btnContents.setOnClickListener {
+            if (settingsContentsPopupWindow == null) {
+                showSettingsContentsPanel()
+            } else {
+                dismissSettingsContentsPanel()
+            }
+        }
+        settingsContentsScrim.setOnClickListener {
+            dismissSettingsContentsPanel()
+        }
+    }
+
+    private fun createSettingsSections(): List<SettingsSection> = buildList {
+        add(SettingsSection(R.string.settings_section_appearance, R.layout.settings_section_appearance))
+        add(SettingsSection(R.string.file_browser, R.layout.settings_section_file_browser))
+        add(SettingsSection(R.string.settings_section_reading, R.layout.settings_section_reading))
+        add(SettingsSection(R.string.settings_section_configuration, R.layout.settings_section_configuration))
+        add(SettingsSection(R.string.source_nas, R.layout.settings_section_nas))
+        add(SettingsSection(R.string.about, R.layout.settings_section_about))
+        if (isDebuggableBuild()) {
+            add(SettingsSection(R.string.settings_section_diagnostics, R.layout.settings_section_diagnostics))
+        }
+    }
+
+    private fun bindNasShareSettings() {
+        val sectionIndex = settingsSections.indexOfFirst {
+            it.layoutResId == R.layout.settings_section_nas
+        }
+        if (sectionIndex < 0) return
+
+        val sectionView = settingsSectionFlipper.getChildAt(sectionIndex)
+        switchNasEnabled = sectionView.findViewById(R.id.switchNasEnabled)
+        switchNasEnabled.isChecked = NasShareStore.isNasEnabled(this)
+        switchNasEnabled.setOnCheckedChangeListener { _, isChecked ->
+            NasShareStore.setNasEnabled(this, isChecked)
+        }
+        tvNasDownloadPath = sectionView.findViewById(R.id.tvNasDownloadPath)
+        btnNasDownloadPathChange = sectionView.findViewById(R.id.btnNasDownloadPathChange)
+        tvNasDownloadPath.text = NasShareStore.downloadPath(this)
+        btnNasDownloadPathChange.setOnClickListener { showNasDownloadPathEditor() }
+        nasSettingsEmptyState = sectionView.findViewById(R.id.nasSettingsEmptyState)
+        nasShareListContainer = sectionView.findViewById(R.id.nasShareListContainer)
+        tvNasShareConfigError = sectionView.findViewById(R.id.tvNasShareConfigError)
+        btnNasAddFirstShare = sectionView.findViewById(R.id.btnNasAddFirstShare)
+        btnNasAddShare = sectionView.findViewById(R.id.btnNasAddShare)
+        btnNasAddFirstShare.setOnClickListener { showNasShareEditor(existing = null) }
+        btnNasAddShare.setOnClickListener { showNasShareEditor(existing = null) }
+        renderNasShareSettings()
+    }
+
+    private fun showNasDownloadPathEditor() {
+        val content = layoutInflater.inflate(R.layout.dialog_nas_download_path, null)
+        val input = content.findViewById<EditText>(R.id.inputNasDownloadPath)
+        val error = content.findViewById<TextView>(R.id.tvNasDownloadPathError)
+        input.setText(NasShareStore.downloadPath(this))
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.nas_download_path_dialog_title)
+            .setView(content)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.nas_save, null)
+            .createRounded()
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val path = normalizeNasDownloadPath(input.text.toString())
+            if (path == null) {
+                error.setText(R.string.nas_download_path_invalid)
+                error.visibility = View.VISIBLE
+                return@setOnClickListener
+            }
+
+            try {
+                NasShareStore.setDownloadPath(this, path)
+                tvNasDownloadPath.text = path
+                dialog.dismiss()
+                showMessage(getString(R.string.nas_download_path_saved))
+            } catch (_: Exception) {
+                error.setText(R.string.nas_download_path_save_failed)
+                error.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    private fun normalizeNasDownloadPath(value: String): String? {
+        val path = value.trim().replace('\\', '/')
+        if (path.isEmpty() || path.startsWith('/') || ':' in path || '\u0000' in path) {
+            return null
+        }
+        val segments = path.split('/')
+        if (segments.any { it.isBlank() || it == "." || it == ".." }) {
+            return null
+        }
+        return segments.joinToString("/")
+    }
+
+    private fun renderNasShareSettings() {
+        val profiles = try {
+            NasShareStore.load(this)
+        } catch (_: Exception) {
+            tvNasShareConfigError.setText(R.string.nas_share_config_read_failed)
+            tvNasShareConfigError.visibility = View.VISIBLE
+            nasSettingsEmptyState.visibility = View.GONE
+            nasShareListContainer.visibility = View.GONE
+            btnNasAddShare.visibility = View.GONE
+            return
+        }
+
+        tvNasShareConfigError.visibility = View.GONE
+        nasShareListContainer.removeAllViews()
+        val hasProfiles = profiles.isNotEmpty()
+        nasSettingsEmptyState.visibility = if (hasProfiles) View.GONE else View.VISIBLE
+        nasShareListContainer.visibility = if (hasProfiles) View.VISIBLE else View.GONE
+        btnNasAddShare.visibility = if (hasProfiles) View.VISIBLE else View.GONE
+        val activeShareId = runCatching { NasShareStore.activeShareId(this) }.getOrNull()
+
+        profiles.forEach { profile ->
+            val item = layoutInflater.inflate(
+                R.layout.item_nas_share,
+                nasShareListContainer,
+                false
+            )
+            val isActiveShare = profile.id == activeShareId
+            item.findViewById<TextView>(R.id.tvNasShareName).text = profile.name
+            item.findViewById<View>(R.id.ivNasShareActiveBadge).visibility =
+                if (isActiveShare) View.VISIBLE else View.GONE
+            val enableButton = item.findViewById<TextView>(R.id.btnNasShareEnable)
+            enableButton.setText(
+                if (isActiveShare) {
+                    R.string.nas_share_enabled_button
+                } else {
+                    R.string.nas_share_enable_button
+                }
+            )
+            enableButton.isEnabled = !isActiveShare
+            enableButton.setTextColor(
+                getColor(
+                    if (isActiveShare) R.color.comiclab_text_tertiary
+                    else R.color.comiclab_accent
+                )
+            )
+            enableButton.setOnClickListener {
+                try {
+                    NasShareStore.setActiveShare(this, profile.id)
+                    renderNasShareSettings()
+                } catch (_: Exception) {
+                    showMessage(getString(R.string.nas_share_enable_failed))
+                }
+            }
+            val status = item.findViewById<TextView>(R.id.tvNasShareTestStatus)
+            val testButton = item.findViewById<TextView>(R.id.btnNasShareTest)
+            testButton.setOnClickListener {
+                testSavedNasShare(profile, status, testButton)
+            }
+            item.findViewById<TextView>(R.id.btnNasShareEdit).setOnClickListener {
+                showNasShareEditor(profile)
+            }
+            item.findViewById<TextView>(R.id.btnNasShareDelete).setOnClickListener {
+                confirmDeleteNasShare(profile)
+            }
+            nasShareListContainer.addView(item)
+        }
+    }
+
+    private data class NasShareFormValues(
+        val profile: NasShareProfile,
+        val password: String
+    )
+
+    private fun showNasShareEditor(existing: NasShareProfile?) {
+        val content = layoutInflater.inflate(R.layout.dialog_nas_share, null)
+        val hostInput = content.findViewById<EditText>(R.id.inputNasHost)
+        val shareInput = content.findViewById<EditText>(R.id.inputNasShareFolder)
+        val usernameInput = content.findViewById<EditText>(R.id.inputNasUsername)
+        val passwordInput = content.findViewById<EditText>(R.id.inputNasPassword)
+        passwordInput.isSaveEnabled = false
+        val rememberPassword = content.findViewById<CheckBox>(R.id.checkRememberNasPassword)
+        val status = content.findViewById<TextView>(R.id.tvNasFormStatus)
+
+        existing?.let { profile ->
+            hostInput.setText(profile.host)
+            shareInput.setText(profile.shareName)
+            usernameInput.setText(profile.username)
+            rememberPassword.isChecked = profile.rememberPassword
+            if (profile.rememberPassword && profile.encryptedPassword != null) {
+                passwordInput.hint = getString(R.string.nas_password_keep_hint)
+            }
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.nas_add_share_title)
+            .setView(content)
+            .setNegativeButton(R.string.cancel, null)
+            .setNeutralButton(R.string.nas_test_connection, null)
+            .setPositiveButton(R.string.nas_save, null)
+            .createRounded()
+
+        dialog.show()
+        val testButton = dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
+        val saveButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        testButton.setOnClickListener {
+            val values = readNasShareForm(
+                existing,
+                hostInput,
+                shareInput,
+                usernameInput,
+                passwordInput,
+                status
+            ) ?: return@setOnClickListener
+            val useRememberedPassword = values.password.isEmpty() &&
+                rememberPassword.isChecked &&
+                existing?.rememberPassword == true &&
+                existing.encryptedPassword != null
+            if (values.profile.username.isNotEmpty() &&
+                values.password.isEmpty() &&
+                !useRememberedPassword
+            ) {
+                status.setText(R.string.nas_test_password_required)
+                return@setOnClickListener
+            }
+            startNasConnectionTest(
+                values.profile,
+                values.password,
+                useRememberedPassword,
+                status,
+                testButton,
+                saveButton,
+                dialog
+            )
+        }
+        saveButton.setOnClickListener {
+            val values = readNasShareForm(
+                existing,
+                hostInput,
+                shareInput,
+                usernameInput,
+                passwordInput,
+                status
+            ) ?: return@setOnClickListener
+            try {
+                NasShareStore.save(
+                    this,
+                    values.profile,
+                    values.password,
+                    rememberPassword.isChecked
+                )
+                dialog.dismiss()
+                renderNasShareSettings()
+                showMessage(getString(R.string.nas_share_saved))
+            } catch (_: Exception) {
+                status.setText(R.string.nas_share_save_failed)
+            }
+        }
+    }
+
+    private fun readNasShareForm(
+        existing: NasShareProfile?,
+        hostInput: EditText,
+        shareInput: EditText,
+        usernameInput: EditText,
+        passwordInput: EditText,
+        status: TextView
+    ): NasShareFormValues? {
+        status.text = ""
+        val host = hostInput.text.toString().trim()
+        val shareName = shareInput.text.toString().trim()
+        val username = usernameInput.text.toString().trim()
+        val password = passwordInput.text.toString()
+
+        if (host.isEmpty()) {
+            status.setText(R.string.nas_host_required)
+            return null
+        }
+        if (host.contains('/') || host.contains('\\') || host.startsWith("smb:", ignoreCase = true)) {
+            status.setText(R.string.nas_host_invalid)
+            return null
+        }
+        if (shareName.isEmpty()) {
+            status.setText(R.string.nas_share_required)
+            return null
+        }
+        if (shareName.contains('/') || shareName.contains('\\')) {
+            status.setText(R.string.nas_share_invalid)
+            return null
+        }
+        if (username.isEmpty() && password.isNotEmpty()) {
+            status.setText(R.string.nas_credentials_invalid)
+            return null
+        }
+
+        val profile = NasShareProfile(
+            id = existing?.id ?: UUID.randomUUID().toString(),
+            name = "$host/$shareName",
+            host = host,
+            shareName = shareName,
+            username = username,
+            rememberPassword = existing?.rememberPassword ?: false,
+            encryptedPassword = existing?.encryptedPassword
+        )
+        return NasShareFormValues(profile, password)
+    }
+
+    private fun testSavedNasShare(
+        profile: NasShareProfile,
+        status: TextView,
+        button: View
+    ) {
+        if (profile.username.isNotEmpty() &&
+            (!profile.rememberPassword || profile.encryptedPassword == null)
+        ) {
+            status.setText(R.string.nas_test_password_required)
+            return
+        }
+        startNasConnectionTest(
+            profile,
+            enteredPassword = "",
+            useRememberedPassword = profile.username.isNotEmpty(),
+            status = status,
+            actionButton = button,
+            saveButton = null,
+            dialog = null
+        )
+    }
+
+    private fun startNasConnectionTest(
+        profile: NasShareProfile,
+        enteredPassword: String,
+        useRememberedPassword: Boolean,
+        status: TextView,
+        actionButton: View,
+        saveButton: Button?,
+        dialog: AlertDialog?
+    ) {
+        status.setText(R.string.nas_test_in_progress)
+        actionButton.isEnabled = false
+        saveButton?.isEnabled = false
+        nasConnectionExecutor.execute {
+            val result: NasConnectionTestOutcome = try {
+                val password = if (useRememberedPassword) {
+                    try {
+                        NasShareStore.rememberedPassword(profile)
+                            ?: throw NasPasswordUnavailableException()
+                    } catch (exception: NasPasswordUnavailableException) {
+                        throw exception
+                    } catch (_: Exception) {
+                        throw NasPasswordUnavailableException()
+                    }
+                } else {
+                    enteredPassword
+                }
+                if (profile.username.isNotEmpty() && password.isEmpty()) {
+                    throw NasPasswordUnavailableException()
+                }
+                NasShareConnectionTester.test(profile, password)
+                NasConnectionTestOutcome.Success
+            } catch (_: NasPasswordUnavailableException) {
+                NasConnectionTestOutcome.PasswordUnavailable
+            } catch (exception: Exception) {
+                NasConnectionTestOutcome.Failed(NasFailureClassifier.classify(exception))
+            }
+
+            runOnUiThread {
+                if (destroyed || (dialog != null && !dialog.isShowing)) {
+                    return@runOnUiThread
+                }
+                when (result) {
+                    NasConnectionTestOutcome.Success -> status.setText(R.string.nas_test_success)
+                    NasConnectionTestOutcome.PasswordUnavailable -> {
+                        status.setText(R.string.nas_password_unavailable)
+                    }
+                    is NasConnectionTestOutcome.Failed -> {
+                        status.text = NasFailureClassifier.format(this@SettingsActivity, result.failure)
+                    }
+                }
+                actionButton.isEnabled = true
+                saveButton?.isEnabled = true
+            }
+        }
+    }
+
+    private fun confirmDeleteNasShare(profile: NasShareProfile) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.nas_share_delete_title)
+            .setMessage(getString(R.string.nas_share_delete_message, profile.name))
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.delete) { _, _ ->
+                try {
+                    NasShareStore.delete(this, profile.id)
+                    renderNasShareSettings()
+                    showMessage(getString(R.string.nas_share_deleted))
+                } catch (_: Exception) {
+                    showMessage(getString(R.string.nas_share_delete_failed))
+                }
+            }
+            .show()
+    }
+
+    private sealed interface NasConnectionTestOutcome {
+        data object Success : NasConnectionTestOutcome
+        data object PasswordUnavailable : NasConnectionTestOutcome
+        data class Failed(val failure: NasFailureDetails) : NasConnectionTestOutcome
+    }
+
+    private class NasPasswordUnavailableException : Exception()
+
+    private fun showSettingsSection(index: Int) {
+        if (settingsSections.isEmpty()) {
+            return
+        }
+
+        currentSettingsSectionIndex = index.coerceIn(settingsSections.indices)
+        settingsSectionFlipper.displayedChild = currentSettingsSectionIndex
+        tvCurrentSettingsSectionTitle.setText(
+            settingsSections[currentSettingsSectionIndex].titleResId
+        )
+        (settingsSectionFlipper.getChildAt(currentSettingsSectionIndex) as? ScrollView)
+            ?.scrollTo(0, 0)
+    }
+
+    private fun showSettingsContentsPanel() {
+        if (settingsContentsPopupWindow != null) {
+            return
+        }
+
+        val rootView = findViewById<View>(R.id.main)
+        val screenWidth = rootView.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels
+        val panelWidth = (screenWidth * 0.75f).roundToInt()
+            .coerceAtLeast(dpToPx(280))
+            .coerceAtMost(screenWidth)
+        val content = layoutInflater.inflate(R.layout.panel_settings_contents, null)
+        val listSettingsSections = content.findViewById<RecyclerView>(R.id.listSettingsSections)
+        listSettingsSections.layoutManager = LinearLayoutManager(this)
+        listSettingsSections.adapter = SettingsSectionAdapter(settingsSections) { index ->
+            dismissSettingsContentsPanel()
+            showSettingsSection(index)
+        }
+
+        showSettingsContentsScrim()
+        val popupWindow = PopupWindow(
+            content,
+            panelWidth,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            true
+        )
+        popupWindow.isOutsideTouchable = true
+        popupWindow.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        popupWindow.animationStyle = R.style.Animation_ComicLab_HelpContentsPanel
+        popupWindow.elevation = dpToPx(8).toFloat()
+        popupWindow.setOnDismissListener {
+            if (settingsContentsPopupWindow === popupWindow) {
+                settingsContentsPopupWindow = null
+                hideSettingsContentsScrim()
+                updateContentsButtonDescription(false)
+            }
+        }
+
+        settingsContentsPopupWindow = popupWindow
+        updateContentsButtonDescription(true)
+        popupWindow.showAtLocation(rootView, Gravity.START or Gravity.TOP, 0, 0)
+    }
+
+    private fun dismissSettingsContentsPanel() {
+        val popupWindow = settingsContentsPopupWindow ?: return
+        settingsContentsPopupWindow = null
+        popupWindow.dismiss()
+        hideSettingsContentsScrim()
+        updateContentsButtonDescription(false)
+    }
+
+    private fun showSettingsContentsScrim() {
+        settingsContentsScrim.animate().cancel()
+        settingsContentsScrim.alpha = 0f
+        settingsContentsScrim.visibility = View.VISIBLE
+        settingsContentsScrim.animate()
+            .alpha(1f)
+            .setDuration(180L)
+            .start()
+    }
+
+    private fun hideSettingsContentsScrim() {
+        if (settingsContentsScrim.visibility != View.VISIBLE) {
+            return
+        }
+
+        settingsContentsScrim.animate().cancel()
+        settingsContentsScrim.animate()
+            .alpha(0f)
+            .setDuration(150L)
+            .withEndAction {
+                settingsContentsScrim.visibility = View.GONE
+                settingsContentsScrim.alpha = 1f
+            }
+            .start()
+    }
+
+    private fun updateContentsButtonDescription(expanded: Boolean) {
+        btnContents.contentDescription = getString(
+            if (expanded) {
+                R.string.settings_contents_collapse
+            } else {
+                R.string.settings_contents_expand
+            }
+        )
+    }
+
+    private fun dpToPx(dp: Int): Int {
+        return (dp * resources.displayMetrics.density).roundToInt()
+    }
+
     override fun onDestroy() {
+        settingsContentsPopupWindow?.dismiss()
+        settingsContentsPopupWindow = null
         destroyed = true
         debugToolExecutor.shutdownNow()
         configurationExecutor.shutdownNow()
         releaseCheckExecutor.shutdownNow()
+        nasConnectionExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -271,7 +872,7 @@ class SettingsActivity : AppCompatActivity() {
         switchDarkMode.setOnCheckedChangeListener { _, enabled ->
             AppSettings.setDarkModeEnabled(this, enabled)
             window.decorView.post {
-                renderSettingsContent()
+                renderSettingsContent(currentSettingsSectionIndex)
             }
         }
     }
@@ -394,17 +995,15 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun bindDebugTools() {
         val showDebugTools = isDebuggableBuild()
-        layoutDebugTools.visibility = if (showDebugTools) View.VISIBLE else View.GONE
-        btnExportCrashLog.visibility = if (showDebugTools) View.VISIBLE else View.GONE
-        btnRunReaderStressTest.visibility = if (showDebugTools) View.VISIBLE else View.GONE
         if (!showDebugTools) {
             return
         }
 
-        btnExportCrashLog.setOnClickListener {
+        layoutDebugTools?.visibility = View.VISIBLE
+        btnExportCrashLog?.setOnClickListener {
             exportCrashLog()
         }
-        btnRunReaderStressTest.setOnClickListener {
+        btnRunReaderStressTest?.setOnClickListener {
             runReaderStressTest()
         }
     }
@@ -699,6 +1298,9 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     companion object {
+        const val EXTRA_SETTINGS_SECTION = "settings_section"
+        const val SETTINGS_SECTION_NAS = "nas"
+        private const val STATE_SETTINGS_SECTION_INDEX = "settings_section_index"
         private const val CHINESE_LANGUAGE_INDEX = 0
         private const val ENGLISH_LANGUAGE_INDEX = 1
         private const val SIMPLIFIED_CHINESE_LANGUAGE_TAG = "zh-CN"

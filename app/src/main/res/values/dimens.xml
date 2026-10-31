@@ -6,6 +6,8 @@
     <dimen name="space_lg">16dp</dimen>
     <dimen name="space_xl">24dp</dimen>
 
+    <dimen name="file_source_switch_segment_width">93dp</dimen>
+
     <dimen name="card_elevation">1dp</dimen>
 
     <dimen name="text_app_title">20sp</dimen>
