@@ -41,6 +41,7 @@ import com.example.comiclab.core.diagnostics.CrashLogManager
 import com.example.comiclab.core.reader.layout.DoublePageModeUnavailableReason
 import com.example.comiclab.core.reader.layout.ReaderPagePositionMapper
 import com.example.comiclab.core.reader.layout.doublePageModeUnavailableReason
+import com.example.comiclab.core.reader.decode.readerScrollDirectionFromDelta
 import com.example.comiclab.core.reader.progress.READER_PROGRESS_CHECKPOINT_DELAY_MS
 import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
@@ -522,11 +523,10 @@ class MangaReaderActivity : AppCompatActivity() {
                 scheduleReaderPositionCheckpoint()
 
                 val primaryDelta = if (isHorizontalReading()) dx else dy
-                val direction = when {
-                    primaryDelta > 0 -> SCROLL_DIRECTION_FORWARD
-                    primaryDelta < 0 -> SCROLL_DIRECTION_BACKWARD
-                    else -> readerScrollDirection
-                }
+                val direction = readerScrollDirectionFromDelta(
+                    delta = primaryDelta,
+                    reverseLayout = readerLayoutManager.reverseLayout
+                ).takeIf { it != 0 } ?: readerScrollDirection
                 if (primaryDelta != 0) {
                     readerScrollDirection = direction
                 }

@@ -1,5 +1,14 @@
 package com.example.comiclab.core.reader.decode
 
+internal fun readerScrollDirectionFromDelta(delta: Int, reverseLayout: Boolean): Int {
+    if (delta == 0) {
+        return 0
+    }
+
+    val layoutDirection = if (delta > 0) 1 else -1
+    return if (reverseLayout) -layoutDirection else layoutDirection
+}
+
 internal fun calculatePdfRenderWidthByPixelBudget(
     pageWidth: Int,
     pageHeight: Int,

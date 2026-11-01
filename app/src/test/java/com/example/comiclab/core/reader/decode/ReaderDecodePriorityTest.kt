@@ -13,6 +13,15 @@ import org.junit.Test
 class ReaderDecodePriorityTest {
 
     @Test
+    fun readerScrollDeltaMapsToLogicalDirectionWhenLayoutIsReversed() {
+        assertEquals(1, readerScrollDirectionFromDelta(delta = 12, reverseLayout = false))
+        assertEquals(-1, readerScrollDirectionFromDelta(delta = -12, reverseLayout = false))
+        assertEquals(-1, readerScrollDirectionFromDelta(delta = 12, reverseLayout = true))
+        assertEquals(1, readerScrollDirectionFromDelta(delta = -12, reverseLayout = true))
+        assertEquals(0, readerScrollDirectionFromDelta(delta = 0, reverseLayout = true))
+    }
+
+    @Test
     fun boundPageCanRefreshBeforeScrollingBecomesIdle() {
         assertEquals(
             true,

@@ -257,6 +257,9 @@ internal class MangaPageAdapter(
             boundPositions.remove(previousPosition)
         }
         val sourcePosition = positionMapper.sourcePositionForAdapterPosition(adapterPosition)
+        if (holder.pdfPlaceholderPosition != sourcePosition) {
+            finishPdfPlaceholder(holder, outcome = "abandoned", source = "rebound")
+        }
         holder.boundPosition = sourcePosition ?: RecyclerView.NO_POSITION
         if (previousPosition != holder.boundPosition) {
             if (previousPosition != RecyclerView.NO_POSITION) {
@@ -288,6 +291,7 @@ internal class MangaPageAdapter(
 
     override fun onViewRecycled(holder: PageViewHolder) {
         cancelPendingTileRefresh(holder)
+        finishPdfPlaceholder(holder, outcome = "abandoned", source = "recycled")
         if (holder.boundPosition != RecyclerView.NO_POSITION) {
             boundPositions.remove(holder.boundPosition)
             zoomQualityRequestedPages.remove(holder.boundPosition)
@@ -695,26 +699,75 @@ internal class MangaPageAdapter(
         val bounds = pageBounds[sourcePosition]
         val isTiled = sourcePosition in tiledPages && bounds != null
         if (isTiled) {
+            if (previewBitmap(sourcePosition) != null) {
+                finishPdfPlaceholder(holder, sourcePosition, "resolved", "tile_preview")
+            }
             bindTiledPage(holder, sourcePosition, bounds)
             return
         }
 
         val fullBitmap = fullBitmap(sourcePosition)
         if (fullBitmap != null) {
+            finishPdfPlaceholder(holder, sourcePosition, "resolved", "full")
             bindBitmap(holder, adapterPosition, fullBitmap)
             return
         }
 
         val previewBitmap = previewBitmap(sourcePosition)
         if (previewBitmap != null) {
+            finishPdfPlaceholder(holder, sourcePosition, "resolved", "preview")
             bindBitmap(holder, adapterPosition, previewBitmap)
             return
         }
 
+        startPdfPlaceholder(holder, sourcePosition)
         bindPlaceholder(holder, adapterPosition, bounds)
     }
 
+    private fun startPdfPlaceholder(holder: PageViewHolder, position: Int) {
+        if (!isPdfSource) {
+            return
+        }
+        if (holder.pdfPlaceholderPosition == position && holder.pdfPlaceholderStartedAtNanos > 0L) {
+            return
+        }
+
+        finishPdfPlaceholder(holder, outcome = "abandoned", source = "rebound")
+        holder.pdfPlaceholderPosition = position
+        holder.pdfPlaceholderStartedAtNanos = SystemClock.elapsedRealtimeNanos()
+        Log.i(
+            PDF_TIMING_LOG_TAG,
+            "event=page_placeholder page=${position + 1} position=$position"
+        )
+    }
+
+    private fun finishPdfPlaceholder(
+        holder: PageViewHolder,
+        expectedPosition: Int = holder.pdfPlaceholderPosition,
+        outcome: String,
+        source: String
+    ) {
+        val position = holder.pdfPlaceholderPosition
+        val startedAtNanos = holder.pdfPlaceholderStartedAtNanos
+        if (!isPdfSource || position != expectedPosition || position !in entries.indices ||
+            startedAtNanos <= 0L
+        ) {
+            return
+        }
+
+        val elapsedMillis = (SystemClock.elapsedRealtimeNanos() - startedAtNanos) / 1_000_000.0
+        val event = if (outcome == "resolved") "page_placeholder_resolved" else "page_placeholder_abandoned"
+        Log.i(
+            PDF_TIMING_LOG_TAG,
+            "event=$event page=${position + 1} position=$position source=$source placeholderMs=" +
+                String.format(java.util.Locale.ROOT, "%.1f", elapsedMillis)
+        )
+        holder.pdfPlaceholderPosition = RecyclerView.NO_POSITION
+        holder.pdfPlaceholderStartedAtNanos = 0L
+    }
+
     private fun bindBlankPage(holder: PageViewHolder) {
+        finishPdfPlaceholder(holder, outcome = "abandoned", source = "blank_slot")
         holder.tileContainer.visibility = View.GONE
         holder.tileContainer.removeAllViews()
         holder.imageView.visibility = View.VISIBLE
@@ -2231,7 +2284,7 @@ internal class MangaPageAdapter(
                 minimumWidth = PDF_MIN_PREVIEW_DECODE_WIDTH,
                 maximumWidth = PDF_MAX_PREVIEW_DECODE_WIDTH
             )
-            return if (pdfFastScrollMode || (isPreload && pdfIdlePreviewPreloadMode)) {
+            return if (isPreload && (pdfFastScrollMode || pdfIdlePreviewPreloadMode)) {
                 minOf(regularWidth, PDF_FAST_PREVIEW_DECODE_WIDTH)
             } else {
                 regularWidth
@@ -2465,6 +2518,8 @@ internal class MangaPageAdapter(
         val tileContainer: FrameLayout
     ) : RecyclerView.ViewHolder(container) {
         var boundPosition: Int = RecyclerView.NO_POSITION
+        var pdfPlaceholderPosition: Int = RecyclerView.NO_POSITION
+        var pdfPlaceholderStartedAtNanos: Long = 0L
         var tileRefreshRunnable: Runnable? = null
     }
 

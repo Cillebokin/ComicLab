@@ -117,11 +117,31 @@ class PreloadWindowTest {
         )
 
         assertEquals(8, window.previewStart)
-        assertEquals(27, window.previewEnd)
+        assertEquals(15, window.previewEnd)
         assertEquals(9, window.protectedStart)
         assertEquals(13, window.protectedEnd)
-        assertEquals(listOf(12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 9, 8), window.previewPositions)
+        assertEquals(listOf(12, 13, 14, 15, 9, 8), window.previewPositions)
         assertEquals(listOf(12, 9), window.fullPositions)
+    }
+
+    @Test
+    fun idlePdfBackwardScrollPreloadsFurtherInTheTravelDirection() {
+        val window = PreloadWindow.from(
+            firstVisible = 10,
+            lastVisible = 11,
+            lastIndex = 30,
+            scrollDirection = -1,
+            isFastScroll = false,
+            isIdle = true,
+            isPdfSource = true
+        )
+
+        assertEquals(6, window.previewStart)
+        assertEquals(13, window.previewEnd)
+        assertEquals(9, window.protectedStart)
+        assertEquals(13, window.protectedEnd)
+        assertEquals(listOf(9, 8, 7, 6, 12, 13), window.previewPositions)
+        assertEquals(listOf(9, 12), window.fullPositions)
     }
 
     @Test

@@ -28,8 +28,16 @@ internal data class PreloadWindow(
                 isPdfSource && isIdle -> {
                     fullBefore = PDF_IDLE_FULL_PRELOAD_BEFORE_COUNT
                     fullAfter = PDF_IDLE_FULL_PRELOAD_AFTER_COUNT
-                    previewBefore = PDF_IDLE_PREVIEW_PRELOAD_BEFORE_COUNT
-                    previewAfter = PDF_IDLE_PREVIEW_PRELOAD_AFTER_COUNT
+                    previewBefore = if (movingForward) {
+                        PDF_IDLE_PREVIEW_PRELOAD_BEFORE_COUNT
+                    } else {
+                        PDF_IDLE_PREVIEW_PRELOAD_AFTER_COUNT
+                    }
+                    previewAfter = if (movingForward) {
+                        PDF_IDLE_PREVIEW_PRELOAD_AFTER_COUNT
+                    } else {
+                        PDF_IDLE_PREVIEW_PRELOAD_BEFORE_COUNT
+                    }
                 }
 
                 isPdfSource && isFastScroll && movingForward -> {
@@ -186,7 +194,7 @@ internal data class PreloadWindow(
         private const val PDF_IDLE_FULL_PRELOAD_BEFORE_COUNT = 1
         private const val PDF_IDLE_FULL_PRELOAD_AFTER_COUNT = 1
         private const val PDF_IDLE_PREVIEW_PRELOAD_BEFORE_COUNT = 2
-        private const val PDF_IDLE_PREVIEW_PRELOAD_AFTER_COUNT = 16
+        private const val PDF_IDLE_PREVIEW_PRELOAD_AFTER_COUNT = 4
         private const val PDF_CACHE_PROTECTED_BEFORE_COUNT = 1
         private const val PDF_CACHE_PROTECTED_AFTER_COUNT = 2
     }

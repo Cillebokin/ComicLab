@@ -27,6 +27,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLog
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -102,6 +103,48 @@ class MangaPageAdapterTest {
         } finally {
             closeAndAwait(adapter, session)
             decodedBitmap.get()?.takeUnless(Bitmap::isRecycled)?.recycle()
+        }
+    }
+
+    @Test
+    fun pdfPlaceholderAndFirstBitmapBindingAreTimed() {
+        val previewStarted = CountDownLatch(1)
+        val releasePreview = CountDownLatch(1)
+        val decodedBitmaps = CopyOnWriteArrayList<Bitmap>()
+        val session = FakeReaderSession(pdfSource = true, previewDecoder = {
+            previewStarted.countDown()
+            awaitUninterruptibly(releasePreview)
+            Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).also(decodedBitmaps::add)
+        })
+        val recyclerView = RecyclerView(RuntimeEnvironment.getApplication())
+        val adapter = newAdapter(session, listOf("page.pdf"), recyclerView = recyclerView)
+        val holder = createHolder(adapter, recyclerView)
+        ShadowLog.clear()
+
+        try {
+            bind(adapter, holder, 0)
+
+            assertTrue("PDF placeholder binding should be logged", ShadowLog.getLogs().any {
+                it.tag == "ComicLabPdfTiming" && it.msg.contains("event=page_placeholder page=1")
+            })
+            assertTrue("the preview decode should start", previewStarted.await(5, TimeUnit.SECONDS))
+
+            releasePreview.countDown()
+            assertTrue("the preview should be cached before the holder refreshes", awaitCondition {
+                adapter.cachedPreviewForTest(0) != null
+            })
+            bind(adapter, holder, 0)
+            assertTrue("the first bitmap binding should report placeholder duration", awaitCondition {
+                ShadowLog.getLogs().any {
+                    it.tag == "ComicLabPdfTiming" &&
+                        it.msg.contains("event=page_placeholder_resolved page=1") &&
+                        it.msg.contains("placeholderMs=")
+                }
+            })
+        } finally {
+            releasePreview.countDown()
+            closeAndAwait(adapter, session)
+            decodedBitmaps.forEach { bitmap -> bitmap.takeUnless(Bitmap::isRecycled)?.recycle() }
         }
     }
 
@@ -570,7 +613,7 @@ class MangaPageAdapterTest {
     }
 
     @Test
-    fun visiblePdfPageUpgradesACompactFastScrollPreviewWhenScrollSettles() {
+    fun visiblePdfPageUpgradesAnInFlightCompactPreviewWhileFastScrolling() {
         val compactPreviewStarted = CountDownLatch(1)
         val releaseCompactPreview = CountDownLatch(1)
         val pageOnePreviewCalls = AtomicInteger(0)
@@ -603,23 +646,7 @@ class MangaPageAdapterTest {
             assertTrue("the compact preview should finish", awaitCondition {
                 adapter.cachedPreviewForTest(1) != null
             })
-            Thread.sleep(150)
-            Shadows.shadowOf(Looper.getMainLooper()).idle()
-
-            assertFalse(
-                "a transient page during fast scrolling should keep the compact preview",
-                session.previewWidths.contains(entries[1] to 1_080)
-            )
-
-            adapter.preloadAround(
-                firstVisiblePosition = 1,
-                visibleItemCount = 1,
-                scrollDirection = 1,
-                isFastScroll = false,
-                isIdle = true
-            )
-
-            assertTrue("the settled visible page must upgrade to a screen-width render", awaitCondition {
+            assertTrue("a visible page must upgrade even before the fast scroll settles", awaitCondition {
                 session.previewWidths.contains(entries[1] to 1_080)
             })
         } finally {
