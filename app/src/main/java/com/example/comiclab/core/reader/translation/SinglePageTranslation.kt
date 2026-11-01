@@ -292,12 +292,13 @@ internal class SinglePageTranslation(private val context: Context, private val c
             val step = paint.textSize * 1.12f
             val columns = TranslationPolicy.verticalColumns(glyphs, rows(paint.textSize))
             drawLocal = { canvas ->
+                // 文本先落在最右列，再逐列向左；每列字符都从同一顶部向下排。
                 columns.forEachIndexed { columnIndex, column ->
                     val x = (width + columns.size * step) / 2 - step * (columnIndex + 0.5f)
                     column.forEachIndexed { rowIndex, glyph ->
-                        val y = (height - column.size * step) / 2 + step * (rowIndex + 0.5f)
+                        val y = step * (rowIndex + 0.5f)
                         canvas.save(); canvas.translate(x, y)
-                        if (glyph in listOf("ー", "―", "—", "（", "）", "(", ")", "「", "」", "『", "』")) canvas.rotate(90f)
+                        if (glyph in listOf("ー", "―", "—", "…", "⋯", "‥", "（", "）", "(", ")", "「", "」", "『", "』")) canvas.rotate(90f)
                         canvas.drawText(glyph, -paint.measureText(glyph) / 2, -(paint.ascent() + paint.descent()) / 2, paint)
                         canvas.restore()
                     }
