@@ -13,8 +13,10 @@
     <string name="translation_invalid_settings">Enter an HTTPS URL, model and key; omit credentials and URL query parameters</string>
     <string name="translation_start">Translate</string>
     <string name="translation_font_size">Translation font scale</string>
-    <string name="translation_first_use">Single page · Downloads about 247.5 MB of local models on first use (resumable)\nOnly recognized text is sent to your AI provider and billed by it. The source is preserved. Review repaired artwork</string>
-    <string name="translation_compare">Original/result</string>
+    <string name="translation_font_size_label">Size</string>
+    <string name="translation_font_size_value">%1$d%%</string>
+    <string name="translation_result">Translated</string>
+    <string name="translation_close">Close</string>
     <string name="translation_edit">Edit text</string>
     <string name="translation_render">Re-render</string>
     <string name="translation_stage_models">Preparing local models</string>
@@ -28,7 +30,8 @@
     <string name="translation_cancelled">Cancelled; completed editing materials remain available</string>
     <string name="translation_cancelling">Cancelling after the current decode or inference safely finishes</string>
     <string name="translation_failed">Processing incomplete; source preserved</string>
-    <string name="translation_ready">Choose a language, then Translate. After changing fonts or size, choose Re-render</string>
+    <string name="translation_ready">Choose a language and translate. Re-render after changing the font or size</string>
+    <string name="translation_preview_failed">Could not display this page. The source image is unchanged</string>
     <string name="translation_no_text">No readable text detected</string>
     <string name="translation_overflow">Text does not fit: shorten it or reduce font size</string>
     <string name="translation_memory">Not enough memory; close other heavy tasks and retry</string>
