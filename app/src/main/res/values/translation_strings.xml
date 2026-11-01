@@ -43,6 +43,18 @@
     <string name="translation_limit">该页面格式、方向或局部区域超出当前处理范围</string>
     <string name="translation_error_help">请检查模型下载、网络、AI配置及译文格式后重试</string>
     <string name="translation_licenses">翻译第三方许可</string>
+    <string name="archive_translation_menu">一键翻译</string>
+    <string name="archive_translation_title">一键翻译整本漫画</string>
+    <string name="archive_translation_notice">将使用已配置的AI服务逐页识别并翻译漫画文字，识别文字会发送给该服务，服务商可能按用量收费。处理失败的页面会保留原图并继续；原漫画不会被修改。</string>
+    <string name="archive_translation_choose_destination">选择译本保存位置</string>
+    <string name="archive_translation_waiting_for_picker">请选择译本的保存位置和文件名</string>
+    <string name="archive_translation_models_progress">正在准备翻译模型</string>
+    <string name="archive_translation_book_progress">正在处理第%1$d/%2$d页 · %3$s\n整本进度%4$d%%</string>
+    <string name="archive_translation_saving">正在保存译本 %1$d%%</string>
+    <string name="archive_translation_page_kept">本页保留原图</string>
+    <string name="archive_translation_page_written">本页已写入译本</string>
+    <string name="archive_translation_done">保存完成：已翻译%1$d页，保留原图%2$d页</string>
+    <string name="archive_translation_failed">整本翻译或保存失败，原漫画未修改。未完成的新文件已尝试清理，请检查网络、可用存储和保存位置</string>
     <string-array name="translation_languages"><item>简体中文</item><item>繁體中文</item><item>English</item><item>日本語</item><item>한국어</item></string-array>
     <string-array name="translation_fonts"><item>无衬线字体</item><item>衬线字体</item></string-array>
 </resources>

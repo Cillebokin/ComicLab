@@ -43,6 +43,18 @@
     <string name="translation_limit">Page format, orientation or crop exceeds the supported limits</string>
     <string name="translation_error_help">Check model download, network, AI settings and response format, then retry</string>
     <string name="translation_licenses">Translation licenses</string>
+    <string name="archive_translation_menu">Translate entire comic</string>
+    <string name="archive_translation_title">Translate entire comic</string>
+    <string name="archive_translation_notice">The configured AI service will recognize and translate each page. Recognized text is sent to that service, which may charge by usage. If a page fails, its original image is kept and processing continues; the source comic is unchanged.</string>
+    <string name="archive_translation_choose_destination">Choose translated comic location</string>
+    <string name="archive_translation_waiting_for_picker">Choose a location and filename for the translated comic</string>
+    <string name="archive_translation_models_progress">Preparing translation models</string>
+    <string name="archive_translation_book_progress">Processing page %1$d/%2$d · %3$s\nOverall progress %4$d%%</string>
+    <string name="archive_translation_saving">Saving translated comic %1$d%%</string>
+    <string name="archive_translation_page_kept">Original page kept</string>
+    <string name="archive_translation_page_written">Page added to translated comic</string>
+    <string name="archive_translation_done">Saved: %1$d translated, %2$d original pages kept</string>
+    <string name="archive_translation_failed">Whole-comic translation or saving failed. The source comic is unchanged. Cleanup of the incomplete new file was attempted. Check the network, available storage and destination</string>
     <string-array name="translation_languages"><item>Simplified Chinese</item><item>Traditional Chinese</item><item>English</item><item>Japanese</item><item>Korean</item></string-array>
     <string-array name="translation_fonts"><item>Sans serif</item><item>Serif</item></string-array>
 </resources>

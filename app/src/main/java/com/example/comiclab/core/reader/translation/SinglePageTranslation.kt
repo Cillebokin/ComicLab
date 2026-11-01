@@ -25,14 +25,17 @@ internal class SinglePageTranslation(private val context: Context, private val c
     private fun checkCancelled() = TranslationModels.checkCancelled(cancelled)
 
     fun process(archive: File, entry: String, directory: File, settings: TranslationSettings, language: String,
-        translate: (TranslationSettings, List<String>, String, AtomicBoolean) -> List<String> = TranslationApi::translate): TranslationAnalysis {
+        translate: (TranslationSettings, List<String>, String, AtomicBoolean) -> List<String> = TranslationApi::translate,
+        modelDirectory: File? = null, preparedSource: File? = null): TranslationAnalysis {
         checkCancelled()
         require(!ComicArchive.isPdf(archive)) { "PDF translation is not supported yet" }
-        val models = TranslationModels.ensure(context, cancelled) { status("models|$it") }
+        val models = modelDirectory ?: TranslationModels.ensure(context, cancelled) { status("models|$it") }
         check(NcnnBackend.available) { "Native translation runtime unavailable" }
         status("extract")
-        val source = File(directory, "source.${entry.substringAfterLast('.', "img")}")
-        check(ComicArchive.extractImageEntryToFile(archive, entry, source)) { "Could not extract source page" }
+        val source = preparedSource ?: File(directory, "source.${entry.substringAfterLast('.', "img")}").also {
+            check(ComicArchive.extractImageEntryToFile(archive, entry, it)) { "Could not extract source page" }
+        }
+        check(source.isFile && source.length() > 0L) { "Could not extract source page" }
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(source.path, bounds)
         val rawW = bounds.outWidth; val rawH = bounds.outHeight

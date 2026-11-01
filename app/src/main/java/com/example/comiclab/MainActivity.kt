@@ -55,6 +55,7 @@ import com.example.comiclab.ebook.ReaderFileType
 import com.example.comiclab.ui.browser.FileListAdapter
 import com.example.comiclab.ui.browser.NasFileListAdapter
 import com.example.comiclab.ui.reader.enhance.ArchiveEnhancementDialog
+import com.example.comiclab.ui.reader.translation.ArchiveTranslationDialog
 import com.example.comiclab.ui.browser.DirectoryBrowserController
 import com.example.comiclab.ui.browser.DirectoryChildCountCache
 import com.example.comiclab.ui.browser.DirectoryScrollStateCache
@@ -2497,6 +2498,7 @@ class MainActivity : AppCompatActivity() {
         val btnFavoriteComic = content.findViewById<TextView>(R.id.btnFavoriteComicAction)
         val btnRead = content.findViewById<TextView>(R.id.btnReadComic)
         val btnEnhance = content.findViewById<TextView>(R.id.btnEnhanceComic)
+        val btnTranslate = content.findViewById<TextView>(R.id.btnTranslateComic)
         val btnDeleteFile = content.findViewById<TextView>(R.id.btnDeleteFile)
         val isFavorite = FavoriteComicStore.isFavorite(this, file)
 
@@ -2504,6 +2506,7 @@ class MainActivity : AppCompatActivity() {
         sizeBottomSheetActionIcons(
             btnRead,
             btnEnhance,
+            btnTranslate,
             btnFavoriteComic,
             btnCopyFileName,
             btnRenameFileName,
@@ -2515,6 +2518,7 @@ class MainActivity : AppCompatActivity() {
         val canStartTransfer = pendingFileTransfer == null && !isFileTransferInProgress
         btnEnhance.visibility = if (ComicArchive.isSupportedArchive(file) &&
             !file.extension.equals("pdf", true)) View.VISIBLE else View.GONE
+        btnTranslate.visibility = btnEnhance.visibility
         val isPendingSource = pendingFileTransfer?.sourcePath == file.absolutePath
         btnCopyFile.isEnabled = canStartTransfer
         btnCutFile.isEnabled = canStartTransfer
@@ -2605,6 +2609,11 @@ class MainActivity : AppCompatActivity() {
         btnEnhance.setOnClickListener {
             dialog.dismiss()
             ArchiveEnhancementDialog.show(this, file)
+        }
+
+        btnTranslate.setOnClickListener {
+            dialog.dismiss()
+            ArchiveTranslationDialog.show(this, file)
         }
 
         btnCopyFile.setOnClickListener {
