@@ -1929,7 +1929,12 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun handleVolumePageTurnKey(event: KeyEvent): Boolean {
-        if (!volumeKeyPageTurnEnabled || !isVolumePageTurnKey(event.keyCode)) {
+        if (!volumeKeyPageTurnEnabled ||
+            readerControlsVisible ||
+            readerPreviewPanelVisible ||
+            pageEnhancementDialog != null ||
+            !isVolumePageTurnKey(event.keyCode)
+        ) {
             return false
         }
 

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="translation_section_title">AI translation</string>
     <string name="translation_settings">AI translation</string>
     <string name="translation_address">AI service URL (HTTPS base URL)</string>
     <string name="translation_model">Model name</string>

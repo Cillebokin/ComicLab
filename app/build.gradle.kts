@@ -27,8 +27,8 @@ android {
         applicationId = "com.example.comiclab"
         minSdk = 33
         targetSdk = 36
-        versionCode = 12
-        versionName = "V1.1.0.1022"
+        versionCode = 13
+        versionName = "V1.1.1.1031"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -82,6 +82,7 @@ dependencies {
     implementation(libs.androidx.recyclerview)
     implementation(libs.sevenzipjbinding.android)
     implementation(libs.subsampling.scale.image.view)
+    implementation(libs.smbj)
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation("org.json:json:20231013")
