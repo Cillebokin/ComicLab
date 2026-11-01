@@ -161,7 +161,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun deleteEntry_createsPersistentBackupBeforeModifyingZip() {
+    fun deleteEntry_doesNotKeepPersistentFullArchiveBackup() {
         val root = Files.createTempDirectory("comiclab-delete-backup").toFile()
         try {
             val archive = File(root, "comic.cbz")
@@ -169,21 +169,9 @@ class ExampleUnitTest {
                 output.writeEntry("001.jpg", "one")
                 output.writeEntry("002.jpg", "two")
             }
-            val originalBytes = archive.readBytes()
-
             assertTrue(ComicArchive.deleteEntry(archive, "002.jpg"))
 
-            val backupFiles = File(root, ".ComicLabBackups")
-                .listFiles()
-                ?.filter { it.isFile && it.extension == "cbz" }
-                .orEmpty()
-            assertEquals(1, backupFiles.size)
-            assertArrayEquals(originalBytes, backupFiles.first().readBytes())
-
-            ZipFile(backupFiles.first()).use { backupZip ->
-                assertNotNull(backupZip.getEntry("001.jpg"))
-                assertNotNull(backupZip.getEntry("002.jpg"))
-            }
+            assertFalse(File(root, ".ComicLabBackups").exists())
             ZipFile(archive).use { currentZip ->
                 assertNotNull(currentZip.getEntry("001.jpg"))
                 assertNull(currentZip.getEntry("002.jpg"))

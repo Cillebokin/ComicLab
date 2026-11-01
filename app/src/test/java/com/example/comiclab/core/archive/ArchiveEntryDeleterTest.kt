@@ -58,7 +58,7 @@ class ArchiveEntryDeleterTest {
     }
 
     @Test
-    fun deleteEntry_missingEntryKeepsOriginalAndPersistentBackup() = withTempDirectory { root ->
+    fun deleteEntry_missingEntryKeepsOriginalWithoutPersistentBackup() = withTempDirectory { root ->
         val archive = File(root, "comic.cbz")
         writeZip(archive, "001.jpg" to "one", "notes.txt" to "note")
         val originalBytes = archive.readBytes()
@@ -67,10 +67,10 @@ class ArchiveEntryDeleterTest {
 
         assertTrue(archive.isFile)
         assertArrayEquals(originalBytes, archive.readBytes())
-        val persistentBackups = persistentBackups(root)
-        assertEquals(1, persistentBackups.size)
-        assertArrayEquals(originalBytes, persistentBackups.single().readBytes())
-        assertFalse(root.listFiles().orEmpty().any { it.name.startsWith("comic.cbz.delete_") })
+        assertTrue(persistentBackups(root).isEmpty())
+        assertFalse(ArchiveReplacementRecovery.hasPending(archive))
+        assertTrue(siblingRollbackFiles(archive).isEmpty())
+        assertTrue(siblingTemporaryFiles(archive).isEmpty())
     }
 
     @Test
@@ -90,7 +90,7 @@ class ArchiveEntryDeleterTest {
     }
 
     @Test
-    fun deleteEntry_rebuildFailureKeepsOriginalAndItsPersistentBackup() = withTempDirectory { root ->
+    fun deleteEntry_rebuildFailureKeepsOriginalWithoutPersistentBackup() = withTempDirectory { root ->
         val archive = File(root, "damaged.cbz")
         archive.writeText("not a zip archive")
         val originalBytes = archive.readBytes()
@@ -99,14 +99,14 @@ class ArchiveEntryDeleterTest {
 
         assertTrue(archive.isFile)
         assertArrayEquals(originalBytes, archive.readBytes())
-        val persistentBackups = persistentBackups(root)
-        assertEquals(1, persistentBackups.size)
-        assertArrayEquals(originalBytes, persistentBackups.single().readBytes())
-        assertFalse(root.listFiles().orEmpty().any { it.name.startsWith("damaged.cbz.delete_") })
+        assertTrue(persistentBackups(root).isEmpty())
+        assertFalse(ArchiveReplacementRecovery.hasPending(archive))
+        assertTrue(siblingRollbackFiles(archive).isEmpty())
+        assertTrue(siblingTemporaryFiles(archive).isEmpty())
     }
 
     @Test
-    fun deleteEntry_unreplaceableOriginalKeepsOriginalAndPersistentBackup() = withTempDirectory { root ->
+    fun deleteEntry_unreplaceableOriginalKeepsOriginalWithoutPersistentBackup() = withTempDirectory { root ->
         val archive = File(root, "comic.cbz")
         writeZip(archive, "001.jpg" to "one", "002.jpg" to "two")
         val originalBytes = archive.readBytes()
@@ -122,13 +122,14 @@ class ArchiveEntryDeleterTest {
 
         assertTrue(archive.isFile)
         assertArrayEquals(originalBytes, archive.readBytes())
-        assertEquals(1, persistentBackups(root).size)
+        assertTrue(persistentBackups(root).isEmpty())
+        assertFalse(ArchiveReplacementRecovery.hasPending(archive))
         assertTrue(siblingRollbackFiles(archive).isEmpty())
         assertTrue(siblingTemporaryFiles(archive).isEmpty())
     }
 
     @Test
-    fun deleteEntry_failedRollbackCanRecoverOriginalFromPersistentBackup() = withTempDirectory { root ->
+    fun deleteEntry_failedRollbackCanRecoverFromShortLivedRollbackFile() = withTempDirectory { root ->
         val archive = File(root, "comic.cbz")
         writeZip(archive, "001.jpg" to "one", "002.jpg" to "two")
         val originalBytes = archive.readBytes()
@@ -142,16 +143,21 @@ class ArchiveEntryDeleterTest {
 
         assertFalse(deleteEntryWithRename(archive, "002.jpg", renameTo))
 
-        assertTrue(archive.isFile)
-        assertArrayEquals(originalBytes, archive.readBytes())
-        val persistentBackup = persistentBackups(root).single()
-        assertArrayEquals(originalBytes, persistentBackup.readBytes())
-        assertTrue(siblingRollbackFiles(archive).isEmpty())
+        assertFalse(archive.exists())
+        assertArrayEquals(originalBytes, siblingRollbackFiles(archive).single().readBytes())
+        assertTrue(ArchiveReplacementRecovery.hasPending(archive))
+        assertTrue(persistentBackups(root).isEmpty())
+        assertEquals(1, siblingRollbackFiles(archive).size)
         assertTrue(siblingTemporaryFiles(archive).isEmpty())
+
+        assertTrue(ArchiveReplacementRecovery.recover(archive))
+        assertArrayEquals(originalBytes, archive.readBytes())
+        assertFalse(ArchiveReplacementRecovery.hasPending(archive))
+        assertTrue(siblingRollbackFiles(archive).isEmpty())
     }
 
     @Test
-    fun deleteEntry_failedRollbackAndRecoveryLeaveOriginalBytesOnlyInBackups() = withTempDirectory { root ->
+    fun deleteEntry_failedRollbackRetainsEvidenceUntilRecoveryCanRetry() = withTempDirectory { root ->
         val archive = File(root, "comic.cbz")
         writeZip(archive, "001.jpg" to "one", "002.jpg" to "two")
         val originalBytes = archive.readBytes()
@@ -167,29 +173,36 @@ class ArchiveEntryDeleterTest {
         assertFalse(deleteEntryWithRename(archive, "002.jpg", renameTo))
 
         assertFalse(archive.exists())
-        val persistentBackup = persistentBackups(root).single()
-        val rollbackBackup = siblingRollbackFiles(archive).single()
-        assertArrayEquals(originalBytes, persistentBackup.readBytes())
-        assertArrayEquals(originalBytes, rollbackBackup.readBytes())
+        val rollbackFile = siblingRollbackFiles(archive).single()
+        assertArrayEquals(originalBytes, rollbackFile.readBytes())
+        assertTrue(ArchiveReplacementRecovery.hasPending(archive))
+        assertTrue(persistentBackups(root).isEmpty())
         assertTrue(siblingTemporaryFiles(archive).isEmpty())
+
+        assertFalse(ArchiveReplacementRecovery.recover(archive, renameTo))
+        assertFalse(archive.exists())
+        assertArrayEquals(originalBytes, rollbackFile.readBytes())
+        assertTrue(ArchiveReplacementRecovery.hasPending(archive))
+
+        assertTrue(ArchiveReplacementRecovery.recover(archive))
+        assertArrayEquals(originalBytes, archive.readBytes())
+        assertFalse(ArchiveReplacementRecovery.hasPending(archive))
     }
 
     @Test
-    fun deleteEntry_repeatedDeletionKeepsDistinctTimestampedBackups() = withTempDirectory { root ->
+    fun deleteEntry_repeatedDeletionDoesNotKeepPersistentFullArchiveBackups() = withTempDirectory { root ->
         val archive = File(root, "comic.cbz")
         writeZip(archive, "001.jpg" to "one", "002.jpg" to "two")
-        val firstOriginalBytes = archive.readBytes()
 
         assertTrue(ComicArchive.deleteEntry(archive, "002.jpg"))
-        val secondOriginalBytes = archive.readBytes()
         assertTrue(ComicArchive.deleteEntry(archive, "001.jpg"))
 
-        val backups = persistentBackups(root)
-        assertEquals(2, backups.size)
-        assertEquals(2, backups.map { it.name }.toSet().size)
-        assertTrue(backups.all { it.name.matches(Regex("comic\\.delete_backup_\\d+(?:_\\d{3})?\\.cbz")) })
-        assertTrue(backups.any { it.readBytes().contentEquals(firstOriginalBytes) })
-        assertTrue(backups.any { it.readBytes().contentEquals(secondOriginalBytes) })
+        assertTrue(ComicArchive.imageEntries(archive).isEmpty())
+        assertTrue(persistentBackups(root).isEmpty())
+        assertFalse(File(root, ".ComicLabBackups").exists())
+        assertFalse(ArchiveReplacementRecovery.hasPending(archive))
+        assertTrue(siblingRollbackFiles(archive).isEmpty())
+        assertTrue(siblingTemporaryFiles(archive).isEmpty())
     }
 
     private fun writeZip(file: File, vararg entries: Pair<String, String>) {
