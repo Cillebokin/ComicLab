@@ -19,6 +19,7 @@ import com.google.android.material.button.MaterialButton
 import com.davemorrissey.labs.subscaleview.ImageSource
 import com.example.comiclab.ComicArchive
 import com.example.comiclab.R
+import com.example.comiclab.SettingsActivity
 import com.example.comiclab.core.reader.enhance.EnhancementRuntime
 import com.example.comiclab.core.reader.translation.*
 import com.example.comiclab.ui.common.SystemBars
@@ -122,7 +123,14 @@ internal class PageTranslationActivity : AppCompatActivity() {
             else {
                 if (model.analysis != null) return@button
                 val config = runCatching { TranslationSettingsStore.load(this) }.getOrNull()
-                if (config == null || config.key.isBlank()) { TranslationSettingsDialog.show(this); return@button }
+                if (config == null || config.address.isBlank() || config.model.isBlank() || config.key.isBlank()) {
+                    Toast.makeText(this, R.string.translation_config_required, Toast.LENGTH_LONG).show()
+                    startActivity(Intent(this, SettingsActivity::class.java).putExtra(
+                        SettingsActivity.EXTRA_SETTINGS_SECTION,
+                        SettingsActivity.SETTINGS_SECTION_AUTO_TRANSLATION
+                    ))
+                    return@button
+                }
                 model.start(File(intent.getStringExtra("archive")!!), intent.getStringExtra("entry")!!, languages[language.selectedItemPosition], style())
             }
         }

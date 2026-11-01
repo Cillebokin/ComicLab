@@ -1,17 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="translation_section_title">AI翻译</string>
-    <string name="translation_settings">AI翻译设置</string>
     <string name="translation_address">AI服务地址（HTTPS Base URL）</string>
     <string name="translation_model">模型名称</string>
     <string name="translation_key">API Key</string>
-    <string name="translation_api_help">支持OpenAI兼容Chat Completions接口。Key加密保存在本机，不参与配置导出。测试连接会发起一次小额请求。\n识字、擦字和排版来自Yakuyomi-engine适配代码（GPL-3.0）；设置中可查看第三方许可。</string>
+    <string name="translation_default_address">https://api.deepseek.com</string>
+    <string name="translation_default_model">deepseek-flash</string>
+    <string name="translation_api_help">支持OpenAI兼容Chat Completions接口。</string>
     <string name="translation_save_settings">保存</string>
+    <string name="translation_settings_saved">翻译服务配置已保存</string>
     <string name="translation_test">测试连接</string>
     <string name="translation_test_ok">连接及译文格式正常</string>
     <string name="translation_test_failed">连接或译文格式异常，请检查地址、模型、Key及账户权限</string>
     <string name="translation_invalid_settings">请填写有效HTTPS地址、模型和Key（地址不能含查询参数或凭证）</string>
+    <string name="translation_config_required">请先在设置的“自动翻译”中填写并保存服务配置</string>
     <string name="translation_start">开始翻译</string>
+    <string name="translation_reader_action">翻译</string>
     <string name="translation_font_size">译文字号比例</string>
     <string name="translation_font_size_label">字号</string>
     <string name="translation_font_size_value">%1$d%%</string>

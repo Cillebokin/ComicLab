@@ -1,17 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="translation_section_title">AI translation</string>
-    <string name="translation_settings">AI translation</string>
     <string name="translation_address">AI service URL (HTTPS base URL)</string>
     <string name="translation_model">Model name</string>
     <string name="translation_key">API key</string>
-    <string name="translation_api_help">OpenAI-compatible Chat Completions API. The key is encrypted locally and excluded from configuration export. Testing sends one small paid request.\nDetection, OCR and rendering adapt Yakuyomi-engine (GPL-3.0). Third-party licenses are available in Settings.</string>
+    <string name="translation_default_address">https://api.deepseek.com</string>
+    <string name="translation_default_model">deepseek-flash</string>
+    <string name="translation_api_help">Supports OpenAI-compatible Chat Completions API.</string>
     <string name="translation_save_settings">Save</string>
+    <string name="translation_settings_saved">Translation service settings saved</string>
     <string name="translation_test">Test connection</string>
     <string name="translation_test_ok">Connection and response format verified</string>
     <string name="translation_test_failed">Check the URL, model, key, account permissions and response format</string>
     <string name="translation_invalid_settings">Enter an HTTPS URL, model and key; omit credentials and URL query parameters</string>
+    <string name="translation_config_required">Enter and save the service settings in Settings → Auto translation first</string>
     <string name="translation_start">Translate</string>
+    <string name="translation_reader_action">Translate</string>
     <string name="translation_font_size">Translation font scale</string>
     <string name="translation_font_size_label">Size</string>
     <string name="translation_font_size_value">%1$d%%</string>

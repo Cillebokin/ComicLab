@@ -136,6 +136,7 @@
     <string name="settings_section_appearance">Appearance</string>
     <string name="settings_section_reading">Reading</string>
     <string name="settings_section_configuration">Configuration</string>
+    <string name="settings_section_auto_translation">Auto translation</string>
     <string name="settings_section_diagnostics">Diagnostics</string>
     <string name="help">Help</string>
     <string name="help_title">Help</string>

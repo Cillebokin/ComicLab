@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:clipToPadding="true"
+    android:fillViewport="false"
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:id="@+id/cardTranslationSettings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_file_picker_card"
+            android:elevation="@dimen/card_elevation"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingTop="14dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="14dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/translation_section_title"
+                android:textColor="@color/comiclab_text_primary"
+                android:textSize="@dimen/text_section"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/translation_address"
+                android:textColor="@color/comiclab_text_secondary"
+                android:textSize="@dimen/text_caption" />
+
+            <EditText
+                android:id="@+id/inputTranslationAddress"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:importantForAutofill="no"
+                android:inputType="textUri|textNoSuggestions"
+                android:minHeight="48dp"
+                android:singleLine="true" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/translation_model"
+                android:textColor="@color/comiclab_text_secondary"
+                android:textSize="@dimen/text_caption" />
+
+            <EditText
+                android:id="@+id/inputTranslationModel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:importantForAutofill="no"
+                android:inputType="text|textNoSuggestions"
+                android:minHeight="48dp"
+                android:singleLine="true" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/translation_key"
+                android:textColor="@color/comiclab_text_secondary"
+                android:textSize="@dimen/text_caption" />
+
+            <EditText
+                android:id="@+id/inputTranslationKey"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:importantForAutofill="no"
+                android:inputType="textPassword"
+                android:minHeight="48dp"
+                android:singleLine="true" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/translation_api_help"
+                android:textColor="@color/comiclab_text_secondary"
+                android:textSize="@dimen/text_caption" />
+
+            <Button
+                android:id="@+id/btnTranslationTest"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_preview_action_button"
+                android:text="@string/translation_test"
+                android:textAllCaps="false"
+                android:textColor="@color/white"
+                android:textSize="@dimen/text_value" />
+
+            <Button
+                android:id="@+id/btnTranslationSave"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_preview_action_button"
+                android:text="@string/translation_save_settings"
+                android:textAllCaps="false"
+                android:textColor="@color/white"
+                android:textSize="@dimen/text_value" />
+
+            <Button
+                android:id="@+id/btnTranslationLicenses"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_preview_action_button"
+                android:text="@string/translation_licenses"
+                android:textAllCaps="false"
+                android:textColor="@color/white"
+                android:textSize="@dimen/text_value" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>
