@@ -10,13 +10,14 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewConfiguration
-import android.os.ParcelFileDescriptor
+import android.widget.ImageView
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.GeneralLocation
 import androidx.test.espresso.action.GeneralSwipeAction
@@ -39,6 +40,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -208,6 +210,57 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         assertEquals(Configuration.ORIENTATION_LANDSCAPE, onMain { rotated.resources.configuration.orientation })
         finishReader(rotated)
         assertTrue("PDF reader progress writer should drain on exit", checkNotNull(progressExecutor(rotated)).awaitTermination(10, TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun pdfFastScrollDoesNotInsertStaticViewportSnapshot() {
+        val pdf = createPdf("pdf-fast-scroll.pdf", pageCount = 30)
+        val activity = launchReader(pdf)
+        val root = onMain { activity.findViewById<ViewGroup>(R.id.main) }
+        val snapshotObservedDuringMotion = AtomicBoolean(false)
+        val listener = object : RecyclerView.OnScrollListener() {
+            private fun recordSnapshot(recyclerView: RecyclerView) {
+                if (recyclerView.scrollState != RecyclerView.SCROLL_STATE_IDLE &&
+                    root.childCount > 1 && root.getChildAt(1) is ImageView
+                ) {
+                    snapshotObservedDuringMotion.set(true)
+                }
+            }
+
+            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                recordSnapshot(recyclerView)
+            }
+
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                recordSnapshot(recyclerView)
+            }
+        }
+        onMain { activity.listReaderPagesForTest.addOnScrollListener(listener) }
+
+        try {
+            onView(withId(R.id.listReaderPages)).perform(
+                GeneralSwipeAction(
+                    Swipe.FAST,
+                    GeneralLocation.CENTER,
+                    GeneralLocation.TOP_CENTER,
+                    Press.FINGER
+                )
+            )
+            awaitCondition("fast PDF swipe did not advance the reader") {
+                activity.currentReaderPositionForTest > 0
+            }
+            awaitCondition("fast PDF swipe did not settle") {
+                onMain {
+                    activity.listReaderPagesForTest.scrollState == RecyclerView.SCROLL_STATE_IDLE
+                }
+            }
+            assertFalse(
+                "PDF fast scrolling must not place a static screenshot over the moving pages",
+                snapshotObservedDuringMotion.get()
+            )
+        } finally {
+            onMain { activity.listReaderPagesForTest.removeOnScrollListener(listener) }
+        }
     }
 
     @Test

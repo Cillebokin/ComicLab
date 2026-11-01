@@ -109,7 +109,9 @@ internal class PageTranslationActivity : AppCompatActivity() {
             override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
             override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
         })
-        language.setSelection(savedInstanceState?.getInt("language", 0) ?: 0)
+        val defaultLanguage = runCatching { TranslationSettingsStore.load(this).targetLanguageIndex }.getOrDefault(0)
+        language.setSelection((savedInstanceState?.getInt("language") ?: defaultLanguage)
+            .coerceIn(0, resources.getStringArray(R.array.translation_languages).lastIndex))
         font.setSelection(savedInstanceState?.getInt("font", 0) ?: 0)
         image = ReaderSubsamplingImageView(this).apply { setMaxScale(8f) }
         root.addView(image, LinearLayout.LayoutParams(-1, 0, 1f))

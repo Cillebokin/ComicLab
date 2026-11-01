@@ -3,6 +3,7 @@
     <string name="translation_section_title">AI translation</string>
     <string name="translation_address">AI service URL (HTTPS base URL)</string>
     <string name="translation_model">Model name</string>
+    <string name="translation_default_target_language">Default translation language</string>
     <string name="translation_key">API key</string>
     <string name="translation_default_address">https://api.deepseek.com</string>
     <string name="translation_default_model">deepseek-flash</string>

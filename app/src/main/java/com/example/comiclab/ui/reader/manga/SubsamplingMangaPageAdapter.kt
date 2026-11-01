@@ -95,35 +95,6 @@ internal class SubsamplingMangaPageAdapter(
 
     override fun readerItemCount(): Int = entryNames.size
 
-    override fun allVisiblePagesHaveRenderableContent(recyclerView: RecyclerView): Boolean {
-        val recyclerBounds = Rect()
-        if (!recyclerView.getGlobalVisibleRect(recyclerBounds)) {
-            return false
-        }
-        val visibleHolders = mutableListOf<PageViewHolder>()
-        for (index in 0 until recyclerView.childCount) {
-            val child = recyclerView.getChildAt(index)
-            val childBounds = Rect()
-            if (!child.getGlobalVisibleRect(childBounds) ||
-                !Rect.intersects(recyclerBounds, childBounds)
-            ) {
-                continue
-            }
-            (recyclerView.getChildViewHolder(child) as? PageViewHolder)?.let(visibleHolders::add)
-        }
-
-        val visiblePositions = visibleHolders.mapNotNull { holder ->
-            holder.bindingAdapterPosition
-                .takeIf { it != RecyclerView.NO_POSITION }
-                ?.let(positionMapper::sourcePositionForAdapterPosition)
-        }.distinct()
-        return areVisibleReaderPagesRenderable(visiblePositions) { position ->
-            val filePath = pageFiles.getOrNull(position)?.absolutePath
-                ?: return@areVisibleReaderPagesRenderable false
-            visibleHolders.any { holder -> holder.boundFilePath == filePath }
-        }
-    }
-
     override fun getItemId(position: Int): Long {
         return position.toLong()
     }

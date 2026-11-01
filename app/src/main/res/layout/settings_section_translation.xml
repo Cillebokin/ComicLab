@@ -88,6 +88,21 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
+                android:text="@string/translation_default_target_language"
+                android:textColor="@color/comiclab_text_secondary"
+                android:textSize="@dimen/text_caption" />
+
+            <Spinner
+                android:id="@+id/spinnerTranslationTargetLanguage"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="48dp"
+                android:spinnerMode="dropdown" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
                 android:text="@string/translation_api_help"
                 android:textColor="@color/comiclab_text_secondary"
                 android:textSize="@dimen/text_caption" />

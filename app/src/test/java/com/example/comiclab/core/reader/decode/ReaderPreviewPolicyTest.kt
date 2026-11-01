@@ -10,9 +10,9 @@ import org.junit.Test
 class ReaderPreviewPolicyTest {
 
     @Test
-    fun pdfPreviewUsesHalfDisplayWidthWithinDecodeLimits() {
+    fun pdfPreviewUsesDisplayWidthWithinDecodeLimits() {
         assertEquals(
-            360,
+            720,
             calculatePdfPreviewWidth(
                 baseDisplayWidth = 720,
                 minimumWidth = 360,
@@ -20,7 +20,7 @@ class ReaderPreviewPolicyTest {
             )
         )
         assertEquals(
-            540,
+            1080,
             calculatePdfPreviewWidth(
                 baseDisplayWidth = 1080,
                 minimumWidth = 360,

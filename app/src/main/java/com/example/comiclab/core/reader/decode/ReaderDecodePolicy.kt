@@ -67,9 +67,7 @@ internal fun calculatePdfPreviewWidth(
 ): Int {
     val safeMinimumWidth = minimumWidth.coerceAtLeast(1)
     val safeMaximumWidth = maximumWidth.coerceAtLeast(safeMinimumWidth)
-    val preferredWidth = (baseDisplayWidth.coerceAtLeast(1).toLong() / 2L)
-        .coerceAtMost(Int.MAX_VALUE.toLong())
-        .toInt()
+    val preferredWidth = baseDisplayWidth.coerceAtLeast(1)
     return preferredWidth.coerceIn(safeMinimumWidth, safeMaximumWidth)
 }
 

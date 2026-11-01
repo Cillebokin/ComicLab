@@ -36,6 +36,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.ArrayAdapter
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.ImageButton
@@ -44,6 +45,7 @@ import android.widget.PopupWindow
 import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.SeekBar
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import android.widget.ViewFlipper
@@ -291,6 +293,11 @@ class SettingsActivity : AppCompatActivity() {
         val address = sectionView.findViewById<EditText>(R.id.inputTranslationAddress)
         val model = sectionView.findViewById<EditText>(R.id.inputTranslationModel)
         val key = sectionView.findViewById<EditText>(R.id.inputTranslationKey)
+        val language = sectionView.findViewById<Spinner>(R.id.spinnerTranslationTargetLanguage)
+        val languages = resources.getStringArray(R.array.translation_languages)
+        language.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, languages).apply {
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
         btnTranslationTest = sectionView.findViewById(R.id.btnTranslationTest)
         val save = sectionView.findViewById<Button>(R.id.btnTranslationSave)
         val licenses = sectionView.findViewById<Button>(R.id.btnTranslationLicenses)
@@ -300,11 +307,13 @@ class SettingsActivity : AppCompatActivity() {
                 address.setText(saved.address.ifBlank { getString(R.string.translation_default_address) })
                 model.setText(saved.model.ifBlank { getString(R.string.translation_default_model) })
                 key.setText(saved.key)
+                language.setSelection(saved.targetLanguageIndex.coerceIn(0, languages.lastIndex))
             }
         fun currentSettings() = TranslationSettings(
             address.text.toString().trim(),
             model.text.toString().trim(),
-            key.text.toString().trim()
+            key.text.toString().trim(),
+            language.selectedItemPosition
         )
         save.setOnClickListener {
             try {
@@ -329,7 +338,8 @@ class SettingsActivity : AppCompatActivity() {
             btnTranslationTest.isEnabled = false
             EnhancementRuntime.io.execute {
                 val ok = runCatching {
-                    TranslationApi.translate(config, listOf("こんにちは"), "Simplified Chinese", cancelled)
+                    val targetLanguage = languages[config.targetLanguageIndex.coerceIn(0, languages.lastIndex)]
+                    TranslationApi.translate(config, listOf("こんにちは"), targetLanguage, cancelled)
                 }.isSuccess
                 runOnUiThread {
                     if (destroyed || translationSettingsTestCancelled !== cancelled) return@runOnUiThread

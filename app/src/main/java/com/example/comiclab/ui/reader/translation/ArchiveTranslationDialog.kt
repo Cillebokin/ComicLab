@@ -189,7 +189,11 @@ internal class ArchiveTranslationDialog : DialogFragment() {
                     uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
             }
-            val language = resources.getStringArray(R.array.translation_languages).first()
+            val languages = resources.getStringArray(R.array.translation_languages)
+            val languageIndex = runCatching {
+                TranslationSettingsStore.load(requireContext()).targetLanguageIndex
+            }.getOrDefault(0).coerceIn(0, languages.lastIndex)
+            val language = languages[languageIndex]
             model.start(source, uri, language)
         }
     }

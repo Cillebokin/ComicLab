@@ -12,7 +12,12 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import org.json.JSONObject
 
-internal data class TranslationSettings(val address: String, val model: String, val key: String)
+internal data class TranslationSettings(
+    val address: String,
+    val model: String,
+    val key: String,
+    val targetLanguageIndex: Int = 0
+)
 
 /** 配置与密文均放入noBackupFilesDir，不进入配置导出、系统备份或设备迁移。 */
 internal object TranslationSettingsStore {
@@ -34,14 +39,19 @@ internal object TranslationSettingsStore {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, secret(), GCMParameterSpec(128, Base64.decode(json.getString("iv"), Base64.NO_WRAP)))
         val key = String(cipher.doFinal(Base64.decode(json.getString("key"), Base64.NO_WRAP)), Charsets.UTF_8)
-        return TranslationSettings(json.getString("address"), json.getString("model"), key)
+        return TranslationSettings(
+            json.getString("address"), json.getString("model"), key,
+            json.optInt("targetLanguageIndex", 0).coerceIn(0, 4)
+        )
     }
     @Synchronized fun save(context: Context, settings: TranslationSettings) {
         TranslationPolicy.endpoint(settings.address)
         require(settings.model.isNotBlank() && settings.model.length <= 200 && settings.key.isNotBlank() && !settings.key.contains('\n'))
+        require(settings.targetLanguageIndex in 0..4)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, secret()) }
         val encrypted = cipher.doFinal(settings.key.toByteArray(Charsets.UTF_8))
         val json = JSONObject().put("address", settings.address.trim()).put("model", settings.model.trim())
+            .put("targetLanguageIndex", settings.targetLanguageIndex)
             .put("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP)).put("key", Base64.encodeToString(encrypted, Base64.NO_WRAP))
         val target = file(context)
         val atomic = android.util.AtomicFile(target)
