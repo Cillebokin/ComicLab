@@ -17,7 +17,7 @@ class SettingsLinkTest {
 
     @Test
     fun releasesLinkLayoutAllowsWrappedText() {
-        val layoutFile = File("src/main/res/layout/activity_settings.xml")
+        val layoutFile = File("src/main/res/layout/settings_section_about.xml")
         assertTrue("Settings layout should exist", layoutFile.isFile)
 
         val layout = layoutFile.readText()
@@ -38,7 +38,7 @@ class SettingsLinkTest {
 
     @Test
     fun settingsLayoutProvidesManualUpdateCheckButton() {
-        val layout = File("src/main/res/layout/activity_settings.xml").readText()
+        val layout = File("src/main/res/layout/settings_section_about.xml").readText()
 
         assertTrue(layout.contains("android:id=\"@+id/btnCheckUpdates\""))
     }
