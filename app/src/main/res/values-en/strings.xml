@@ -426,9 +426,10 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="custom_brightness">Custom brightness</string>
     <string name="brightness_percent">%1$d%%</string>
     <string name="stability_tools">Stability tools</string>
-    <string name="export_crash_log">Export crash log</string>
-    <string name="crash_log_empty">No crash log available</string>
-    <string name="crash_log_share_title">Export ComicLab crash log</string>
+    <string name="export_crash_log">Export reader diagnostics and crash log</string>
+    <string name="crash_log_empty">No reader diagnostics or crash log available</string>
+    <string name="crash_log_export_failed">Could not export diagnostics. Check available storage and try again</string>
+    <string name="crash_log_share_title">Export ComicLab diagnostic log</string>
     <string name="run_reader_stress_test">Run reader stress test</string>
     <string name="configuration_management">Configuration management</string>
     <string name="export_configuration">Export configuration</string>

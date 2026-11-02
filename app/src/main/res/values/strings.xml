@@ -425,9 +425,10 @@
     <string name="custom_brightness">自定义亮度</string>
     <string name="brightness_percent">%1$d%%</string>
     <string name="stability_tools">稳定性工具</string>
-    <string name="export_crash_log">导出崩溃日志</string>
-    <string name="crash_log_empty">暂无崩溃日志</string>
-    <string name="crash_log_share_title">导出 ComicLab 崩溃日志</string>
+    <string name="export_crash_log">导出阅读诊断与崩溃日志</string>
+    <string name="crash_log_empty">暂无阅读诊断或崩溃日志</string>
+    <string name="crash_log_export_failed">诊断日志导出失败，请检查可用存储空间后重试</string>
+    <string name="crash_log_share_title">导出 ComicLab 诊断日志</string>
     <string name="run_reader_stress_test">启动阅读器压力测试</string>
     <string name="configuration_management">配置管理</string>
     <string name="export_configuration">导出配置</string>

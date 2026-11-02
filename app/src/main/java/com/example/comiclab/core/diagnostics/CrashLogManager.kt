@@ -62,12 +62,27 @@ object CrashLogManager {
     }
 
     fun createLatestCrashLogExport(context: Context): File? {
-        val latest = latestCrashLog(context) ?: return null
+        val latest = latestCrashLog(context)
+        val prefs = diagnosticPrefs(context)
+        val pdf = PdfReaderDiagnostics.snapshot(context)
+        val render = prefs.getString(READER_RENDER_KEY, null)
+        if (latest == null && pdf == null && render == null) return null
         val exportDir = File(context.cacheDir, CRASH_EXPORT_DIR_NAME).apply {
             mkdirs()
         }
         val exportFile = File(exportDir, "ComicLab_crash_latest.txt")
-        latest.copyTo(exportFile, overwrite = true)
+        exportFile.bufferedWriter().use { writer ->
+            writer.appendLine("ComicLab Reader Diagnostics")
+            writer.appendLine("App: ${appVersionText(context)}")
+            writer.appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+            writer.appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
+            writer.appendLine("Reader render: ${render ?: "none"}")
+            writer.appendLine("Reader checkpoint: ${prefs.getString(READER_CHECKPOINT_KEY, "none")}")
+            writer.appendLine(pdf ?: "No PDF timing snapshot available")
+            writer.appendLine("Latest crash/interruption log (may be from another session):")
+            if (latest != null) latest.bufferedReader().use { it.copyTo(writer) }
+            else writer.appendLine("No crash log available")
+        }
         return exportFile
     }
 
@@ -235,6 +250,7 @@ object CrashLogManager {
             appendLine("Reader checkpoint: ${diagnostics.getString(READER_CHECKPOINT_KEY, "unknown")}")
             appendLine("Reader render phase: ${diagnostics.getString(READER_RENDER_PHASE_KEY, "unknown")}")
             appendLine("Reader render: ${diagnostics.getString(READER_RENDER_KEY, "unknown")}")
+            appendLine(PdfReaderDiagnostics.snapshot(context) ?: "No PDF timing snapshot available")
             appendLine()
             appendLine(stackTrace)
         }
@@ -281,6 +297,7 @@ object CrashLogManager {
                     appendLine("Reader checkpoint: ${prefs.getString(READER_CHECKPOINT_KEY, "unknown")}")
                     appendLine("Reader render phase: ${prefs.getString(READER_RENDER_PHASE_KEY, "unknown")}")
                     appendLine("Reader render: ${prefs.getString(READER_RENDER_KEY, "unknown")}")
+                    appendLine(PdfReaderDiagnostics.snapshot(context) ?: "No PDF timing snapshot available")
                 }
             )
             trimOldCrashLogs(logDir)

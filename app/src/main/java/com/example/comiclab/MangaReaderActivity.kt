@@ -300,6 +300,7 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        pageAdapter?.onReaderPaused()
         readerPreviewAdapter?.setDecodingEnabled(false)
         handler.removeCallbacks(readerCheckpointRunnable)
         saveReaderPosition(forceCommit = true)
@@ -874,6 +875,12 @@ class MangaReaderActivity : AppCompatActivity() {
         pageAdapter = adapter
         listReaderPages.adapter = adapter
         bindReaderPreviewAdapter(entries, readerFile, previewSession)
+        // 索引可能在 Activity 暂停后才完成；新适配器不能凭初始化启动后台采样。
+        if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+            adapter.onReaderResumed()
+        } else {
+            adapter.onReaderPaused()
+        }
         initializeReaderPosition(entries)
     }
 

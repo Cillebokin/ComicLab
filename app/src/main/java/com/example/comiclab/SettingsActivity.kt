@@ -1275,7 +1275,10 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun exportCrashLog() {
-        val exportFile = CrashLogManager.createLatestCrashLogExport(this)
+        val exportFile = runCatching { CrashLogManager.createLatestCrashLogExport(this) }.getOrElse {
+            showMessage(getString(R.string.crash_log_export_failed))
+            return
+        }
         if (exportFile == null) {
             showMessage(getString(R.string.crash_log_empty))
             return

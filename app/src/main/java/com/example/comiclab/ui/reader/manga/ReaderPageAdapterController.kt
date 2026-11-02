@@ -25,6 +25,8 @@ internal interface ReaderPageAdapterController {
 
     fun onReaderResumed() {}
 
+    fun onReaderPaused() {}
+
     fun flushPendingRefreshesIfIdle()
 
     fun close()

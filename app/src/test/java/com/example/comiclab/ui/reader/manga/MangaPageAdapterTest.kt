@@ -38,6 +38,80 @@ class MangaPageAdapterTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
 
+    @Test fun aLateCreatedPdfAdapterWaitsForAnExplicitResumeBeforeStartingPeriodicDiagnostics() {
+        val session = FakeReaderSession(pdfSource = true)
+        val adapter = newAdapter(session, listOf("page.pdf"))
+        val context = RuntimeEnvironment.getApplication()
+        fun pipelineCount() = Regex("pipeline:[0-9]+").find(
+            com.example.comiclab.core.diagnostics.PdfReaderDiagnostics.snapshot(context)!!)!!.value
+        try {
+            val initial = pipelineCount()
+            // Indexing may finish after Activity.onPause, before an adapter exists to pause.
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(6, TimeUnit.SECONDS)
+            assertEquals("construction must not imply that the reader is resumed", initial, pipelineCount())
+            adapter.onReaderResumed()
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(2, TimeUnit.SECONDS)
+            assertFalse("an explicitly resumed reader should refresh diagnostics", initial == pipelineCount())
+            adapter.onReaderPaused()
+            val paused = pipelineCount()
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(6, TimeUnit.SECONDS)
+            assertEquals(paused, pipelineCount())
+        } finally { closeAndAwait(adapter, session) }
+    }
+
+    @Test fun rapidReverseJumpsAndMemoryPressureKeepLatestVisiblePageFirstAndDiagnosticsBounded() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val bitmaps = CopyOnWriteArrayList<Bitmap>()
+        val entries = (0..100).map { "page-$it.pdf" }
+        val session = FakeReaderSession(pdfSource = true, previewDecoder = { entry ->
+            if (entry == entries[0]) {
+                com.example.comiclab.core.diagnostics.PdfReaderDiagnostics.nativePhase("native_render")
+                started.countDown()
+                awaitUninterruptibly(release)
+            }
+            Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).also(bitmaps::add)
+        })
+        val recycler = RecyclerView(RuntimeEnvironment.getApplication())
+        setScrollStateForTest(recycler, RecyclerView.SCROLL_STATE_SETTLING)
+        val adapter = newAdapter(session, entries, recyclerView = recycler)
+        try {
+            requestPreview(adapter, 0)
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            repeat(120) { step ->
+                val forward = step % 2 == 0
+                adapter.preloadAround(if (forward) 70 + step % 20 else 10 + step % 20, 1,
+                    scrollDirection = if (forward) 1 else -1, isFastScroll = true, isIdle = false)
+            }
+            adapter.trimMemory(ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)
+            adapter.onReaderResumed()
+            adapter.preloadAround(50, 1, scrollDirection = -1, isFastScroll = true, isIdle = false)
+            val context = RuntimeEnvironment.getApplication()
+            val waiting = com.example.comiclab.core.diagnostics.PdfReaderDiagnostics.snapshot(context)!!
+            assertTrue(waiting.contains("task=0 page=1 kind=PREVIEW phase=native_render"))
+            assertTrue("diagnostic memory must not grow with each scroll", waiting.length < 32_000)
+            release.countDown()
+            assertTrue("the final viewport must get a preview while still scrolling", awaitCondition {
+                cachedPreview(adapter, 50) != null && adapter.loadingPreviewPagesForTest.isEmpty() &&
+                    com.example.comiclab.core.diagnostics.PdfReaderDiagnostics.snapshot(RuntimeEnvironment.getApplication())!!.contains("activeTasks=0")
+            })
+            assertEquals("latest visible page must precede background work", entries[50], session.previewWidths[1].first)
+            adapter.onReaderPaused()
+            val before = com.example.comiclab.core.diagnostics.PdfReaderDiagnostics.snapshot(context)!!
+            assertTrue(before.contains("activeTasks=0"))
+            assertTrue(before.contains("cancelled:"))
+            assertTrue(before.contains("direction=-1 fast=true"))
+            val pipelineCount = Regex("pipeline:[0-9]+").find(before)!!.value
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(6, TimeUnit.SECONDS)
+            val after = com.example.comiclab.core.diagnostics.PdfReaderDiagnostics.snapshot(context)!!
+            assertEquals("paused readers must stop periodic snapshots", pipelineCount, Regex("pipeline:[0-9]+").find(after)!!.value)
+        } finally {
+            release.countDown()
+            closeAndAwait(adapter, session)
+            bitmaps.forEach { it.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
     @Test fun missingPdfPageRunsBeforeAnAlreadyVisiblePreviewQualityUpgrade() {
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
@@ -196,6 +270,19 @@ class MangaPageAdapterTest {
                         it.msg.contains("placeholderMs=")
                 }
             })
+            val context = RuntimeEnvironment.getApplication()
+            val bound = com.example.comiclab.core.diagnostics.PdfReaderDiagnostics.snapshot(context)!!
+            assertTrue(bound.contains("event=bound page=1"))
+            assertTrue("bitmap binding CPU work must have its own timing", bound.contains("event=bind_cpu page=1"))
+            assertTrue(bound.contains("phase=awaiting_draw"))
+            assertFalse(bound.contains("event=draw page=1"))
+            holder.imageView.layout(0, 0, 20, 20)
+            holder.imageView.draw(android.graphics.Canvas())
+            val drawn = com.example.comiclab.core.diagnostics.PdfReaderDiagnostics.snapshot(context)!!
+            assertTrue("binding alone is not a draw observation", drawn.contains("event=draw page=1"))
+            assertFalse(drawn.contains("phase=awaiting_draw"))
+            val exported = com.example.comiclab.core.diagnostics.CrashLogManager.createLatestCrashLogExport(context)!!
+            assertTrue(exported.readText().contains("event=draw page=1"))
         } finally {
             releasePreview.countDown()
             closeAndAwait(adapter, session)
