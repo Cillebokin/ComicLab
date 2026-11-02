@@ -366,7 +366,8 @@ internal class MangaPageAdapter(
         cancelStalePreloadTasks(generation)
         trimDistantCaches()
 
-        if (isPdfSource && isIdle && !isDiscreteJump) {
+        // 预取 holder 进入视口时 RecyclerView 不一定再次 onBind；每次视口变化都补齐首图请求。
+        if (isPdfSource) {
             (firstVisible..lastVisible).forEach { position ->
                 ensurePreview(
                     position,
@@ -1171,7 +1172,7 @@ internal class MangaPageAdapter(
             visiblePdfPreviewUpgradeRequests.add(position)
         }
         submitTask(
-            priority = priority,
+            priority = if (isPdfSource && previewBitmap(position) != null) PRIORITY_VISIBLE_PREVIEW else priority,
             position = position,
             generation = generation,
             kind = DecodeTaskKind.PREVIEW,

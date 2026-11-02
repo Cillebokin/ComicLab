@@ -498,6 +498,8 @@
     <string name="reader_prepare_cache_failure">准备阅读失败，可能是缓存空间不足</string>
     <string name="ebook_untitled_book">未命名电子书</string>
     <string name="ebook_untitled_chapter">未命名</string>
+    <string name="ebook_previous_chapter">上一章</string>
+    <string name="ebook_next_chapter">下一章</string>
     <string name="reader_enhance">高清化</string>
     <string name="reader_enhance_title">第%1$d页 · %2$d倍高清化</string>
     <string name="reader_enhance_preparing">正在提取原图并加载模型…</string>
@@ -526,4 +528,5 @@
     <string name="favorite_comics_read_failed">无法读取漫画收藏，已保留原数据</string>
     <string name="favorite_paths_read_failed">无法读取目录收藏，已保留原数据</string>
     <string name="reading_history_read_failed">无法读取阅读历史，已保留原数据</string>
+    <string name="ebook_content_too_large">电子书展开内容过大，暂时无法安全加载</string>
 </resources>

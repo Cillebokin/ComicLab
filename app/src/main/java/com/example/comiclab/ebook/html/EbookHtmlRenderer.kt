@@ -1,6 +1,7 @@
 package com.example.comiclab.ebook.html
 
 import android.net.Uri
+import java.io.Writer
 import com.example.comiclab.ebook.EbookBook
 import com.example.comiclab.ebook.EbookChapter
 import com.example.comiclab.ebook.EbookResource
@@ -11,12 +12,36 @@ data class EbookStyle(
     val fontScale: Float = 1.0f,
     val lineHeight: Float = 1.6f,
     val backgroundColor: String = "#101010",
-    val foregroundColor: String = "#E8E8E8"
+    val foregroundColor: String = "#E8E8E8",
+    val previousChapterLabel: String = "上一章",
+    val nextChapterLabel: String = "下一章"
 )
 
 class EbookHtmlRenderer {
 
     fun render(book: EbookBook, style: EbookStyle, svgSource: ((EbookResource) -> String?)? = null): String {
+        val output = StringBuilder()
+        writeTo(book, style, output, svgSource)
+        return output.toString()
+    }
+
+    fun writeTo(book: EbookBook, style: EbookStyle, output: Appendable,
+                svgSource: ((EbookResource) -> String?)? = null) {
+        writeDocuments(book, style, output, svgSource, null)
+    }
+
+    /** 共用全书锚点索引，但各章独立落盘，运行时仅装载相邻章节。 */
+    internal fun writeChapterDocuments(book: EbookBook, style: EbookStyle, shell: Appendable,
+        svgSource: ((EbookResource) -> String?)?,
+        windowCharBudget: Long, windowTagBudget: Long,
+        chapterWriter: (EbookChapter, (Appendable) -> Unit) -> Unit) {
+        writeDocuments(book, style, shell, svgSource, chapterWriter, windowCharBudget, windowTagBudget)
+    }
+
+    private fun writeDocuments(book: EbookBook, style: EbookStyle, output: Appendable,
+        svgSource: ((EbookResource) -> String?)?,
+        chapterWriter: ((EbookChapter, (Appendable) -> Unit) -> Unit)?,
+        windowCharBudget: Long = 0, windowTagBudget: Long = 0) {
         checkEbookCancellation()
         val safeStyle = style.normalized()
         var svgIndex = -1
@@ -30,7 +55,6 @@ class EbookHtmlRenderer {
             }
         }
         val anchors = book.chapters.associate { it.index to collectAnchors(it.html, it.index) }
-        val output = StringBuilder()
         output.append("<!doctype html><html><head>")
         output.append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
         output.append("<meta charset=\"utf-8\">")
@@ -46,9 +70,9 @@ class EbookHtmlRenderer {
             .append(safeStyle.foregroundColor)
             .append(";}")
         output.append("body{font-size:")
-            .append((safeStyle.fontScale * 100f).toInt())
+            .append((safeStyle.fontScale * 100f).toInt().toString())
             .append("%;line-height:")
-            .append(safeStyle.lineHeight)
+            .append(safeStyle.lineHeight.toString())
             .append(";font-family:sans-serif;padding:24px 18px 48px;word-wrap:break-word;}")
         output.append("article{max-width:760px;margin:0 auto;}")
         output.append("h1,h2,h3,h4,h5,h6{line-height:1.25;}img,svg{max-width:100%;height:auto;}")
@@ -57,7 +81,12 @@ class EbookHtmlRenderer {
             .append(";}")
         output.append(".book-header{border-bottom:1px solid rgba(128,128,128,.35);margin-bottom:28px;padding-bottom:18px;}")
         output.append(".book-author{opacity:.72;margin-top:8px;}")
-        output.append("</style></head><body><article>")
+        output.append("</style></head><body><article data-chapter-count=\"")
+            .append(book.chapters.size.toString()).append("\"")
+        if (chapterWriter != null) output.append(" data-window-char-budget=\"")
+            .append(windowCharBudget.toString()).append("\" data-window-tag-budget=\"")
+            .append(windowTagBudget.toString()).append("\"")
+        output.append(">")
         output.append("<header class=\"book-header\"><h1>")
             .append(escapeHtml(book.title))
             .append("</h1>")
@@ -70,7 +99,16 @@ class EbookHtmlRenderer {
 
         book.chapters.forEach { chapter ->
             checkEbookCancellation()
-            appendChapter(output, book, chapter, anchors, loadSvg)
+            if (chapterWriter == null) appendChapter(output, book, chapter, anchors, loadSvg)
+            else chapterWriter(chapter) { target -> appendChapter(target, book, chapter, anchors, loadSvg) }
+        }
+
+        if (chapterWriter != null) {
+            output.append("</article><nav id=\"chapter-navigation\" style=\"position:fixed;bottom:8px;left:18px;right:18px;display:flex;justify-content:space-between;max-width:760px;margin:auto\">")
+                .append("<button id=\"chapter-previous\" aria-label=\"").append(escapeHtmlAttribute(style.previousChapterLabel)).append("\">‹</button>")
+                .append("<button id=\"chapter-next\" aria-label=\"").append(escapeHtmlAttribute(style.nextChapterLabel)).append("\">›</button></nav>")
+                .append("<script src=\"/ebook-chapters.js\"></script></body></html>")
+            return
         }
 
         output.append(
@@ -142,19 +180,23 @@ class EbookHtmlRenderer {
             </script></body></html>
             """.trimIndent()
         )
-        return output.toString()
     }
 
-    private fun appendChapter(output: StringBuilder, book: EbookBook, chapter: EbookChapter, anchors: Map<Int, Map<String, String>>, loadSvg: ((EbookResource) -> Pair<Int, String>?)?) {
+    private fun appendChapter(output: Appendable, book: EbookBook, chapter: EbookChapter, anchors: Map<Int, Map<String, String>>, loadSvg: ((EbookResource) -> Pair<Int, String>?)?) {
         output.append("<section id=\"chapter-")
-            .append(chapter.index)
+            .append(chapter.index.toString())
             .append("\" data-chapter-index=\"")
-            .append(chapter.index)
+            .append(chapter.index.toString())
             .append("\"><h2>")
             .append(escapeHtml(chapter.title))
             .append("</h2>")
-            .append(sanitizeFragment(chapter.html, book, chapter.sourcePath, chapter.index, anchors, loadSvg))
-            .append("</section>")
+        appendSanitizedFragment(output, chapter.html, book, chapter.sourcePath, chapter.index, anchors, loadSvg)
+        output.append("</section>")
+    }
+
+    private fun Appendable.appendSource(source: String, start: Int, end: Int) {
+        if (this is Writer) write(source, start, end - start)
+        else append(source, start, end)
     }
 
     private fun cleanFragment(fragment: String): String = fragment
@@ -179,15 +221,17 @@ class EbookHtmlRenderer {
 
     private fun collectAnchors(fragment: String, index: Int): Map<String, String> {
         val anchors = linkedMapOf<String, String>()
-        TAG_REGEX.findAll(cleanFragment(fragment)).forEach { match ->
+        val match = TAG_REGEX.toPattern().matcher(cleanFragment(fragment))
+        while (match.find()) {
             checkEbookCancellation()
-            val tag = match.groupValues[2].lowercase().removePrefix("svg:")
-            if (match.groupValues[1].isNotEmpty() || (tag !in SAFE_TEXT_TAGS && tag !in setOf("a", "img", "br", "svg") && tag !in SVG_TAGS)) return@forEach
-            val attributes = match.groupValues[3]
-            if (attributes.isBlank()) return@forEach
+            if (match.start(1) != match.end(1) || match.start(3) == match.end(3)) continue
+            val tag = match.group(2).lowercase().removePrefix("svg:")
+            if (tag !in SAFE_TEXT_TAGS && tag != "a" && tag != "img" && tag != "br" && tag != "svg" && tag !in SVG_TAGS) continue
+            val attributes = match.group(3)
+            if (attributes.isBlank()) continue
             val id = attribute(attributes, "id")?.takeIf(String::isNotBlank)
             val name = if (tag == "a") attribute(attributes, "name")?.takeIf(String::isNotBlank) else null
-            val target = (id ?: name)?.let { anchorId(index, it) } ?: return@forEach
+            val target = (id ?: name)?.let { anchorId(index, it) } ?: continue
             id?.let { anchors.putIfAbsent(it, target) }
             name?.let { anchors.putIfAbsent(it, target) }
         }
@@ -207,19 +251,19 @@ class EbookHtmlRenderer {
         return if (fragment.isEmpty()) "chapter-${chapter.index}" else anchors[chapter.index]?.get(fragment)
     }
 
-    private fun sanitizeFragment(fragment: String, book: EbookBook, sourcePath: String?, index: Int,
-                                 anchors: Map<Int, Map<String, String>>, loadSvg: ((EbookResource) -> Pair<Int, String>?)? = null): String {
+    private fun appendSanitizedFragment(output: Appendable, fragment: String, book: EbookBook, sourcePath: String?, index: Int,
+                                 anchors: Map<Int, Map<String, String>>, loadSvg: ((EbookResource) -> Pair<Int, String>?)? = null) {
         val source = cleanFragment(fragment)
-        val output = StringBuilder()
         var cursor = 0
         var svgDepth = 0
         val localAnchors = anchors[index].orEmpty()
-        TAG_REGEX.findAll(source).forEach { match ->
+        val match = TAG_REGEX.toPattern().matcher(source)
+        while (match.find()) {
             checkEbookCancellation()
-            output.append(source, cursor, match.range.first)
-            val closing = match.groupValues[1].isNotEmpty()
-            val tag = match.groupValues[2].lowercase().removePrefix("svg:")
-            val attributes = match.groupValues[3]
+            output.appendSource(source, cursor, match.start())
+            val closing = match.start(1) != match.end(1)
+            val tag = match.group(2).lowercase().removePrefix("svg:")
+            val attributes = match.group(3)
             val selfClosing = attributes.trimEnd().endsWith("/")
             when {
                 tag == "svg" -> {
@@ -233,7 +277,7 @@ class EbookHtmlRenderer {
                 }
                 svgDepth > 0 && tag in SVG_TAGS -> {
                     val svgTag = SVG_TAGS.getValue(tag)
-                    if (closing) { if (tag != "image") output.append("</$svgTag>") } else {
+                    if (closing) { if (tag != "image") output.append("</").append(svgTag).append(">") } else {
                         val href = if (tag == "image") {
                             (attribute(attributes, "href") ?: attribute(attributes, "xlink:href"))
                                 ?.let { svgImageUrl(it, book, sourcePath) }
@@ -243,16 +287,16 @@ class EbookHtmlRenderer {
                                 ?.let { localAnchors[Uri.decode(it)] }?.let { "#$it" }
                         }
                         if (tag != "image" || href != null) {
-                            output.append("<$svgTag").append(svgAttributes(attributes, localAnchors))
+                            output.append("<").append(svgTag).append(svgAttributes(attributes, localAnchors))
                             if (href != null) output.append(" href=\"").append(escapeHtmlAttribute(href)).append("\" xlink:href=\"").append(escapeHtmlAttribute(href)).append("\"")
                             output.append(if (selfClosing || tag == "image") "/>" else ">")
                         }
                     }
                 }
                 svgDepth == 0 && tag in SAFE_TEXT_TAGS -> {
-                    if (closing) output.append("</$tag>") else {
-                        output.append("<$tag").append(safeAttributes(attributes, localAnchors)).append(">")
-                        if (selfClosing) output.append("</$tag>")
+                    if (closing) output.append("</").append(tag).append(">") else {
+                        output.append("<").append(tag).append(safeAttributes(attributes, localAnchors)).append(">")
+                        if (selfClosing) output.append("</").append(tag).append(">")
                     }
                 }
                 svgDepth == 0 && tag == "a" -> {
@@ -271,24 +315,24 @@ class EbookHtmlRenderer {
                     val loadedSvg = resource?.takeIf { it.mimeType == "image/svg+xml" }?.let { loadSvg?.invoke(it) }
                     if (loadedSvg != null) {
                         output.append("<span").append(safeAttributes(attributes, localAnchors)).append(">")
-                            .append(renderSvgResource(book, resource, loadedSvg.second, loadedSvg.first)).append("</span>")
+                        appendSvgResource(output, book, resource, loadedSvg.second, loadedSvg.first)
+                        output.append("</span>")
                     } else if (id != null) output.append("<img").append(safeAttributes(attributes, localAnchors))
                         .append(" src=\"ebook-resource://").append(escapeHtmlAttribute(id)).append("\" alt=\"\">")
                 }
                 svgDepth == 0 && tag == "br" && !closing -> output.append("<br").append(safeAttributes(attributes, localAnchors)).append(">")
             }
-            cursor = match.range.last + 1
+            cursor = match.end()
         }
-        output.append(source, cursor, source.length)
-        return output.toString()
+        output.appendSource(source, cursor, source.length)
     }
 
     /** SVG 内联后，内部图片仍通过受控资源会话读取，局部 ID 与其他插图隔离。 */
-    private fun renderSvgResource(book: EbookBook, resource: EbookResource, source: String, index: Int): String {
+    private fun appendSvgResource(output: Appendable, book: EbookBook, resource: EbookResource, source: String, index: Int) {
         checkEbookCancellation()
-        val svg = SVG_DOCUMENT.find(source)?.value ?: return ""
+        val svg = SVG_DOCUMENT.find(source)?.value ?: return
         val anchors = mapOf(index to collectAnchors(svg, index))
-        return sanitizeFragment(svg, book, resource.path, index, anchors)
+        appendSanitizedFragment(output, svg, book, resource.path, index, anchors)
     }
 
     private fun svgAttributes(attributes: String, anchors: Map<String, String>): String = buildString {

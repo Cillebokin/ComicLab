@@ -10,6 +10,7 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.example.comiclab.ebook.prepareEbookPreview
+import com.example.comiclab.ebook.EbookContentLimitException
 import com.example.comiclab.ebook.EbookSessionFactory
 import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.ebook.ReaderFileDetector
@@ -183,6 +184,7 @@ class EbookPreviewActivity : AppCompatActivity() {
 
     private fun errorMessage(error: Throwable): String {
         return when (error) {
+            is EbookContentLimitException -> getString(R.string.ebook_content_too_large)
             is MobiParseException -> when (error.reason) {
                 MobiParseError.DRM_PROTECTED -> getString(R.string.ebook_drm_unsupported)
                 MobiParseError.UNSUPPORTED_COMPRESSION,

@@ -38,6 +38,59 @@ class MangaPageAdapterTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
 
+    @Test fun missingPdfPageRunsBeforeAnAlreadyVisiblePreviewQualityUpgrade() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val decoded = CopyOnWriteArrayList<String>()
+        val bitmaps = CopyOnWriteArrayList<Bitmap>()
+        val session = FakeReaderSession(pdfSource = true, previewDecoder = { entry ->
+            decoded.add(entry)
+            if (entry == "busy.pdf") { started.countDown(); awaitUninterruptibly(release) }
+            Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).also(bitmaps::add)
+        })
+        val adapter = newAdapter(session, listOf("upgrade.pdf", "missing.pdf", "busy.pdf"))
+        try {
+            val low = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).also(bitmaps::add)
+            MangaPageAdapter::class.java.getDeclaredMethod("putPreviewBitmap", Int::class.javaPrimitiveType,
+                Bitmap::class.java, Int::class.javaPrimitiveType).apply { isAccessible = true }
+                .invoke(adapter, 0, low, 360)
+            requestPreview(adapter, 2)
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            adapter.ensurePreviewForTest(0, 101, 0, false)
+            adapter.ensurePreviewForTest(1, 101, 0, false)
+            release.countDown()
+            assertTrue(awaitCondition { decoded.size == 3 && adapter.loadingPreviewPagesForTest.isEmpty() })
+            assertEquals(listOf("busy.pdf", "missing.pdf", "upgrade.pdf"), decoded.toList())
+        } finally {
+            release.countDown()
+            closeAndAwait(adapter, session)
+            bitmaps.forEach { it.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
+    @Test fun fastViewportRequestsMissingPreviewEvenWhenPrefetchWasCancelledByMemoryPressure() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val session = FakeReaderSession(pdfSource = true, previewDecoder = {
+            if (it == "current.pdf") started.countDown()
+            awaitUninterruptibly(release)
+            null
+        })
+        val recycler = RecyclerView(RuntimeEnvironment.getApplication())
+        setScrollStateForTest(recycler, RecyclerView.SCROLL_STATE_SETTLING)
+        val adapter = newAdapter(session, listOf("previous.pdf", "current.pdf", "next.pdf"), recyclerView = recycler)
+        try {
+            adapter.trimMemory(ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)
+            // RecyclerView can reuse an already bound prefetch holder without another onBind.
+            adapter.preloadAround(1, 1, isFastScroll = true, isIdle = false)
+            assertTrue("a visible page must not wait until scrolling stops", started.await(2, TimeUnit.SECONDS))
+            assertFalse("memory pressure must still suppress background work", session.previewWidths.any { it.first == "next.pdf" })
+        } finally {
+            release.countDown()
+            closeAndAwait(adapter, session)
+        }
+    }
+
     @Test
     fun doublePageCoverSlotDoesNotChangeSourceEntryCount() {
         val session = FakeReaderSession()

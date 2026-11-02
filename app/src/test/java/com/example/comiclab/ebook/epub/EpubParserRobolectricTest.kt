@@ -366,6 +366,25 @@ class EpubParserRobolectricTest {
         } finally { root.deleteRecursively() }
     }
 
+    @Test
+    fun compressedAndAggregateContentLimitsRemainDistinctFromCorruptedArchiveErrors() {
+        val root = Files.createTempDirectory("comiclab-epub-budget").toFile()
+        try {
+            val file = File(root, "expanded.epub")
+            writeEpub(file, extraEntries = mapOf("EPUB/Text/chapter1.xhtml" to
+                "<html><body><p>" + "正文".repeat(20000) + "</p></body></html>"))
+            val smallEntry = com.example.comiclab.ebook.EbookContentLimits(100000, 4096, 200000, 10000)
+            assertTrue("compressed size must not decide the expansion budget", file.length() < 4096)
+            org.junit.Assert.assertThrows(com.example.comiclab.ebook.EbookContentLimitException::class.java) {
+                EpubParser(smallEntry).parse(file)
+            }
+            val smallBook = smallEntry.copy(maxBookChars = 1000, maxEntryBytes = 200000)
+            org.junit.Assert.assertThrows(com.example.comiclab.ebook.EbookContentLimitException::class.java) {
+                EpubParser(smallBook).parse(file)
+            }
+        } finally { root.deleteRecursively() }
+    }
+
     private fun encryptionXml(references: List<Pair<String, String>>): String = buildString {
         append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
         append("<encryption xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\" ")

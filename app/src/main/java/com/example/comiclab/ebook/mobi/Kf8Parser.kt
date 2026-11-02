@@ -3,7 +3,8 @@ package com.example.comiclab.ebook.mobi
 import android.util.Log
 import com.example.comiclab.ebook.checkEbookCancellation
 import java.util.concurrent.CancellationException
-import java.io.ByteArrayOutputStream
+import com.example.comiclab.ebook.EbookContentLimits
+import com.example.comiclab.ebook.EbookContentLimitException
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 
@@ -39,6 +40,8 @@ class Kf8Parser(
     private val warn: (message: String, throwable: Throwable?) -> Unit = ::logKf8Fallback
 ) {
 
+    private val limits = EbookContentLimits.forHeap()
+
     fun parse(
         rawMarkup: ByteArray,
         charset: Charset,
@@ -48,6 +51,7 @@ class Kf8Parser(
         readRecord: (Int) -> ByteArray
     ): Kf8Content {
         checkEbookCancellation()
+        limits.checkEntryBytes(rawMarkup.size.toLong())
         if (rawMarkup.isEmpty()) {
             return Kf8Content(emptyList())
         }
@@ -87,7 +91,7 @@ class Kf8Parser(
         }
 
         val failure = reconstruction.exceptionOrNull()
-        if (failure is CancellationException) throw failure
+        if (failure is CancellationException || failure is EbookContentLimitException) throw failure
         val fallbackReason = if (failure != null) {
             Kf8FallbackReason.RECONSTRUCTION_FAILED
         } else {
@@ -101,6 +105,7 @@ class Kf8Parser(
             .filter(String::isNotBlank)
             .ifEmpty { listOf(String(rawMarkup, charset)) }
 
+        limits.checkBookChars(documents.sumOf { it.length.toLong() })
         return Kf8Content(
             documents = documents,
             stylesheet = stylesheet,
@@ -180,6 +185,7 @@ class Kf8Parser(
 
         val documents = ArrayList<String>(skeletonIndex.entries.size)
         var fragmentCursor = 0
+        var documentChars = 0L
         for (skeleton in skeletonIndex.entries) {
             checkEbookCancellation()
             val skeletonStart = skeleton.tagValues[TAG_START]?.firstOrNull()
@@ -225,7 +231,10 @@ class Kf8Parser(
                     .coerceIn(0, assembled.size)
                 assembled = insertBytes(assembled, relativePosition, fragmentBytes)
             }
-            documents += String(assembled, charset)
+            val document = String(assembled, charset)
+            documentChars += document.length
+            limits.checkBookChars(documentChars)
+            documents += document
         }
 
         return documents.filter(String::isNotBlank)
@@ -476,11 +485,13 @@ class Kf8Parser(
     }
 
     private fun insertBytes(source: ByteArray, position: Int, insertion: ByteArray): ByteArray {
-        val output = ByteArrayOutputStream(source.size + insertion.size)
-        output.write(source, 0, position)
-        output.write(insertion)
-        output.write(source, position, source.size - position)
-        return output.toByteArray()
+        val size = source.size.toLong() + insertion.size
+        limits.checkEntryBytes(size)
+        return ByteArray(size.toInt()).also { output ->
+            source.copyInto(output, 0, 0, position)
+            insertion.copyInto(output, position)
+            source.copyInto(output, position + insertion.size, position, source.size)
+        }
     }
 
     private fun resolveRecordIndex(

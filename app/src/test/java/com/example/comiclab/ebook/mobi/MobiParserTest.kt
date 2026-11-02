@@ -75,6 +75,8 @@ class MobiParserTest {
             val resourceId = session.book.resources.single().id
 
             assertEquals("chapter", session.book.chapters.single().html.removePrefix("<p>").removeSuffix("</p>"))
+            session.releaseChapterContent()
+            assertTrue(session.book.chapters.single().html.isEmpty())
             assertEquals(image.toList(), session.openResource(resourceId)?.use { it.readBytes().toList() })
             assertEquals(null, session.openResource("missing"))
             session.close()
@@ -83,6 +85,24 @@ class MobiParserTest {
         } finally {
             file.delete()
         }
+    }
+
+    @Test
+    fun expandedTextLimitIsNotMisreportedAsACorruptMobiFile() {
+        val text = "正文".repeat(1000).toByteArray(StandardCharsets.UTF_8)
+        val header = ByteArray(280).apply {
+            putUnsignedShort(0, 1); putUnsignedInt(4, text.size); putUnsignedShort(8, 1)
+            writeAscii(16, "MOBI"); putUnsignedInt(20, 264); putUnsignedInt(28, 65001)
+            putUnsignedInt(36, 5); putUnsignedInt(108, -1)
+        }
+        val file = File.createTempFile("comiclab-mobi-budget", ".mobi")
+        try {
+            file.writeBytes(buildPalmDb(listOf(header, text)))
+            val limits = com.example.comiclab.ebook.EbookContentLimits(100, 10000, 10000, 1000)
+            org.junit.Assert.assertThrows(com.example.comiclab.ebook.EbookContentLimitException::class.java) {
+                MobiParser(limits).parse(file)
+            }
+        } finally { file.delete() }
     }
 
     private fun buildPalmDb(records: List<ByteArray>): ByteArray {

@@ -5,12 +5,19 @@ import java.io.FileInputStream
 import java.io.FilterInputStream
 import java.io.InputStream
 import com.example.comiclab.ebook.EbookSession
+import com.example.comiclab.ebook.withoutChapterContent
 
 class MobiBookSession private constructor(
-    override val book: MobiBook,
+    book: MobiBook,
     private val resourceRecords: Map<String, ResourceRecord>,
     private val sourceFile: File
 ) : EbookSession {
+
+    @Volatile
+    override var book = book
+        private set
+
+    override fun releaseChapterContent() { book = book.withoutChapterContent() }
 
     @Volatile
     private var closed = false

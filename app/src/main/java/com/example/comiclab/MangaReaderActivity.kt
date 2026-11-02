@@ -167,7 +167,9 @@ class MangaReaderActivity : AppCompatActivity() {
     private var readingDirection = AppSettings.READING_DIRECTION_TOP_TO_BOTTOM
     private var doublePageReadingEnabled = AppSettings.DEFAULT_DOUBLE_PAGE_READING_ENABLED
     private var readerCoverSinglePageEnabled = false
-    private var lastReaderPreloadSpreadStart = RecyclerView.NO_POSITION
+    private data class ReaderPreloadRequest(val first: Int, val count: Int, val direction: Int,
+        val fast: Boolean, val idle: Boolean, val discrete: Boolean)
+    private var lastReaderPreloadRequest: ReaderPreloadRequest? = null
     private var volumeKeyPageTurnEnabled = true
     private var autoHideSystemBarsEnabled = true
     private var lastVolumePageTurnAt = 0L
@@ -794,7 +796,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
         pageAdapter?.close()
         readerCoverSinglePageEnabled = AppSettings.isDoublePageCoverSingleEnabled(this)
-        lastReaderPreloadSpreadStart = RecyclerView.NO_POSITION
+        lastReaderPreloadRequest = null
         val adapter = SubsamplingMangaPageAdapter(
             context = this,
             recyclerView = listReaderPages,
@@ -844,7 +846,7 @@ class MangaReaderActivity : AppCompatActivity() {
         pageAdapter?.close()
         readerCoverSinglePageEnabled = !session.isPdfSource() &&
             AppSettings.isDoublePageCoverSingleEnabled(this)
-        lastReaderPreloadSpreadStart = RecyclerView.NO_POSITION
+        lastReaderPreloadRequest = null
         val adapter = MangaPageAdapter(
             context = this,
             recyclerView = listReaderPages,
@@ -1291,11 +1293,14 @@ class MangaReaderActivity : AppCompatActivity() {
     ) {
         val adapter = pageAdapter ?: return
         val layoutSpreadStart = readerSpreadStartLayoutPosition(firstVisiblePosition)
-        if (!force && layoutSpreadStart == lastReaderPreloadSpreadStart) {
+        val request = ReaderPreloadRequest(layoutSpreadStart, visibleItemCount, scrollDirection,
+            isFastScroll, isIdle, isDiscreteJump)
+        // 首页不变时，尾页进入视口、反向滑动与滚动模式切换仍需要更新解码窗口。
+        if (!force && request == lastReaderPreloadRequest) {
             return
         }
 
-        lastReaderPreloadSpreadStart = layoutSpreadStart
+        lastReaderPreloadRequest = request
         adapter.preloadAround(
             firstVisiblePosition = layoutSpreadStart,
             visibleItemCount = visibleItemCount,

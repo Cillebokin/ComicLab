@@ -2,6 +2,9 @@ package com.example.comiclab.ebook.epub
 
 import android.util.Xml
 import com.example.comiclab.ebook.EbookBook
+import com.example.comiclab.ebook.EbookContentLimits
+import com.example.comiclab.ebook.EbookContentLimitException
+import com.example.comiclab.ebook.limitEbookInput
 import com.example.comiclab.ebook.EbookChapter
 import com.example.comiclab.ebook.EbookResource
 import com.example.comiclab.ebook.EbookResourceRecord
@@ -19,7 +22,7 @@ import java.util.zip.ZipException
 import java.util.zip.ZipFile
 import org.xmlpull.v1.XmlPullParser
 
-class EpubParser {
+class EpubParser(private val limits: EbookContentLimits = EbookContentLimits.forHeap()) {
 
     fun parse(file: File, untitledChapterTitle: String = "未命名"): ParsedEpub {
         checkEbookCancellation()
@@ -39,6 +42,8 @@ class EpubParser {
             throw EpubParseException(EpubParseError.INVALID_ARCHIVE, "Unable to read EPUB archive", error)
         } catch (error: CancellationException) {
             throw error
+        } catch (error: EbookContentLimitException) {
+            throw error
         } catch (error: RuntimeException) {
             throw EpubParseException(EpubParseError.INVALID_PACKAGE, "Unable to parse EPUB package", error)
         }
@@ -55,7 +60,7 @@ class EpubParser {
         } else {
             val references = runCatching {
                 readEncryptedDataReferences(zipFile.getInputStream(encryptionEntry))
-            }.onFailure { if (it is CancellationException) throw it }.getOrNull()
+            }.onFailure { if (it is CancellationException || it is EbookContentLimitException) throw it }.getOrNull()
             if (references.isNullOrEmpty() || references.any { reference ->
                     reference.algorithm !in FONT_OBFUSCATION_ALGORITHMS || reference.uri.isBlank()
                 }
@@ -68,7 +73,7 @@ class EpubParser {
         val mimetypeEntry = zipFile.getEntry(MIMETYPE_ENTRY)
             ?: throw EpubParseException(EpubParseError.MISSING_MIMETYPE, "EPUB mimetype is missing")
         val mimetype = zipFile.getInputStream(mimetypeEntry).use { input ->
-            String(input.readEbookBytes(), StandardCharsets.US_ASCII).trim()
+            String(input.readEbookBytes(limits.maxMetadataBytes), StandardCharsets.US_ASCII).trim()
         }
         if (mimetype != EPUB_MIMETYPE) {
             throw EpubParseException(EpubParseError.MISSING_MIMETYPE, "EPUB mimetype is invalid")
@@ -117,11 +122,16 @@ class EpubParser {
         var coverResourceId: String? = null
         var resourceNumber = 0
         val css = StringBuilder()
+        var bookChars = chapters.sumOf { it.html.length.toLong() }
 
         resolvedManifest.forEach { item ->
             checkEbookCancellation()
             if (item.mediaType == CSS_MIME_TYPE) {
-                readZipEntry(zipFile, item.path)?.let { css.append(it).append('\n') }
+                readZipEntry(zipFile, item.path)?.let {
+                    bookChars += it.length.toLong() + 1
+                    limits.checkBookChars(bookChars)
+                    css.append(it).append('\n')
+                }
             }
 
             if (!item.mediaType.startsWith("image/")) {
@@ -320,7 +330,7 @@ class EpubParser {
             ?: manifestById.values.firstOrNull { it.mediaType == NCX_MIME_TYPE }
             ?: return emptyMap()
         val navPath = navItem.path.ifBlank { return emptyMap() }
-        val source = readZipEntry(zipFile, navPath) ?: return emptyMap()
+        val source = readZipEntry(zipFile, navPath, limits.maxMetadataBytes) ?: return emptyMap()
 
         return if (navItem.mediaType == NCX_MIME_TYPE) {
             parseNcxTitles(source, navPath)
@@ -340,6 +350,7 @@ class EpubParser {
         val spineItems = packageData.spine
             .filter { it.linear }
             .ifEmpty { packageData.spine }
+        var bookChars = 0L
         return spineItems.mapNotNull { spineItem ->
             checkEbookCancellation()
             val item = manifestById[spineItem.idref] ?: return@mapNotNull null
@@ -348,6 +359,8 @@ class EpubParser {
             }
             val source = readZipEntry(zipFile, item.path) ?: return@mapNotNull null
             val body = (if (item.mediaType == "image/svg+xml") source else extractBody(source)).trim()
+            bookChars += body.length
+            limits.checkBookChars(bookChars)
             if (body.isBlank()) {
                 return@mapNotNull null
             }
@@ -404,9 +417,10 @@ class EpubParser {
         }.filter { it.second.isNotBlank() }.toMap()
     }
 
-    private fun readZipEntry(zipFile: ZipFile, path: String): String? {
+    private fun readZipEntry(zipFile: ZipFile, path: String, maxBytes: Long = limits.maxEntryBytes): String? {
         val entry = zipFile.getEntry(path) ?: return null
-        return zipFile.getInputStream(entry).use { input -> decodeXml(input.readEbookBytes()) }
+        if (entry.size > maxBytes) throw EbookContentLimitException()
+        return zipFile.getInputStream(entry).use { input -> decodeXml(input.readEbookBytes(maxBytes)) }
     }
 
     private fun extractBody(source: String): String {
@@ -451,7 +465,7 @@ class EpubParser {
     private fun newParser(input: InputStream): XmlPullParser {
         return Xml.newPullParser().apply {
             setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
-            setInput(InputStreamReader(input, StandardCharsets.UTF_8))
+            setInput(InputStreamReader(input.limitEbookInput(limits.maxMetadataBytes), StandardCharsets.UTF_8))
         }
     }
 

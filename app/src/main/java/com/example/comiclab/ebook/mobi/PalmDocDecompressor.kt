@@ -1,12 +1,14 @@
 package com.example.comiclab.ebook.mobi
 
 import com.example.comiclab.ebook.checkEbookCancellation
+import com.example.comiclab.ebook.EbookContentLimits
+import com.example.comiclab.ebook.EbookContentLimitException
 
 object PalmDocDecompressor {
 
-    fun decompress(input: ByteArray): ByteArray {
+    fun decompress(input: ByteArray, maxOutputBytes: Long = EbookContentLimits.forHeap().maxEntryBytes): ByteArray {
         checkEbookCancellation()
-        val output = ByteOutput(input.size)
+        val output = ByteOutput(input.size, maxOutputBytes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
         var index = 0
         var untilCancellationCheck = 4096
 
@@ -56,14 +58,15 @@ object PalmDocDecompressor {
     }
 
     /** 可增长的字节缓冲区，避免对每个字节进行装箱。 */
-    private class ByteOutput(initialCapacity: Int) {
-        private var data = ByteArray(initialCapacity.coerceAtLeast(16))
+    private class ByteOutput(initialCapacity: Int, private val limit: Int) {
+        private var data = ByteArray(initialCapacity.coerceAtLeast(16).coerceAtMost(limit))
         var size = 0
             private set
 
         fun add(value: Byte) {
+            if (size >= limit) throw EbookContentLimitException()
             if (size == data.size) {
-                data = data.copyOf(data.size * 2)
+                data = data.copyOf((data.size.toLong() * 2).coerceAtMost(limit.toLong()).toInt())
             }
             data[size++] = value
         }

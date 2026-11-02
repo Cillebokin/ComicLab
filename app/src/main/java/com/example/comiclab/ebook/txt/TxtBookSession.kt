@@ -3,8 +3,9 @@ package com.example.comiclab.ebook.txt
 import com.example.comiclab.ebook.EbookBook
 import com.example.comiclab.ebook.EbookChapter
 import com.example.comiclab.ebook.EbookSession
+import com.example.comiclab.ebook.EbookContentLimits
+import com.example.comiclab.ebook.withoutChapterContent
 import com.example.comiclab.ebook.checkEbookCancellation
-import com.example.comiclab.ebook.readEbookText
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileInputStream
@@ -16,8 +17,14 @@ import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 
 class TxtBookSession private constructor(
-    override val book: EbookBook
+    book: EbookBook
 ) : EbookSession {
+
+    @Volatile
+    override var book = book
+        private set
+
+    override fun releaseChapterContent() { book = book.withoutChapterContent() }
 
     override fun openResource(resourceId: String): InputStream? = null
 
@@ -27,20 +34,21 @@ class TxtBookSession private constructor(
         fun open(
             file: File,
             untitledBookTitle: String,
-            untitledChapterTitle: String
+            untitledChapterTitle: String,
+            limits: EbookContentLimits = EbookContentLimits.forHeap()
         ): TxtBookSession {
             checkEbookCancellation()
             val title = file.nameWithoutExtension.takeIf(String::isNotBlank) ?: untitledBookTitle
-            val text = readText(file)
+            val html = readHtml(file, limits)
             val chapterTitle = title.ifBlank { untitledChapterTitle }
-            val chapters = if (text.isBlank()) {
+            val chapters = if (html.isEmpty()) {
                 emptyList()
             } else {
                 listOf(
                     EbookChapter(
                         index = 0,
                         title = chapterTitle,
-                        html = textToHtml(text)
+                        html = html
                     )
                 )
             }
@@ -54,16 +62,16 @@ class TxtBookSession private constructor(
             )
         }
 
-        private fun readText(file: File): String {
+        private fun readHtml(file: File, limits: EbookContentLimits): String {
             val bom = detectBom(file)
             if (bom != null) {
-                return decode(file, bom.charset, bom.length)
+                return decode(file, bom.charset, bom.length, limits)
             }
 
             return try {
-                decode(file, StandardCharsets.UTF_8, 0)
+                decode(file, StandardCharsets.UTF_8, 0, limits)
             } catch (_: CharacterCodingException) {
-                decode(file, Charset.forName("GB18030"), 0)
+                decode(file, Charset.forName("GB18030"), 0, limits)
             }
         }
 
@@ -94,38 +102,55 @@ class TxtBookSession private constructor(
             }
         }
 
-        private fun decode(file: File, charset: Charset, bomLength: Int): String {
+        private fun decode(file: File, charset: Charset, bomLength: Int, limits: EbookContentLimits): String {
             FileInputStream(file).use { input ->
-                repeat(bomLength) {
-                    if (input.read() < 0) return ""
-                }
+                repeat(bomLength) { if (input.read() < 0) return "" }
                 val decoder = charset.newDecoder()
                     .onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
-                return BufferedReader(InputStreamReader(input, decoder)).use { it.readEbookText() }
-            }
-        }
-
-        private fun textToHtml(text: String): String {
-            val html = StringBuilder(text.length)
-            var index = 0
-            while (index < text.length) {
-                if (index and 4095 == 0) checkEbookCancellation()
-                when (val character = text[index++]) {
-                    '\r' -> {
-                        if (text.getOrNull(index) == '\n') index++
-                        html.append("<br>\n")
+                return BufferedReader(InputStreamReader(input, decoder)).use { reader ->
+                    val output = StringBuilder()
+                    val buffer = CharArray(8192)
+                    var rawChars = 0L
+                    var hasText = false
+                    var previousWasCr = false
+                    fun appendPlain(start: Int, end: Int) {
+                        limits.checkBookChars(output.length.toLong() + end - start)
+                        output.append(buffer, start, end - start)
                     }
-                    '\n' -> html.append("<br>\n")
-                    '&' -> html.append("&amp;")
-                    '<' -> html.append("&lt;")
-                    '>' -> html.append("&gt;")
-                    '"' -> html.append("&quot;")
-                    '\'' -> html.append("&#39;")
-                    else -> html.append(character)
+                    while (true) {
+                        checkEbookCancellation()
+                        val count = reader.read(buffer)
+                        if (count < 0) break
+                        rawChars += count
+                        limits.checkBookChars(rawChars)
+                        var plainStart = 0
+                        for (index in 0 until count) {
+                            val character = buffer[index]
+                            if (!hasText && !character.isWhitespace()) hasText = true
+                            val replacement = when (character) {
+                                '\r' -> "<br>\n"
+                                '\n' -> if (previousWasCr) "" else "<br>\n"
+                                '&' -> "&amp;"
+                                '<' -> "&lt;"
+                                '>' -> "&gt;"
+                                '"' -> "&quot;"
+                                '\'' -> "&#39;"
+                                else -> null
+                            }
+                            if (replacement != null) {
+                                appendPlain(plainStart, index)
+                                limits.checkBookChars(output.length.toLong() + replacement.length)
+                                output.append(replacement)
+                                plainStart = index + 1
+                            }
+                            previousWasCr = character == '\r'
+                        }
+                        appendPlain(plainStart, count)
+                    }
+                    if (hasText) output.toString() else ""
                 }
             }
-            return html.toString()
         }
 
         private data class Bom(val charset: Charset, val length: Int)

@@ -13,6 +13,29 @@ import org.junit.Test
 class TxtBookSessionTest {
 
     @Test
+    fun streamingDecodeKeepsCrLfAndEscapesAcrossBufferBoundaries() {
+        val file = File.createTempFile("comiclab-txt-boundary", ".txt")
+        try {
+            val prefix = "x".repeat(8191)
+            file.writeText(prefix + "\r\n<&中\"'\rnext")
+            val html = TxtBookSession.open(file, "book", "chapter").book.chapters.single().html
+            assertEquals(prefix + "<br>\n&lt;&amp;中&quot;&#39;<br>\nnext", html)
+        } finally { file.delete() }
+    }
+
+    @Test
+    fun escapingExpansionIsCheckedWhileReadingInsteadOfAfterBuildingTheWholeBook() {
+        val file = File.createTempFile("comiclab-txt-budget", ".txt")
+        try {
+            file.writeText("&".repeat(20))
+            val limits = com.example.comiclab.ebook.EbookContentLimits(30, 1000, 1000, 1000)
+            org.junit.Assert.assertThrows(com.example.comiclab.ebook.EbookContentLimitException::class.java) {
+                TxtBookSession.open(file, "book", "chapter", limits)
+            }
+        } finally { file.delete() }
+    }
+
+    @Test
     fun openReadsUtf8AndEscapesHtmlCharactersAndLineEndings() {
         val root = Files.createTempDirectory("comiclab-txt-utf8").toFile()
         try {
