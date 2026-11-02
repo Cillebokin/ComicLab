@@ -514,6 +514,16 @@
     <string name="reader_enhance_busy">上一项高清任务正在处理或取消，请稍后重试</string>
     <string name="reader_enhance_save">保存</string>
     <string name="enhancement_book_menu">一键高清化</string>
+    <string name="comic_convert_to_pdf">转换为PDF</string>
+    <string name="comic_convert_to_cbz">转换为CBZ</string>
+    <string name="comic_conversion_title">漫画格式转换</string>
+    <string name="comic_conversion_choose_destination">请选择保存位置和文件名</string>
+    <string name="comic_conversion_progress">正在转换第%1$d/%2$d页 · %3$d%%</string>
+    <string name="comic_conversion_saving">正在保存文件 · %1$d%%</string>
+    <string name="comic_conversion_cancelling">正在取消并清理临时文件…</string>
+    <string name="comic_conversion_done">转换完成</string>
+    <string name="comic_conversion_busy">另一个漫画处理任务正在运行，请稍后重试</string>
+    <string name="comic_conversion_failed">转换或保存失败。请检查漫画文件、图片尺寸、可用空间和目标位置权限；原文件未修改</string>
     <string name="enhancement_book_title">整本漫画高清化 · %1$d倍</string>
     <string name="enhancement_choose_destination">请选择保存位置和文件名</string>
     <string name="enhancement_book_progress">正在处理第%1$d/%2$d页 · 当前页%3$d%%\n整本进度%4$d%%</string>

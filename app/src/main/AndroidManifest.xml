@@ -33,6 +33,11 @@
             android:screenOrientation="portrait"
             android:exported="false" />
 
+        <activity
+            android:name="com.example.comiclab.ui.reader.conversion.ComicFormatConversionActivity"
+            android:screenOrientation="portrait"
+            android:exported="false" />
+
         <activity android:name="com.example.comiclab.ui.reader.translation.PageTranslationActivity"
             android:screenOrientation="portrait" android:exported="false" />
 
