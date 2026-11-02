@@ -21,12 +21,14 @@ internal object EpubPath {
         } else {
             "$baseDirectory/$decodedReference"
         }
-        return normalize(combined)
+        return normalizeDecoded(combined)
     }
 
-    fun normalize(path: String): String? {
+    fun normalize(path: String): String? = normalizeDecoded(Uri.decode(path))
+
+    private fun normalizeDecoded(path: String): String? {
         val parts = ArrayDeque<String>()
-        Uri.decode(path).replace('\\', '/').split('/').forEach { part ->
+        path.replace('\\', '/').split('/').forEach { part ->
             when (part) {
                 "", "." -> Unit
                 ".." -> if (parts.isNotEmpty()) parts.removeLast() else return null
@@ -37,9 +39,6 @@ internal object EpubPath {
     }
 
     private fun isExternalReference(reference: String): Boolean {
-        return reference.startsWith("data:", ignoreCase = true) ||
-            reference.startsWith("http:", ignoreCase = true) ||
-            reference.startsWith("https:", ignoreCase = true) ||
-            reference.startsWith("mailto:", ignoreCase = true)
+        return reference.startsWith("//") || Regex("^[A-Za-z][A-Za-z0-9+.-]*:").containsMatchIn(reference)
     }
 }

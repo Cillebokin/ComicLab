@@ -346,6 +346,26 @@ class EpubParserRobolectricTest {
         }).also(::append)
     }
 
+    @Test
+    fun svgSpineDocumentsAreKeptAsReadableChapters() {
+        val root = Files.createTempDirectory("comiclab-svg-spine").toFile()
+        try {
+            val file = File(root, "svg.epub")
+            val opf = packageXml().replace(
+                "id=\"chapter2\" href=\"Text/chapter2.xhtml\" media-type=\"application/xhtml+xml\"",
+                "id=\"chapter2\" href=\"Text/chapter2.xhtml\" media-type=\"image/svg+xml\""
+            )
+            writeEpub(file, opf = opf, extraEntries = mapOf("EPUB/Text/chapter2.xhtml" to
+                """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900"><image href="../Images/inline.png" width="600" height="900"/></svg>"""))
+            val parsed = EpubParser().parse(file)
+            assertEquals(2, parsed.book.chapters.size)
+            assertTrue(parsed.book.chapters.last().html.startsWith("<svg"))
+            val html = com.example.comiclab.ebook.html.EbookHtmlRenderer().render(parsed.book, com.example.comiclab.ebook.html.EbookStyle())
+            assertTrue(html.contains("viewBox=\"0 0 600 900\""))
+            assertTrue(html.contains("<image"))
+        } finally { root.deleteRecursively() }
+    }
+
     private fun encryptionXml(references: List<Pair<String, String>>): String = buildString {
         append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
         append("<encryption xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\" ")

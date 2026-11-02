@@ -343,11 +343,11 @@ class EpubParser {
         return spineItems.mapNotNull { spineItem ->
             checkEbookCancellation()
             val item = manifestById[spineItem.idref] ?: return@mapNotNull null
-            if (item.mediaType != XHTML_MIME_TYPE && item.mediaType != HTML_MIME_TYPE) {
+            if (item.mediaType != XHTML_MIME_TYPE && item.mediaType != HTML_MIME_TYPE && item.mediaType != "image/svg+xml") {
                 return@mapNotNull null
             }
             val source = readZipEntry(zipFile, item.path) ?: return@mapNotNull null
-            val body = extractBody(source).trim()
+            val body = (if (item.mediaType == "image/svg+xml") source else extractBody(source)).trim()
             if (body.isBlank()) {
                 return@mapNotNull null
             }
@@ -455,7 +455,7 @@ class EpubParser {
         }
     }
 
-    private fun decodeXml(bytes: ByteArray): String {
+    internal fun decodeXml(bytes: ByteArray): String {
         val prefix = bytes.copyOfRange(0, bytes.size.coerceAtMost(256)).toString(StandardCharsets.US_ASCII)
         val encoding = XML_ENCODING_REGEX.find(prefix)?.groupValues?.getOrNull(1)
             ?.let { runCatching { Charset.forName(it) }.getOrNull() }

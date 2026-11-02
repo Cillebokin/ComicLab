@@ -32,6 +32,10 @@ import com.example.comiclab.ebook.EbookSession
 import com.example.comiclab.ebook.EbookSessionFactory
 import com.example.comiclab.ebook.html.EbookHtmlRenderer
 import com.example.comiclab.ebook.html.EbookStyle
+import com.example.comiclab.ebook.html.EBOOK_BASE_URL
+import com.example.comiclab.ebook.html.ebookAnchorFromUrl
+import com.example.comiclab.ebook.readEbookBytes
+import com.example.comiclab.ebook.epub.EpubParser
 import com.example.comiclab.ebook.epub.EpubParseError
 import com.example.comiclab.ebook.epub.EpubParseException
 import com.example.comiclab.ebook.mobi.MobiParseException
@@ -396,6 +400,11 @@ class EbookReaderActivity : AppCompatActivity() {
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                if (request.isForMainFrame && pageReady && !destroyed && !webReaderDestroyed) {
+                    ebookAnchorFromUrl(request.url)?.let { anchor ->
+                        view.evaluateJavascript("window.jumpToComicLabAnchor(${org.json.JSONObject.quote(anchor)});", null)
+                    }
+                }
                 return true
             }
 
@@ -448,7 +457,16 @@ class EbookReaderActivity : AppCompatActivity() {
                     try {
                         PreparedBook(
                             session = loadedSession,
-                            html = htmlRenderer.render(loadedSession.book, style)
+                            html = htmlRenderer.render(loadedSession.book, style) { resource ->
+                                try {
+                                    loadedSession.openResource(resource.id)?.use { input ->
+                                        EpubParser().decodeXml(input.readEbookBytes())
+                                    }
+                                } catch (error: java.io.IOException) {
+                                    android.util.Log.w("ComicLabEbook", "Unable to load SVG resource ${resource.id}", error)
+                                    null
+                                }
+                            }
                         )
                     } catch (error: Throwable) {
                         loadedSession.close()
@@ -636,7 +654,7 @@ class EbookReaderActivity : AppCompatActivity() {
         const val EXTRA_START_FROM_BEGINNING = "start_from_beginning"
 
         private const val RESOURCE_SCHEME = "ebook-resource"
-        private const val BASE_URL = "https://comiclab.invalid/"
+        private const val BASE_URL = EBOOK_BASE_URL
         private const val JS_BRIDGE_NAME = "ComicLabBridge"
         private const val MIN_PROGRESS_SAVE_INTERVAL_MS = 500L
     }

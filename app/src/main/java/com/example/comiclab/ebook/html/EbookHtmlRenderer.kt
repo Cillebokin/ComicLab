@@ -3,6 +3,8 @@ package com.example.comiclab.ebook.html
 import android.net.Uri
 import com.example.comiclab.ebook.EbookBook
 import com.example.comiclab.ebook.EbookChapter
+import com.example.comiclab.ebook.EbookResource
+import com.example.comiclab.ebook.epub.EpubPath
 import com.example.comiclab.ebook.checkEbookCancellation
 
 data class EbookStyle(
@@ -14,9 +16,20 @@ data class EbookStyle(
 
 class EbookHtmlRenderer {
 
-    fun render(book: EbookBook, style: EbookStyle): String {
+    fun render(book: EbookBook, style: EbookStyle, svgSource: ((EbookResource) -> String?)? = null): String {
         checkEbookCancellation()
         val safeStyle = style.normalized()
+        var svgIndex = -1
+        val standaloneVectors = mutableSetOf<String>()
+        val loadSvg: ((EbookResource) -> Pair<Int, String>?)? = svgSource?.let { source ->
+            { resource ->
+                if (resource.id in standaloneVectors) null else source(resource)?.let { svg ->
+                    if (needsSvgInlining(svg)) svgIndex-- to svg
+                    else { standaloneVectors += resource.id; null }
+                }
+            }
+        }
+        val anchors = book.chapters.associate { it.index to collectAnchors(it.html, it.index) }
         val output = StringBuilder()
         output.append("<!doctype html><html><head>")
         output.append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
@@ -38,7 +51,7 @@ class EbookHtmlRenderer {
             .append(safeStyle.lineHeight)
             .append(";font-family:sans-serif;padding:24px 18px 48px;word-wrap:break-word;}")
         output.append("article{max-width:760px;margin:0 auto;}")
-        output.append("h1,h2,h3,h4,h5,h6{line-height:1.25;}img{max-width:100%;height:auto;}")
+        output.append("h1,h2,h3,h4,h5,h6{line-height:1.25;}img,svg{max-width:100%;height:auto;}")
         output.append("a{color:")
             .append(safeStyle.foregroundColor)
             .append(";}")
@@ -57,7 +70,7 @@ class EbookHtmlRenderer {
 
         book.chapters.forEach { chapter ->
             checkEbookCancellation()
-            appendChapter(output, book, chapter)
+            appendChapter(output, book, chapter, anchors, loadSvg)
         }
 
         output.append(
@@ -103,6 +116,22 @@ class EbookHtmlRenderer {
                     window.scrollTo(0, target);
                     setTimeout(reportProgress, 200);
                 };
+                window.jumpToComicLabAnchor = function(anchorId) {
+                    var target = document.getElementById(anchorId);
+                    if (!target) return false;
+                    window.scrollTo(0, sectionTop(target));
+                    reportProgress();
+                    return true;
+                };
+                document.addEventListener('click', function(event) {
+                    if (event.defaultPrevented) return;
+                    var link = event.target.closest ? event.target.closest('a[href]') : null;
+                    var href = link ? link.getAttribute('href') : null;
+                    if (href && /^#chapter-\d+(?:-a-[0-9a-f]+)?$/.test(href)) {
+                        event.preventDefault();
+                        window.jumpToComicLabAnchor(href.substring(1));
+                    }
+                });
                 window.jumpToComicLabChapter = function(chapterIndex) {
                     var section = document.getElementById('chapter-' + chapterIndex);
                     if (section) window.scrollTo(0, sectionTop(section));
@@ -116,7 +145,7 @@ class EbookHtmlRenderer {
         return output.toString()
     }
 
-    private fun appendChapter(output: StringBuilder, book: EbookBook, chapter: EbookChapter) {
+    private fun appendChapter(output: StringBuilder, book: EbookBook, chapter: EbookChapter, anchors: Map<Int, Map<String, String>>, loadSvg: ((EbookResource) -> Pair<Int, String>?)?) {
         output.append("<section id=\"chapter-")
             .append(chapter.index)
             .append("\" data-chapter-index=\"")
@@ -124,60 +153,162 @@ class EbookHtmlRenderer {
             .append("\"><h2>")
             .append(escapeHtml(chapter.title))
             .append("</h2>")
-            .append(sanitizeFragment(chapter.html, book, chapter.sourcePath))
+            .append(sanitizeFragment(chapter.html, book, chapter.sourcePath, chapter.index, anchors, loadSvg))
             .append("</section>")
     }
 
-    private fun sanitizeFragment(
-        fragment: String,
-        book: EbookBook,
-        sourcePath: String?
-    ): String {
-        val withoutUnsafeBlocks = fragment
-            .replace(UNSAFE_BLOCK_REGEX, "")
-            .replace(COMMENT_REGEX, "")
+    private fun cleanFragment(fragment: String): String = fragment
+        .replace(UNSAFE_BLOCK_REGEX, "")
+        .replace(COMMENT_REGEX, "")
+
+    private fun needsSvgInlining(source: String): Boolean = TAG_REGEX.findAll(source).any { match ->
+        checkEbookCancellation()
+        match.groupValues[1].isEmpty() && match.groupValues[2].substringAfter(':').equals("image", true) &&
+            (attribute(match.groupValues[3], "href") ?: attribute(match.groupValues[3], "xlink:href"))
+                ?.let { !it.startsWith("data:", ignoreCase = true) } == true
+    }
+
+    private fun svgImageUrl(reference: String, book: EbookBook, sourcePath: String?): String? {
+        val value = reference.trim()
+        if (DATA_BITMAP.matches(value)) return value.replace("\r", "").replace("\n", "")
+        return resolveResourceId(value, book, sourcePath)?.let { "ebook-resource://$it" }
+    }
+
+    private fun anchorId(index: Int, name: String): String = "chapter-$index-a-" +
+        name.toByteArray(Charsets.UTF_8).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
+
+    private fun collectAnchors(fragment: String, index: Int): Map<String, String> {
+        val anchors = linkedMapOf<String, String>()
+        TAG_REGEX.findAll(cleanFragment(fragment)).forEach { match ->
+            checkEbookCancellation()
+            val tag = match.groupValues[2].lowercase().removePrefix("svg:")
+            if (match.groupValues[1].isNotEmpty() || (tag !in SAFE_TEXT_TAGS && tag !in setOf("a", "img", "br", "svg") && tag !in SVG_TAGS)) return@forEach
+            val attributes = match.groupValues[3]
+            if (attributes.isBlank()) return@forEach
+            val id = attribute(attributes, "id")?.takeIf(String::isNotBlank)
+            val name = if (tag == "a") attribute(attributes, "name")?.takeIf(String::isNotBlank) else null
+            val target = (id ?: name)?.let { anchorId(index, it) } ?: return@forEach
+            id?.let { anchors.putIfAbsent(it, target) }
+            name?.let { anchors.putIfAbsent(it, target) }
+        }
+        return anchors
+    }
+
+    private fun internalLink(reference: String, book: EbookBook, sourcePath: String?, index: Int,
+                             anchors: Map<Int, Map<String, String>>): String? {
+        val value = reference.trim()
+        if (value.isBlank() || EXTERNAL_REFERENCE.containsMatchIn(value) || value.startsWith("//")) return null
+        val path = value.substringBefore('#').substringBefore('?')
+        val chapter = if (path.isBlank()) book.chapters.firstOrNull { it.index == index }
+            else sourcePath?.let { base -> EpubPath.resolve(base, path) }
+                ?.let { resolved -> book.chapters.firstOrNull { it.sourcePath == resolved } }
+        chapter ?: return null
+        val fragment = Uri.decode(value.substringAfter('#', ""))
+        return if (fragment.isEmpty()) "chapter-${chapter.index}" else anchors[chapter.index]?.get(fragment)
+    }
+
+    private fun sanitizeFragment(fragment: String, book: EbookBook, sourcePath: String?, index: Int,
+                                 anchors: Map<Int, Map<String, String>>, loadSvg: ((EbookResource) -> Pair<Int, String>?)? = null): String {
+        val source = cleanFragment(fragment)
         val output = StringBuilder()
         var cursor = 0
-
-        TAG_REGEX.findAll(withoutUnsafeBlocks).forEach { match ->
+        var svgDepth = 0
+        val localAnchors = anchors[index].orEmpty()
+        TAG_REGEX.findAll(source).forEach { match ->
             checkEbookCancellation()
-            output.append(withoutUnsafeBlocks, cursor, match.range.first)
+            output.append(source, cursor, match.range.first)
             val closing = match.groupValues[1].isNotEmpty()
-            val tagName = match.groupValues[2].lowercase()
+            val tag = match.groupValues[2].lowercase().removePrefix("svg:")
             val attributes = match.groupValues[3]
-            if (tagName in SAFE_TEXT_TAGS) {
-                if (closing) {
-                    output.append("</$tagName>")
-                } else {
-                    output.append("<$tagName")
-                        .append(safeAttributes(attributes))
-                        .append(">")
+            val selfClosing = attributes.trimEnd().endsWith("/")
+            when {
+                tag == "svg" -> {
+                    if (closing) {
+                        if (svgDepth > 0) { output.append("</svg>"); svgDepth-- }
+                    } else {
+                        output.append("<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\"")
+                            .append(svgAttributes(attributes, localAnchors)).append(if (selfClosing) "/>" else ">")
+                        if (!selfClosing) svgDepth++
+                    }
                 }
-            } else if (tagName == "a" && !closing) {
-                val href = attribute(attributes, "href")
-                    ?.takeIf { it.startsWith("#") }
-                output.append("<a")
-                if (href != null) {
-                    output.append(" href=\"").append(escapeHtmlAttribute(href)).append("\"")
+                svgDepth > 0 && tag in SVG_TAGS -> {
+                    val svgTag = SVG_TAGS.getValue(tag)
+                    if (closing) { if (tag != "image") output.append("</$svgTag>") } else {
+                        val href = if (tag == "image") {
+                            (attribute(attributes, "href") ?: attribute(attributes, "xlink:href"))
+                                ?.let { svgImageUrl(it, book, sourcePath) }
+                        } else {
+                            (attribute(attributes, "href") ?: attribute(attributes, "xlink:href"))
+                                ?.takeIf { it.startsWith("#") }?.removePrefix("#")
+                                ?.let { localAnchors[Uri.decode(it)] }?.let { "#$it" }
+                        }
+                        if (tag != "image" || href != null) {
+                            output.append("<$svgTag").append(svgAttributes(attributes, localAnchors))
+                            if (href != null) output.append(" href=\"").append(escapeHtmlAttribute(href)).append("\" xlink:href=\"").append(escapeHtmlAttribute(href)).append("\"")
+                            output.append(if (selfClosing || tag == "image") "/>" else ">")
+                        }
+                    }
                 }
-                output.append(">")
-            } else if (tagName == "a" && closing) {
-                output.append("</a>")
-            } else if (tagName == "img" && !closing) {
-                val reference = attribute(attributes, "recindex") ?: attribute(attributes, "src")
-                val resourceId = reference?.let { resolveResourceId(it, book, sourcePath) }
-                if (resourceId != null) {
-                    output.append("<img src=\"ebook-resource://")
-                        .append(escapeHtmlAttribute(resourceId))
-                        .append("\" alt=\"\">")
+                svgDepth == 0 && tag in SAFE_TEXT_TAGS -> {
+                    if (closing) output.append("</$tag>") else {
+                        output.append("<$tag").append(safeAttributes(attributes, localAnchors)).append(">")
+                        if (selfClosing) output.append("</$tag>")
+                    }
                 }
-            } else if (tagName == "br" && !closing) {
-                output.append("<br>")
+                svgDepth == 0 && tag == "a" -> {
+                    if (closing) output.append("</a>") else {
+                        val href = attribute(attributes, "href")?.let { internalLink(it, book, sourcePath, index, anchors) }
+                        output.append("<a").append(safeAttributes(attributes, localAnchors, namedAnchor = true))
+                        if (href != null) output.append(" href=\"#").append(href).append("\"")
+                        output.append(">")
+                        if (selfClosing) output.append("</a>")
+                    }
+                }
+                svgDepth == 0 && tag == "img" && !closing -> {
+                    val reference = attribute(attributes, "recindex") ?: attribute(attributes, "src")
+                    val id = reference?.let { resolveResourceId(it, book, sourcePath) }
+                    val resource = book.resources.firstOrNull { it.id == id }
+                    val loadedSvg = resource?.takeIf { it.mimeType == "image/svg+xml" }?.let { loadSvg?.invoke(it) }
+                    if (loadedSvg != null) {
+                        output.append("<span").append(safeAttributes(attributes, localAnchors)).append(">")
+                            .append(renderSvgResource(book, resource, loadedSvg.second, loadedSvg.first)).append("</span>")
+                    } else if (id != null) output.append("<img").append(safeAttributes(attributes, localAnchors))
+                        .append(" src=\"ebook-resource://").append(escapeHtmlAttribute(id)).append("\" alt=\"\">")
+                }
+                svgDepth == 0 && tag == "br" && !closing -> output.append("<br").append(safeAttributes(attributes, localAnchors)).append(">")
             }
             cursor = match.range.last + 1
         }
-        output.append(withoutUnsafeBlocks, cursor, withoutUnsafeBlocks.length)
+        output.append(source, cursor, source.length)
         return output.toString()
+    }
+
+    /** SVG 内联后，内部图片仍通过受控资源会话读取，局部 ID 与其他插图隔离。 */
+    private fun renderSvgResource(book: EbookBook, resource: EbookResource, source: String, index: Int): String {
+        checkEbookCancellation()
+        val svg = SVG_DOCUMENT.find(source)?.value ?: return ""
+        val anchors = mapOf(index to collectAnchors(svg, index))
+        return sanitizeFragment(svg, book, resource.path, index, anchors)
+    }
+
+    private fun svgAttributes(attributes: String, anchors: Map<String, String>): String = buildString {
+        append(safeAttributes(attributes, anchors))
+        val values = parseAttributes(attributes).toMutableMap()
+        values["style"]?.split(';')?.forEach { declaration ->
+            val name = declaration.substringBefore(':').trim().lowercase()
+            if (name in SVG_STYLE_ATTRIBUTES && ':' in declaration) values[name] = declaration.substringAfter(':').trim()
+        }
+        SVG_ATTRIBUTES.forEach { name ->
+            values[name.lowercase()]?.let { value ->
+                val localUrl = LOCAL_SVG_URL.matchEntire(value)
+                val safeValue = when {
+                    localUrl != null -> anchors[localUrl.groupValues[1]]?.let { "url(#$it)" }
+                    value.contains("url", ignoreCase = true) -> null
+                    else -> value
+                }
+                if (safeValue != null) append(" $name=\"").append(escapeHtmlAttribute(safeValue)).append("\"")
+            }
+        }
     }
 
     private fun resolveResourceId(
@@ -186,14 +317,15 @@ class EbookHtmlRenderer {
         sourcePath: String?
     ): String? {
         val normalized = reference.trim().removeSurrounding("\"").removeSurrounding("'")
-        val mobiResourceIndex = if (sourcePath == null) {
-            MOBI_RESOURCE_INDEX_REGEX.find(normalized)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.let(::decodeMobiResourceIndex)
-        } else {
-            null
+        if (sourcePath != null) {
+            if (EXTERNAL_REFERENCE.containsMatchIn(normalized) || normalized.startsWith("//")) return null
+            val path = EpubPath.resolve(sourcePath, normalized) ?: return null
+            return book.resources.firstOrNull { it.path == path }?.id
         }
+        val mobiResourceIndex = MOBI_RESOURCE_INDEX_REGEX.find(normalized)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.let(::decodeMobiResourceIndex)
         return book.resources.firstOrNull { it.id == normalized }?.id
             ?: normalized.removePrefix("ebook-resource://")
                 .removePrefix("mobi-resource://")
@@ -261,16 +393,17 @@ class EbookHtmlRenderer {
         return parts.joinToString("/").takeIf(String::isNotEmpty)
     }
 
-    private fun safeAttributes(attributes: String): String {
+    private fun safeAttributes(attributes: String, anchors: Map<String, String>, namedAnchor: Boolean = false): String {
+        if (attributes.isBlank()) return ""
         val builder = StringBuilder()
-        attribute(attributes, "class")
-            ?.let(::safeCssTokens)
-            ?.takeIf(String::isNotEmpty)
+        attribute(attributes, "class")?.let(::safeCssTokens)?.takeIf(String::isNotEmpty)
             ?.let { builder.append(" class=\"").append(escapeHtmlAttribute(it)).append("\"") }
-        attribute(attributes, "id")
-            ?.let(::safeCssToken)
-            ?.takeIf(String::isNotEmpty)
-            ?.let { builder.append(" id=\"").append(escapeHtmlAttribute(it)).append("\"") }
+        val original = attribute(attributes, "id")?.takeIf(String::isNotBlank)
+            ?: if (namedAnchor) attribute(attributes, "name")?.takeIf(String::isNotBlank) else null
+        original?.let { name -> anchors[name]?.let { target ->
+            builder.append(" id=\"").append(target).append("\" data-ebook-id=\"")
+                .append(anchorId(0, name).substringAfter("-a-")).append("\"")
+        } }
         return builder.toString()
     }
 
@@ -289,14 +422,38 @@ class EbookHtmlRenderer {
             .replace(CSS_IMPORT_REGEX, "")
             .replace(CSS_UNSAFE_DECLARATION_REGEX, "")
             .replace(CSS_URL_REGEX, "none")
+            .replace(CSS_SELECTOR_REGEX) { rule ->
+                rule.groupValues[1].replace(CSS_ID_SELECTOR_REGEX) { selector ->
+                    "[data-ebook-id=\"${anchorId(0, selector.groupValues[1]).substringAfter("-a-")}\"]"
+                } + "{"
+            }
     }
 
-    private fun attribute(attributes: String, name: String): String? {
-        val match = Regex(
-            "(?is)(?:^|\\s)$name\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))"
-        ).find(attributes) ?: return null
-        return match.groupValues.drop(1).firstOrNull(String::isNotEmpty)
+    private fun attribute(attributes: String, name: String): String? =
+        ATTRIBUTE_REGEX.findAll(attributes).firstOrNull { it.groupValues[1].equals(name, ignoreCase = true) }
+            ?.let { match -> attributeValue(match) }
+
+    private fun parseAttributes(attributes: String): Map<String, String> {
+        val result = linkedMapOf<String, String>()
+        ATTRIBUTE_REGEX.findAll(attributes).forEach { match ->
+            attributeValue(match)?.let { result.putIfAbsent(match.groupValues[1].lowercase(), it) }
+        }
+        return result
     }
+
+    private fun attributeValue(match: MatchResult): String? =
+        match.groupValues.drop(2).firstOrNull(String::isNotEmpty)?.let { value ->
+            XML_ENTITY.replace(value) { entity ->
+                when (val name = entity.groupValues[1]) {
+                    "amp" -> "&"; "lt" -> "<"; "gt" -> ">"; "quot" -> "\""; "apos" -> "'"
+                    else -> {
+                        val number = if (name.startsWith("#x", true)) name.drop(2).toIntOrNull(16) else name.drop(1).toIntOrNull()
+                        number?.takeIf { Character.isValidCodePoint(it) && it !in 0xD800..0xDFFF }
+                            ?.let { String(Character.toChars(it)) } ?: entity.value
+                    }
+                }
+            }
+        }
 
     private fun escapeHtml(value: String): String {
         return value
@@ -320,12 +477,29 @@ class EbookHtmlRenderer {
     }
 
     private companion object {
+        val ATTRIBUTE_REGEX = Regex("(?is)(?:^|\\s)([a-z_:][a-z0-9_:.-]*)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))")
+        val EXTERNAL_REFERENCE = Regex("^[A-Za-z][A-Za-z0-9+.-]*:")
+        val XML_ENTITY = Regex("&(#x[0-9a-fA-F]+|#[0-9]+|amp|lt|gt|quot|apos);")
+        val CSS_SELECTOR_REGEX = Regex("([^{}]+)\\{")
+        val CSS_ID_SELECTOR_REGEX = Regex("#([A-Za-z_][A-Za-z0-9_-]*)")
+        val SVG_DOCUMENT = Regex("(?is)<(?:svg:)?svg\\b.*</(?:svg:)?svg\\s*>|<(?:svg:)?svg\\b[^>]*/>")
+        val LOCAL_SVG_URL = Regex("url\\(\\s*#([^\\s)]+)\\s*\\)", RegexOption.IGNORE_CASE)
+        val DATA_BITMAP = Regex("data:image/(?:png|jpeg|gif|webp|bmp|avif);base64,[A-Za-z0-9+/=\\r\\n]+", RegexOption.IGNORE_CASE)
+        val SVG_TAGS = listOf("g", "defs", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
+            "text", "tspan", "title", "desc", "clipPath", "mask", "linearGradient", "radialGradient", "stop", "use", "symbol", "image")
+            .associateBy { it.lowercase() }
+        val SVG_STYLE_ATTRIBUTES = setOf("fill", "stroke", "stroke-width", "fill-opacity", "stroke-opacity", "opacity", "font-size", "font-family", "text-anchor")
+        val SVG_ATTRIBUTES = listOf("viewBox", "width", "height", "x", "y", "x1", "y1", "x2", "y2", "dx", "dy",
+            "cx", "cy", "r", "rx", "ry", "d", "points", "transform", "preserveAspectRatio", "fill", "stroke",
+            "stroke-width", "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "fill-rule", "clip-rule",
+            "opacity", "fill-opacity", "stroke-opacity", "clip-path", "mask", "offset", "stop-color", "stop-opacity",
+            "gradientUnits", "gradientTransform", "text-anchor", "font-size", "font-family")
         val SAFE_TEXT_TAGS = setOf(
             "p", "div", "span", "h1", "h2", "h3", "h4", "h5", "h6",
             "em", "strong", "blockquote", "ul", "ol", "li", "table", "tr", "td", "th"
         )
         val TAG_REGEX = Regex("(?is)<(/?)([a-z][a-z0-9:-]*)([^>]*)>")
-        val UNSAFE_BLOCK_REGEX = Regex("(?is)<(script|style|iframe|object|embed)\\b.*?</\\1\\s*>")
+        val UNSAFE_BLOCK_REGEX = Regex("(?is)<(script|style|iframe|object|embed|foreignObject)\\b.*?</\\1\\s*>")
         val COMMENT_REGEX = Regex("(?is)<!--.*?-->")
         val CSS_IMPORT_REGEX = Regex("(?is)@import[^;]*;")
         val CSS_UNSAFE_DECLARATION_REGEX = Regex("(?is)(?:behavior|binding|expression)\\s*:[^;{}]+;?")
