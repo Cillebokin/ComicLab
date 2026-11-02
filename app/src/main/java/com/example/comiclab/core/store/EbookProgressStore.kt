@@ -16,7 +16,8 @@ object EbookProgressStore {
 
         return EbookProgress(
             chapterIndex = prefs.getInt(keyForChapter(key), 0),
-            scrollFraction = prefs.getFloat(keyForFraction(key), 0f)
+            scrollFraction = prefs.getFloat(keyForFraction(key), 0f),
+            coordinateVersion = prefs.getInt(keyForVersion(key), 1)
         ).normalized()
     }
 
@@ -27,6 +28,7 @@ object EbookProgressStore {
             .edit()
             .putInt(keyForChapter(key), normalized.chapterIndex)
             .putFloat(keyForFraction(key), normalized.scrollFraction)
+            .putInt(keyForVersion(key), normalized.coordinateVersion)
             .apply()
     }
 
@@ -36,6 +38,7 @@ object EbookProgressStore {
             .edit()
             .remove(keyForChapter(key))
             .remove(keyForFraction(key))
+            .remove(keyForVersion(key))
             .apply()
     }
 
@@ -53,6 +56,8 @@ object EbookProgressStore {
     private fun keyForChapter(key: String): String = "${KEY_PREFIX}${key}_chapter"
 
     private fun keyForFraction(key: String): String = "${KEY_PREFIX}${key}_fraction"
+
+    private fun keyForVersion(key: String): String = "${KEY_PREFIX}${key}_coordinate_version"
 
     private const val PREFS_NAME = "ebook_progress_prefs"
     private const val KEY_PREFIX = "ebook_progress_"

@@ -7,10 +7,13 @@ import java.io.RandomAccessFile
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import kotlin.math.min
+import com.example.comiclab.ebook.checkEbookCancellation
+import java.util.concurrent.CancellationException
 
 class MobiParser {
 
     fun parse(file: File, untitledBookTitle: String = "未命名电子书"): ParsedMobi {
+        checkEbookCancellation()
         if (!file.isFile || !file.canRead() || file.length() <= 0L) {
             throw MobiParseException(MobiParseError.INVALID_FILE, "MOBI file is not readable")
         }
@@ -27,6 +30,8 @@ class MobiParser {
                 "Unable to read MOBI records",
                 error
             )
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: RuntimeException) {
             throw MobiParseException(
                 MobiParseError.INVALID_FILE,
@@ -347,6 +352,7 @@ class MobiParser {
         records: List<Record>
     ): Int? {
         for (recordIndex in 1 until records.size) {
+            checkEbookCancellation()
             val boundary = readRecord(randomAccessFile, records[recordIndex - 1])
             if (!boundary.contentEquals(KF8_BOUNDARY)) {
                 continue
@@ -395,6 +401,7 @@ class MobiParser {
         )
         val textRecordsEnd = textRecordsStart + textRecordCount
         for (recordIndex in textRecordsStart until textRecordsEnd) {
+            checkEbookCancellation()
             val compressedText = trimTrailingData(
                 data = readRecord(randomAccessFile, records[recordIndex]),
                 flags = trailingDataFlags
@@ -478,6 +485,7 @@ class MobiParser {
         val offsets = ArrayList<Long>(recordCount)
         randomAccessFile.seek(PALMDB_RECORD_TABLE_OFFSET.toLong())
         repeat(recordCount) {
+            checkEbookCancellation()
             val offset = randomAccessFile.readInt().toLong() and UINT32_MAX
             randomAccessFile.skipBytes(4)
             if (offset < tableEnd || offset >= fileLength) {
@@ -490,6 +498,7 @@ class MobiParser {
         }
 
         return offsets.mapIndexed { index, offset ->
+            checkEbookCancellation()
             val end = offsets.getOrNull(index + 1) ?: fileLength
             val length = end - offset
             if (length <= 0L || length > Int.MAX_VALUE) {
@@ -500,10 +509,22 @@ class MobiParser {
     }
 
     private fun readRecord(randomAccessFile: RandomAccessFile, record: Record): ByteArray {
+        checkEbookCancellation()
         val bytes = ByteArray(record.length)
         randomAccessFile.seek(record.offset)
-        randomAccessFile.readFully(bytes)
+        readRecordBytes(randomAccessFile, bytes)
         return bytes
+    }
+
+    private fun readRecordBytes(file: RandomAccessFile, bytes: ByteArray) {
+        var offset = 0
+        while (offset < bytes.size) {
+            checkEbookCancellation()
+            val count = minOf(8192, bytes.size - offset)
+            file.readFully(bytes, offset, count)
+            offset += count
+        }
+        checkEbookCancellation()
     }
 
     private fun readExthMetadata(
@@ -532,6 +553,7 @@ class MobiParser {
         var coverOffset: Int? = null
 
         repeat(count) {
+            checkEbookCancellation()
             if (offset + 8 > headerRecord.size) {
                 return@repeat
             }
@@ -580,6 +602,7 @@ class MobiParser {
         var coverResourceId: String? = null
 
         for (recordIndex in firstImageRecord until records.size) {
+            checkEbookCancellation()
             val record = records[recordIndex]
             val prefix = readPrefix(randomAccessFile, record, IMAGE_PREFIX_LENGTH)
             val mimeType = imageMimeType(prefix) ?: continue
@@ -613,7 +636,7 @@ class MobiParser {
         val length = min(record.length, maxLength)
         val bytes = ByteArray(length)
         randomAccessFile.seek(record.offset)
-        randomAccessFile.readFully(bytes)
+        readRecordBytes(randomAccessFile, bytes)
         return bytes
     }
 
@@ -626,6 +649,7 @@ class MobiParser {
             .ifEmpty { listOf(normalized.trim()) }
 
         return sections.mapIndexed { index, section ->
+            checkEbookCancellation()
             val heading = HEADING_REGEX.find(section)?.groupValues?.getOrNull(1)
                 ?.replace(TAG_REGEX, "")
                 ?.replace(ENTITY_REGEX, ::decodeEntity)

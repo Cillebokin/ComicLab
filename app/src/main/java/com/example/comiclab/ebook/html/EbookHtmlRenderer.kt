@@ -3,6 +3,7 @@ package com.example.comiclab.ebook.html
 import android.net.Uri
 import com.example.comiclab.ebook.EbookBook
 import com.example.comiclab.ebook.EbookChapter
+import com.example.comiclab.ebook.checkEbookCancellation
 
 data class EbookStyle(
     val fontScale: Float = 1.0f,
@@ -14,6 +15,7 @@ data class EbookStyle(
 class EbookHtmlRenderer {
 
     fun render(book: EbookBook, style: EbookStyle): String {
+        checkEbookCancellation()
         val safeStyle = style.normalized()
         val output = StringBuilder()
         output.append("<!doctype html><html><head>")
@@ -54,6 +56,7 @@ class EbookHtmlRenderer {
         output.append("</header>")
 
         book.chapters.forEach { chapter ->
+            checkEbookCancellation()
             appendChapter(output, book, chapter)
         }
 
@@ -62,33 +65,47 @@ class EbookHtmlRenderer {
             </article><script>
             (function() {
                 var reportTimer = null;
+                function sectionTop(section) {
+                    return section.getBoundingClientRect().top + window.scrollY;
+                }
+                function maxScroll() {
+                    return Math.max(document.documentElement.scrollHeight - window.innerHeight, 0);
+                }
+                function chapterSpan(sections, index) {
+                    var end = index + 1 < sections.length ? sectionTop(sections[index + 1]) : maxScroll();
+                    return Math.max(end - sectionTop(sections[index]), 1);
+                }
                 function reportProgress() {
                     var sections = document.querySelectorAll('[data-chapter-index]');
                     var position = window.scrollY;
                     var current = 0;
                     for (var i = 0; i < sections.length; i++) {
-                        if (sections[i].offsetTop <= position) current = i;
+                        if (sectionTop(sections[i]) <= position) current = i;
                     }
+                    if (sections.length && maxScroll() > 0 && position >= maxScroll() - 0.5) current = sections.length - 1;
                     var section = sections[current];
-                    var sectionTop = section ? section.offsetTop : 0;
-                    var sectionHeight = section ? Math.max(section.offsetHeight - window.innerHeight, 1) : 1;
-                    var fraction = Math.max(0, Math.min(1, (position - sectionTop) / sectionHeight));
+                    var top = section ? sectionTop(section) : 0;
+                    var fraction = Math.max(0, Math.min(1, (position - top) / (section ? chapterSpan(sections, current) : 1)));
+                    if (maxScroll() > 0 && position >= maxScroll() - 0.5) fraction = 1;
                     if (window.ComicLabBridge) window.ComicLabBridge.reportProgress(current, fraction);
                 }
                 window.addEventListener('scroll', function() {
                     if (reportTimer) clearTimeout(reportTimer);
                     reportTimer = setTimeout(reportProgress, 180);
                 });
-                window.restoreComicLabProgress = function(chapterIndex, fraction) {
+                window.restoreComicLabProgress = function(chapterIndex, fraction, coordinateVersion) {
                     var section = document.getElementById('chapter-' + chapterIndex);
                     if (!section) return;
-                    var target = section.offsetTop + Math.max(0, Math.min(1, fraction)) * Math.max(section.offsetHeight - window.innerHeight, 0);
+                    var sections = document.querySelectorAll('[data-chapter-index]');
+                    var span = coordinateVersion === 1 ? Math.max(section.offsetHeight - window.innerHeight, 0) : chapterSpan(sections, chapterIndex);
+                    var target = sectionTop(section) + Math.max(0, Math.min(1, fraction)) * span;
+                    if (coordinateVersion !== 1 && chapterIndex === sections.length - 1 && fraction >= 1) target = maxScroll();
                     window.scrollTo(0, target);
                     setTimeout(reportProgress, 200);
                 };
                 window.jumpToComicLabChapter = function(chapterIndex) {
                     var section = document.getElementById('chapter-' + chapterIndex);
-                    if (section) window.scrollTo(0, section.offsetTop);
+                    if (section) window.scrollTo(0, sectionTop(section));
                     setTimeout(reportProgress, 200);
                 };
                 setTimeout(reportProgress, 200);
@@ -123,6 +140,7 @@ class EbookHtmlRenderer {
         var cursor = 0
 
         TAG_REGEX.findAll(withoutUnsafeBlocks).forEach { match ->
+            checkEbookCancellation()
             output.append(withoutUnsafeBlocks, cursor, match.range.first)
             val closing = match.groupValues[1].isNotEmpty()
             val tagName = match.groupValues[2].lowercase()

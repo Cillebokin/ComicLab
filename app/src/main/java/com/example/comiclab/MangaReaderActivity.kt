@@ -277,6 +277,16 @@ class MangaReaderActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        pageAdapter?.onReaderResumed()
+        readerPreviewAdapter?.setDecodingEnabled(readerPreviewPanelVisible)
+        listReaderPages.post {
+            if (!destroyed && pageAdapter != null) {
+                val first = readerLayoutManager.findFirstVisibleItemPosition()
+                if (first != RecyclerView.NO_POSITION) {
+                    preloadReaderAround(first, visibleReaderItemCount(), isIdle = true, force = true)
+                }
+            }
+        }
         doublePageReadingEnabled = AppSettings.isDoublePageReadingEnabled(this)
         volumeKeyPageTurnEnabled = AppSettings.isVolumeKeyPageTurnEnabled(this)
         autoHideSystemBarsEnabled = AppSettings.isAutoHideSystemBarsEnabled(this)
@@ -288,6 +298,7 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        readerPreviewAdapter?.setDecodingEnabled(false)
         handler.removeCallbacks(readerCheckpointRunnable)
         saveReaderPosition(forceCommit = true)
         restoreSystemBrightness()
@@ -895,6 +906,7 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         )
         readerPreviewAdapter = adapter
+        adapter.setDecodingEnabled(readerPreviewPanelVisible)
         listReaderPreview.adapter = adapter
         adapter.setSelectedPosition(currentReaderPosition)
     }
@@ -1154,6 +1166,7 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         readerPreviewPanelVisible = true
+        readerPreviewAdapter?.setDecodingEnabled(true)
         readerControlsController.cancelAutoHide()
         setReaderControlsVisible(true)
         scrollReaderPreviewToCurrentPage()
@@ -1182,6 +1195,7 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         readerPreviewPanelVisible = false
+        readerPreviewAdapter?.setDecodingEnabled(false)
         readerPreviewScrim.animate().cancel()
         readerPreviewScrim.animate()
             .alpha(0f)

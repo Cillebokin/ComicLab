@@ -1,5 +1,7 @@
 package com.example.comiclab.ui.reader.manga
 
+import android.content.ComponentCallbacks2
+import org.junit.Assert.assertSame
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.graphics.drawable.BitmapDrawable
@@ -149,6 +151,72 @@ class MangaPageAdapterTest {
     }
 
     @Test
+    fun uncachedVisiblePdfPageShowsFirstStagePreviewBeforeScreenWidthUpgrade() {
+        val firstPreviewStarted = CountDownLatch(1)
+        val releaseFirstPreview = CountDownLatch(1)
+        val screenWidthPreviewStarted = CountDownLatch(1)
+        val previewCalls = AtomicInteger()
+        val decodedBitmaps = CopyOnWriteArrayList<Bitmap>()
+        val session = FakeReaderSession(pdfSource = true, previewDecoder = {
+            when (previewCalls.getAndIncrement()) {
+                0 -> {
+                    firstPreviewStarted.countDown()
+                    awaitUninterruptibly(releaseFirstPreview)
+                }
+                1 -> screenWidthPreviewStarted.countDown()
+            }
+            Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).also(decodedBitmaps::add)
+        })
+        val recyclerView = RecyclerView(RuntimeEnvironment.getApplication())
+        setScrollStateForTest(recyclerView, RecyclerView.SCROLL_STATE_SETTLING)
+        val adapter = newAdapter(session, listOf("page.pdf"), recyclerView = recyclerView)
+        val holder = createHolder(adapter, recyclerView)
+
+        try {
+            bind(adapter, holder, 0)
+            assertTrue("the first visible preview should start", firstPreviewStarted.await(5, TimeUnit.SECONDS))
+            assertEquals("first show a quick preview before the full-width render", 720, session.previewWidths.first().second)
+
+            releaseFirstPreview.countDown()
+            assertTrue("the screen-width upgrade should follow the first preview", awaitCondition {
+                screenWidthPreviewStarted.count == 0L && session.previewWidths.contains("page.pdf" to 1_080)
+            })
+        } finally {
+            releaseFirstPreview.countDown()
+            closeAndAwait(adapter, session)
+            decodedBitmaps.forEach { bitmap -> bitmap.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
+    @Test
+    fun failedQuickPdfPreviewRetriesAtScreenWidth() {
+        val previewCalls = AtomicInteger()
+        val decodedBitmaps = CopyOnWriteArrayList<Bitmap>()
+        val session = FakeReaderSession(pdfSource = true, previewDecoder = {
+            if (previewCalls.incrementAndGet() == 1) {
+                null
+            } else {
+                Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).also(decodedBitmaps::add)
+            }
+        })
+        val recyclerView = RecyclerView(RuntimeEnvironment.getApplication())
+        setScrollStateForTest(recyclerView, RecyclerView.SCROLL_STATE_SETTLING)
+        val adapter = newAdapter(session, listOf("page.pdf"), recyclerView = recyclerView)
+        val holder = createHolder(adapter, recyclerView)
+
+        try {
+            bind(adapter, holder, 0)
+            assertTrue("the quick preview failure should retry once at screen width", awaitCondition {
+                previewCalls.get() == 2 && adapter.cachedPreviewForTest(0) != null &&
+                    session.previewWidths.contains("page.pdf" to 1_080)
+            })
+        } finally {
+            closeAndAwait(adapter, session)
+            decodedBitmaps.forEach { bitmap -> bitmap.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
+    @Test
     fun missingAndCorruptPreviewsAreRecordedWithoutStoppingOtherDecodeTasks() {
         val requests = CountDownLatch(2)
         val session = FakeReaderSession(previewDecoder = { entryName ->
@@ -248,7 +316,7 @@ class MangaPageAdapterTest {
             })
             assertEquals(
                 "queued preview work for pages passed during a fast scroll should be discarded",
-                listOf(entries.first(), entries.last()),
+                listOf(entries.first(), entries.last(), entries.last()),
                 decodedEntries.toList()
             )
         } finally {
@@ -447,7 +515,7 @@ class MangaPageAdapterTest {
             bind(adapter, holder, 0)
             assertTrue("the first PDF preview should start", firstPreviewStarted.await(5, TimeUnit.SECONDS))
             assertTrue("the initial PDF preview should decode", awaitCondition {
-                session.previewWidths.contains(entries[0] to 1_080)
+                session.previewWidths.contains(entries[0] to 720)
             })
 
             adapter.preloadAround(
@@ -836,6 +904,97 @@ class MangaPageAdapterTest {
         }
     }
 
+    @Test
+    fun leavingPdfPageRemovesItsQueuedVisibleFullDecode() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val session = FakeReaderSession(pdfSource = true, previewDecoder = {
+            started.countDown()
+            awaitUninterruptibly(release)
+            null
+        })
+        val adapter = newAdapter(session, listOf("old.pdf", "current.pdf"))
+        try {
+            requestPreview(adapter, 0)
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            adapter.ensureFullOrTiledPageForTest(0, 0, 0, false)
+            assertTrue(adapter.loadingFullPagesForTest.contains(0))
+            adapter.preloadAround(1, 1)
+            assertFalse("an old full render must not delay the new page", adapter.loadingFullPagesForTest.contains(0))
+            requestPreview(adapter, 1)
+            release.countDown()
+            assertTrue(awaitCondition { session.previewWidths.any { it.first == "current.pdf" } })
+            assertFalse(session.boundsReads.contains("old.pdf"))
+        } finally {
+            release.countDown()
+            closeAndAwait(adapter, session)
+        }
+    }
+
+    @Test
+    fun hidingPdfUiKeepsReadyPreviewAndDoesNotDisablePreloads() {
+        val bitmaps = CopyOnWriteArrayList<Bitmap>()
+        val session = FakeReaderSession(pdfSource = true, previewDecoder = {
+            Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).also(bitmaps::add)
+        })
+        val adapter = newAdapter(session, listOf("visible.pdf", "next.pdf"))
+        try {
+            requestPreview(adapter, 0)
+            assertTrue(awaitCondition { cachedPreview(adapter, 0) != null })
+            val ready = cachedPreview(adapter, 0)
+            adapter.trimMemory(ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN)
+            assertSame("returning from background must retain the ready page", ready, cachedPreview(adapter, 0))
+            adapter.preloadAround(0, 1, isIdle = true)
+            assertTrue("UI hidden must not permanently stop adjacent preloads", awaitCondition {
+                session.previewWidths.any { it.first == "next.pdf" }
+            })
+        } finally {
+            closeAndAwait(adapter, session)
+            bitmaps.forEach { it.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
+    @Test
+    fun returningToReaderRestoresPreloadsAfterActualMemoryPressure() {
+        val session = FakeReaderSession(pdfSource = true)
+        val adapter = newAdapter(session, listOf("visible.pdf", "next.pdf"))
+        try {
+            adapter.trimMemory(ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)
+            adapter.preloadAround(0, 1)
+            assertTrue(session.previewWidths.isEmpty())
+            adapter.onReaderResumed()
+            adapter.preloadAround(0, 1)
+            assertTrue(awaitCondition { session.previewWidths.any { it.first == "next.pdf" } })
+        } finally {
+            closeAndAwait(adapter, session)
+        }
+    }
+
+    @Test
+    fun activeOldPdfFullRequestStopsBeforeRenderingAfterBoundsReturn() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val session = FakeReaderSession(pdfSource = true, boundsReader = {
+            started.countDown()
+            awaitUninterruptibly(release)
+            ComicArchive.ImageBounds(1000, 1400)
+        })
+        val adapter = newAdapter(session, listOf("old.pdf", "new.pdf"))
+        try {
+            adapter.ensureFullOrTiledPageForTest(0, 0, 0, false)
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            adapter.ensureFullOrTiledPageForTest(0, 0, 0, false)
+            assertTrue("an active PDF full render must not be enqueued twice", adapter.decodeExecutorForTest.queue.isEmpty())
+            adapter.preloadAround(1, 1)
+            release.countDown()
+            assertTrue(awaitCondition { !adapter.loadingFullPagesForTest.contains(0) })
+            assertTrue("an obsolete request must not enter native full rendering", session.fullReads.isEmpty())
+        } finally {
+            release.countDown()
+            closeAndAwait(adapter, session)
+        }
+    }
+
     private fun newAdapter(
         session: FakeReaderSession,
         entries: List<String>,
@@ -935,18 +1094,20 @@ class MangaPageAdapterTest {
 
     private class FakeReaderSession(
         private val pdfSource: Boolean = false,
-        private val previewDecoder: (String) -> Bitmap? = { null }
+        private val previewDecoder: (String) -> Bitmap? = { null },
+        private val boundsReader: (String) -> ComicArchive.ImageBounds? = { null }
     ) : ComicArchive.ImageReaderSession {
         val closed = CountDownLatch(1)
         val closeCount = AtomicInteger(0)
         val boundsReads = CopyOnWriteArrayList<String>()
         val previewWidths = CopyOnWriteArrayList<Pair<String, Int>>()
+        val fullReads = CopyOnWriteArrayList<String>()
 
         override fun isPdfSource(): Boolean = pdfSource
 
         override fun readBounds(entryName: String): ComicArchive.ImageBounds? {
             boundsReads.add(entryName)
-            return null
+            return boundsReader(entryName)
         }
 
         override fun decodePreviewForWidth(entryName: String, targetWidth: Int): Bitmap? {
@@ -954,9 +1115,15 @@ class MangaPageAdapterTest {
             return previewDecoder(entryName)
         }
 
-        override fun decodeImageForWidth(entryName: String, targetWidth: Int): Bitmap? = null
+        override fun decodeImageForWidth(entryName: String, targetWidth: Int): Bitmap? {
+            fullReads.add(entryName)
+            return null
+        }
 
-        override fun decodeImageForPage(entryName: String, targetWidth: Int, targetHeight: Int): Bitmap? = null
+        override fun decodeImageForPage(entryName: String, targetWidth: Int, targetHeight: Int): Bitmap? {
+            fullReads.add(entryName)
+            return null
+        }
 
         override fun decodeRegionForWidth(entryName: String, sourceRect: Rect, targetWidth: Int): Bitmap? = null
 

@@ -264,6 +264,49 @@ class MangaReaderPhase5DeviceAcceptanceTest {
     }
 
     @Test
+    fun pdfRapidTurnsAndBackgroundReturnKeepRenderingAvailable() {
+        val supplied = File(context.getExternalFilesDir(null), "reader-priority.pdf")
+        val pdf = if (supplied.isFile) supplied else createPdf("pdf-priority.pdf", pageCount = 30)
+        onMain { AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_TOP_TO_BOTTOM) }
+        val activity = launchReader(pdf)
+        val adapter = onMain { activity.pageAdapterForTest }!!
+        val lowMemory = adapter.javaClass.getDeclaredField("pdfLowMemoryMode").apply { isAccessible = true }
+        val count = activity.imageEntriesForTest.size
+        val waits = mutableListOf<Long>()
+        repeat(12) { step ->
+            val target = (step * 7 + 1) % count
+            // Leave several pages before their deferred full render can become useful.
+            onMain {
+                activity.jumpReaderToPageForTest((target + 2) % count)
+                activity.jumpReaderToPageForTest((target + 1) % count)
+                activity.jumpReaderToPageForTest(target)
+            }
+            val started = SystemClock.elapsedRealtime()
+            awaitCondition("target PDF page $target did not acquire a readable bitmap") {
+                onMain {
+                    val holder = activity.listReaderPagesForTest.findViewHolderForAdapterPosition(target)
+                        as? com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder
+                    (holder?.imageView?.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                        ?.let { !it.isRecycled && it.width > 0 } == true
+                }
+            }
+            waits += SystemClock.elapsedRealtime() - started
+        }
+        onMain { activity.onTrimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) }
+        assertFalse("ordinary backgrounding must not latch low-memory mode", lowMemory.getBoolean(adapter))
+        ParcelFileDescriptor.AutoCloseInputStream(
+            instrumentation.uiAutomation.executeShellCommand("input keyevent KEYCODE_HOME")
+        ).close()
+        awaitCondition("reader did not leave the foreground") { onMain { resumedReader() == null } }
+        ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(
+            "am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n ${context.packageName}/com.example.comiclab.MainActivity -f 0x10200000"
+        )).bufferedReader().use { it.readText() }
+        awaitCondition("reader did not resume its existing session") { onMain { resumedReader() === activity } }
+        assertFalse("returning to the reader must enable normal quality and preloads", lowMemory.getBoolean(adapter))
+        android.util.Log.i("ReaderPriorityAcceptance", "pdfBytes=${pdf.length()} pages=$count targetBitmapWaitMs=$waits")
+    }
+
+    @Test
     fun preparedImagePathKeepsCacheAcrossRotationAndDeletesItAfterExit() {
         val archive = createArchive("prepared-reader.cbz", pageCount = 12)
         val cacheDirectory = File(temporaryFolder.root, "prepared-reader-cache").apply { mkdirs() }
@@ -318,7 +361,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
 
     private fun ensureBrowserForeground(): MainActivity {
         val descriptor = instrumentation.uiAutomation.executeShellCommand(
-            "am start -n com.example.comiclab/.MainActivity -f 0x10008000"
+            "am start -n ${context.packageName}/com.example.comiclab.MainActivity -f 0x10008000"
         )
         val shellOutput = ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
         assertTrue("device shell could not foreground the isolated browser: $shellOutput", shellOutput.contains("Starting:"))

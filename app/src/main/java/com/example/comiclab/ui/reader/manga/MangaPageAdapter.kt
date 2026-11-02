@@ -370,7 +370,11 @@ internal class MangaPageAdapter(
             (firstVisible..lastVisible).forEach { position ->
                 ensurePreview(
                     position,
-                    PRIORITY_VISIBLE_PREVIEW + 1,
+                    visiblePreviewPriorityForReader(
+                        isPdfSource = true,
+                        previewPriority = PRIORITY_VISIBLE_PREVIEW + 1,
+                        fullPriority = PRIORITY_VISIBLE
+                    ),
                     generation = 0,
                     isPreload = false
                 )
@@ -474,6 +478,13 @@ internal class MangaPageAdapter(
     }
 
     override fun trimMemory(level: Int) {
+        if (isPdfSource && level == ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+            // 界面隐藏不代表内存不足；保留已显示页面，避免返回时重新出现占位。
+            cancelPendingPdfIdleFullDecodes()
+            cancelQueuedPreloadTasks()
+            trimDistantCaches()
+            return
+        }
         if (isPdfSource && level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
             pdfLowMemoryMode = true
             cancelQueuedPreloadTasks()
@@ -507,6 +518,10 @@ internal class MangaPageAdapter(
             clearVisibleBitmapReferences(clearFullBitmaps = true)
             notifyDataSetChangedSafely()
         }
+    }
+
+    override fun onReaderResumed() {
+        pdfLowMemoryMode = false
     }
 
     override fun flushPendingRefreshesIfIdle() {
@@ -1108,6 +1123,11 @@ internal class MangaPageAdapter(
         }
         val requestedTargetWidth =
             (targetWidthOverride ?: previewDecodeWidth(isPreload)).coerceAtLeast(1)
+        val stageVisiblePdfPreview = isPdfSource && !isPreload &&
+            position !in failedPreviewPages &&
+            position in boundPositions &&
+            previewBitmap(position) == null &&
+            requestedTargetWidth > PDF_VISIBLE_PREVIEW_FIRST_STAGE_WIDTH
         if (isPdfSource && fullBitmap(position) != null) {
             return
         }
@@ -1147,6 +1167,9 @@ internal class MangaPageAdapter(
             }
             return
         }
+        if (stageVisiblePdfPreview) {
+            visiblePdfPreviewUpgradeRequests.add(position)
+        }
         submitTask(
             priority = priority,
             position = position,
@@ -1158,8 +1181,15 @@ internal class MangaPageAdapter(
                 if (isPreload && !isUsefulPreviewPreload(position, generation)) {
                     return@submitTask
                 }
-                val targetWidth =
+                val requestedDecodeWidth =
                     (targetWidthOverride ?: previewDecodeWidth(isPreload)).coerceAtLeast(1)
+                val targetWidth = if (stageVisiblePdfPreview &&
+                    previewBitmapDecodeWidth(position) == 0
+                ) {
+                    minOf(requestedDecodeWidth, PDF_VISIBLE_PREVIEW_FIRST_STAGE_WIDTH)
+                } else {
+                    requestedDecodeWidth
+                }
                 if (previewBitmapDecodeWidth(position) >= targetWidth) {
                     return@submitTask
                 }
@@ -1186,9 +1216,6 @@ internal class MangaPageAdapter(
                 if (bitmap == null) {
                     if (isPdfSource || !isPreload) {
                         failedPreviewPages.add(position)
-                    }
-                    if (isPdfSource && !isPreload) {
-                        pdfPreviewRetryUsedPages.add(position)
                     }
                     return@submitTask
                 }
@@ -1230,7 +1257,11 @@ internal class MangaPageAdapter(
                         ) {
                             ensurePreview(
                                 position,
-                                PRIORITY_VISIBLE_PREVIEW + 1,
+                                visiblePreviewPriorityForReader(
+                                    isPdfSource = true,
+                                    previewPriority = PRIORITY_VISIBLE_PREVIEW + 1,
+                                    fullPriority = PRIORITY_VISIBLE
+                                ),
                                 generation = 0,
                                 isPreload = false
                             )
@@ -1299,7 +1330,7 @@ internal class MangaPageAdapter(
         }
 
         val registeredLoading = loadingFullPages.add(position)
-        if (!registeredLoading && isPreload) {
+        if (!registeredLoading && (isPreload || isPdfSource)) {
             return
         }
 
@@ -1311,6 +1342,9 @@ internal class MangaPageAdapter(
             cancelable = isPreload
         ) {
             try {
+                if (!isPreload && !isCurrentPdfFullRequest(position)) {
+                    return@submitTask
+                }
                 if (isPreload && !isUsefulPreload(position, generation)) {
                     return@submitTask
                 }
@@ -1339,6 +1373,9 @@ internal class MangaPageAdapter(
                 }
 
                 val shouldUseTiles = shouldUseTiledPage(bounds)
+                if (!isPreload && !isCurrentPdfFullRequest(position)) {
+                    return@submitTask
+                }
                 if (shouldUseTiles) {
                     if (shouldSkipTiledPdfPreviewDecodeAfterMemoryTrim(
                             isPdfSource = isPdfSource,
@@ -1411,7 +1448,7 @@ internal class MangaPageAdapter(
                     fitWithinBounds = shouldUseTiles
                 )
 
-                if (bitmap == null && isPdfSource && shouldRetryFullPageAfterFailure(
+                if (bitmap == null && isPdfSource && isCurrentPdfFullRequest(position) && shouldRetryFullPageAfterFailure(
                         isPreload = isPreload,
                         alreadyRetried = position in fullDecodeRetriedPages
                     )
@@ -2020,6 +2057,11 @@ internal class MangaPageAdapter(
             (isPdfSource || generation == preloadGeneration.get())
     }
 
+    private fun isCurrentPdfFullRequest(position: Int): Boolean {
+        return !isPdfSource || visibleWindowEnd < visibleWindowStart ||
+            position in visibleWindowStart..visibleWindowEnd
+    }
+
     private fun schedulePdfIdleFullDecode(position: Int) {
         if (!isPdfSource || closed || position !in entries.indices ||
             position !in boundPositions || position in loadingFullPages ||
@@ -2074,7 +2116,8 @@ internal class MangaPageAdapter(
             val isVisiblePdfPreview = isPdfSource &&
                 task.kind == DecodeTaskKind.PREVIEW &&
                 task.generation == 0
-            if (!task.cancelable && !isVisiblePdfPreview) {
+            val isVisiblePdfFull = isPdfSource && task.kind == DecodeTaskKind.FULL && !task.cancelable
+            if (!task.cancelable && !isVisiblePdfPreview && !isVisiblePdfFull) {
                 return@forEach
             }
 
@@ -2085,7 +2128,7 @@ internal class MangaPageAdapter(
                         task.position !in protectedWindowStart..protectedWindowEnd
                 }
 
-                isVisiblePdfPreview -> {
+                isVisiblePdfPreview || isVisiblePdfFull -> {
                     task.position !in visibleWindowStart..visibleWindowEnd
                 }
 
@@ -2615,6 +2658,7 @@ internal class MangaPageAdapter(
         private const val MAX_PREVIEW_DECODE_WIDTH = 720
         private const val PDF_MIN_PREVIEW_DECODE_WIDTH = 360
         private const val PDF_FAST_PREVIEW_DECODE_WIDTH = 360
+        private const val PDF_VISIBLE_PREVIEW_FIRST_STAGE_WIDTH = 720
         private const val PDF_FAST_SCROLL_DECODE_THREAD_COUNT = 2
         private const val PDF_IDLE_FULL_DECODE_DELAY_MS = 100L
         private const val PDF_MAX_PREVIEW_DECODE_WIDTH = 1080

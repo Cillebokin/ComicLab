@@ -3,6 +3,8 @@ package com.example.comiclab.ebook.txt
 import com.example.comiclab.ebook.EbookBook
 import com.example.comiclab.ebook.EbookChapter
 import com.example.comiclab.ebook.EbookSession
+import com.example.comiclab.ebook.checkEbookCancellation
+import com.example.comiclab.ebook.readEbookText
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileInputStream
@@ -27,6 +29,7 @@ class TxtBookSession private constructor(
             untitledBookTitle: String,
             untitledChapterTitle: String
         ): TxtBookSession {
+            checkEbookCancellation()
             val title = file.nameWithoutExtension.takeIf(String::isNotBlank) ?: untitledBookTitle
             val text = readText(file)
             val chapterTitle = title.ifBlank { untitledChapterTitle }
@@ -99,7 +102,7 @@ class TxtBookSession private constructor(
                 val decoder = charset.newDecoder()
                     .onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
-                return BufferedReader(InputStreamReader(input, decoder)).use { it.readText() }
+                return BufferedReader(InputStreamReader(input, decoder)).use { it.readEbookText() }
             }
         }
 
@@ -107,6 +110,7 @@ class TxtBookSession private constructor(
             val html = StringBuilder(text.length)
             var index = 0
             while (index < text.length) {
+                if (index and 4095 == 0) checkEbookCancellation()
                 when (val character = text[index++]) {
                     '\r' -> {
                         if (text.getOrNull(index) == '\n') index++

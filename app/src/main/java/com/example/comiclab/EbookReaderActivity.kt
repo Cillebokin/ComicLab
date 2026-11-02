@@ -6,11 +6,13 @@ import android.os.Bundle
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.RenderProcessGoneDetail
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.FrameLayout
@@ -65,6 +67,9 @@ class EbookReaderActivity : AppCompatActivity() {
     private val style = EbookStyle()
     private var currentProgress: EbookProgress? = null
     private var pageReady = false
+    @Volatile
+    private var webReaderDestroyed = false
+    private var rendererErrorDialog: AlertDialog? = null
     private var lastProgressSavedAt = 0L
     private var isUpdatingProgressControls = false
     private var isDraggingReaderProgress = false
@@ -168,9 +173,15 @@ class EbookReaderActivity : AppCompatActivity() {
         destroyed = true
         loadGeneration++
         readerControlsController.close()
-        webReader.removeJavascriptInterface(JS_BRIDGE_NAME)
-        webReader.stopLoading()
-        webReader.destroy()
+        rendererErrorDialog?.dismiss()
+        rendererErrorDialog = null
+        if (!webReaderDestroyed) {
+            webReaderDestroyed = true
+            webReader.removeJavascriptInterface(JS_BRIDGE_NAME)
+            webReader.stopLoading()
+            (webReader.parent as? ViewGroup)?.removeView(webReader)
+            webReader.destroy()
+        }
         session?.close()
         session = null
         restoreSystemBrightness()
@@ -362,6 +373,28 @@ class EbookReaderActivity : AppCompatActivity() {
         }
         webReader.addJavascriptInterface(ReaderBridge(), JS_BRIDGE_NAME)
         webReader.webViewClient = object : WebViewClient() {
+            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                if (destroyed || webReaderDestroyed) return true
+                pageReady = false
+                webReaderDestroyed = true
+                loadGeneration++
+                loadExecutor.shutdownNow()
+                saveCurrentProgress(force = true)
+                session?.close()
+                session = null
+                // 进程退出后的 WebView 只能移除并销毁；重试时由 Activity 重建新的实例。
+                (view.parent as? ViewGroup)?.removeView(view)
+                view.destroy()
+                showError(getString(R.string.ebook_load_failed))
+                rendererErrorDialog = AlertDialog.Builder(this@EbookReaderActivity)
+                    .setMessage(R.string.ebook_load_failed)
+                    .setPositiveButton(R.string.retry) { _, _ -> recreate() }
+                    .setNegativeButton(R.string.back) { _, _ -> finish() }
+                    .setOnCancelListener { finish() }
+                    .show()
+                return true
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 return true
             }
@@ -388,7 +421,7 @@ class EbookReaderActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
-                if (destroyed) return
+                if (destroyed || webReaderDestroyed) return
                 pageReady = true
                 restoreProgress(currentProgress)
                 tvStatus.visibility = android.view.View.GONE
@@ -478,7 +511,7 @@ class EbookReaderActivity : AppCompatActivity() {
             progress ?: EbookProgress(0, 0f),
             chapterCount
         )
-        val script = "javascript:window.restoreComicLabProgress(${normalized.chapterIndex},${normalized.scrollFraction});"
+        val script = "javascript:window.restoreComicLabProgress(${normalized.chapterIndex},${normalized.scrollFraction},${normalized.coordinateVersion});"
         webReader.evaluateJavascript(script, null)
     }
 
@@ -577,7 +610,7 @@ class EbookReaderActivity : AppCompatActivity() {
     private inner class ReaderBridge {
         @JavascriptInterface
         fun reportProgress(chapterIndex: Int, fraction: Float) {
-            if (destroyed) return
+            if (destroyed || webReaderDestroyed) return
             val generation = loadGeneration
             val chapterCount = session?.book?.chapters?.size ?: return
             val reportedProgress = EbookProgress(

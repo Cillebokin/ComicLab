@@ -22,6 +22,62 @@ import org.robolectric.RobolectricTestRunner
 @LooperMode(LooperMode.Mode.PAUSED)
 class EbookReaderLifecycleRobolectricTest {
 
+    @Test
+    fun rendererExitReleasesTheBookAndHandlesTheFailureWithoutUsingTheDeadWebView() {
+        val context = RuntimeEnvironment.getApplication()
+        val controller = Robolectric.buildActivity(EbookReaderActivity::class.java,
+            Intent(context, EbookReaderActivity::class.java)).create()
+        var closes = 0
+        val fake = object : com.example.comiclab.ebook.EbookSession {
+            override val book = com.example.comiclab.ebook.EbookBook("book", null, emptyList(), emptyList())
+            override fun openResource(resourceId: String): java.io.InputStream? = null
+            override fun close() { closes++ }
+        }
+        val activity = controller.get()
+        EbookReaderActivity::class.java.getDeclaredField("session").apply { isAccessible = true; set(activity, fake) }
+        val web = activity.findViewById<android.webkit.WebView>(R.id.webEbookReader)
+        val client = org.robolectric.Shadows.shadowOf(web).webViewClient
+        try {
+            val handled = client.onRenderProcessGone(web, object : android.webkit.RenderProcessGoneDetail() {
+                override fun didCrash() = false
+                override fun rendererPriorityAtExit() = android.webkit.WebView.RENDERER_PRIORITY_IMPORTANT
+            })
+            org.junit.Assert.assertTrue("renderer exit must be handled by the reader", handled)
+            assertEquals(1, closes)
+            assertNull(web.parent)
+            val dialog = EbookReaderActivity::class.java.getDeclaredField("rendererErrorDialog")
+                .apply { isAccessible = true }.get(activity) as android.app.Dialog
+            org.junit.Assert.assertTrue(dialog.isShowing)
+        } finally {
+            controller.destroy()
+            org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle()
+        }
+        assertEquals("destroy must not close an already-released book again", 1, closes)
+    }
+
+    @Test
+    fun legacyStoredProgressKeepsItsCoordinatesUntilTheWebReaderReportsANewPosition() {
+        val application = RuntimeEnvironment.getApplication()
+        val book = File(application.cacheDir, "legacy-progress.epub").apply { writeText("fixture") }
+        try {
+            EbookProgressStore.save(application, book, EbookProgress(1, 0.75f))
+            val prefs = application.getSharedPreferences("ebook_progress_prefs", 0)
+            val editor = prefs.edit()
+            prefs.all.keys.filter { it.endsWith("_coordinate_version") }.forEach(editor::remove)
+            editor.commit()
+            assertEquals(EbookProgress(1, 0.75f, 1), EbookProgressStore.load(application, book))
+            val clamped = com.example.comiclab.ebook.EbookReaderProgressMapper.clampToBook(
+                checkNotNull(EbookProgressStore.load(application, book)), 3
+            )
+            assertEquals(1, clamped.coordinateVersion)
+            EbookProgressStore.save(application, book, EbookProgress(1, 0.5f))
+            assertEquals(2, EbookProgressStore.load(application, book)?.coordinateVersion)
+        } finally {
+            EbookProgressStore.clear(application, book)
+            book.delete()
+        }
+    }
+
     @get:Rule
     val temporaryFolder = TemporaryFolder()
 

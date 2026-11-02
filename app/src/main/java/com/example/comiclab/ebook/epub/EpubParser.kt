@@ -5,6 +5,9 @@ import com.example.comiclab.ebook.EbookBook
 import com.example.comiclab.ebook.EbookChapter
 import com.example.comiclab.ebook.EbookResource
 import com.example.comiclab.ebook.EbookResourceRecord
+import com.example.comiclab.ebook.checkEbookCancellation
+import com.example.comiclab.ebook.readEbookBytes
+import java.util.concurrent.CancellationException
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -19,6 +22,7 @@ import org.xmlpull.v1.XmlPullParser
 class EpubParser {
 
     fun parse(file: File, untitledChapterTitle: String = "未命名"): ParsedEpub {
+        checkEbookCancellation()
         if (!file.isFile || !file.canRead() || file.length() <= 0L) {
             throw EpubParseException(EpubParseError.INVALID_FILE, "EPUB file is not readable")
         }
@@ -33,6 +37,8 @@ class EpubParser {
             throw EpubParseException(EpubParseError.INVALID_ARCHIVE, "EPUB archive is invalid", error)
         } catch (error: IOException) {
             throw EpubParseException(EpubParseError.INVALID_ARCHIVE, "Unable to read EPUB archive", error)
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: RuntimeException) {
             throw EpubParseException(EpubParseError.INVALID_PACKAGE, "Unable to parse EPUB package", error)
         }
@@ -49,7 +55,7 @@ class EpubParser {
         } else {
             val references = runCatching {
                 readEncryptedDataReferences(zipFile.getInputStream(encryptionEntry))
-            }.getOrNull()
+            }.onFailure { if (it is CancellationException) throw it }.getOrNull()
             if (references.isNullOrEmpty() || references.any { reference ->
                     reference.algorithm !in FONT_OBFUSCATION_ALGORITHMS || reference.uri.isBlank()
                 }
@@ -62,7 +68,7 @@ class EpubParser {
         val mimetypeEntry = zipFile.getEntry(MIMETYPE_ENTRY)
             ?: throw EpubParseException(EpubParseError.MISSING_MIMETYPE, "EPUB mimetype is missing")
         val mimetype = zipFile.getInputStream(mimetypeEntry).use { input ->
-            String(input.readBytes(), StandardCharsets.US_ASCII).trim()
+            String(input.readEbookBytes(), StandardCharsets.US_ASCII).trim()
         }
         if (mimetype != EPUB_MIMETYPE) {
             throw EpubParseException(EpubParseError.MISSING_MIMETYPE, "EPUB mimetype is invalid")
@@ -113,6 +119,7 @@ class EpubParser {
         val css = StringBuilder()
 
         resolvedManifest.forEach { item ->
+            checkEbookCancellation()
             if (item.mediaType == CSS_MIME_TYPE) {
                 readZipEntry(zipFile, item.path)?.let { css.append(it).append('\n') }
             }
@@ -163,6 +170,7 @@ class EpubParser {
             val parser = newParser(input)
             var rootFilePath: String? = null
             while (parser.next() != XmlPullParser.END_DOCUMENT) {
+                checkEbookCancellation()
                 if (parser.eventType == XmlPullParser.START_TAG && parser.name == "rootfile") {
                     val candidate = parser.getAttributeValue(null, "full-path")
                     if (candidate != null &&
@@ -191,6 +199,7 @@ class EpubParser {
             var algorithmCount = 0
             var referenceCount = 0
             while (parser.next() != XmlPullParser.END_DOCUMENT) {
+                checkEbookCancellation()
                 when (parser.eventType) {
                     XmlPullParser.START_TAG -> when (parser.name.substringAfterLast(':')) {
                         "EncryptedData" -> {
@@ -247,6 +256,7 @@ class EpubParser {
             var spineTocId: String? = null
 
             while (parser.next() != XmlPullParser.END_DOCUMENT) {
+                checkEbookCancellation()
                 if (parser.eventType != XmlPullParser.START_TAG) {
                     continue
                 }
@@ -331,6 +341,7 @@ class EpubParser {
             .filter { it.linear }
             .ifEmpty { packageData.spine }
         return spineItems.mapNotNull { spineItem ->
+            checkEbookCancellation()
             val item = manifestById[spineItem.idref] ?: return@mapNotNull null
             if (item.mediaType != XHTML_MIME_TYPE && item.mediaType != HTML_MIME_TYPE) {
                 return@mapNotNull null
@@ -361,6 +372,7 @@ class EpubParser {
         }
         val points = ArrayDeque<NcxPoint>()
         while (parser.next() != XmlPullParser.END_DOCUMENT) {
+                checkEbookCancellation()
             when (parser.eventType) {
                 XmlPullParser.START_TAG -> when (parser.name.substringAfterLast(':')) {
                     "navPoint" -> points.addLast(NcxPoint())
@@ -394,7 +406,7 @@ class EpubParser {
 
     private fun readZipEntry(zipFile: ZipFile, path: String): String? {
         val entry = zipFile.getEntry(path) ?: return null
-        return zipFile.getInputStream(entry).use { input -> decodeXml(input.readBytes()) }
+        return zipFile.getInputStream(entry).use { input -> decodeXml(input.readEbookBytes()) }
     }
 
     private fun extractBody(source: String): String {

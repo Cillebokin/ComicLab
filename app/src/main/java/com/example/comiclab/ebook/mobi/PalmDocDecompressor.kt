@@ -1,10 +1,14 @@
 package com.example.comiclab.ebook.mobi
 
+import com.example.comiclab.ebook.checkEbookCancellation
+
 object PalmDocDecompressor {
 
     fun decompress(input: ByteArray): ByteArray {
+        checkEbookCancellation()
         val output = ByteOutput(input.size)
         var index = 0
+        var untilCancellationCheck = 4096
 
         fun readByte(): Int {
             if (index >= input.size) {
@@ -17,6 +21,10 @@ object PalmDocDecompressor {
         }
 
         while (index < input.size) {
+            if (--untilCancellationCheck == 0) {
+                checkEbookCancellation()
+                untilCancellationCheck = 4096
+            }
             val value = readByte()
             when {
                 value == 0 -> output.add(0)

@@ -27,19 +27,23 @@ class MobiBookSession private constructor(
 
         return runCatching {
             val input = FileInputStream(sourceFile)
-            var remainingOffset = record.offset
-            while (remainingOffset > 0L) {
-                val skipped = input.skip(remainingOffset)
-                if (skipped > 0L) {
-                    remainingOffset -= skipped
-                } else if (input.read() >= 0) {
-                    remainingOffset--
-                } else {
-                    input.close()
-                    return null
+            var transferred = false
+            try {
+                var remainingOffset = record.offset
+                while (remainingOffset > 0L) {
+                    val skipped = input.skip(remainingOffset)
+                    if (skipped > 0L) {
+                        remainingOffset -= skipped
+                    } else if (input.read() >= 0) {
+                        remainingOffset--
+                    } else {
+                        return@runCatching null
+                    }
                 }
+                LimitedInputStream(input, record.length.toLong()).also { transferred = true }
+            } finally {
+                if (!transferred) input.close()
             }
-            LimitedInputStream(input, record.length.toLong())
         }.getOrNull()
     }
 

@@ -23,6 +23,8 @@ internal interface ReaderPageAdapterController {
 
     fun trimMemory(level: Int)
 
+    fun onReaderResumed() {}
+
     fun flushPendingRefreshesIfIdle()
 
     fun close()

@@ -483,7 +483,7 @@ class AndroidStoresRobolectricTest {
                     .commit()
             )
             assertEquals(
-                com.example.comiclab.ebook.EbookProgress(7, 0.75f),
+                com.example.comiclab.ebook.EbookProgress(7, 0.75f, coordinateVersion = 1),
                 com.example.comiclab.core.store.EbookProgressStore.load(context, file)
             )
 
@@ -496,7 +496,7 @@ class AndroidStoresRobolectricTest {
                 com.example.comiclab.ebook.EbookProgress(0, 1f),
                 com.example.comiclab.core.store.EbookProgressStore.load(context, file)
             )
-            assertEquals(setOf(fileChapterKey, fileFractionKey, otherChapterKey, otherFractionKey), preferences.all.keys)
+            assertEquals(setOf(fileChapterKey, fileFractionKey, "ebook_progress_${key}_coordinate_version", otherChapterKey, otherFractionKey), preferences.all.keys)
             assertEquals(3, preferences.getInt(otherChapterKey, -1))
             assertEquals(0.4f, preferences.getFloat(otherFractionKey, -1f))
 

@@ -9,6 +9,26 @@ import org.junit.Test
 class Kf8ParserTest {
 
     @Test
+    fun cancelledReconstructionIsNotSwallowedByTheRawMarkupFallback() {
+        val charset = StandardCharsets.UTF_8
+        val skeleton = "<html><body><h1>Chapter</h1></body></html>"
+        val fragment = "<p>content</p>"
+        val records = validRecords(skeleton, fragment, charset)
+        val warnings = mutableListOf<Throwable?>()
+        org.junit.Assert.assertThrows(java.util.concurrent.CancellationException::class.java) {
+            Kf8Parser(warn = { _, error -> warnings += error }).parse(
+                rawMarkup = (skeleton + fragment).toByteArray(charset),
+                charset = charset,
+                header = records.first(),
+                headerRecordIndex = 0,
+                totalRecordCount = records.size,
+                readRecord = { throw java.util.concurrent.CancellationException("cancel reconstruction") }
+            )
+        }
+        assertTrue("cancellation must not be reported as a corrupt book", warnings.isEmpty())
+    }
+
+    @Test
     fun reconstructsBodyWhenIndexEntryOffsetsPrecedeIdxt() {
         val charset = StandardCharsets.UTF_8
         val skeleton = "<html><body><h1>Chapter</h1></body></html>"
