@@ -132,6 +132,8 @@ internal class MangaPageAdapter(
     @Volatile
     private var pdfFastScrollMode = false
     @Volatile
+    private var pdfPreviewUpgradeAllowed = true
+    @Volatile
     private var pdfIdlePreviewPreloadMode = false
     private val positionMapper = ReaderPagePositionMapper(
         sourceItemCount = entries.size,
@@ -289,6 +291,7 @@ internal class MangaPageAdapter(
     }
 
     override fun onBindViewHolder(holder: PageViewHolder, adapterPosition: Int) {
+        if (isPdfSource) pdfPreviewUpgradeAllowed = recyclerView.scrollState == RecyclerView.SCROLL_STATE_IDLE
         val previousPosition = holder.boundPosition
         if (previousPosition != RecyclerView.NO_POSITION) {
             boundPositions.remove(previousPosition)
@@ -359,6 +362,7 @@ internal class MangaPageAdapter(
             return
         }
         pdfFastScrollMode = isPdfSource && isFastScroll && !isIdle && !isDiscreteJump
+        pdfPreviewUpgradeAllowed = isIdle || isDiscreteJump
         pdfIdlePreviewPreloadMode = isPdfSource && isIdle && !isDiscreteJump
         val desiredDecodeThreadCount = pdfDecodeThreadCountForScroll(
             isPdfSource = isPdfSource,
@@ -1221,6 +1225,10 @@ internal class MangaPageAdapter(
         if (isPdfSource && fullBitmap(position) != null) {
             return
         }
+        // 已有首图时先保留它，移动中不反复升级大预览并挤出邻页的紧凑首图。
+        if (isPdfSource && previewBitmap(position) != null &&
+            (!pdfPreviewUpgradeAllowed || pdfFastScrollMode)
+        ) return
         if (previewBitmap(position) != null &&
             (!isPdfSource || previewBitmapDecodeWidth(position) >= requestedTargetWidth)
         ) {
@@ -1271,9 +1279,15 @@ internal class MangaPageAdapter(
                 if (isPreload && !isUsefulPreviewPreload(position, generation)) {
                     return@submitTask
                 }
+                if (!isPreload && !isCurrentPdfPreviewRequest(position)) return@submitTask
+                if (isPdfSource && previewBitmap(position) != null &&
+                    (!pdfPreviewUpgradeAllowed || pdfFastScrollMode)
+                ) return@submitTask
                 val requestedDecodeWidth =
                     (targetWidthOverride ?: previewDecodeWidth(isPreload)).coerceAtLeast(1)
-                val targetWidth = if (stageVisiblePdfPreview &&
+                        .let { width -> if (isPdfSource && pdfFastScrollMode && !isPreload)
+                            minOf(width, PDF_FAST_PREVIEW_DECODE_WIDTH) else width }
+                var targetWidth = if (stageVisiblePdfPreview &&
                     previewBitmapDecodeWidth(position) == 0
                 ) {
                     minOf(requestedDecodeWidth, PDF_VISIBLE_PREVIEW_FIRST_STAGE_WIDTH)
@@ -1284,6 +1298,7 @@ internal class MangaPageAdapter(
                     return@submitTask
                 }
 
+                var skippedStalePreview = false
                 val bitmap = decodeWithRenderDiagnostics(
                     position = position,
                     kind = "PREVIEW",
@@ -1291,8 +1306,20 @@ internal class MangaPageAdapter(
                     targetHeight = null
                 ) {
                     runCatching {
-                        decodeSessionForCurrentThread()
-                            .decodePreviewForWidth(entries[position], targetWidth)
+                        val decoder = decodeSessionForCurrentThread()
+                        if ((!isPreload && !isCurrentPdfPreviewRequest(position)) ||
+                            (isPdfSource && previewBitmap(position) != null &&
+                                (!pdfPreviewUpgradeAllowed || pdfFastScrollMode))
+                        ) {
+                            skippedStalePreview = true
+                            PdfReaderDiagnostics.nativePhase("stale", "page=${position + 1} reason=preview_no_longer_needed")
+                            null
+                        } else {
+                            if (isPdfSource && pdfFastScrollMode && !isPreload) {
+                                targetWidth = minOf(targetWidth, PDF_FAST_PREVIEW_DECODE_WIDTH)
+                            }
+                            decoder.decodePreviewForWidth(entries[position], targetWidth)
+                        }
                     }.onFailure {
                         handleDecodeFailure(
                             position = position,
@@ -1303,6 +1330,7 @@ internal class MangaPageAdapter(
                     }.getOrNull()
                 }
 
+                if (skippedStalePreview) return@submitTask
                 if (bitmap == null) {
                     if (isPdfSource || !isPreload) {
                         failedPreviewPages.add(position)
@@ -2174,6 +2202,10 @@ internal class MangaPageAdapter(
         return !isPdfSource || visibleWindowEnd < visibleWindowStart ||
             position in visibleWindowStart..visibleWindowEnd
     }
+
+    private fun isCurrentPdfPreviewRequest(position: Int): Boolean =
+        !isPdfSource || visibleWindowEnd < visibleWindowStart ||
+            position in visibleWindowStart..visibleWindowEnd || position in boundPositions
 
     private fun schedulePdfIdleFullDecode(position: Int) {
         if (!isPdfSource || closed || position !in entries.indices ||

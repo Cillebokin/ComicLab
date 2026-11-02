@@ -38,6 +38,115 @@ class MangaPageAdapterTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
 
+    @Test fun aMissingPreviewRechecksItsSizeIfFastScrollBeginsWhileAcquiringTheSession() {
+        val acquiring = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val session = FakeReaderSession(pdfSource = true)
+        val adapter = newAdapter(session, listOf("page.pdf"))
+        MangaPageAdapter::class.java.getDeclaredField("decodeSessionForWorker").apply {
+            isAccessible = true
+            set(adapter, object : ThreadLocal<ComicArchive.ImageReaderSession>() {
+                override fun initialValue(): ComicArchive.ImageReaderSession {
+                    acquiring.countDown(); awaitUninterruptibly(release); return session
+                }
+            })
+        }
+        try {
+            requestPreview(adapter, 0)
+            assertTrue(acquiring.await(5, TimeUnit.SECONDS))
+            adapter.preloadAround(0, 1, isFastScroll = true)
+            release.countDown()
+            assertTrue(awaitCondition { adapter.loadingPreviewPagesForTest.isEmpty() })
+            assertEquals(360, session.previewWidths.first().second)
+        } finally { release.countDown(); closeAndAwait(adapter, session) }
+    }
+
+    @Test fun anIdleUpgradeBlockedOnSessionAcquisitionIsSkippedIfMotionBegins() {
+        val acquiring = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val session = FakeReaderSession(pdfSource = true)
+        val recycler = RecyclerView(RuntimeEnvironment.getApplication())
+        val adapter = newAdapter(session, listOf("page.pdf"), recyclerView = recycler)
+        val compact = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+        MangaPageAdapter::class.java.getDeclaredMethod("putPreviewBitmap", Int::class.javaPrimitiveType,
+            Bitmap::class.java, Int::class.javaPrimitiveType).apply { isAccessible = true }.invoke(adapter, 0, compact, 360)
+        MangaPageAdapter::class.java.getDeclaredField("decodeSessionForWorker").apply {
+            isAccessible = true
+            set(adapter, object : ThreadLocal<ComicArchive.ImageReaderSession>() {
+                override fun initialValue(): ComicArchive.ImageReaderSession {
+                    acquiring.countDown(); awaitUninterruptibly(release); return session
+                }
+            })
+        }
+        try {
+            requestPreview(adapter, 0)
+            assertTrue(acquiring.await(5, TimeUnit.SECONDS))
+            setScrollStateForTest(recycler, RecyclerView.SCROLL_STATE_SETTLING)
+            adapter.preloadAround(0, 1, isFastScroll = true)
+            release.countDown()
+            assertTrue(awaitCondition { adapter.loadingPreviewPagesForTest.isEmpty() })
+            assertTrue("an upgrade must recheck motion after acquiring its session", session.previewWidths.isEmpty())
+            assertFalse(adapter.failedPreviewPagesForTest.contains(0))
+            setScrollStateForTest(recycler, RecyclerView.SCROLL_STATE_IDLE)
+            adapter.preloadAround(0, 1, isIdle = true)
+            assertTrue(awaitCondition { session.previewWidths.any { it.second == 1080 } })
+        } finally { release.countDown(); closeAndAwait(adapter, session); compact.recycle() }
+    }
+
+    @Test fun aPreviewThatBecomesObsoleteDuringSessionAcquisitionDoesNotEnterNativeRendering() {
+        val acquiring = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val session = FakeReaderSession(pdfSource = true)
+        val adapter = newAdapter(session, (0..20).map { "page-$it.pdf" })
+        val local = object : ThreadLocal<ComicArchive.ImageReaderSession>() {
+            override fun initialValue(): ComicArchive.ImageReaderSession {
+                acquiring.countDown(); awaitUninterruptibly(release); return session
+            }
+        }
+        MangaPageAdapter::class.java.getDeclaredField("decodeSessionForWorker").apply {
+            isAccessible = true; set(adapter, local)
+        }
+        try {
+            requestPreview(adapter, 0)
+            assertTrue(acquiring.await(5, TimeUnit.SECONDS))
+            adapter.preloadAround(10, 1, isFastScroll = true)
+            release.countDown()
+            assertTrue(awaitCondition { !adapter.loadingPreviewPagesForTest.contains(0) })
+            assertFalse("an obsolete request must not consume a native page render", session.previewWidths.any { it.first == "page-0.pdf" })
+            assertFalse("cancellation must not poison retry state", adapter.failedPreviewPagesForTest.contains(0))
+        } finally { release.countDown(); closeAndAwait(adapter, session) }
+    }
+
+    @Test fun cachedVisiblePreviewDoesNotQueueQualityWorkDuringMotionButUpgradesAtIdle() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val bitmaps = CopyOnWriteArrayList<Bitmap>()
+        val session = FakeReaderSession(pdfSource = true, previewDecoder = {
+            if (it == "busy.pdf") { started.countDown(); awaitUninterruptibly(release) }
+            Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).also(bitmaps::add)
+        })
+        val recycler = RecyclerView(RuntimeEnvironment.getApplication())
+        setScrollStateForTest(recycler, RecyclerView.SCROLL_STATE_SETTLING)
+        val adapter = newAdapter(session, listOf("busy.pdf", "visible.pdf", "next.pdf"), recyclerView = recycler)
+        try {
+            requestPreview(adapter, 0)
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            val compact = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).also(bitmaps::add)
+            MangaPageAdapter::class.java.getDeclaredMethod("putPreviewBitmap", Int::class.javaPrimitiveType,
+                Bitmap::class.java, Int::class.javaPrimitiveType).apply { isAccessible = true }.invoke(adapter, 1, compact, 360)
+            adapter.preloadAround(1, 1, isFastScroll = true)
+            assertFalse("quality work must not occupy the queue while pages are moving", adapter.loadingPreviewPagesForTest.contains(1))
+            assertSame(compact, adapter.cachedPreviewForTest(1))
+            setScrollStateForTest(recycler, RecyclerView.SCROLL_STATE_IDLE)
+            adapter.preloadAround(1, 1, isIdle = true)
+            release.countDown()
+            assertTrue(awaitCondition { session.previewWidths.contains("visible.pdf" to 1080) })
+        } finally {
+            release.countDown(); closeAndAwait(adapter, session)
+            bitmaps.forEach { it.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
     @Test fun aLateCreatedPdfAdapterWaitsForAnExplicitResumeBeforeStartingPeriodicDiagnostics() {
         val session = FakeReaderSession(pdfSource = true)
         val adapter = newAdapter(session, listOf("page.pdf"))
@@ -158,6 +267,8 @@ class MangaPageAdapterTest {
             // RecyclerView can reuse an already bound prefetch holder without another onBind.
             adapter.preloadAround(1, 1, isFastScroll = true, isIdle = false)
             assertTrue("a visible page must not wait until scrolling stops", started.await(2, TimeUnit.SECONDS))
+            assertTrue("even an unbound fast viewport must start with a compact first image",
+                session.previewWidths.contains("current.pdf" to 360))
             assertFalse("memory pressure must still suppress background work", session.previewWidths.any { it.first == "next.pdf" })
         } finally {
             release.countDown()
@@ -318,6 +429,12 @@ class MangaPageAdapterTest {
             assertEquals("first show a quick preview before the full-width render", 720, session.previewWidths.first().second)
 
             releaseFirstPreview.countDown()
+            assertTrue("the first preview should remain available during movement", awaitCondition {
+                adapter.cachedPreviewForTest(0) != null
+            })
+            assertEquals(1L, screenWidthPreviewStarted.count)
+            setScrollStateForTest(recyclerView, RecyclerView.SCROLL_STATE_IDLE)
+            adapter.preloadAround(0, 1, isIdle = true)
             assertTrue("the screen-width upgrade should follow the first preview", awaitCondition {
                 screenWidthPreviewStarted.count == 0L && session.previewWidths.contains("page.pdf" to 1_080)
             })
@@ -456,7 +573,7 @@ class MangaPageAdapterTest {
             })
             assertEquals(
                 "queued preview work for pages passed during a fast scroll should be discarded",
-                listOf(entries.first(), entries.last(), entries.last()),
+                listOf(entries.first(), entries.last()),
                 decodedEntries.toList()
             )
         } finally {
@@ -717,8 +834,9 @@ class MangaPageAdapterTest {
         try {
             bind(adapter, holder, 0)
             assertTrue("the active PDF preview should block the worker", firstPreviewStarted.await(5, TimeUnit.SECONDS))
+            setScrollStateForTest(recyclerView, RecyclerView.SCROLL_STATE_IDLE)
             adapter.preloadAround(0, 1, 1, isFastScroll = false, isIdle = true)
-            adapter.ensurePreviewForTest(20, priority = 90, generation = 0, isPreload = false)
+            bind(adapter, createHolder(adapter, recyclerView), 20)
 
             releaseFirstPreview.countDown()
             assertTrue("the next page should be prefetched at screen width while distant pages stay compact", awaitCondition {
@@ -821,7 +939,7 @@ class MangaPageAdapterTest {
     }
 
     @Test
-    fun visiblePdfPageUpgradesAnInFlightCompactPreviewWhileFastScrolling() {
+    fun visiblePdfPageKeepsInFlightCompactPreviewUntilFastScrollingSettles() {
         val compactPreviewStarted = CountDownLatch(1)
         val releaseCompactPreview = CountDownLatch(1)
         val pageOnePreviewCalls = AtomicInteger(0)
@@ -854,7 +972,12 @@ class MangaPageAdapterTest {
             assertTrue("the compact preview should finish", awaitCondition {
                 adapter.cachedPreviewForTest(1) != null
             })
-            assertTrue("a visible page must upgrade even before the fast scroll settles", awaitCondition {
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(200, TimeUnit.MILLISECONDS)
+            assertFalse("a moving page must retain its compact preview instead of competing for first images",
+                session.previewWidths.contains(entries[1] to 1_080))
+            setScrollStateForTest(recyclerView, RecyclerView.SCROLL_STATE_IDLE)
+            adapter.preloadAround(1, 1, isIdle = true)
+            assertTrue("screen quality must resume after scrolling settles", awaitCondition {
                 session.previewWidths.contains(entries[1] to 1_080)
             })
         } finally {

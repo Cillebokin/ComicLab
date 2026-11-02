@@ -264,11 +264,80 @@ class MangaReaderPhase5DeviceAcceptanceTest {
     }
 
     @Test
+    fun largestPdfContinuousRealGesturesCaptureFramesAndExportDiagnostics() {
+        val pdf = File(context.getExternalFilesDir(null), "reader-priority.pdf")
+        assertTrue("supply the real PDF in the isolated test package", pdf.isFile)
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_TOP_TO_BOTTOM)
+        val activity = launchReader(pdf, allowPreviewReady = true)
+        val directory = File(context.getExternalFilesDir(null), "pdf-gestures-${if (BuildConfig.DEBUG) "debug" else "release"}").apply { mkdirs() }
+        val samples = mutableListOf<String>()
+        fun sample(label: String) {
+            val memory = android.os.Debug.MemoryInfo().also(android.os.Debug::getMemoryInfo)
+            val position = onMain { activity.currentReaderPositionForTest }
+            samples += "$label page=${position + 1} totalPssKb=${memory.totalPss} nativePssKb=${memory.nativePss} dalvikPssKb=${memory.dalvikPss}"
+        }
+        try {
+            onMain { activity.jumpReaderToPageForTest(40.coerceAtMost(activity.imageEntriesForTest.lastIndex)) }
+            sample("before")
+            repeat(24) { step ->
+                val rect = onMain { android.graphics.Rect().also { activity.listReaderPagesForTest.getGlobalVisibleRect(it) } }
+                val forward = step < 8 || step >= 16
+                val x = rect.exactCenterX()
+                val from = rect.top + rect.height() * if (forward) .8f else .2f
+                val to = rect.top + rect.height() * if (forward) .2f else .8f
+                val down = SystemClock.uptimeMillis()
+                fun inject(action: Int, y: Float) {
+                    MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x, y, 0).also { event ->
+                        event.source = InputDevice.SOURCE_TOUCHSCREEN
+                        try { assertTrue(instrumentation.uiAutomation.injectInputEvent(event, false)) }
+                        finally { event.recycle() }
+                    }
+                }
+                inject(MotionEvent.ACTION_DOWN, from)
+                repeat(6) { move ->
+                    SystemClock.sleep(16)
+                    inject(MotionEvent.ACTION_MOVE, from + (to - from) * (move + 1) / 6)
+                }
+                inject(MotionEvent.ACTION_UP, to)
+                SystemClock.sleep(40)
+                if (step % 4 == 3) {
+                    sample("gesture-$step")
+                    val screenshot = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+                    try { File(directory, "gesture-$step.png").outputStream().use {
+                        assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, it))
+                    } } finally { screenshot.recycle() }
+                }
+            }
+            val waitStarted = SystemClock.elapsedRealtime()
+            awaitCondition("the final visible pages did not display valid bitmaps") {
+                onMain {
+                    val list = activity.listReaderPagesForTest
+                    val holders = (0 until list.childCount).map { list.getChildViewHolder(list.getChildAt(it)) }
+                        .filterIsInstance<com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder>()
+                    holders.isNotEmpty() && holders.all {
+                        val bitmap = (it.imageView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                        bitmap != null && !bitmap.isRecycled
+                    }
+                }
+            }
+            samples += "settleWaitMs=${SystemClock.elapsedRealtime() - waitStarted}"
+            sample("after")
+            assertTrue("real gestures should change reading position", samples.mapNotNull {
+                Regex("page=([0-9]+)").find(it)?.groupValues?.get(1)
+            }.distinct().size > 2)
+        } finally {
+            File(directory, "samples.txt").writeText("debug=${BuildConfig.DEBUG} pdfBytes=${pdf.length()}\n" + samples.joinToString("\n"))
+            com.example.comiclab.core.diagnostics.CrashLogManager.createLatestCrashLogExport(context)
+                ?.copyTo(File(directory, "diagnostics.txt"), overwrite = true)
+        }
+    }
+
+    @Test
     fun pdfRapidTurnsAndBackgroundReturnKeepRenderingAvailable() {
         val supplied = File(context.getExternalFilesDir(null), "reader-priority.pdf")
         val pdf = if (supplied.isFile) supplied else createPdf("pdf-priority.pdf", pageCount = 30)
         onMain { AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_TOP_TO_BOTTOM) }
-        val activity = launchReader(pdf)
+        val activity = launchReader(pdf, allowPreviewReady = true)
         val adapter = onMain { activity.pageAdapterForTest }!!
         val lowMemory = adapter.javaClass.getDeclaredField("pdfLowMemoryMode").apply { isAccessible = true }
         val count = activity.imageEntriesForTest.size
@@ -298,9 +367,11 @@ class MangaReaderPhase5DeviceAcceptanceTest {
             instrumentation.uiAutomation.executeShellCommand("input keyevent KEYCODE_HOME")
         ).close()
         awaitCondition("reader did not leave the foreground") { onMain { resumedReader() == null } }
-        ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(
-            "am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n ${context.packageName}/com.example.comiclab.MainActivity -f 0x10200000"
-        )).bufferedReader().use { it.readText() }
+        // MainActivity 为 singleTask，重新启动它会清除上面的阅读页；这里模拟从最近任务返回。
+        onMain {
+            val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            manager.appTasks.first { it.taskInfo.taskId == activity.taskId }.moveToFront()
+        }
         awaitCondition("reader did not resume its existing session") { onMain { resumedReader() === activity } }
         assertFalse("returning to the reader must enable normal quality and preloads", lowMemory.getBoolean(adapter))
         android.util.Log.i("ReaderPriorityAcceptance", "pdfBytes=${pdf.length()} pages=$count targetBitmapWaitMs=$waits")
@@ -341,7 +412,8 @@ class MangaReaderPhase5DeviceAcceptanceTest {
     private fun launchReader(
         archive: File,
         preparedCacheDirectory: File? = null,
-        debugStressIterations: Int = 0
+        debugStressIterations: Int = 0,
+        allowPreviewReady: Boolean = false
     ): MangaReaderActivity {
         val browser = ensureBrowserForeground()
         val intent = Intent(context, MangaReaderActivity::class.java)
@@ -356,7 +428,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
             intent.putExtra(MangaReaderActivity.EXTRA_DEBUG_READER_STRESS_DELAY_MS, 90L)
         }
         onMain { browser.startActivity(intent) }
-        return awaitReadyReader()
+        return awaitReadyReader(allowPreviewReady = allowPreviewReady)
     }
 
     private fun ensureBrowserForeground(): MainActivity {
@@ -371,7 +443,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         }
     }
 
-    private fun awaitReadyReader(previous: MangaReaderActivity? = null): MangaReaderActivity {
+    private fun awaitReadyReader(previous: MangaReaderActivity? = null, allowPreviewReady: Boolean = false): MangaReaderActivity {
         var readyReader: MangaReaderActivity? = null
         try {
             awaitCondition("reader did not load and render its first page") {
@@ -384,6 +456,14 @@ class MangaReaderPhase5DeviceAcceptanceTest {
                         (0 until recyclerView.childCount).any { index ->
                             (findZoomView(recyclerView.getChildAt(index)) as? ReaderSubsamplingImageView)
                                 ?.isImageLoaded() == true
+                        }
+                    } else if (allowPreviewReady) {
+                        // PDF显示回归从实际已显示的预览开始；首屏性能指标由其他验收检查。
+                        (0 until recyclerView.childCount).any { index ->
+                            val holder = recyclerView.getChildViewHolder(recyclerView.getChildAt(index))
+                                as? com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder
+                            val bitmap = (holder?.imageView?.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                            bitmap != null && !bitmap.isRecycled
                         }
                     } else {
                         current.firstReaderPageReadyMetricReportedForTest
