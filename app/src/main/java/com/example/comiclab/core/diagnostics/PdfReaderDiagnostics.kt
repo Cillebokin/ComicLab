@@ -59,7 +59,9 @@ internal object PdfReaderDiagnostics {
         private val counters = linkedMapOf<String, Long>()
         private data class Task(val page: Int, val kind: String, var phase: String, val since: Long,
             var phaseSince: Long = since)
-        private data class Placeholder(val page: Int, val since: Long, var boundAt: Long? = null)
+        private data class Placeholder(val page: Int, val since: Long, var boundAt: Long? = null, var cachedAt: Long? = null,
+            val trace: ArrayDeque<String> = ArrayDeque())
+        private val slowEvidence = ArrayDeque<String>()
         private val tasks = linkedMapOf<Long, Task>()
         private val placeholders = linkedMapOf<Long, Placeholder>()
         private var placeholderSequence = 0L
@@ -72,10 +74,16 @@ internal object PdfReaderDiagnostics {
         private var bindMax = 0L
         private var latestViewport = "none"
 
-        private fun event(name: String, fields: String = "") {
+        private fun event(name: String, fields: String = "", page: Int? = null) {
             counters[name] = (counters[name] ?: 0) + 1
             if (history.size == 64) { history.removeFirst(); dropped++ }
-            history.addLast("tMs=${ms(clock() - started)} event=$name $fields".trimEnd())
+            val line = "tMs=${ms(clock() - started)} event=$name $fields".trimEnd()
+            history.addLast(line)
+            if (page != null) placeholders.values.filter { it.page == page }.forEach {
+                if (it.trace.size == 32) it.trace.removeFirst()
+                it.trace.addLast(line)
+                if (name == "cache_accepted") it.cachedAt = clock()
+            }
         }
 
         private fun makeRoom() {
@@ -91,7 +99,7 @@ internal object PdfReaderDiagnostics {
             if (closedAt != null) return@synchronized
             makeRoom()
             tasks[id] = Task(position + 1, kind, "queued", clock())
-            event("queued", "task=$id page=${position + 1} kind=$kind preload=$preload pending=$pending")
+            event("queued", "task=$id page=${position + 1} kind=$kind preload=$preload pending=$pending", position + 1)
         }
 
         fun started(id: Long, queueNanos: Long, position: Int? = null, kind: String? = null) = synchronized(lock) {
@@ -103,7 +111,7 @@ internal object PdfReaderDiagnostics {
             tasks[id]?.phase = "started"
             tasks[id]?.phaseSince = clock()
             queueMax = maxOf(queueMax, queueNanos)
-            event("started", "task=$id queueWaitMs=${ms(queueNanos)}")
+            event("started", "task=$id queueWaitMs=${ms(queueNanos)}", tasks[id]?.page)
         }
 
         fun phase(id: Long, phase: String, details: String = "", durationNanos: Long = 0) = synchronized(lock) {
@@ -112,7 +120,7 @@ internal object PdfReaderDiagnostics {
             tasks[id]?.phaseSince = clock()
             if (phase == "native_done") nativeMax = maxOf(nativeMax, durationNanos)
             if (phase.startsWith("legacy_diagnostic")) legacyDiagnosticMax = maxOf(legacyDiagnosticMax, durationNanos)
-            event(phase, "task=$id $details")
+            event(phase, "task=$id $details", tasks[id]?.page)
         }
 
         fun finished(id: Long) = synchronized(lock) {
@@ -150,7 +158,7 @@ internal object PdfReaderDiagnostics {
             item.boundAt = clock()
             val elapsed = clock() - item.since
             placeholderMax = maxOf(placeholderMax, elapsed)
-            event("bound", "page=${item.page} view=$id source=$source placeholderMs=${ms(elapsed)}")
+            event("bound", "page=${item.page} view=$id source=$source placeholderMs=${ms(elapsed)} lastCacheToBindMs=${item.cachedAt?.let { ms(clock() - it) } ?: "unknown"}", item.page)
         }
 
         fun binding(position: Int, durationNanos: Long) = synchronized(lock) {
@@ -167,12 +175,21 @@ internal object PdfReaderDiagnostics {
             val elapsed = clock() - bound
             drawAfterBindMax = maxOf(drawAfterBindMax, elapsed)
             event("draw", "page=${item.page} view=$id afterBindMs=${ms(elapsed)}")
+            retainSlow(id, item, "draw")
         }
 
         fun abandoned(id: Long, reason: String) = synchronized(lock) {
             if (closedAt != null) return@synchronized
             val item = placeholders.remove(id) ?: return@synchronized
             event("abandoned", "page=${item.page} view=$id reason=$reason ageMs=${ms(clock() - item.since)}")
+            retainSlow(id, item, "abandoned:$reason")
+        }
+
+        private fun retainSlow(id: Long, item: Placeholder, outcome: String) {
+            if (clock() - item.since < 250_000_000) return
+            if (slowEvidence.size == 8) slowEvidence.removeFirst()
+            slowEvidence.addLast("slow view=$id page=${item.page} outcome=$outcome ageMs=${ms(clock() - item.since)} viewport=$latestViewport\n" +
+                item.trace.joinToString("\n") + "\n" + history.last())
         }
 
         fun close() = synchronized(lock) {
@@ -192,6 +209,12 @@ internal object PdfReaderDiagnostics {
                 appendLine("counts=" + counters.entries.joinToString(" ") { "${it.key}:${it.value}" })
                 tasks.forEach { (id, item) -> appendLine("task=$id page=${item.page} kind=${item.kind} phase=${item.phase} ageMs=${ms(now - item.since)} phaseAgeMs=${ms(now - item.phaseSince)}") }
                 placeholders.forEach { (id, item) -> appendLine("view=$id page=${item.page} phase=${if (item.boundAt == null) "awaiting_bitmap" else "awaiting_draw"} ageMs=${ms(now - item.since)}") }
+                appendLine("Slow placeholder evidence (last 8 completed >=250ms; holder lifetime may include offscreen time):")
+                slowEvidence.forEach(::appendLine)
+                placeholders.filterValues { now - it.since >= 250_000_000 }.forEach { (id, item) ->
+                    appendLine("slow-active view=$id page=${item.page}")
+                    item.trace.forEach(::appendLine)
+                }
                 history.forEach(::appendLine)
             }
         }

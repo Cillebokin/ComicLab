@@ -38,6 +38,69 @@ class MangaPageAdapterTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
 
+    @Test fun rejectedPdfFirstImageDoesNotContinuouslyRequeueItsUpgrade() {
+        val session = FakeReaderSession(pdfSource = true, previewDecoder = {
+            Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
+        })
+        val adapter = newAdapter(session, listOf("0.pdf", "1.pdf"))
+        val cache = MangaPageAdapter::class.java.getDeclaredField("previewBitmapCache").apply { isAccessible = true }
+            .get(adapter) as android.util.LruCache<Int, Bitmap>
+        cache.resize(1)
+        val visible = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
+        MangaPageAdapter::class.java.getDeclaredMethod("putPreviewBitmap", Int::class.javaPrimitiveType,
+            Bitmap::class.java, Int::class.javaPrimitiveType).apply { isAccessible = true }.invoke(adapter, 0, visible, 360)
+        for (field in listOf("visibleWindowStart", "visibleWindowEnd")) {
+            MangaPageAdapter::class.java.getDeclaredField(field).apply { isAccessible = true }.setInt(adapter, 0)
+        }
+        @Suppress("UNCHECKED_CAST")
+        val bound = MangaPageAdapter::class.java.getDeclaredField("boundPositions").apply { isAccessible = true }
+            .get(adapter) as MutableSet<Int>
+        bound.add(1)
+        try {
+            requestPreview(adapter, 1)
+            assertTrue(awaitCondition { session.previewWidths.isNotEmpty() && adapter.loadingPreviewPagesForTest.isEmpty() })
+            repeat(10) { Shadows.shadowOf(Looper.getMainLooper()).idle() }
+            assertEquals("rejection must wait for viewport changes instead of requeueing", 1, session.previewWidths.size)
+        } finally { closeAndAwait(adapter, session); visible.recycle() }
+    }
+
+    @Test fun distantPdfPreviewsCannotEvictABoundFirstImageUnderCachePressure() {
+        val session = FakeReaderSession(pdfSource = true)
+        val adapter = newAdapter(session, (0..30).map { "$it.pdf" })
+        val cache = MangaPageAdapter::class.java.getDeclaredField("previewBitmapCache").apply { isAccessible = true }
+            .get(adapter) as android.util.LruCache<Int, Bitmap>
+        cache.resize(4)
+        @Suppress("UNCHECKED_CAST")
+        val bound = MangaPageAdapter::class.java.getDeclaredField("boundPositions").apply { isAccessible = true }
+            .get(adapter) as MutableSet<Int>
+        bound.add(1)
+        val images = listOf(Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888),
+            Bitmap.createBitmap(32, 16, Bitmap.Config.ARGB_8888),
+            Bitmap.createBitmap(32, 16, Bitmap.Config.ARGB_8888))
+        val put = MangaPageAdapter::class.java.getDeclaredMethod("putPreviewBitmap", Int::class.javaPrimitiveType,
+            Bitmap::class.java, Int::class.javaPrimitiveType).apply { isAccessible = true }
+        try {
+            put.invoke(adapter, 1, images[0], 360)
+            bound.add(20)
+            put.invoke(adapter, 20, images[1], 360)
+            val upgrade = Bitmap.createBitmap(64, 16, Bitmap.Config.ARGB_8888)
+            put.invoke(adapter, 20, upgrade, 1080)
+            assertTrue("offscreen HD replacement cannot borrow the old compact priority", upgrade.isRecycled)
+            assertSame(images[0], adapter.cachedPreviewForTest(1))
+            put.invoke(adapter, 20, images[1], 1080)
+            put.invoke(adapter, 21, images[2], 360)
+            assertSame("distant writes must not evict the bound first image", images[0], adapter.cachedPreviewForTest(1))
+            assertNull("offscreen large previews must give way to new compact first images", adapter.cachedPreviewForTest(20))
+            assertTrue(cache.size() <= cache.maxSize())
+            val distant = adapter.cachedPreviewForTest(21)
+            val rejected = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888)
+            put.invoke(adapter, 22, rejected, 1080)
+            assertTrue("rejected result must be released", rejected.isRecycled)
+            assertSame("failed admission must leave the old cache intact", distant, adapter.cachedPreviewForTest(21))
+            assertSame(images[0], adapter.cachedPreviewForTest(1))
+        } finally { closeAndAwait(adapter, session); images.forEach { if (!it.isRecycled) it.recycle() } }
+    }
+
     @Test fun aMissingPreviewRechecksItsSizeIfFastScrollBeginsWhileAcquiringTheSession() {
         val acquiring = CountDownLatch(1)
         val release = CountDownLatch(1)

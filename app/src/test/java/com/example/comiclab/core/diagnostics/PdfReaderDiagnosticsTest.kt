@@ -4,6 +4,27 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PdfReaderDiagnosticsTest {
+    @Test fun slowPlaceholderEvidenceSurvivesHistoryOverflowAndSeparatesCacheFromBinding() {
+        var now = 0L
+        val session = PdfReaderDiagnostics.Session("book.pdf", clock = { now })
+        val view = session.placeholderStarted(7)
+        session.queued(1, 7, "PREVIEW", false, 0)
+        now = 100_000_000
+        session.phase(1, "cache_accepted")
+        now = 600_000_000
+        session.phase(1, "cache_accepted")
+        now = 800_000_000
+        session.placeholderBound(view, "preview")
+        now = 820_000_000
+        session.drawn(view)
+        repeat(1000) { session.note("noise", "other") }
+        val text = session.snapshot()
+        assertTrue(text.contains("Slow placeholder evidence"))
+        assertTrue(text.contains("lastCacheToBindMs=200.0"))
+        assertTrue(text.contains("event=cache_accepted"))
+        assertTrue(text.contains("event=draw page=8"))
+    }
+
     @Test fun exportSeparatesQueuedNativeBindingAndDrawStagesAndKeepsUnfinishedWorkVisible() {
         var now = 0L
         val session = PdfReaderDiagnostics.Session("book.pdf", clock = { now })

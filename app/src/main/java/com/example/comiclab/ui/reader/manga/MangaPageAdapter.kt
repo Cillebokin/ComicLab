@@ -151,6 +151,8 @@ internal class MangaPageAdapter(
 
         override fun entryRemoved(evicted: Boolean, key: Int, oldValue: Bitmap, newValue: Bitmap?) {
             previewBitmapDecodeWidths.remove(key)
+            if (isPdfSource && newValue == null) pdfDiagnostics?.note("preview_removed",
+                "page=${key + 1} reason=${if (evicted) "lru" else "explicit"} bytes=${oldValue.byteCount}")
         }
     }
     private val fullBitmapCache = object : LruCache<Int, Bitmap>(
@@ -1275,6 +1277,7 @@ internal class MangaPageAdapter(
             kind = DecodeTaskKind.PREVIEW,
             cancelable = isPreload
         ) {
+            var previewAdmissionRejected = false
             try {
                 if (isPreload && !isUsefulPreviewPreload(position, generation)) {
                     return@submitTask
@@ -1363,13 +1366,13 @@ internal class MangaPageAdapter(
                     return@submitTask
                 }
 
-                putPreviewBitmap(position, bitmap, targetWidth)
-                requestItemRefresh(position, immediate = !isPreload)
+                previewAdmissionRejected = !putPreviewBitmap(position, bitmap, targetWidth)
+                if (!previewAdmissionRejected) requestItemRefresh(position, immediate = !isPreload)
             } finally {
                 if (registeredLoading) {
                     loadingPreviewPages.remove(position)
                 }
-                if (isPdfSource && visiblePdfPreviewUpgradeRequests.remove(position)) {
+                if (isPdfSource && visiblePdfPreviewUpgradeRequests.remove(position) && !previewAdmissionRejected) {
                     mainHandler.post {
                         if (!closed && position in boundPositions &&
                             previewBitmapDecodeWidth(position) < previewDecodeWidth(isPreload = false)
@@ -1387,7 +1390,7 @@ internal class MangaPageAdapter(
                         }
                     }
                 }
-                pendingPdfIdlePreviewUpgradeRequests.remove(position)?.let { request ->
+                pendingPdfIdlePreviewUpgradeRequests.remove(position)?.takeUnless { previewAdmissionRejected }?.let { request ->
                     val (targetWidth, requestGeneration) = request
                     mainHandler.post {
                         if (!closed && !pdfFastScrollMode && pdfIdlePreviewPreloadMode &&
@@ -2627,12 +2630,34 @@ internal class MangaPageAdapter(
         }
     }
 
-    private fun putPreviewBitmap(position: Int, bitmap: Bitmap, decodeWidth: Int) {
+    private fun putPreviewBitmap(position: Int, bitmap: Bitmap, decodeWidth: Int): Boolean {
         if (closed) {
             bitmap.recycle()
-            return
+            return false
         }
         val accepted = synchronized(cacheLock) {
+            if (isPdfSource) {
+                val incomingKb = (bitmap.byteCount / 1024).coerceAtLeast(1)
+                val oldKb = previewBitmapCache.get(position)?.let { (it.byteCount / 1024).coerceAtLeast(1) } ?: 0
+                val neededKb = previewBitmapCache.size() - oldKb + incomingKb - previewBitmapCache.maxSize()
+                if (incomingKb > previewBitmapCache.maxSize()) return@synchronized false
+                if (neededKb > 0) {
+                    // 普通LRU会把早已预取、即将进入视口的首图先淘汰；先让远处预览让位。
+                    val priority = pdfPreviewRetentionPriority(position, decodeWidth)
+                    val candidates = previewBitmapCache.snapshot().entries
+                        .filter { it.key != position && pdfPreviewRetentionPriority(it.key) <= priority }
+                        .sortedBy { pdfPreviewRetentionPriority(it.key) }
+                    if (candidates.sumOf { (it.value.byteCount / 1024).coerceAtLeast(1) } < neededKb) {
+                        return@synchronized false
+                    }
+                    var freedKb = 0
+                    for ((key, value) in candidates) {
+                        previewBitmapCache.remove(key)
+                        freedKb += (value.byteCount / 1024).coerceAtLeast(1)
+                        if (freedKb >= neededKb) break
+                    }
+                }
+            }
             previewBitmapCache.put(position, bitmap)
             val isAccepted = previewBitmapCache.get(position) === bitmap
             if (isAccepted) {
@@ -2647,6 +2672,16 @@ internal class MangaPageAdapter(
         if (!accepted) {
             bitmap.recycle()
         }
+        return accepted
+    }
+
+    private fun pdfPreviewRetentionPriority(position: Int, width: Int = previewBitmapDecodeWidths[position] ?: 0): Int = when {
+        position in visibleWindowStart..visibleWindowEnd -> 3
+        // 屏外holder的大预览不能长期占满预算，阻断前方紧凑首图。
+        position in boundPositions -> if (width <=
+            PDF_VISIBLE_PREVIEW_FIRST_STAGE_WIDTH) 2 else 0
+        position in preloadWindowStart..preloadWindowEnd -> 1
+        else -> 0
     }
 
     private fun canFitFullBitmapInCache(
