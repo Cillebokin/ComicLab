@@ -38,6 +38,52 @@ class MangaPageAdapterTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
 
+    @Test fun attachingPdfHolderBindsTheCachedFirstImageAfterLayoutWithoutWaitingForRetry() {
+        val session = FakeReaderSession(pdfSource = true)
+        val list = RecyclerView(RuntimeEnvironment.getApplication())
+        list.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(RuntimeEnvironment.getApplication())
+        setScrollStateForTest(list, RecyclerView.SCROLL_STATE_SETTLING)
+        val adapter = newAdapter(session, listOf("0.pdf"), recyclerView = list)
+        val holder = createHolder(adapter, list)
+        holder.boundPosition = 0
+        list.addView(holder.itemView)
+        val bitmap = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
+        MangaPageAdapter::class.java.getDeclaredMethod("putPreviewBitmap", Int::class.javaPrimitiveType,
+            Bitmap::class.java, Int::class.javaPrimitiveType).apply { isAccessible = true }.invoke(adapter, 0, bitmap, 360)
+        val layoutCounter = RecyclerView::class.java.getDeclaredField("mLayoutOrScrollCounter").apply { isAccessible = true }
+        try {
+            layoutCounter.setInt(list, 1)
+            adapter.onViewAttachedToWindow(holder)
+            assertNull("layout callback must not change the image or its geometry", holder.imageView.drawable)
+            layoutCounter.setInt(list, 0)
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            assertSame(bitmap, (holder.imageView.drawable as? BitmapDrawable)?.bitmap)
+            holder.imageView.setImageDrawable(null)
+            layoutCounter.setInt(list, 1)
+            adapter.onViewAttachedToWindow(holder)
+            holder.boundPosition = RecyclerView.NO_POSITION
+            layoutCounter.setInt(list, 0)
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            assertNull("a delayed attachment callback must not bind a reused holder", holder.imageView.drawable)
+        } finally { layoutCounter.setInt(list, 0); closeAndAwait(adapter, session); bitmap.recycle() }
+    }
+
+    @Test fun boundPdfFirstImageRefreshDoesNotEnterThePreloadCoalescingQueue() {
+        val session = FakeReaderSession(pdfSource = true)
+        val adapter = newAdapter(session, listOf("0.pdf"))
+        @Suppress("UNCHECKED_CAST")
+        val bound = MangaPageAdapter::class.java.getDeclaredField("boundPositions").apply { isAccessible = true }.get(adapter) as MutableSet<Int>
+        bound.add(0)
+        try {
+            MangaPageAdapter::class.java.getDeclaredMethod("requestItemRefresh", Int::class.javaPrimitiveType,
+                Boolean::class.javaPrimitiveType).apply { isAccessible = true }.invoke(adapter, 0, false)
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            val snapshot = com.example.comiclab.core.diagnostics.PdfReaderDiagnostics.snapshot(RuntimeEnvironment.getApplication())!!
+            assertTrue(snapshot.contains("immediate=true postWaitMs="))
+            assertFalse(snapshot.contains("reason=coalesce"))
+        } finally { closeAndAwait(adapter, session) }
+    }
+
     @Test fun rejectedPdfFirstImageDoesNotContinuouslyRequeueItsUpgrade() {
         val session = FakeReaderSession(pdfSource = true, previewDecoder = {
             Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
@@ -62,6 +108,82 @@ class MangaPageAdapterTest {
             repeat(10) { Shadows.shadowOf(Looper.getMainLooper()).idle() }
             assertEquals("rejection must wait for viewport changes instead of requeueing", 1, session.previewWidths.size)
         } finally { closeAndAwait(adapter, session); visible.recycle() }
+    }
+
+    @Test fun nearerPdfPreloadsOutlastFartherOnesUnderCachePressure() {
+        val session = FakeReaderSession(pdfSource = true)
+        val adapter = newAdapter(session, (0..30).map { "$it.pdf" })
+        previewCache(adapter).resize(3)
+        setPreviewWindows(adapter, visible = 10..10, preload = 9..14)
+        val ahead = (11..14).associateWith { bitmapKb(1) }
+        val behind = bitmapKb(1)
+        try {
+            for (position in 11..13) putPreview(adapter, position, ahead.getValue(position), 360)
+            putPreview(adapter, 14, ahead.getValue(14), 360)
+            assertTrue("a farther page must not push out pages about to enter the viewport", ahead.getValue(14).isRecycled)
+            for (position in 11..13) assertSame(ahead.getValue(position), adapter.cachedPreviewForTest(position))
+
+            putPreview(adapter, 9, behind, 360)
+            assertSame(behind, adapter.cachedPreviewForTest(9))
+            assertNull("the farthest resident page gives way first", adapter.cachedPreviewForTest(13))
+            assertSame(ahead.getValue(11), adapter.cachedPreviewForTest(11))
+            assertSame(ahead.getValue(12), adapter.cachedPreviewForTest(12))
+        } finally {
+            closeAndAwait(adapter, session)
+            (ahead.values + behind).forEach { it.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
+    @Test fun aVisiblePdfUpgradeNeverEvictsAnotherVisiblePagesPreview() {
+        val session = FakeReaderSession(pdfSource = true)
+        val adapter = newAdapter(session, listOf("0.pdf", "1.pdf", "2.pdf"))
+        previewCache(adapter).resize(3)
+        setPreviewWindows(adapter, visible = 0..1, preload = 0..2)
+        val first = bitmapKb(2)
+        val compact = bitmapKb(1)
+        val upgrade = bitmapKb(2)
+        try {
+            putPreview(adapter, 0, first, 1080)
+            putPreview(adapter, 1, compact, 720)
+            putPreview(adapter, 1, upgrade, 1080)
+            assertTrue("a rejected upgrade must be released", upgrade.isRecycled)
+            assertSame("two visible pages must not take turns losing their cached image", first, adapter.cachedPreviewForTest(0))
+            assertSame(compact, adapter.cachedPreviewForTest(1))
+        } finally {
+            closeAndAwait(adapter, session)
+            listOf(first, compact, upgrade).forEach { it.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
+    @Test fun aVisiblePdfPagesFirstImageMayStillTakeSpaceFromAnotherVisiblePage() {
+        val session = FakeReaderSession(pdfSource = true)
+        val adapter = newAdapter(session, listOf("0.pdf", "1.pdf", "2.pdf"))
+        previewCache(adapter).resize(3)
+        setPreviewWindows(adapter, visible = 0..1, preload = 0..2)
+        val first = bitmapKb(2)
+        val second = bitmapKb(2)
+        try {
+            putPreview(adapter, 0, first, 1080)
+            putPreview(adapter, 1, second, 720)
+            assertSame("a visible page without any image must always get one", second, adapter.cachedPreviewForTest(1))
+            assertNull(adapter.cachedPreviewForTest(0))
+        } finally {
+            closeAndAwait(adapter, session)
+            listOf(first, second).forEach { it.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
+    @Test fun pdfPreloadsStayCompactWhileDragging() {
+        val entries = (0..10).map { "page-$it.pdf" }
+        val session = FakeReaderSession(pdfSource = true)
+        val adapter = newAdapter(session, entries)
+        try {
+            adapter.preloadAround(0, 1, scrollDirection = 1, isFastScroll = false, isIdle = false)
+            assertTrue(awaitCondition { adapter.loadingPreviewPagesForTest.isEmpty() && session.previewWidths.size >= 4 })
+            val preloads = session.previewWidths.filter { it.first != entries[0] }
+            assertTrue(preloads.isNotEmpty())
+            assertTrue("slow dragging must not decode full-width lookahead: $preloads", preloads.all { it.second == 360 })
+        } finally { closeAndAwait(adapter, session) }
     }
 
     @Test fun distantPdfPreviewsCannotEvictABoundFirstImageUnderCachePressure() {
@@ -1347,6 +1469,28 @@ class MangaPageAdapterTest {
             {},
             {}
         )
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun previewCache(adapter: MangaPageAdapter): android.util.LruCache<Int, Bitmap> =
+        MangaPageAdapter::class.java.getDeclaredField("previewBitmapCache").apply { isAccessible = true }
+            .get(adapter) as android.util.LruCache<Int, Bitmap>
+
+    private fun bitmapKb(kb: Int): Bitmap = Bitmap.createBitmap(16 * kb, 16, Bitmap.Config.ARGB_8888)
+
+    private fun putPreview(adapter: MangaPageAdapter, position: Int, bitmap: Bitmap, width: Int) {
+        MangaPageAdapter::class.java.getDeclaredMethod("putPreviewBitmap", Int::class.javaPrimitiveType,
+            Bitmap::class.java, Int::class.javaPrimitiveType).apply { isAccessible = true }
+            .invoke(adapter, position, bitmap, width)
+    }
+
+    private fun setPreviewWindows(adapter: MangaPageAdapter, visible: IntRange, preload: IntRange) {
+        mapOf(
+            "visibleWindowStart" to visible.first, "visibleWindowEnd" to visible.last,
+            "preloadWindowStart" to preload.first, "preloadWindowEnd" to preload.last
+        ).forEach { (field, value) ->
+            MangaPageAdapter::class.java.getDeclaredField(field).apply { isAccessible = true }.setInt(adapter, value)
+        }
     }
 
     private fun requestPreview(adapter: MangaPageAdapter, position: Int) {

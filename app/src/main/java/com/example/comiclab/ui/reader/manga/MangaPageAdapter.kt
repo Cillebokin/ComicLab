@@ -332,6 +332,26 @@ internal class MangaPageAdapter(
         ensureVisiblePage(sourcePosition)
     }
 
+    override fun onViewAttachedToWindow(holder: PageViewHolder) {
+        super.onViewAttachedToWindow(holder)
+        val position = holder.boundPosition
+        if (!isPdfSource || closed || position !in entries.indices) return
+        val refresh = Runnable {
+            if (closed || holder.boundPosition != position || holder.itemView.parent !== recyclerView) return@Runnable
+            if (recyclerView.isComputingLayout) {
+                requestItemRefresh(position, immediate = true)
+            } else if (previewBitmap(position) != null || fullBitmap(position) != null) {
+                val adapterPosition = positionMapper.adapterPositionForSourcePosition(position)
+                if (adapterPosition >= 0) {
+                    pdfDiagnostics?.note("attach_cache_bind", "page=${position + 1}")
+                    bindBestAvailable(holder, position, adapterPosition)
+                }
+            }
+        }
+        // 挂载可能发生在RecyclerView布局中，等布局退出后再更新图片与页面尺寸。
+        if (recyclerView.isComputingLayout) mainHandler.post(refresh) else refresh.run()
+    }
+
     override fun onViewRecycled(holder: PageViewHolder) {
         abandonPdfDraw(holder, "recycled")
         cancelPendingTileRefresh(holder)
@@ -1912,12 +1932,17 @@ internal class MangaPageAdapter(
     }
 
     private fun requestItemRefresh(position: Int, immediate: Boolean) {
+        val refreshImmediately = immediate || (isPdfSource && position in boundPositions)
+        val requestedAt = SystemClock.elapsedRealtimeNanos()
+        pdfDiagnostics?.note("refresh_requested", "page=${position + 1} request=$requestedAt immediate=$refreshImmediately")
         if (closed || position !in entries.indices || !shouldRefreshPosition(position)) {
+            pdfDiagnostics?.note("refresh_skipped", "page=${position + 1} request=$requestedAt reason=closed_or_not_needed")
             return
         }
 
-        if (immediate) {
+        if (refreshImmediately) {
             mainHandler.post {
+                pdfDiagnostics?.note("refresh_main", "page=${position + 1} request=$requestedAt immediate=true postWaitMs=${(SystemClock.elapsedRealtimeNanos() - requestedAt) / 1_000_000.0}")
                 if (!closed && position in entries.indices && shouldRefreshPosition(position)) {
                     if (refreshBoundPositionDirectly(position)) {
                         return@post
@@ -1929,11 +1954,18 @@ internal class MangaPageAdapter(
         }
 
         mainHandler.post {
+            pdfDiagnostics?.note("refresh_main", "page=${position + 1} request=$requestedAt immediate=false postWaitMs=${(SystemClock.elapsedRealtimeNanos() - requestedAt) / 1_000_000.0}")
             if (closed || position !in entries.indices || !shouldRefreshPosition(position)) {
                 return@post
             }
 
+            if (isPdfSource && position in boundPositions) {
+                refreshPositionOrDefer(position)
+                return@post
+            }
+
             pendingRefreshPositions.add(position)
+            pdfDiagnostics?.note("refresh_pending", "page=${position + 1} request=$requestedAt reason=coalesce scheduled=$refreshScheduled")
             if (!refreshScheduled) {
                 refreshScheduled = true
                 mainHandler.postDelayed(flushRefreshRunnable, UI_REFRESH_THROTTLE_MS)
@@ -1943,10 +1975,12 @@ internal class MangaPageAdapter(
 
     private fun flushPendingRefreshes() {
         refreshScheduled = false
+        pdfDiagnostics?.note("refresh_flush", "pending=${pendingRefreshPositions.size} layout=${recyclerView.isComputingLayout}")
         if (closed) {
             return
         }
         if (recyclerView.isComputingLayout) {
+            pdfDiagnostics?.note("refresh_flush_wait", "reason=layout")
             scheduleRefreshFlush()
             return
         }
@@ -1958,6 +1992,7 @@ internal class MangaPageAdapter(
         }
 
         positions.forEach { position ->
+            pdfDiagnostics?.note("refresh_flush_page", "page=${position + 1}")
             if (closed || position !in entries.indices || !shouldRefreshPosition(position)) {
                 return@forEach
             }
@@ -1972,6 +2007,7 @@ internal class MangaPageAdapter(
                     notifyItemChanged(adapterPosition)
                 }
             } else {
+                pdfDiagnostics?.note("refresh_pending", "page=${position + 1} reason=notify_unavailable scroll=${recyclerView.scrollState} layout=${recyclerView.isComputingLayout}")
                 pendingRefreshPositions.add(position)
             }
         }
@@ -1995,6 +2031,7 @@ internal class MangaPageAdapter(
         }
 
         pendingRefreshPositions.add(position)
+        pdfDiagnostics?.note("refresh_pending", "page=${position + 1} reason=notify_unavailable scroll=${recyclerView.scrollState} layout=${recyclerView.isComputingLayout}")
         scheduleRefreshFlush()
     }
 
@@ -2009,24 +2046,38 @@ internal class MangaPageAdapter(
 
     private fun refreshBoundPositionDirectly(position: Int): Boolean {
         if (recyclerView.isComputingLayout) {
+            pdfDiagnostics?.note("refresh_direct_wait", "page=${position + 1} reason=layout")
             return false
         }
 
         val adapterPosition = positionMapper.adapterPositionForSourcePosition(position)
         if (adapterPosition < 0) {
+            pdfDiagnostics?.note("refresh_direct_wait", "page=${position + 1} reason=no_adapter_position")
             return false
         }
 
         val holder = recyclerView.findViewHolderForAdapterPosition(adapterPosition) as? PageViewHolder
-            ?: return false
+        if (holder == null) {
+            if (pdfDiagnostics != null) {
+                val attached = (0 until recyclerView.childCount).asSequence()
+                    .map { recyclerView.getChildViewHolder(recyclerView.getChildAt(it)) }
+                    .filterIsInstance<PageViewHolder>().firstOrNull { it.boundPosition == position }
+                pdfDiagnostics.note("refresh_direct_wait", "page=${position + 1} reason=holder_missing " +
+                    "attached=${attached != null} pendingUpdates=${recyclerView.hasPendingAdapterUpdates()} " +
+                    "bindingPosition=${attached?.bindingAdapterPosition} layoutPosition=${attached?.layoutPosition}")
+            }
+            return false
+        }
         if (!shouldRefreshBoundReaderPageImmediately(
                 isBoundToPosition = holder.boundPosition == position,
                 isComputingLayout = recyclerView.isComputingLayout
             )
         ) {
+            pdfDiagnostics?.note("refresh_direct_wait", "page=${position + 1} reason=holder_changed bound=${holder.boundPosition}")
             return false
         }
 
+        pdfDiagnostics?.note("refresh_direct_bind", "page=${position + 1}")
         bindBestAvailable(holder, position, adapterPosition)
         return true
     }
@@ -2479,11 +2530,8 @@ internal class MangaPageAdapter(
                 minimumWidth = PDF_MIN_PREVIEW_DECODE_WIDTH,
                 maximumWidth = PDF_MAX_PREVIEW_DECODE_WIDTH
             )
-            return if (isPreload && (pdfFastScrollMode || pdfIdlePreviewPreloadMode)) {
-                minOf(regularWidth, PDF_FAST_PREVIEW_DECODE_WIDTH)
-            } else {
-                regularWidth
-            }
+            // 预览缓存只有几MB，预加载窗口按常规宽度放不下；预加载一律用紧凑宽度，可见页自己的请求仍用常规宽度。
+            return if (isPreload) minOf(regularWidth, PDF_FAST_PREVIEW_DECODE_WIDTH) else regularWidth
         }
         return (baseDisplayWidth / 2).coerceIn(MIN_PREVIEW_DECODE_WIDTH, MAX_PREVIEW_DECODE_WIDTH)
     }
@@ -2646,9 +2694,15 @@ internal class MangaPageAdapter(
                 if (incomingKb > previewBitmapCache.maxSize()) return@synchronized false
                 if (neededKb > 0) {
                     // 普通LRU会把早已预取、即将进入视口的首图先淘汰；先让远处预览让位。
+                    // 已有首图的页做升级时不得挤掉其他可见页，否则同屏两页会轮流丢失缓存；
+                    // 可见页的首图仍可让位，保证每个可见页总有图可显示。
                     val priority = pdfPreviewRetentionPriority(position, decodeWidth)
                     val candidates = previewBitmapCache.snapshot().entries
-                        .filter { it.key != position && pdfPreviewRetentionPriority(it.key) <= priority }
+                        .filter {
+                            val retained = pdfPreviewRetentionPriority(it.key)
+                            it.key != position && retained <= priority &&
+                                (retained < PDF_VISIBLE_RETENTION || oldKb == 0)
+                        }
                         .sortedBy { pdfPreviewRetentionPriority(it.key) }
                     if (candidates.sumOf { (it.value.byteCount / 1024).coerceAtLeast(1) } < neededKb) {
                         return@synchronized false
@@ -2679,11 +2733,15 @@ internal class MangaPageAdapter(
     }
 
     private fun pdfPreviewRetentionPriority(position: Int, width: Int = previewBitmapDecodeWidths[position] ?: 0): Int = when {
-        position in visibleWindowStart..visibleWindowEnd -> 3
+        position in visibleWindowStart..visibleWindowEnd -> PDF_VISIBLE_RETENTION
         // 屏外holder的大预览不能长期占满预算，阻断前方紧凑首图。
         position in boundPositions -> if (width <=
-            PDF_VISIBLE_PREVIEW_FIRST_STAGE_WIDTH) 2 else 0
-        position in preloadWindowStart..preloadWindowEnd -> 1
+            PDF_VISIBLE_PREVIEW_FIRST_STAGE_WIDTH) 200 else 0
+        // 预加载窗口内越靠近可见区越值得保留；同分时按LRU会因近到远的访问顺序先淘汰最近的页。
+        position in preloadWindowStart..preloadWindowEnd -> 199 - minOf(
+            99,
+            if (position < visibleWindowStart) visibleWindowStart - position else position - visibleWindowEnd
+        )
         else -> 0
     }
 
@@ -2854,6 +2912,7 @@ internal class MangaPageAdapter(
         private const val PDF_MIN_PREVIEW_DECODE_WIDTH = 360
         private const val PDF_FAST_PREVIEW_DECODE_WIDTH = 360
         private const val PDF_VISIBLE_PREVIEW_FIRST_STAGE_WIDTH = 720
+        private const val PDF_VISIBLE_RETENTION = 300
         private const val PDF_FAST_SCROLL_DECODE_THREAD_COUNT = 2
         private const val PDF_IDLE_FULL_DECODE_DELAY_MS = 100L
         private const val PDF_MAX_PREVIEW_DECODE_WIDTH = 1080

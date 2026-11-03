@@ -1,4 +1,5 @@
 *.iml
+*.dm
 .gradle
 local.properties
 .externalNativeBuild
