@@ -300,9 +300,10 @@ class MangaReaderPhase5DeviceAcceptanceTest {
                             ?: return@mapNotNull null
                         val location = IntArray(2).also { child.getLocationOnScreen(it) }
                         val rect = android.graphics.Rect(location[0], location[1], location[0] + child.width, location[1] + child.height)
-                        val page = list.getChildAdapterPosition(child)
+                        val adapterPosition = list.getChildAdapterPosition(child)
+                        val sourcePosition = holder.boundPosition
                         val bitmap = (holder.imageView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
-                        "$page:${rect.top}:${rect.bottom}:${bitmap != null && !bitmap.isRecycled}:${adapter.hasCachedPreviewForTest(page)}"
+                        "${sourcePosition + 1}:$adapterPosition:${rect.top}:${rect.bottom}:${bitmap != null && !bitmap.isRecycled}:${sourcePosition >= 0 && adapter.hasCachedPreviewForTest(sourcePosition)}"
                     }
                     if (timelineCount.incrementAndGet() <= 20000) timeline.add("frame=$frame uptimeMs=${SystemClock.uptimeMillis()} viewport=${viewport.top}:${viewport.bottom} holders=${holders.joinToString(";")}")
                     postInvalidateOnAnimation()
@@ -369,7 +370,10 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         } finally {
             diagnostics.eventSinkForTest = null
             onMain { (marker.parent as? android.view.ViewGroup)?.removeView(marker) }
-            File(directory, "timeline.txt").writeText(timeline.joinToString("\n"))
+            File(directory, "timeline.txt").writeText(
+                "observation=overlay (adds sampling/drawing overhead; onDraw is not GPU presentation)\n" +
+                    "holdersFormat=sourcePage(1-based,0=blank):adapterPosition(0-based):top:bottom:bitmap:cached\n" +
+                    timeline.joinToString("\n"))
             File(directory, "samples.txt").writeText("debug=${BuildConfig.DEBUG} pdfBytes=${pdf.length()}\n" + samples.joinToString("\n"))
             com.example.comiclab.core.diagnostics.CrashLogManager.createLatestCrashLogExport(context)
                 ?.copyTo(File(directory, "diagnostics.txt"), overwrite = true)
