@@ -50,6 +50,7 @@ internal object PdfReaderDiagnostics {
     }
 
     class Session(private val identity: String, private val clock: () -> Long) {
+        @Volatile internal var eventSinkForTest: ((String) -> Unit)? = null
         private val lock = Any()
         private val token = UUID.randomUUID().toString()
         private val startedWallTime = System.currentTimeMillis()
@@ -79,6 +80,7 @@ internal object PdfReaderDiagnostics {
             if (history.size == 64) { history.removeFirst(); dropped++ }
             val line = "tMs=${ms(clock() - started)} event=$name $fields".trimEnd()
             history.addLast(line)
+            eventSinkForTest?.invoke(line)
             if (page != null) placeholders.values.filter { it.page == page }.forEach {
                 if (it.trace.size == 32) it.trace.removeFirst()
                 it.trace.addLast(line)

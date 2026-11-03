@@ -607,6 +607,9 @@ internal class MangaPageAdapter(
     }
 
     internal fun cachedPreviewForTest(position: Int): Bitmap? = previewBitmap(position)
+    internal fun hasCachedPreviewForTest(position: Int): Boolean = synchronized(cacheLock) {
+        previewBitmapDecodeWidths.containsKey(position)
+    }
 
     internal fun shouldUseTiledPageForTest(bounds: ComicArchive.ImageBounds): Boolean =
         shouldUseTiledPage(bounds)

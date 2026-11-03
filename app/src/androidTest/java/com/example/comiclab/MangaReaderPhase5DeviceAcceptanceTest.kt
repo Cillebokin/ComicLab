@@ -271,6 +271,47 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         val activity = launchReader(pdf, allowPreviewReady = true)
         val directory = File(context.getExternalFilesDir(null), "pdf-gestures-${if (BuildConfig.DEBUG) "debug" else "release"}").apply { mkdirs() }
         val samples = mutableListOf<String>()
+        val timeline = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        val timelineCount = java.util.concurrent.atomic.AtomicInteger()
+        val adapter = onMain { activity.pageAdapterForTest } as com.example.comiclab.ui.reader.manga.MangaPageAdapter
+        val diagnostics = adapter.javaClass.getDeclaredField("pdfDiagnostics").apply { isAccessible = true }
+            .get(adapter) as com.example.comiclab.core.diagnostics.PdfReaderDiagnostics.Session
+        diagnostics.eventSinkForTest = { event ->
+            if (timelineCount.incrementAndGet() <= 20000) timeline.add("uptimeMs=${SystemClock.uptimeMillis()} $event")
+        }
+        val marker = onMain {
+            object : android.view.View(activity) {
+                private val paint = android.graphics.Paint()
+                private var frame = 0
+                override fun onDraw(canvas: android.graphics.Canvas) {
+                    super.onDraw(canvas)
+                    frame++
+                    paint.color = android.graphics.Color.BLUE
+                    canvas.drawRect(0f, 0f, 10f, 20f, paint)
+                    repeat(16) { bit ->
+                        paint.color = if (frame and (1 shl bit) != 0) android.graphics.Color.GREEN else android.graphics.Color.RED
+                        canvas.drawRect(10f + bit * 10, 0f, 20f + bit * 10, 20f, paint)
+                    }
+                    val list = activity.listReaderPagesForTest
+                    val viewport = android.graphics.Rect().also { list.getGlobalVisibleRect(it) }
+                    val holders = (0 until list.childCount).mapNotNull { index ->
+                        val child = list.getChildAt(index)
+                        val holder = list.getChildViewHolder(child) as? com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder
+                            ?: return@mapNotNull null
+                        val location = IntArray(2).also { child.getLocationOnScreen(it) }
+                        val rect = android.graphics.Rect(location[0], location[1], location[0] + child.width, location[1] + child.height)
+                        val page = list.getChildAdapterPosition(child)
+                        val bitmap = (holder.imageView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                        "$page:${rect.top}:${rect.bottom}:${bitmap != null && !bitmap.isRecycled}:${adapter.hasCachedPreviewForTest(page)}"
+                    }
+                    if (timelineCount.incrementAndGet() <= 20000) timeline.add("frame=$frame uptimeMs=${SystemClock.uptimeMillis()} viewport=${viewport.top}:${viewport.bottom} holders=${holders.joinToString(";")}")
+                    postInvalidateOnAnimation()
+                }
+            }.also {
+                (activity.window.decorView as android.view.ViewGroup).addView(it,
+                    android.view.ViewGroup.LayoutParams(170, 20))
+            }
+        }
         fun sample(label: String) {
             val memory = android.os.Debug.MemoryInfo().also(android.os.Debug::getMemoryInfo)
             val position = onMain { activity.currentReaderPositionForTest }
@@ -326,6 +367,9 @@ class MangaReaderPhase5DeviceAcceptanceTest {
                 Regex("page=([0-9]+)").find(it)?.groupValues?.get(1)
             }.distinct().size > 2)
         } finally {
+            diagnostics.eventSinkForTest = null
+            onMain { (marker.parent as? android.view.ViewGroup)?.removeView(marker) }
+            File(directory, "timeline.txt").writeText(timeline.joinToString("\n"))
             File(directory, "samples.txt").writeText("debug=${BuildConfig.DEBUG} pdfBytes=${pdf.length()}\n" + samples.joinToString("\n"))
             com.example.comiclab.core.diagnostics.CrashLogManager.createLatestCrashLogExport(context)
                 ?.copyTo(File(directory, "diagnostics.txt"), overwrite = true)
