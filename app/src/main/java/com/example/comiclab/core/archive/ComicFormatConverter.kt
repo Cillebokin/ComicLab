@@ -14,8 +14,14 @@ import java.io.FilterOutputStream
 import java.io.IOException
 import java.io.OutputStream
 import java.util.Locale
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CancellationException
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -32,6 +38,14 @@ internal object ComicFormatConverter {
     private const val MAX_PAGE_EDGE = 4096
     private const val MAX_PAGE_PIXELS = 8_000_000L
     private const val TARGET_DPI = 300L
+
+    private sealed interface ArchivePageResult {
+        data class Decoded(val pageIndex: Int, val bitmap: Bitmap) : ArchivePageResult
+        data class Failed(val failure: Throwable) : ArchivePageResult
+        data object Complete : ArchivePageResult
+    }
+
+    private data class PendingPngPage(val pageIndex: Int, val encodedFile: Future<File>)
 
     fun convert(
         source: File,
@@ -69,46 +83,56 @@ internal object ComicFormatConverter {
         val extractionDirectory = File(output.parentFile, "extracted-images")
         check(extractionDirectory.mkdirs() || extractionDirectory.isDirectory)
         val document = PdfDocument()
+        val decodedPages = ArrayBlockingQueue<ArchivePageResult>(1)
+        val decoder = Executors.newSingleThreadExecutor { task ->
+            Thread(task, "comic-conversion-decode").apply { isDaemon = true }
+        }
         try {
-            ComicArchive.openPreparedImageExtractor(source, extractionDirectory).use { extractor ->
-                entries.forEachIndexed { index, entryName ->
-                    checkCancelled(cancelled)
-                    val imageFile = extractor.extract(index, entryName)
-                        ?: throw IOException("Could not extract page ${index + 1}")
-                    try {
-                        checkCancelled(cancelled)
-                        val bitmap = decodeBoundedImage(imageFile)
-                            ?: throw IOException("Could not decode page ${index + 1}")
+            decoder.execute {
+                try {
+                    ComicArchive.openPreparedImageExtractor(source, extractionDirectory).use { extractor ->
+                        entries.forEachIndexed { index, entryName ->
+                            checkCancelled(cancelled)
+                            val imageFile = extractor.extract(index, entryName)
+                                ?: throw IOException("Could not extract page ${index + 1}")
+                            val bitmap = try {
+                                checkCancelled(cancelled)
+                                decodeBoundedImage(imageFile)
+                                    ?: throw IOException("Could not decode page ${index + 1}")
+                            } finally {
+                                ComicArchive.discardPreparedImageFile(imageFile)
+                            }
+                            offerArchivePage(
+                                decodedPages,
+                                ArchivePageResult.Decoded(index, bitmap),
+                                cancelled
+                            )
+                        }
+                    }
+                    offerArchivePage(decodedPages, ArchivePageResult.Complete, cancelled)
+                } catch (failure: Throwable) {
+                    if (failure !is CancellationException && !cancelled.get()) {
+                        offerArchivePage(decodedPages, ArchivePageResult.Failed(failure), cancelled)
+                    }
+                } finally {
+                    extractionDirectory.deleteRecursively()
+                }
+            }
+
+            while (true) {
+                checkCancelled(cancelled)
+                when (val next = takeArchivePage(decodedPages, cancelled)) {
+                    is ArchivePageResult.Decoded -> {
                         try {
                             checkCancelled(cancelled)
-                            val pageWidth = pixelsToPdfPoints(bitmap.width)
-                            val pageHeight = pixelsToPdfPoints(bitmap.height)
-                            val pageInfo = PdfDocument.PageInfo.Builder(
-                                pageWidth,
-                                pageHeight,
-                                index + 1
-                            ).create()
-                            val page = document.startPage(pageInfo)
-                            var pageFinished = false
-                            try {
-                                page.canvas.drawBitmap(
-                                    bitmap,
-                                    null,
-                                    RectF(0f, 0f, pageWidth.toFloat(), pageHeight.toFloat()),
-                                    null
-                                )
-                                document.finishPage(page)
-                                pageFinished = true
-                            } finally {
-                                if (!pageFinished) runCatching { document.finishPage(page) }
-                            }
+                            appendBitmapPage(document, next.bitmap, next.pageIndex + 1)
                         } finally {
-                            bitmap.recycle()
+                            next.bitmap.recycle()
                         }
-                    } finally {
-                        ComicArchive.discardPreparedImageFile(imageFile)
+                        onPage(next.pageIndex + 1, entries.size)
                     }
-                    onPage(index + 1, entries.size)
+                    is ArchivePageResult.Failed -> throw next.failure
+                    ArchivePageResult.Complete -> break
                 }
             }
 
@@ -124,8 +148,84 @@ internal object ComicFormatConverter {
             output.delete()
             throw failure
         } finally {
-            runCatching { document.close() }
+            if (cancelled.get()) decoder.shutdownNow() else decoder.shutdown()
+            awaitWorkerExecutor(decoder)
+            drainDecodedPages(decodedPages)
             extractionDirectory.deleteRecursively()
+            runCatching { document.close() }
+        }
+    }
+
+    private fun appendBitmapPage(document: PdfDocument, bitmap: Bitmap, pageNumber: Int) {
+        val pageWidth = pixelsToPdfPoints(bitmap.width)
+        val pageHeight = pixelsToPdfPoints(bitmap.height)
+        val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
+        val page = document.startPage(pageInfo)
+        var pageFinished = false
+        try {
+            page.canvas.drawBitmap(
+                bitmap,
+                null,
+                RectF(0f, 0f, pageWidth.toFloat(), pageHeight.toFloat()),
+                null
+            )
+            document.finishPage(page)
+            pageFinished = true
+        } finally {
+            if (!pageFinished) runCatching { document.finishPage(page) }
+        }
+    }
+
+    private fun offerArchivePage(
+        queue: ArrayBlockingQueue<ArchivePageResult>,
+        result: ArchivePageResult,
+        cancelled: AtomicBoolean
+    ) {
+        var offered = false
+        try {
+            while (!cancelled.get() && !Thread.currentThread().isInterrupted) {
+                if (queue.offer(result, 100, TimeUnit.MILLISECONDS)) {
+                    offered = true
+                    return
+                }
+            }
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+        } finally {
+            if (!offered && result is ArchivePageResult.Decoded) {
+                result.bitmap.recycle()
+            }
+        }
+    }
+
+    private fun takeArchivePage(
+        queue: ArrayBlockingQueue<ArchivePageResult>,
+        cancelled: AtomicBoolean
+    ): ArchivePageResult {
+        while (true) {
+            checkCancelled(cancelled)
+            try {
+                queue.poll(100, TimeUnit.MILLISECONDS)?.let { return it }
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw CancellationException()
+            }
+        }
+    }
+
+    private fun drainDecodedPages(queue: ArrayBlockingQueue<ArchivePageResult>) {
+        while (true) {
+            val result = queue.poll() ?: return
+            if (result is ArchivePageResult.Decoded) runCatching { result.bitmap.recycle() }
+        }
+    }
+
+    private fun awaitWorkerExecutor(executor: java.util.concurrent.ExecutorService) {
+        try {
+            executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS)
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            executor.shutdownNow()
         }
     }
 
@@ -135,10 +235,17 @@ internal object ComicFormatConverter {
         cancelled: AtomicBoolean,
         onPage: (completed: Int, total: Int) -> Unit
     ) {
-        val descriptor = ParcelFileDescriptor.open(source, ParcelFileDescriptor.MODE_READ_ONLY)
+        var descriptor: ParcelFileDescriptor? = null
         var renderer: PdfRenderer? = null
+        val encodedPagesDirectory = File(output.parentFile, "encoded-pages")
+        val encoder = Executors.newSingleThreadExecutor { task ->
+            Thread(task, "comic-conversion-png").apply { isDaemon = true }
+        }
         try {
-            renderer = PdfRenderer(descriptor)
+            check(encodedPagesDirectory.mkdirs() || encodedPagesDirectory.isDirectory)
+            val openedDescriptor = ParcelFileDescriptor.open(source, ParcelFileDescriptor.MODE_READ_ONLY)
+            descriptor = openedDescriptor
+            renderer = PdfRenderer(openedDescriptor)
             val total = renderer.pageCount
             check(total > 0) { "PDF has no pages" }
 
@@ -148,6 +255,9 @@ internal object ComicFormatConverter {
                     cancelled
                 )
             ).use { zip ->
+                // PNG 已压缩过，外层 ZIP 不再重复执行高成本压缩。
+                zip.setLevel(Deflater.NO_COMPRESSION)
+                var pendingPage: PendingPngPage? = null
                 for (index in 0 until total) {
                     checkCancelled(cancelled)
                     val page = renderer.openPage(index)
@@ -156,19 +266,48 @@ internal object ComicFormatConverter {
                     } finally {
                         page.close()
                     }
+                    var encoderOwnsBitmap = false
                     try {
                         checkCancelled(cancelled)
-                        zip.putNextEntry(
-                            ZipEntry(String.format(Locale.ROOT, "%06d.png", index + 1))
-                        )
-                        check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, zip)) {
-                            "Could not encode page ${index + 1}"
+                        pendingPage?.let { pending ->
+                            appendEncodedPage(zip, pending, total, cancelled, onPage)
+                            pendingPage = null
                         }
-                        zip.closeEntry()
+                        val encodedFile = File(
+                            encodedPagesDirectory,
+                            String.format(Locale.ROOT, "%06d.png", index + 1)
+                        )
+                        pendingPage = PendingPngPage(
+                            index,
+                            encoder.submit<File> {
+                                try {
+                                    checkCancelled(cancelled)
+                                    CancellationCheckingOutputStream(
+                                        encodedFile.outputStream().buffered(256 * 1024),
+                                        cancelled
+                                    ).use { png ->
+                                        check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, png)) {
+                                            "Could not encode page ${index + 1}"
+                                        }
+                                    }
+                                    checkCancelled(cancelled)
+                                    encodedFile
+                                } catch (failure: Throwable) {
+                                    encodedFile.delete()
+                                    throw failure
+                                } finally {
+                                    bitmap.recycle()
+                                }
+                            }
+                        )
+                        encoderOwnsBitmap = true
                     } finally {
-                        bitmap.recycle()
+                        if (!encoderOwnsBitmap) bitmap.recycle()
                     }
-                    onPage(index + 1, total)
+                }
+                pendingPage?.let { pending ->
+                    appendEncodedPage(zip, pending, total, cancelled, onPage)
+                    pendingPage = null
                 }
                 checkCancelled(cancelled)
             }
@@ -177,9 +316,40 @@ internal object ComicFormatConverter {
             output.delete()
             throw failure
         } finally {
+            encoder.shutdown()
+            awaitWorkerExecutor(encoder)
+            encodedPagesDirectory.deleteRecursively()
             runCatching { renderer?.close() }
-            runCatching { descriptor.close() }
+            runCatching { descriptor?.close() }
         }
+    }
+
+    private fun appendEncodedPage(
+        zip: ZipOutputStream,
+        pending: PendingPngPage,
+        total: Int,
+        cancelled: AtomicBoolean,
+        onPage: (completed: Int, total: Int) -> Unit
+    ) {
+        checkCancelled(cancelled)
+        val encodedFile = try {
+            pending.encodedFile.get()
+        } catch (failure: ExecutionException) {
+            throw failure.cause ?: failure
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw CancellationException()
+        }
+        checkCancelled(cancelled)
+        zip.putNextEntry(
+            ZipEntry(String.format(Locale.ROOT, "%06d.png", pending.pageIndex + 1))
+        )
+        encodedFile.inputStream().buffered(256 * 1024).use { input ->
+            input.copyTo(zip, 256 * 1024)
+        }
+        zip.closeEntry()
+        encodedFile.delete()
+        onPage(pending.pageIndex + 1, total)
     }
 
     private fun decodeBoundedImage(file: File): Bitmap? {
@@ -245,7 +415,7 @@ internal object ComicFormatConverter {
     }
 
     private fun checkCancelled(cancelled: AtomicBoolean) {
-        if (cancelled.get()) throw CancellationException()
+        if (cancelled.get() || Thread.currentThread().isInterrupted) throw CancellationException()
     }
 
     private fun pixelsToPdfPoints(pixels: Int): Int =

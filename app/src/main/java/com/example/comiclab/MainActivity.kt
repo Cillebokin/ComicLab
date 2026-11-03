@@ -57,7 +57,7 @@ import com.example.comiclab.ui.browser.NasFileListAdapter
 import com.example.comiclab.ui.reader.enhance.ArchiveEnhancementDialog
 import com.example.comiclab.ui.reader.translation.ArchiveTranslationDialog
 import com.example.comiclab.core.archive.ComicConversionTarget
-import com.example.comiclab.ui.reader.conversion.ComicFormatConversionActivity
+import com.example.comiclab.ui.reader.conversion.ComicFormatConversionDialog
 import com.example.comiclab.ui.browser.DirectoryBrowserController
 import com.example.comiclab.ui.browser.DirectoryChildCountCache
 import com.example.comiclab.ui.browser.DirectoryScrollStateCache
@@ -2625,7 +2625,7 @@ class MainActivity : AppCompatActivity() {
         btnConvert.setOnClickListener {
             val target = conversionTarget ?: return@setOnClickListener
             dialog.dismiss()
-            ComicFormatConversionActivity.launch(this, file, target)
+            ComicFormatConversionDialog.show(this, file, target)
         }
 
         btnEnhance.setOnClickListener {
