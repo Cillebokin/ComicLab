@@ -381,6 +381,126 @@ class MangaReaderPhase5DeviceAcceptanceTest {
     }
 
     @Test
+    fun pdfReadingForwardThenBackKeepsAFirstImageForPagesWhoseFullImageWasTrimmed() {
+        val pdf = File(context.getExternalFilesDir(null), "reader-priority.pdf")
+        assertTrue("supply the real PDF in the isolated test package", pdf.isFile)
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_TOP_TO_BOTTOM)
+        val activity = launchReader(pdf, allowPreviewReady = true)
+        val adapter = onMain { activity.pageAdapterForTest } as com.example.comiclab.ui.reader.manga.MangaPageAdapter
+        val directory = File(context.getExternalFilesDir(null), "pdf-readback-${if (BuildConfig.DEBUG) "debug" else "release"}").apply { mkdirs() }
+        @Suppress("UNCHECKED_CAST")
+        val fullCache = adapter.javaClass.getDeclaredField("fullBitmapCache").apply { isAccessible = true }
+            .get(adapter) as android.util.LruCache<Int, Bitmap>
+        val notes = mutableListOf<String>()
+        fun visibleSourcePages(): List<Int> = onMain {
+            val list = activity.listReaderPagesForTest
+            (0 until list.childCount).mapNotNull { index ->
+                val child = list.getChildAt(index)
+                val holder = list.getChildViewHolder(child) as? com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder
+                holder?.boundPosition?.takeIf { it >= 0 && child.bottom > 0 && child.top < list.height }
+            }
+        }
+        // 慢拖：中途放慢并在抬手前停住，避免产生惯性滑行，一次约移动列表高度的一半。
+        fun slowDrag(forward: Boolean) {
+            val rect = onMain { android.graphics.Rect().also { activity.listReaderPagesForTest.getGlobalVisibleRect(it) } }
+            val x = rect.exactCenterX()
+            val from = rect.top + rect.height() * if (forward) .85f else .25f
+            val to = rect.top + rect.height() * if (forward) .25f else .85f
+            val down = SystemClock.uptimeMillis()
+            fun inject(action: Int, y: Float) {
+                MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x, y, 0).also { event ->
+                    event.source = InputDevice.SOURCE_TOUCHSCREEN
+                    try { assertTrue(instrumentation.uiAutomation.injectInputEvent(event, false)) } finally { event.recycle() }
+                }
+            }
+            inject(MotionEvent.ACTION_DOWN, from)
+            repeat(20) { move ->
+                SystemClock.sleep(16)
+                inject(MotionEvent.ACTION_MOVE, from + (to - from) * (move + 1) / 20)
+            }
+            SystemClock.sleep(150)
+            inject(MotionEvent.ACTION_MOVE, to)
+            inject(MotionEvent.ACTION_UP, to)
+        }
+        // 停下阅读：等当前可见页都拿到全图；超时不算失败，只记录。
+        val everFull = sortedSetOf<Int>()
+        val fallbackMissing = mutableListOf<String>()
+        fun hasFallback(page: Int) = onMain { adapter.hasCachedPreviewForTest(page) }
+        fun settleReading(label: String) {
+            val deadline = SystemClock.elapsedRealtime() + 3_000
+            while (SystemClock.elapsedRealtime() < deadline) {
+                val pages = visibleSourcePages()
+                if (pages.isNotEmpty() && pages.all { fullCache.snapshot().containsKey(it) }) break
+                SystemClock.sleep(50)
+            }
+            // 全图先入缓存、紧凑首图随后替换旧预览，两步之间差几毫秒；再等一会儿再判。
+            val fallbackDeadline = SystemClock.elapsedRealtime() + 1_000
+            while (SystemClock.elapsedRealtime() < fallbackDeadline &&
+                visibleSourcePages().any { fullCache.snapshot().containsKey(it) && !hasFallback(it) }) {
+                SystemClock.sleep(50)
+            }
+            val missing = visibleSourcePages().filter { fullCache.snapshot().containsKey(it) && !hasFallback(it) }
+            if (missing.isNotEmpty()) fallbackMissing += "$label pages=${missing.map { it + 1 }}"
+            everFull += fullCache.snapshot().keys
+            notes += "$label visible=${visibleSourcePages().map { it + 1 }} fullCached=${fullCache.snapshot().keys.sorted().map { it + 1 }}"
+        }
+        // 逐帧记录：有 holder 在屏幕上但没有位图，即黑屏帧。
+        val frames = java.util.concurrent.atomic.AtomicInteger()
+        val blankFrames = java.util.concurrent.atomic.AtomicInteger()
+        val sampling = java.util.concurrent.atomic.AtomicBoolean()
+        val callback = object : android.view.Choreographer.FrameCallback {
+            override fun doFrame(frameTimeNanos: Long) {
+                if (!sampling.get()) return
+                val list = activity.listReaderPagesForTest
+                val blank = (0 until list.childCount).any { index ->
+                    val child = list.getChildAt(index)
+                    val holder = list.getChildViewHolder(child) as? com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder
+                    holder != null && holder.boundPosition >= 0 && child.bottom > 100 && child.top < list.height - 100 &&
+                        (holder.imageView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap?.isRecycled != false
+                }
+                frames.incrementAndGet()
+                if (blank) blankFrames.incrementAndGet()
+                android.view.Choreographer.getInstance().postFrameCallback(this)
+            }
+        }
+        try {
+            onMain { activity.jumpReaderToPageForTest(40.coerceAtMost(activity.imageEntriesForTest.lastIndex)) }
+            settleReading("start")
+            val startPage = checkNotNull(visibleSourcePages().minOrNull()) { "no visible page after the jump" }
+            repeat(10) { step ->
+                slowDrag(forward = true)
+                settleReading("forward-$step")
+            }
+            val current = checkNotNull(visibleSourcePages().minOrNull())
+            assertTrue("the forward reading must move well past the start page", current - startPage >= 5)
+            // P4 的机制：视口里拿到全图的页，缓存里必须同时有一张预览，否则全图被裁掉后页面就是空白占位。
+            assertTrue("a page showing its full image must still have a first image in the cache: $fallbackMissing",
+                fallbackMissing.isEmpty())
+
+            // 以下只做测量、不做断言：已被裁掉全图且落在预加载窗口之外的页，预览优先级为 0，
+            // 缓存常年接近满载，它们通常很快被后来的预览挤掉，所以这里留下的紧凑首图并不保证长期存活。
+            val trimmed = everFull.filter { it <= current - 3 && !fullCache.snapshot().containsKey(it) }
+            val retained = trimmed.filter { hasFallback(it) }
+            notes += "everFull=${everFull.map { it + 1 }} trimmedOutsideWindow=${trimmed.map { it + 1 }} withCachedPreview=${retained.map { it + 1 }}"
+            assertTrue("this run must produce trimmed pages to exercise the path: $notes", trimmed.size >= 3)
+
+            onMain {
+                sampling.set(true)
+                android.view.Choreographer.getInstance().postFrameCallback(callback)
+            }
+            repeat(8) { slowDrag(forward = false) }
+            settleReading("back")
+            onMain { sampling.set(false) }
+            notes += "returnFrames=${frames.get()} blankFrames=${blankFrames.get()}"
+        } finally {
+            onMain { sampling.set(false) }
+            File(directory, "notes.txt").writeText(notes.joinToString("\n"))
+            com.example.comiclab.core.diagnostics.CrashLogManager.createLatestCrashLogExport(context)
+                ?.copyTo(File(directory, "diagnostics.txt"), overwrite = true)
+        }
+    }
+
+    @Test
     fun pdfRapidTurnsAndBackgroundReturnKeepRenderingAvailable() {
         val supplied = File(context.getExternalFilesDir(null), "reader-priority.pdf")
         val pdf = if (supplied.isFile) supplied else createPdf("pdf-priority.pdf", pageCount = 30)

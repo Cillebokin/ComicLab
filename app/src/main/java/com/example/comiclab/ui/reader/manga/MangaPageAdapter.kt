@@ -1323,6 +1323,12 @@ internal class MangaPageAdapter(
                 if (previewBitmapDecodeWidth(position) >= targetWidth) {
                     return@submitTask
                 }
+                // 缓存放不下的预加载不渲染：等同被拒收，等视口变化后再按新的优先级判断。
+                if (isPdfSource && isPreload && !canAdmitPdfPreview(position, targetWidth)) {
+                    previewAdmissionRejected = true
+                    PdfReaderDiagnostics.nativePhase("stale", "page=${position + 1} reason=preview_wont_fit")
+                    return@submitTask
+                }
 
                 var skippedStalePreview = false
                 val bitmap = decodeWithRenderDiagnostics(
@@ -2705,31 +2711,9 @@ internal class MangaPageAdapter(
         val accepted = synchronized(cacheLock) {
             if (isPdfSource) {
                 val incomingKb = (bitmap.byteCount / 1024).coerceAtLeast(1)
-                val oldKb = previewBitmapCache.get(position)?.let { (it.byteCount / 1024).coerceAtLeast(1) } ?: 0
-                val neededKb = previewBitmapCache.size() - oldKb + incomingKb - previewBitmapCache.maxSize()
-                if (incomingKb > previewBitmapCache.maxSize()) return@synchronized false
-                if (neededKb > 0) {
-                    // 普通LRU会把早已预取、即将进入视口的首图先淘汰；先让远处预览让位。
-                    // 已有首图的页做升级时不得挤掉其他可见页，否则同屏两页会轮流丢失缓存；
-                    // 可见页的首图仍可让位，保证每个可见页总有图可显示。
-                    val priority = pdfPreviewRetentionPriority(position, decodeWidth)
-                    val candidates = previewBitmapCache.snapshot().entries
-                        .filter {
-                            val retained = pdfPreviewRetentionPriority(it.key)
-                            it.key != position && retained <= priority &&
-                                (retained < PDF_VISIBLE_RETENTION || oldKb == 0)
-                        }
-                        .sortedBy { pdfPreviewRetentionPriority(it.key) }
-                    if (candidates.sumOf { (it.value.byteCount / 1024).coerceAtLeast(1) } < neededKb) {
-                        return@synchronized false
-                    }
-                    var freedKb = 0
-                    for ((key, value) in candidates) {
-                        previewBitmapCache.remove(key)
-                        freedKb += (value.byteCount / 1024).coerceAtLeast(1)
-                        if (freedKb >= neededKb) break
-                    }
-                }
+                val evictable = pdfPreviewEvictionsFor(position, decodeWidth, incomingKb)
+                    ?: return@synchronized false
+                evictable.forEach { previewBitmapCache.remove(it) }
             }
             previewBitmapCache.put(position, bitmap)
             val isAccepted = previewBitmapCache.get(position) === bitmap
@@ -2746,6 +2730,52 @@ internal class MangaPageAdapter(
             bitmap.recycle()
         }
         return accepted
+    }
+
+    /**
+     * 把 [incomingKb] 大小的预览放进缓存需要先淘汰哪些页；放不下则返回 null。必须在 cacheLock 内调用。
+     * 准入判定只此一处：解码前的预检与解码后的入缓存都走它，两处不会各自漂移。
+     * 普通LRU会把早已预取、即将进入视口的首图先淘汰，所以按保留优先级先让远处预览让位；
+     * 已有首图的页做升级时不得挤掉其他可见页，否则同屏两页会轮流丢失缓存；
+     * 可见页的首图仍可让位，保证每个可见页总有图可显示。
+     */
+    private fun pdfPreviewEvictionsFor(position: Int, decodeWidth: Int, incomingKb: Int): List<Int>? {
+        val oldKb = previewBitmapCache.get(position)?.let { (it.byteCount / 1024).coerceAtLeast(1) } ?: 0
+        val neededKb = previewBitmapCache.size() - oldKb + incomingKb - previewBitmapCache.maxSize()
+        if (incomingKb > previewBitmapCache.maxSize()) return null
+        if (neededKb <= 0) return emptyList()
+        val priority = pdfPreviewRetentionPriority(position, decodeWidth)
+        val candidates = previewBitmapCache.snapshot().entries
+            .filter {
+                val retained = pdfPreviewRetentionPriority(it.key)
+                it.key != position && retained <= priority &&
+                    (retained < PDF_VISIBLE_RETENTION || oldKb == 0)
+            }
+            .sortedBy { pdfPreviewRetentionPriority(it.key) }
+        if (candidates.sumOf { (it.value.byteCount / 1024).coerceAtLeast(1) } < neededKb) return null
+        val chosen = mutableListOf<Int>()
+        var freedKb = 0
+        for ((key, value) in candidates) {
+            chosen += key
+            freedKb += (value.byteCount / 1024).coerceAtLeast(1)
+            if (freedKb >= neededKb) break
+        }
+        return chosen
+    }
+
+    /**
+     * 预加载解码前的预检：缓存按优先级放不下就不做这次原生渲染，避免滚动时反复渲染再被拒收。
+     * 页面比例未知，按驻留预览里「字节/宽度²」最小的一张估算，偏向放行：宁可漏拦，不可误拦。
+     * 缓存里没有可参照的预览时无从预判，直接放行。
+     */
+    private fun canAdmitPdfPreview(position: Int, targetWidth: Int): Boolean {
+        synchronized(cacheLock) {
+            val bytesPerSquarePixel = previewBitmapCache.snapshot().values
+                .minOfOrNull { it.byteCount.toDouble() / (it.width.toDouble() * it.width) }
+                ?: return true
+            val incomingKb = (bytesPerSquarePixel * targetWidth * targetWidth / 1024).toInt().coerceAtLeast(1)
+            return pdfPreviewEvictionsFor(position, targetWidth, incomingKb) != null
+        }
     }
 
     private fun pdfPreviewRetentionPriority(position: Int, width: Int = previewBitmapDecodeWidths[position] ?: 0): Int = when {

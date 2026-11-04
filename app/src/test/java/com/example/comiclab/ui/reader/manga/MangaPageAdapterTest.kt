@@ -183,6 +183,52 @@ class MangaPageAdapterTest {
         }
     }
 
+    @Test fun aPdfPreloadTheFullCacheCouldNotAdmitIsNeverRendered() {
+        val made = CopyOnWriteArrayList<Bitmap>()
+        val session = FakeReaderSession(pdfSource = true, previewDecoder = {
+            Bitmap.createBitmap(360, 100, Bitmap.Config.ARGB_8888).also(made::add)
+        })
+        val adapter = newAdapter(session, (0..30).map { "$it.pdf" })
+        // 三张360x100预览(各140KB)刚好占满；再来一张更远的页没有可让位的对象。
+        previewCache(adapter).resize(425)
+        setPreviewWindows(adapter, visible = 10..10, preload = 9..14)
+        val resident = (11..13).associateWith { Bitmap.createBitmap(360, 100, Bitmap.Config.ARGB_8888).also(made::add) }
+        try {
+            resident.forEach { (position, bitmap) -> putPreview(adapter, position, bitmap, 360) }
+            adapter.ensurePreviewForTest(14, 20, 0, true)
+            assertTrue(awaitCondition { adapter.loadingPreviewPagesForTest.isEmpty() })
+            assertFalse("a result the cache would reject must not cost a native render", session.previewWidths.any { it.first == "14.pdf" })
+            assertFalse("skipping is not a failure and must not poison later retries", adapter.failedPreviewPagesForTest.contains(14))
+            resident.forEach { (position, bitmap) -> assertSame(bitmap, adapter.cachedPreviewForTest(position)) }
+        } finally {
+            closeAndAwait(adapter, session)
+            made.forEach { it.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
+    @Test fun aPdfPreloadThatCanDisplaceAFartherPageIsStillRendered() {
+        val made = CopyOnWriteArrayList<Bitmap>()
+        val session = FakeReaderSession(pdfSource = true, previewDecoder = {
+            Bitmap.createBitmap(360, 100, Bitmap.Config.ARGB_8888).also(made::add)
+        })
+        val adapter = newAdapter(session, (0..30).map { "$it.pdf" })
+        previewCache(adapter).resize(425)
+        setPreviewWindows(adapter, visible = 10..10, preload = 9..14)
+        val resident = (11..13).associateWith { Bitmap.createBitmap(360, 100, Bitmap.Config.ARGB_8888).also(made::add) }
+        try {
+            resident.forEach { (position, bitmap) -> putPreview(adapter, position, bitmap, 360) }
+            adapter.ensurePreviewForTest(9, 20, 0, true)
+            assertTrue("a nearer page may take the place of the farthest resident one", awaitCondition {
+                adapter.cachedPreviewForTest(9) != null
+            })
+            assertTrue(session.previewWidths.any { it.first == "9.pdf" })
+            assertNull(adapter.cachedPreviewForTest(13))
+        } finally {
+            closeAndAwait(adapter, session)
+            made.forEach { it.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
     @Test fun aVisiblePdfUpgradeNeverEvictsAnotherVisiblePagesPreview() {
         val session = FakeReaderSession(pdfSource = true)
         val adapter = newAdapter(session, listOf("0.pdf", "1.pdf", "2.pdf"))
