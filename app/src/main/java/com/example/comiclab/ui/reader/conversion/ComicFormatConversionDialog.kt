@@ -117,14 +117,11 @@ internal class ComicFormatConversionViewModel(application: Application) : Androi
             } catch (_: CancellationException) {
                 state.postValue(ComicFormatConversionState(cancelled = true))
             } catch (failure: OutOfMemoryError) {
-                android.util.Log.e("ComicFormatConversion", "Conversion ran out of memory", failure)
-                state.postValue(ComicFormatConversionState(failed = true))
+                postFailure("Conversion ran out of memory", failure)
             } catch (failure: LinkageError) {
-                android.util.Log.e("ComicFormatConversion", "Conversion runtime is unavailable", failure)
-                state.postValue(ComicFormatConversionState(failed = true))
+                postFailure("Conversion runtime is unavailable", failure)
             } catch (failure: Exception) {
-                android.util.Log.e("ComicFormatConversion", "Conversion failed", failure)
-                state.postValue(ComicFormatConversionState(failed = true))
+                postFailure("Conversion failed", failure)
             } finally {
                 if (!success) removeOutput(destination)
                 workDirectory?.deleteRecursively()
@@ -132,6 +129,14 @@ internal class ComicFormatConversionViewModel(application: Application) : Androi
                 EnhancementRuntime.busy.set(false)
             }
         }
+    }
+
+    private fun postFailure(message: String, failure: Throwable) {
+        android.util.Log.e("ComicFormatConversion", message, failure)
+        state.postValue(
+            if (cancelled.get()) ComicFormatConversionState(cancelled = true)
+            else ComicFormatConversionState(failed = true)
+        )
     }
 
     private fun checkCancelled() {
@@ -239,9 +244,11 @@ internal class ComicFormatConversionDialog : DialogFragment() {
             progress.progress = state.percent.coerceAtLeast(0)
             progress.visibility = if (state.failed) View.GONE else View.VISIBLE
             val finished = state.done || state.failed || state.cancelled
-            alert.getButton(DialogInterface.BUTTON_NEGATIVE)?.setText(
+            val actionButton = alert.getButton(DialogInterface.BUTTON_NEGATIVE)
+            actionButton?.setText(
                 if (finished) R.string.reader_enhance_close else android.R.string.cancel
             )
+            if (finished) actionButton?.isEnabled = true
             if (finished) alert.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             else alert.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
