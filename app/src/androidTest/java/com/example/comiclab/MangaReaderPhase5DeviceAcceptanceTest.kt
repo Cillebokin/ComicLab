@@ -500,6 +500,111 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         }
     }
 
+    // 文档约定：界面隐藏不代表内存不足，可见页不得因此失去图像，低内存标志也不得被置上。
+    // 系统只肯对前台进程送 RUNNING_* 三档，UI_HIDDEN 只能直接调用 Activity.onTrimMemory。
+    @Test
+    fun pdfUiHiddenTrimKeepsVisiblePagesDisplayableAndDoesNotLatchLowMemory() {
+        val pdf = File(context.getExternalFilesDir(null), "reader-priority.pdf")
+        assertTrue("supply the real PDF in the isolated test package", pdf.isFile)
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_TOP_TO_BOTTOM)
+        val activity = launchReader(pdf, allowPreviewReady = true)
+        val adapter = onMain { activity.pageAdapterForTest } as com.example.comiclab.ui.reader.manga.MangaPageAdapter
+        val lowMemory = adapter.javaClass.getDeclaredField("pdfLowMemoryMode").apply { isAccessible = true }
+        onMain { activity.jumpReaderToPageForTest(30) }
+        awaitCondition("visible pages did not display before the trim") {
+            visibleSourcePagesOf(activity).isNotEmpty() && !anyVisibleBlank(activity)
+        }
+        onMain { activity.onTrimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) }
+        var blankSamples = 0
+        val deadline = SystemClock.elapsedRealtime() + 2_000
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (anyVisibleBlank(activity)) blankSamples++
+            SystemClock.sleep(8)
+        }
+        assertEquals("UI hidden must not blank a visible page", 0, blankSamples)
+        assertFalse("UI hidden must not latch low-memory mode", lowMemory.getBoolean(adapter))
+    }
+
+    // 现行约定：系统送达 RUNNING_LOW 后，低内存标志一直保持到阅读器暂停再恢复，期间不再预加载前方页。
+    // 若以后有意放宽（例如静默一段时间后自动恢复），同步改这条；对照与恢复两段保证它不是空断言。
+    @Test
+    fun pdfRunningLowTrimSuppressesLookaheadUntilTheReaderResumes() {
+        val pdf = File(context.getExternalFilesDir(null), "reader-priority.pdf")
+        assertTrue("supply the real PDF in the isolated test package", pdf.isFile)
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_TOP_TO_BOTTOM)
+        val activity = launchReader(pdf, allowPreviewReady = true)
+        val adapter = onMain { activity.pageAdapterForTest } as com.example.comiclab.ui.reader.manga.MangaPageAdapter
+        @Suppress("UNCHECKED_CAST")
+        val fullCache = adapter.javaClass.getDeclaredField("fullBitmapCache").apply { isAccessible = true }
+            .get(adapter) as android.util.LruCache<Int, Bitmap>
+        val lowMemory = adapter.javaClass.getDeclaredField("pdfLowMemoryMode").apply { isAccessible = true }
+        val diagnostics = adapter.javaClass.getDeclaredField("pdfDiagnostics").apply { isAccessible = true }
+            .get(adapter) as com.example.comiclab.core.diagnostics.PdfReaderDiagnostics.Session
+        val trimLevels = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        diagnostics.eventSinkForTest = { event ->
+            if (event.contains("event=memory_trim")) trimLevels.add(Regex("level=(\\d+)").find(event)?.groupValues?.get(1) ?: "?")
+        }
+        // 跳到 page 页并等可见页拿到全图，再看紧接着的两页有没有被预加载出预览。
+        fun lookaheadCachedAfterJumpTo(page: Int): List<Boolean> {
+            onMain { activity.jumpReaderToPageForTest(page) }
+            val deadline = SystemClock.elapsedRealtime() + 3_000
+            while (SystemClock.elapsedRealtime() < deadline) {
+                val pages = visibleSourcePagesOf(activity)
+                if (pages.isNotEmpty() && pages.all { fullCache.snapshot().containsKey(it) }) break
+                SystemClock.sleep(50)
+            }
+            SystemClock.sleep(400)
+            val ahead = (1..2).map { (visibleSourcePagesOf(activity).maxOrNull() ?: -10) + it }
+            SystemClock.sleep(1_500)
+            return ahead.map { onMain { adapter.hasCachedPreviewForTest(it) } }
+        }
+        try {
+            // 阅读器真正恢复时 Activity.onResume 会调用它；这里显式调用，保证从干净状态开始。
+            onMain { adapter.onReaderResumed() }
+            val control = lookaheadCachedAfterJumpTo(30)
+            assertTrue("without memory pressure the next pages must be preloaded, or this test proves nothing: $control",
+                control.all { it })
+
+            ParcelFileDescriptor.AutoCloseInputStream(
+                instrumentation.uiAutomation.executeShellCommand("am send-trim-memory ${android.os.Process.myPid()} RUNNING_LOW 2>&1")
+            ).bufferedReader().use { it.readText() }
+            awaitCondition("the system did not deliver RUNNING_LOW (levels seen: $trimLevels)") {
+                trimLevels.contains(android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW.toString())
+            }
+            assertTrue("RUNNING_LOW must put the adapter into low-memory mode", lowMemory.getBoolean(adapter))
+            val suppressed = lookaheadCachedAfterJumpTo(45)
+            assertFalse("low-memory mode must stop look-ahead preloading: $suppressed", suppressed.any { it })
+            assertTrue("low-memory mode stays latched until the reader resumes", lowMemory.getBoolean(adapter))
+
+            onMain { adapter.onReaderResumed() }
+            assertFalse(lowMemory.getBoolean(adapter))
+            val restored = lookaheadCachedAfterJumpTo(60)
+            assertTrue("resuming must bring look-ahead preloading back: $restored", restored.all { it })
+        } finally {
+            diagnostics.eventSinkForTest = null
+        }
+    }
+
+    private fun visibleSourcePagesOf(activity: MangaReaderActivity): List<Int> = onMain {
+        val list = activity.listReaderPagesForTest
+        (0 until list.childCount).mapNotNull { index ->
+            val child = list.getChildAt(index)
+            val holder = list.getChildViewHolder(child) as? com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder
+            holder?.boundPosition?.takeIf { it >= 0 && child.bottom > 100 && child.top < list.height - 100 }
+        }
+    }
+
+    // 有 holder 在屏幕上但没有可绘制位图，即占位或黑屏。
+    private fun anyVisibleBlank(activity: MangaReaderActivity): Boolean = onMain {
+        val list = activity.listReaderPagesForTest
+        (0 until list.childCount).any { index ->
+            val child = list.getChildAt(index)
+            val holder = list.getChildViewHolder(child) as? com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder
+            holder != null && holder.boundPosition >= 0 && child.bottom > 100 && child.top < list.height - 100 &&
+                (holder.imageView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap?.isRecycled != false
+        }
+    }
+
     @Test
     fun pdfRapidTurnsAndBackgroundReturnKeepRenderingAvailable() {
         val supplied = File(context.getExternalFilesDir(null), "reader-priority.pdf")
