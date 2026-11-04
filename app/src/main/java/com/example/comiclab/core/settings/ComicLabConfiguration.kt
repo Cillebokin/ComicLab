@@ -31,7 +31,8 @@ data class ComicLabMangaProgress(
 data class ComicLabEbookProgress(
     val path: String,
     val chapterIndex: Int,
-    val scrollFraction: Float
+    val scrollFraction: Float,
+    val coordinateVersion: Int = 2
 )
 
 data class ComicLabAppSettings(
@@ -123,6 +124,7 @@ object ComicLabConfigurationJson {
                             .put("path", item.path)
                             .put("chapterIndex", item.chapterIndex)
                             .put("scrollFraction", item.scrollFraction.toDouble())
+                            .put("coordinateVersion", item.coordinateVersion)
                     )
                 }
             })
@@ -239,7 +241,9 @@ object ComicLabConfigurationJson {
             if (path == null || chapterIndex == null || scrollFraction == null) {
                 skippedEntries++
             } else {
-                ebookReadingProgress += ComicLabEbookProgress(path, chapterIndex, scrollFraction)
+                ebookReadingProgress += ComicLabEbookProgress(
+                    path, chapterIndex, scrollFraction, obj.optInt("coordinateVersion", 1).coerceIn(1, 2)
+                )
             }
         }.also { skippedEntries += it }
 

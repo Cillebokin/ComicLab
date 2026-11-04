@@ -106,7 +106,7 @@ class EbookReaderDeviceAcceptanceTest {
             .putExtra(EbookReaderActivity.EXTRA_BOOK_PATH, bookFile.absolutePath)
         val launchOutput = ParcelFileDescriptor.AutoCloseInputStream(
             instrumentation.uiAutomation.executeShellCommand(
-                "am start -W -n com.example.comiclab/.MainActivity"
+                "am start -W -n ${context.packageName}/com.example.comiclab.MainActivity"
             )
         ).bufferedReader().use { it.readText() }
         check("Status: ok" in launchOutput) {
@@ -130,6 +130,43 @@ class EbookReaderDeviceAcceptanceTest {
             "Saved progress changed unexpectedly after rotation: $persisted",
             abs(expected.scrollFraction - persisted.scrollFraction) <= PROGRESS_TOLERANCE
         )
+    }
+
+    @Test
+    fun chapterTailRestoresTheSamePhysicalPositionAfterRecreation() {
+        val launchOutput = ParcelFileDescriptor.AutoCloseInputStream(
+            instrumentation.uiAutomation.executeShellCommand(
+                "am start -W -n ${context.packageName}/com.example.comiclab.MainActivity"
+            )
+        ).bufferedReader().use { it.readText() }
+        check("Status: ok" in launchOutput)
+        browserActivity = awaitBrowser()
+        onMain { browserActivity!!.startActivity(Intent(context, EbookReaderActivity::class.java)
+            .putExtra(EbookReaderActivity.EXTRA_BOOK_PATH, bookFile.absolutePath)) }
+        val before = awaitReader(null, false)
+        evaluate(before, "window.scrollTo(0, document.getElementById('chapter-1').getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.25); window.dispatchEvent(new Event('scroll')); true;")
+        awaitCondition("chapter-tail progress was not saved using the new coordinates") {
+            EbookProgressStore.load(context, bookFile)?.let {
+                it.coordinateVersion == 2 && it.chapterIndex == 0 && it.scrollFraction > 0.9f
+            } == true
+        }
+        val expectedY = evaluate(before, "window.scrollY").toDouble()
+        onMain { before.recreate() }
+        awaitCondition("reader was not recreated") { onMain { resumedEbookActivity()?.let { it !== before } == true } }
+        val after = awaitReader(null, true)
+        val restoredY = evaluate(after, "window.scrollY").toDouble()
+        assertTrue("chapter-tail position moved from $expectedY to $restoredY", abs(expectedY - restoredY) <= 2)
+    }
+
+    private fun evaluate(activity: EbookReaderActivity, script: String): String {
+        val result = AtomicReference<String>()
+        val done = java.util.concurrent.CountDownLatch(1)
+        onMain { activity.findViewById<WebView>(R.id.webEbookReader).evaluateJavascript(script) {
+            result.set(it)
+            done.countDown()
+        } }
+        check(done.await(10, TimeUnit.SECONDS)) { "WebView did not complete the probe" }
+        return result.get()
     }
 
     private fun awaitReader(

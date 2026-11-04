@@ -12,11 +12,19 @@ object EbookSessionFactory {
         untitledBookTitle: String,
         untitledChapterTitle: String
     ): EbookSession {
-        return when (ReaderFileDetector.typeOf(file)) {
+        checkEbookCancellation()
+        val session = when (ReaderFileDetector.typeOf(file)) {
             ReaderFileType.MOBI -> MobiBookSession.open(file, untitledBookTitle)
             ReaderFileType.EPUB -> EpubBookSession.open(file, untitledChapterTitle)
             ReaderFileType.TXT -> TxtBookSession.open(file, untitledBookTitle, untitledChapterTitle)
             else -> throw IllegalArgumentException("Unsupported ebook file")
+        }
+        return try {
+            checkEbookCancellation()
+            session
+        } catch (error: Throwable) {
+            session.close()
+            throw error
         }
     }
 }

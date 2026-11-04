@@ -7,10 +7,15 @@ import java.io.RandomAccessFile
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import kotlin.math.min
+import com.example.comiclab.ebook.EbookContentLimits
+import com.example.comiclab.ebook.EbookContentLimitException
+import com.example.comiclab.ebook.checkEbookCancellation
+import java.util.concurrent.CancellationException
 
-class MobiParser {
+class MobiParser(private val limits: EbookContentLimits = EbookContentLimits.forHeap()) {
 
     fun parse(file: File, untitledBookTitle: String = "未命名电子书"): ParsedMobi {
+        checkEbookCancellation()
         if (!file.isFile || !file.canRead() || file.length() <= 0L) {
             throw MobiParseException(MobiParseError.INVALID_FILE, "MOBI file is not readable")
         }
@@ -27,6 +32,10 @@ class MobiParser {
                 "Unable to read MOBI records",
                 error
             )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: EbookContentLimitException) {
+            throw error
         } catch (error: RuntimeException) {
             throw MobiParseException(
                 MobiParseError.INVALID_FILE,
@@ -320,8 +329,15 @@ class MobiParser {
                 resourcesResult = legacyResourcesResult
             }
         }
+        limits.checkBookChars(kf8Content.documents.sumOf { it.length.toLong() })
+        var chapterChars = 0L
         val chapters = kf8Content.documents
-            .flatMap { extractChapters(it, title) }
+            .flatMap { document ->
+                extractChapters(document, title).also { chapters ->
+                    chapterChars += chapters.sumOf { it.html.length.toLong() }
+                    limits.checkBookChars(chapterChars)
+                }
+            }
             .mapIndexed { index, chapter -> chapter.copy(index = index) }
         if (chapters.isEmpty()) {
             throw MobiParseException(MobiParseError.EMPTY_BOOK, "KF8 contains no readable chapters")
@@ -347,6 +363,7 @@ class MobiParser {
         records: List<Record>
     ): Int? {
         for (recordIndex in 1 until records.size) {
+            checkEbookCancellation()
             val boundary = readRecord(randomAccessFile, records[recordIndex - 1])
             if (!boundary.contentEquals(KF8_BOUNDARY)) {
                 continue
@@ -391,24 +408,26 @@ class MobiParser {
         trailingDataFlags: Int
     ): ByteArray {
         val textBytes = ByteArrayOutputStream(
-            min(textLength.toIntOrMax(), MAX_INITIAL_TEXT_CAPACITY)
+            minOf(textLength.toIntOrMax(), MAX_INITIAL_TEXT_CAPACITY, limits.maxEntryBytes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
         )
         val textRecordsEnd = textRecordsStart + textRecordCount
         for (recordIndex in textRecordsStart until textRecordsEnd) {
+            checkEbookCancellation()
             val compressedText = trimTrailingData(
                 data = readRecord(randomAccessFile, records[recordIndex]),
                 flags = trailingDataFlags
             )
             val decodedText = when (compression) {
                 COMPRESSION_NONE -> compressedText
-                COMPRESSION_PALMDOC -> PalmDocDecompressor.decompress(compressedText)
+                COMPRESSION_PALMDOC -> PalmDocDecompressor.decompress(compressedText, limits.maxEntryBytes)
                 else -> error("validated compression type")
             }
+            limits.checkEntryBytes(textBytes.size().toLong() + decodedText.size)
             textBytes.write(decodedText)
         }
 
         val allTextBytes = textBytes.toByteArray()
-        return if (textLength in 1..allTextBytes.size.toLong()) {
+        return if (textLength > 0 && textLength < allTextBytes.size.toLong()) {
             allTextBytes.copyOf(textLength.toInt())
         } else {
             allTextBytes
@@ -478,6 +497,7 @@ class MobiParser {
         val offsets = ArrayList<Long>(recordCount)
         randomAccessFile.seek(PALMDB_RECORD_TABLE_OFFSET.toLong())
         repeat(recordCount) {
+            checkEbookCancellation()
             val offset = randomAccessFile.readInt().toLong() and UINT32_MAX
             randomAccessFile.skipBytes(4)
             if (offset < tableEnd || offset >= fileLength) {
@@ -490,6 +510,7 @@ class MobiParser {
         }
 
         return offsets.mapIndexed { index, offset ->
+            checkEbookCancellation()
             val end = offsets.getOrNull(index + 1) ?: fileLength
             val length = end - offset
             if (length <= 0L || length > Int.MAX_VALUE) {
@@ -500,10 +521,23 @@ class MobiParser {
     }
 
     private fun readRecord(randomAccessFile: RandomAccessFile, record: Record): ByteArray {
+        checkEbookCancellation()
+        limits.checkEntryBytes(record.length.toLong())
         val bytes = ByteArray(record.length)
         randomAccessFile.seek(record.offset)
-        randomAccessFile.readFully(bytes)
+        readRecordBytes(randomAccessFile, bytes)
         return bytes
+    }
+
+    private fun readRecordBytes(file: RandomAccessFile, bytes: ByteArray) {
+        var offset = 0
+        while (offset < bytes.size) {
+            checkEbookCancellation()
+            val count = minOf(8192, bytes.size - offset)
+            file.readFully(bytes, offset, count)
+            offset += count
+        }
+        checkEbookCancellation()
     }
 
     private fun readExthMetadata(
@@ -532,6 +566,7 @@ class MobiParser {
         var coverOffset: Int? = null
 
         repeat(count) {
+            checkEbookCancellation()
             if (offset + 8 > headerRecord.size) {
                 return@repeat
             }
@@ -580,6 +615,7 @@ class MobiParser {
         var coverResourceId: String? = null
 
         for (recordIndex in firstImageRecord until records.size) {
+            checkEbookCancellation()
             val record = records[recordIndex]
             val prefix = readPrefix(randomAccessFile, record, IMAGE_PREFIX_LENGTH)
             val mimeType = imageMimeType(prefix) ?: continue
@@ -613,11 +649,12 @@ class MobiParser {
         val length = min(record.length, maxLength)
         val bytes = ByteArray(length)
         randomAccessFile.seek(record.offset)
-        randomAccessFile.readFully(bytes)
+        readRecordBytes(randomAccessFile, bytes)
         return bytes
     }
 
     private fun extractChapters(content: String, bookTitle: String): List<MobiChapter> {
+        limits.checkBookChars(content.length.toLong())
         val normalized = content.replace("\r\n", "\n").replace('\r', '\n')
         val sections = normalized
             .split(PAGE_BREAK_REGEX)
@@ -625,16 +662,21 @@ class MobiParser {
             .filter(String::isNotEmpty)
             .ifEmpty { listOf(normalized.trim()) }
 
+        var chapterChars = 0L
         return sections.mapIndexed { index, section ->
+            checkEbookCancellation()
             val heading = HEADING_REGEX.find(section)?.groupValues?.getOrNull(1)
                 ?.replace(TAG_REGEX, "")
                 ?.replace(ENTITY_REGEX, ::decodeEntity)
                 ?.trim()
                 ?.takeIf(String::isNotEmpty)
+            val html = asHtml(section)
+            chapterChars += html.length
+            limits.checkBookChars(chapterChars)
             MobiChapter(
                 index = index,
                 title = heading ?: if (sections.size == 1) bookTitle else (index + 1).toString(),
-                html = asHtml(section)
+                html = html
             )
         }
     }
@@ -643,7 +685,7 @@ class MobiParser {
         if (TAG_DETECTOR.containsMatchIn(content)) {
             return content
         }
-        return "<p>${escapeHtml(content).replace("\n", "<br>")}</p>"
+        return "<p>${escapeHtml(content)}</p>"
     }
 
     private fun decodeText(bytes: ByteArray, charset: Charset): String = String(bytes, charset)
@@ -689,12 +731,24 @@ class MobiParser {
     }
 
     private fun escapeHtml(value: String): String {
-        return value
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace("\"", "&quot;")
-            .replace("'", "&#39;")
+        val output = StringBuilder()
+        value.forEachIndexed { index, character ->
+            if (index and 4095 == 0) {
+                checkEbookCancellation()
+                limits.checkBookChars(output.length.toLong())
+            }
+            when (character) {
+                '&' -> output.append("&amp;")
+                '<' -> output.append("&lt;")
+                '>' -> output.append("&gt;")
+                '"' -> output.append("&quot;")
+                '\'' -> output.append("&#39;")
+                '\n' -> output.append("<br>")
+                else -> output.append(character)
+            }
+        }
+        limits.checkBookChars(output.length.toLong() + 7)
+        return output.toString()
     }
 
     private fun decodeEntity(match: MatchResult): String {

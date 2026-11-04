@@ -1,7 +1,10 @@
 package com.example.comiclab.ebook.mobi
 
 import android.util.Log
-import java.io.ByteArrayOutputStream
+import com.example.comiclab.ebook.checkEbookCancellation
+import java.util.concurrent.CancellationException
+import com.example.comiclab.ebook.EbookContentLimits
+import com.example.comiclab.ebook.EbookContentLimitException
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 
@@ -37,6 +40,8 @@ class Kf8Parser(
     private val warn: (message: String, throwable: Throwable?) -> Unit = ::logKf8Fallback
 ) {
 
+    private val limits = EbookContentLimits.forHeap()
+
     fun parse(
         rawMarkup: ByteArray,
         charset: Charset,
@@ -45,6 +50,8 @@ class Kf8Parser(
         totalRecordCount: Int,
         readRecord: (Int) -> ByteArray
     ): Kf8Content {
+        checkEbookCancellation()
+        limits.checkEntryBytes(rawMarkup.size.toLong())
         if (rawMarkup.isEmpty()) {
             return Kf8Content(emptyList())
         }
@@ -58,7 +65,7 @@ class Kf8Parser(
         )
         val stylesheet = flows
             .drop(1)
-            .map { String(it, charset) }
+            .map { checkEbookCancellation(); String(it, charset) }
             .filterNot(::looksLikeImageFlow)
             .filter(::looksLikeStylesheet)
             .joinToString("\n")
@@ -84,6 +91,7 @@ class Kf8Parser(
         }
 
         val failure = reconstruction.exceptionOrNull()
+        if (failure is CancellationException || failure is EbookContentLimitException) throw failure
         val fallbackReason = if (failure != null) {
             Kf8FallbackReason.RECONSTRUCTION_FAILED
         } else {
@@ -93,10 +101,11 @@ class Kf8Parser(
 
         val documents = flows
             .take(1)
-            .map { String(it, charset) }
+            .map { checkEbookCancellation(); String(it, charset) }
             .filter(String::isNotBlank)
             .ifEmpty { listOf(String(rawMarkup, charset)) }
 
+        limits.checkBookChars(documents.sumOf { it.length.toLong() })
         return Kf8Content(
             documents = documents,
             stylesheet = stylesheet,
@@ -133,6 +142,7 @@ class Kf8Parser(
         }
 
         val offsets = (0 until fdstSectionCount).map { index ->
+            checkEbookCancellation()
             readUnsignedInt(fdst, FDST_OFFSETS_OFFSET + index * 8).toInt()
         } + rawMarkup.size
         if (offsets.firstOrNull() != 0 || offsets.zipWithNext().any { (start, end) ->
@@ -175,7 +185,9 @@ class Kf8Parser(
 
         val documents = ArrayList<String>(skeletonIndex.entries.size)
         var fragmentCursor = 0
+        var documentChars = 0L
         for (skeleton in skeletonIndex.entries) {
+            checkEbookCancellation()
             val skeletonStart = skeleton.tagValues[TAG_START]?.firstOrNull()
                 ?: return emptyList()
             val skeletonLength = skeleton.tagValues[TAG_START]?.getOrNull(1)
@@ -194,6 +206,7 @@ class Kf8Parser(
             )
             var fragmentBase = skeletonStart + skeletonLength
             repeat(fragmentCount) {
+                checkEbookCancellation()
                 val fragment = fragmentIndex.entries.getOrNull(fragmentCursor++)
                     ?: return emptyList()
                 val fragmentStart = fragment.tagValues[TAG_START]?.firstOrNull()
@@ -218,7 +231,10 @@ class Kf8Parser(
                     .coerceIn(0, assembled.size)
                 assembled = insertBytes(assembled, relativePosition, fragmentBytes)
             }
-            documents += String(assembled, charset)
+            val document = String(assembled, charset)
+            documentChars += document.length
+            limits.checkBookChars(documentChars)
+            documents += document
         }
 
         return documents.filter(String::isNotBlank)
@@ -270,6 +286,7 @@ class Kf8Parser(
         var definitionOffset = tagxOffset + TAGX_DEFINITION_OFFSET
         val definitionEnd = tagxOffset + firstEntryOffset
         while (definitionOffset + TAG_DEFINITION_LENGTH <= definitionEnd) {
+            checkEbookCancellation()
             definitions += TagDefinition(
                 tag = mainRecord[definitionOffset].toInt() and 0xFF,
                 valuesPerEntry = mainRecord[definitionOffset + 1].toInt() and 0xFF,
@@ -289,6 +306,7 @@ class Kf8Parser(
             val entryCount = readUnsignedInt(record, INDX_COUNT_OFFSET).toInt()
             val positions = readEntryPositions(record, indexStart, entryCount)
             positions.forEachIndexed { positionIndex, entryOffset ->
+            checkEbookCancellation()
                 parseEntry(
                     record = record,
                     entryOffset = entryOffset,
@@ -317,6 +335,7 @@ class Kf8Parser(
         val positions = ArrayList<Int>()
         var offset = indexStart + 4
         for (entryIndex in 0 until entryCount) {
+            checkEbookCancellation()
             val entryOffset = readUnsignedShort(record, offset)
             offset += 2
             // INDX stores the entry offsets in the IDXT table, but the entries
@@ -360,6 +379,7 @@ class Kf8Parser(
         var controlByteIndex = 0
         val tagSpecs = ArrayList<TagSpec>()
         for (definition in definitions) {
+            checkEbookCancellation()
             if (controlByteIndex >= controlByteCount) {
                 return null
             }
@@ -407,6 +427,7 @@ class Kf8Parser(
 
         val tagValues = linkedMapOf<Int, List<Int>>()
         for (spec in tagSpecs) {
+            checkEbookCancellation()
             val values = ArrayList<Int>()
             if (spec.valueCount != null) {
                 repeat(spec.valueCount) {
@@ -426,6 +447,7 @@ class Kf8Parser(
                     return null
                 }
                 while (dataOffset < end) {
+                    checkEbookCancellation()
                     val (consumed, value) = readVwi(record, dataOffset)
                     if (dataOffset + consumed > end) {
                         return null
@@ -463,11 +485,13 @@ class Kf8Parser(
     }
 
     private fun insertBytes(source: ByteArray, position: Int, insertion: ByteArray): ByteArray {
-        val output = ByteArrayOutputStream(source.size + insertion.size)
-        output.write(source, 0, position)
-        output.write(insertion)
-        output.write(source, position, source.size - position)
-        return output.toByteArray()
+        val size = source.size.toLong() + insertion.size
+        limits.checkEntryBytes(size)
+        return ByteArray(size.toInt()).also { output ->
+            source.copyInto(output, 0, 0, position)
+            insertion.copyInto(output, position)
+            source.copyInto(output, position + insertion.size, position, source.size)
+        }
     }
 
     private fun resolveRecordIndex(

@@ -9,6 +9,11 @@ import com.example.comiclab.core.nas.NasShareProfile
 import com.example.comiclab.core.nas.NasShareStore
 import com.example.comiclab.core.update.GitHubReleaseApi
 import com.example.comiclab.core.diagnostics.CrashLogManager
+import com.example.comiclab.core.reader.enhance.EnhancementRuntime
+import com.example.comiclab.core.reader.translation.TranslationApi
+import com.example.comiclab.core.reader.translation.TranslationPolicy
+import com.example.comiclab.core.reader.translation.TranslationSettings
+import com.example.comiclab.core.reader.translation.TranslationSettingsStore
 import com.example.comiclab.core.store.PrefsGateway
 import com.example.comiclab.ui.common.createRounded
 import com.example.comiclab.ui.common.SystemBars
@@ -31,6 +36,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.ArrayAdapter
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.ImageButton
@@ -39,6 +45,7 @@ import android.widget.PopupWindow
 import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.SeekBar
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import android.widget.ViewFlipper
@@ -57,11 +64,15 @@ import java.io.File
 import java.util.ArrayDeque
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
 internal const val COMICLAB_RELEASES_URL =
     "https://github.com/Cillebokin/ComicLab/releases"
+
+// 当前版本保留自动翻译实现，仅隐藏界面入口。
+internal const val AUTO_TRANSLATION_UI_ENABLED = false
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -98,6 +109,8 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var tvNasShareConfigError: TextView
     private lateinit var btnNasAddFirstShare: Button
     private lateinit var btnNasAddShare: Button
+    private lateinit var btnTranslationTest: Button
+    private var translationSettingsTestCancelled: AtomicBoolean? = null
     private val debugToolExecutor = Executors.newSingleThreadExecutor()
     private val configurationExecutor = Executors.newSingleThreadExecutor()
     private val releaseCheckExecutor = Executors.newSingleThreadExecutor()
@@ -153,6 +166,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+        cancelTranslationSettingsTest()
         ProcessConfigurationImportCoordinator.removeListener(configurationImportListener)
         super.onStop()
     }
@@ -209,6 +223,7 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         bindLanguageSetting()
+        bindTranslationSettings()
         bindNasShareSettings()
         bindDarkModeSetting()
         bindReadingDirection()
@@ -240,6 +255,9 @@ class SettingsActivity : AppCompatActivity() {
             SETTINGS_SECTION_NAS -> settingsSections.indexOfFirst {
                 it.layoutResId == R.layout.settings_section_nas
             }
+            SETTINGS_SECTION_AUTO_TRANSLATION -> settingsSections.indexOfFirst {
+                it.layoutResId == R.layout.settings_section_translation
+            }
             else -> -1
         }
         showSettingsSection(if (requestedIndex >= 0) requestedIndex else initialSectionIndex)
@@ -262,10 +280,94 @@ class SettingsActivity : AppCompatActivity() {
         add(SettingsSection(R.string.settings_section_reading, R.layout.settings_section_reading))
         add(SettingsSection(R.string.settings_section_configuration, R.layout.settings_section_configuration))
         add(SettingsSection(R.string.source_nas, R.layout.settings_section_nas))
+        if (AUTO_TRANSLATION_UI_ENABLED) {
+            add(SettingsSection(R.string.settings_section_auto_translation, R.layout.settings_section_translation))
+        }
         add(SettingsSection(R.string.about, R.layout.settings_section_about))
         if (isDebuggableBuild()) {
             add(SettingsSection(R.string.settings_section_diagnostics, R.layout.settings_section_diagnostics))
         }
+    }
+
+    private fun bindTranslationSettings() {
+        val sectionIndex = settingsSections.indexOfFirst {
+            it.layoutResId == R.layout.settings_section_translation
+        }
+        if (sectionIndex < 0) return
+        val sectionView = settingsSectionFlipper.getChildAt(sectionIndex)
+        val address = sectionView.findViewById<EditText>(R.id.inputTranslationAddress)
+        val model = sectionView.findViewById<EditText>(R.id.inputTranslationModel)
+        val key = sectionView.findViewById<EditText>(R.id.inputTranslationKey)
+        val language = sectionView.findViewById<Spinner>(R.id.spinnerTranslationTargetLanguage)
+        val languages = resources.getStringArray(R.array.translation_languages)
+        language.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, languages).apply {
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
+        btnTranslationTest = sectionView.findViewById(R.id.btnTranslationTest)
+        val save = sectionView.findViewById<Button>(R.id.btnTranslationSave)
+        val licenses = sectionView.findViewById<Button>(R.id.btnTranslationLicenses)
+        runCatching { TranslationSettingsStore.load(this) }
+            .getOrDefault(TranslationSettings("", "", ""))
+            .let { saved ->
+                address.setText(saved.address.ifBlank { getString(R.string.translation_default_address) })
+                model.setText(saved.model.ifBlank { getString(R.string.translation_default_model) })
+                key.setText(saved.key)
+                language.setSelection(saved.targetLanguageIndex.coerceIn(0, languages.lastIndex))
+            }
+        fun currentSettings() = TranslationSettings(
+            address.text.toString().trim(),
+            model.text.toString().trim(),
+            key.text.toString().trim(),
+            language.selectedItemPosition
+        )
+        save.setOnClickListener {
+            try {
+                TranslationSettingsStore.save(this, currentSettings())
+                showMessage(getString(R.string.translation_settings_saved))
+            } catch (_: Exception) {
+                showMessage(getString(R.string.translation_invalid_settings))
+            }
+        }
+        btnTranslationTest.setOnClickListener {
+            val config = currentSettings()
+            try {
+                TranslationPolicy.endpoint(config.address)
+                require(config.model.isNotBlank() && config.key.isNotBlank())
+            } catch (_: Exception) {
+                showMessage(getString(R.string.translation_invalid_settings))
+                return@setOnClickListener
+            }
+            if (translationSettingsTestCancelled != null) return@setOnClickListener
+            val cancelled = AtomicBoolean()
+            translationSettingsTestCancelled = cancelled
+            btnTranslationTest.isEnabled = false
+            EnhancementRuntime.io.execute {
+                val ok = runCatching {
+                    val targetLanguage = languages[config.targetLanguageIndex.coerceIn(0, languages.lastIndex)]
+                    TranslationApi.translate(config, listOf("こんにちは"), targetLanguage, cancelled)
+                }.isSuccess
+                runOnUiThread {
+                    if (destroyed || translationSettingsTestCancelled !== cancelled) return@runOnUiThread
+                    translationSettingsTestCancelled = null
+                    btnTranslationTest.isEnabled = true
+                    showMessage(getString(if (ok) R.string.translation_test_ok else R.string.translation_test_failed))
+                }
+            }
+        }
+        licenses.setOnClickListener {
+            val text = assets.open("translation/NOTICE.txt").bufferedReader().use { it.readText() } + "\n\n" +
+                assets.open("translation/LICENSE-GPL-3.0.txt").bufferedReader().use { it.readText() }
+            val view = TextView(this).apply { this.text = text; setPadding(24, 12, 24, 12); textSize = 12f }
+            AlertDialog.Builder(this).setTitle(R.string.translation_licenses)
+                .setView(android.widget.ScrollView(this).apply { addView(view) }).setPositiveButton(android.R.string.ok, null).show()
+        }
+    }
+
+    private fun cancelTranslationSettingsTest() {
+        val cancelled = translationSettingsTestCancelled ?: return
+        cancelled.set(true)
+        translationSettingsTestCancelled = null
+        if (::btnTranslationTest.isInitialized) btnTranslationTest.isEnabled = true
     }
 
     private fun bindNasShareSettings() {
@@ -653,6 +755,12 @@ class SettingsActivity : AppCompatActivity() {
             return
         }
 
+        if (currentSettingsSectionIndex != index &&
+            settingsSections.getOrNull(currentSettingsSectionIndex)?.layoutResId == R.layout.settings_section_translation
+        ) {
+            cancelTranslationSettingsTest()
+        }
+
         currentSettingsSectionIndex = index.coerceIn(settingsSections.indices)
         settingsSectionFlipper.displayedChild = currentSettingsSectionIndex
         tvCurrentSettingsSectionTitle.setText(
@@ -754,6 +862,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        cancelTranslationSettingsTest()
         settingsContentsPopupWindow?.dismiss()
         settingsContentsPopupWindow = null
         destroyed = true
@@ -1171,7 +1280,10 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun exportCrashLog() {
-        val exportFile = CrashLogManager.createLatestCrashLogExport(this)
+        val exportFile = runCatching { CrashLogManager.createLatestCrashLogExport(this) }.getOrElse {
+            showMessage(getString(R.string.crash_log_export_failed))
+            return
+        }
         if (exportFile == null) {
             showMessage(getString(R.string.crash_log_empty))
             return
@@ -1300,6 +1412,7 @@ class SettingsActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_SETTINGS_SECTION = "settings_section"
         const val SETTINGS_SECTION_NAS = "nas"
+        const val SETTINGS_SECTION_AUTO_TRANSLATION = "auto_translation"
         private const val STATE_SETTINGS_SECTION_INDEX = "settings_section_index"
         private const val CHINESE_LANGUAGE_INDEX = 0
         private const val ENGLISH_LANGUAGE_INDEX = 1

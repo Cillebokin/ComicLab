@@ -5,12 +5,19 @@ import java.io.FileInputStream
 import java.io.FilterInputStream
 import java.io.InputStream
 import com.example.comiclab.ebook.EbookSession
+import com.example.comiclab.ebook.withoutChapterContent
 
 class MobiBookSession private constructor(
-    override val book: MobiBook,
+    book: MobiBook,
     private val resourceRecords: Map<String, ResourceRecord>,
     private val sourceFile: File
 ) : EbookSession {
+
+    @Volatile
+    override var book = book
+        private set
+
+    override fun releaseChapterContent() { book = book.withoutChapterContent() }
 
     @Volatile
     private var closed = false
@@ -27,19 +34,23 @@ class MobiBookSession private constructor(
 
         return runCatching {
             val input = FileInputStream(sourceFile)
-            var remainingOffset = record.offset
-            while (remainingOffset > 0L) {
-                val skipped = input.skip(remainingOffset)
-                if (skipped > 0L) {
-                    remainingOffset -= skipped
-                } else if (input.read() >= 0) {
-                    remainingOffset--
-                } else {
-                    input.close()
-                    return null
+            var transferred = false
+            try {
+                var remainingOffset = record.offset
+                while (remainingOffset > 0L) {
+                    val skipped = input.skip(remainingOffset)
+                    if (skipped > 0L) {
+                        remainingOffset -= skipped
+                    } else if (input.read() >= 0) {
+                        remainingOffset--
+                    } else {
+                        return@runCatching null
+                    }
                 }
+                LimitedInputStream(input, record.length.toLong()).also { transferred = true }
+            } finally {
+                if (!transferred) input.close()
             }
-            LimitedInputStream(input, record.length.toLong())
         }.getOrNull()
     }
 

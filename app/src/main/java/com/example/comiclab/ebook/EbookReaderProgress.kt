@@ -39,7 +39,7 @@ object EbookReaderProgressMapper {
             return EbookProgress(0, 0f)
         }
 
-        return EbookProgress(
+        return progress.copy(
             chapterIndex = progress.chapterIndex.coerceIn(0, chapterCount - 1),
             scrollFraction = progress.scrollFraction.coerceIn(0f, 1f)
         )

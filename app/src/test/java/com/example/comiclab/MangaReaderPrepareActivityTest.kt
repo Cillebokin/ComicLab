@@ -44,6 +44,8 @@ class MangaReaderPrepareActivityTest {
         assertTrue(staleCache.setLastModified(System.currentTimeMillis() - 25L * 60L * 60L * 1000L))
 
         val queuedExecutor = QueuedExecutorService()
+        var staleCleanupScheduled = false
+        var activityPreparedCache: File? = null
         val intent = Intent(application, MangaReaderPrepareActivity::class.java).apply {
             putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, archive.absolutePath)
         }
@@ -53,11 +55,13 @@ class MangaReaderPrepareActivityTest {
 
         try {
             controller.create()
+            activityPreparedCache = activity.preparedDirectoryForTest
 
             assertTrue("cleanup must not block Activity creation", staleCache.exists())
             assertEquals(1, queuedExecutor.pendingTaskCount)
 
             queuedExecutor.runNext()
+            staleCleanupScheduled = true
 
             assertTrue(
                 "expired cache deletion is scheduled off the preparation thread",
@@ -66,7 +70,22 @@ class MangaReaderPrepareActivityTest {
             assertTrue("recent cache is preserved", recentCache.exists())
         } finally {
             controller.pause().stop().destroy()
-            cacheRoot.deleteRecursively()
+            activityPreparedCache?.let { preparedCache ->
+                assertTrue(
+                    "Activity-owned prepared cache should finish asynchronous cleanup",
+                    awaitCondition { !preparedCache.exists() }
+                )
+            }
+            if (staleCleanupScheduled) {
+                assertTrue(
+                    "stale cache cleanup should finish before fixture cleanup",
+                    awaitCondition { !staleCache.exists() }
+                )
+            } else {
+                staleCache.deleteRecursively()
+            }
+            recentCache.deleteRecursively()
+            cacheRoot.delete()
         }
     }
 

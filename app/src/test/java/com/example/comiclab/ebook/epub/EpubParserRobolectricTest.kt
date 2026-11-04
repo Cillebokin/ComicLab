@@ -346,6 +346,45 @@ class EpubParserRobolectricTest {
         }).also(::append)
     }
 
+    @Test
+    fun svgSpineDocumentsAreKeptAsReadableChapters() {
+        val root = Files.createTempDirectory("comiclab-svg-spine").toFile()
+        try {
+            val file = File(root, "svg.epub")
+            val opf = packageXml().replace(
+                "id=\"chapter2\" href=\"Text/chapter2.xhtml\" media-type=\"application/xhtml+xml\"",
+                "id=\"chapter2\" href=\"Text/chapter2.xhtml\" media-type=\"image/svg+xml\""
+            )
+            writeEpub(file, opf = opf, extraEntries = mapOf("EPUB/Text/chapter2.xhtml" to
+                """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900"><image href="../Images/inline.png" width="600" height="900"/></svg>"""))
+            val parsed = EpubParser().parse(file)
+            assertEquals(2, parsed.book.chapters.size)
+            assertTrue(parsed.book.chapters.last().html.startsWith("<svg"))
+            val html = com.example.comiclab.ebook.html.EbookHtmlRenderer().render(parsed.book, com.example.comiclab.ebook.html.EbookStyle())
+            assertTrue(html.contains("viewBox=\"0 0 600 900\""))
+            assertTrue(html.contains("<image"))
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test
+    fun compressedAndAggregateContentLimitsRemainDistinctFromCorruptedArchiveErrors() {
+        val root = Files.createTempDirectory("comiclab-epub-budget").toFile()
+        try {
+            val file = File(root, "expanded.epub")
+            writeEpub(file, extraEntries = mapOf("EPUB/Text/chapter1.xhtml" to
+                "<html><body><p>" + "正文".repeat(20000) + "</p></body></html>"))
+            val smallEntry = com.example.comiclab.ebook.EbookContentLimits(100000, 4096, 200000, 10000)
+            assertTrue("compressed size must not decide the expansion budget", file.length() < 4096)
+            org.junit.Assert.assertThrows(com.example.comiclab.ebook.EbookContentLimitException::class.java) {
+                EpubParser(smallEntry).parse(file)
+            }
+            val smallBook = smallEntry.copy(maxBookChars = 1000, maxEntryBytes = 200000)
+            org.junit.Assert.assertThrows(com.example.comiclab.ebook.EbookContentLimitException::class.java) {
+                EpubParser(smallBook).parse(file)
+            }
+        } finally { root.deleteRecursively() }
+    }
+
     private fun encryptionXml(references: List<Pair<String, String>>): String = buildString {
         append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
         append("<encryption xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\" ")

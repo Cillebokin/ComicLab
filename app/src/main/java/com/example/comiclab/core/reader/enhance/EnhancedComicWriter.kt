@@ -9,7 +9,10 @@ import java.util.zip.ZipOutputStream
 
 internal object EnhancedComicWriter {
     fun write(output: File, entries: List<String>, cancelled: AtomicBoolean,
-        render: (Int, String) -> File, onPage: (Int, Int) -> Unit) {
+        render: (Int, String) -> File, onPage: (Int, Int) -> Unit,
+        outputEntryName: (Int, String, File) -> String = { index, _, _ ->
+            "%06d.png".format(java.util.Locale.ROOT, index + 1)
+        }) {
         require(entries.isNotEmpty() && !output.exists())
         fun checkCancelled() { if (cancelled.get()) throw CancellationException() }
         try {
@@ -30,7 +33,7 @@ internal object EnhancedComicWriter {
                                 crc.update(buffer, 0, count)
                             }
                         }
-                        zip.putNextEntry(ZipEntry("%06d.png".format(java.util.Locale.ROOT, index + 1)).apply {
+                        zip.putNextEntry(ZipEntry(outputEntryName(index, name, image)).apply {
                             method = ZipEntry.STORED
                             size = image.length()
                             compressedSize = size

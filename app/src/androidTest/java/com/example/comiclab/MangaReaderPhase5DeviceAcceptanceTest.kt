@@ -10,13 +10,14 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewConfiguration
-import android.os.ParcelFileDescriptor
+import android.widget.ImageView
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.GeneralLocation
 import androidx.test.espresso.action.GeneralSwipeAction
@@ -39,6 +40,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -211,6 +213,444 @@ class MangaReaderPhase5DeviceAcceptanceTest {
     }
 
     @Test
+    fun pdfFastScrollDoesNotInsertStaticViewportSnapshot() {
+        val pdf = createPdf("pdf-fast-scroll.pdf", pageCount = 30)
+        val activity = launchReader(pdf)
+        val root = onMain { activity.findViewById<ViewGroup>(R.id.main) }
+        val snapshotObservedDuringMotion = AtomicBoolean(false)
+        val listener = object : RecyclerView.OnScrollListener() {
+            private fun recordSnapshot(recyclerView: RecyclerView) {
+                if (recyclerView.scrollState != RecyclerView.SCROLL_STATE_IDLE &&
+                    root.childCount > 1 && root.getChildAt(1) is ImageView
+                ) {
+                    snapshotObservedDuringMotion.set(true)
+                }
+            }
+
+            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                recordSnapshot(recyclerView)
+            }
+
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                recordSnapshot(recyclerView)
+            }
+        }
+        onMain { activity.listReaderPagesForTest.addOnScrollListener(listener) }
+
+        try {
+            onView(withId(R.id.listReaderPages)).perform(
+                GeneralSwipeAction(
+                    Swipe.FAST,
+                    GeneralLocation.CENTER,
+                    GeneralLocation.TOP_CENTER,
+                    Press.FINGER
+                )
+            )
+            awaitCondition("fast PDF swipe did not advance the reader") {
+                activity.currentReaderPositionForTest > 0
+            }
+            awaitCondition("fast PDF swipe did not settle") {
+                onMain {
+                    activity.listReaderPagesForTest.scrollState == RecyclerView.SCROLL_STATE_IDLE
+                }
+            }
+            assertFalse(
+                "PDF fast scrolling must not place a static screenshot over the moving pages",
+                snapshotObservedDuringMotion.get()
+            )
+        } finally {
+            onMain { activity.listReaderPagesForTest.removeOnScrollListener(listener) }
+        }
+    }
+
+    @Test
+    fun largestPdfContinuousRealGesturesCaptureFramesAndExportDiagnostics() {
+        val pdf = File(context.getExternalFilesDir(null), "reader-priority.pdf")
+        assertTrue("supply the real PDF in the isolated test package", pdf.isFile)
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_TOP_TO_BOTTOM)
+        val activity = launchReader(pdf, allowPreviewReady = true)
+        val directory = File(context.getExternalFilesDir(null), "pdf-gestures-${if (BuildConfig.DEBUG) "debug" else "release"}").apply { mkdirs() }
+        val samples = mutableListOf<String>()
+        val timeline = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        val timelineCount = java.util.concurrent.atomic.AtomicInteger()
+        val adapter = onMain { activity.pageAdapterForTest } as com.example.comiclab.ui.reader.manga.MangaPageAdapter
+        val diagnostics = adapter.javaClass.getDeclaredField("pdfDiagnostics").apply { isAccessible = true }
+            .get(adapter) as com.example.comiclab.core.diagnostics.PdfReaderDiagnostics.Session
+        diagnostics.eventSinkForTest = { event ->
+            if (timelineCount.incrementAndGet() <= 20000) timeline.add("uptimeMs=${SystemClock.uptimeMillis()} $event")
+        }
+        val marker = onMain {
+            object : android.view.View(activity) {
+                private val paint = android.graphics.Paint()
+                private var frame = 0
+                override fun onDraw(canvas: android.graphics.Canvas) {
+                    super.onDraw(canvas)
+                    frame++
+                    paint.color = android.graphics.Color.BLUE
+                    canvas.drawRect(0f, 0f, 10f, 20f, paint)
+                    repeat(16) { bit ->
+                        paint.color = if (frame and (1 shl bit) != 0) android.graphics.Color.GREEN else android.graphics.Color.RED
+                        canvas.drawRect(10f + bit * 10, 0f, 20f + bit * 10, 20f, paint)
+                    }
+                    val list = activity.listReaderPagesForTest
+                    val viewport = android.graphics.Rect().also { list.getGlobalVisibleRect(it) }
+                    val holders = (0 until list.childCount).mapNotNull { index ->
+                        val child = list.getChildAt(index)
+                        val holder = list.getChildViewHolder(child) as? com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder
+                            ?: return@mapNotNull null
+                        val location = IntArray(2).also { child.getLocationOnScreen(it) }
+                        val rect = android.graphics.Rect(location[0], location[1], location[0] + child.width, location[1] + child.height)
+                        val adapterPosition = list.getChildAdapterPosition(child)
+                        val sourcePosition = holder.boundPosition
+                        val bitmap = (holder.imageView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                        "${sourcePosition + 1}:$adapterPosition:${rect.top}:${rect.bottom}:${bitmap != null && !bitmap.isRecycled}:${sourcePosition >= 0 && adapter.hasCachedPreviewForTest(sourcePosition)}"
+                    }
+                    if (timelineCount.incrementAndGet() <= 20000) timeline.add("frame=$frame uptimeMs=${SystemClock.uptimeMillis()} viewport=${viewport.top}:${viewport.bottom} holders=${holders.joinToString(";")}")
+                    postInvalidateOnAnimation()
+                }
+            }.also {
+                (activity.window.decorView as android.view.ViewGroup).addView(it,
+                    android.view.ViewGroup.LayoutParams(170, 20))
+            }
+        }
+        fun sample(label: String) {
+            val memory = android.os.Debug.MemoryInfo().also(android.os.Debug::getMemoryInfo)
+            val position = onMain { activity.currentReaderPositionForTest }
+            samples += "$label page=${position + 1} totalPssKb=${memory.totalPss} nativePssKb=${memory.nativePss} dalvikPssKb=${memory.dalvikPss}"
+        }
+        try {
+            onMain { activity.jumpReaderToPageForTest(40.coerceAtMost(activity.imageEntriesForTest.lastIndex)) }
+            sample("before")
+            repeat(24) { step ->
+                val rect = onMain { android.graphics.Rect().also { activity.listReaderPagesForTest.getGlobalVisibleRect(it) } }
+                val forward = step < 8 || step >= 16
+                val x = rect.exactCenterX()
+                val from = rect.top + rect.height() * if (forward) .8f else .2f
+                val to = rect.top + rect.height() * if (forward) .2f else .8f
+                val down = SystemClock.uptimeMillis()
+                fun inject(action: Int, y: Float) {
+                    MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x, y, 0).also { event ->
+                        event.source = InputDevice.SOURCE_TOUCHSCREEN
+                        try { assertTrue(instrumentation.uiAutomation.injectInputEvent(event, false)) }
+                        finally { event.recycle() }
+                    }
+                }
+                inject(MotionEvent.ACTION_DOWN, from)
+                repeat(6) { move ->
+                    SystemClock.sleep(16)
+                    inject(MotionEvent.ACTION_MOVE, from + (to - from) * (move + 1) / 6)
+                }
+                inject(MotionEvent.ACTION_UP, to)
+                SystemClock.sleep(40)
+                if (step % 4 == 3) {
+                    sample("gesture-$step")
+                    val screenshot = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+                    try { File(directory, "gesture-$step.png").outputStream().use {
+                        assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, it))
+                    } } finally { screenshot.recycle() }
+                }
+            }
+            val waitStarted = SystemClock.elapsedRealtime()
+            awaitCondition("the final visible pages did not display valid bitmaps") {
+                onMain {
+                    val list = activity.listReaderPagesForTest
+                    val holders = (0 until list.childCount).map { list.getChildViewHolder(list.getChildAt(it)) }
+                        .filterIsInstance<com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder>()
+                    holders.isNotEmpty() && holders.all {
+                        val bitmap = (it.imageView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                        bitmap != null && !bitmap.isRecycled
+                    }
+                }
+            }
+            samples += "settleWaitMs=${SystemClock.elapsedRealtime() - waitStarted}"
+            sample("after")
+            assertTrue("real gestures should change reading position", samples.mapNotNull {
+                Regex("page=([0-9]+)").find(it)?.groupValues?.get(1)
+            }.distinct().size > 2)
+        } finally {
+            diagnostics.eventSinkForTest = null
+            onMain { (marker.parent as? android.view.ViewGroup)?.removeView(marker) }
+            File(directory, "timeline.txt").writeText(
+                "observation=overlay (adds sampling/drawing overhead; onDraw is not GPU presentation)\n" +
+                    "holdersFormat=sourcePage(1-based,0=blank):adapterPosition(0-based):top:bottom:bitmap:cached\n" +
+                    timeline.joinToString("\n"))
+            File(directory, "samples.txt").writeText("debug=${BuildConfig.DEBUG} pdfBytes=${pdf.length()}\n" + samples.joinToString("\n"))
+            com.example.comiclab.core.diagnostics.CrashLogManager.createLatestCrashLogExport(context)
+                ?.copyTo(File(directory, "diagnostics.txt"), overwrite = true)
+        }
+    }
+
+    @Test
+    fun pdfReadingForwardThenBackKeepsAFirstImageForPagesWhoseFullImageWasTrimmed() {
+        val pdf = File(context.getExternalFilesDir(null), "reader-priority.pdf")
+        assertTrue("supply the real PDF in the isolated test package", pdf.isFile)
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_TOP_TO_BOTTOM)
+        val activity = launchReader(pdf, allowPreviewReady = true)
+        val adapter = onMain { activity.pageAdapterForTest } as com.example.comiclab.ui.reader.manga.MangaPageAdapter
+        val directory = File(context.getExternalFilesDir(null), "pdf-readback-${if (BuildConfig.DEBUG) "debug" else "release"}").apply { mkdirs() }
+        @Suppress("UNCHECKED_CAST")
+        val fullCache = adapter.javaClass.getDeclaredField("fullBitmapCache").apply { isAccessible = true }
+            .get(adapter) as android.util.LruCache<Int, Bitmap>
+        val notes = mutableListOf<String>()
+        fun visibleSourcePages(): List<Int> = onMain {
+            val list = activity.listReaderPagesForTest
+            (0 until list.childCount).mapNotNull { index ->
+                val child = list.getChildAt(index)
+                val holder = list.getChildViewHolder(child) as? com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder
+                holder?.boundPosition?.takeIf { it >= 0 && child.bottom > 0 && child.top < list.height }
+            }
+        }
+        // 慢拖：中途放慢并在抬手前停住，避免产生惯性滑行，一次约移动列表高度的一半。
+        fun slowDrag(forward: Boolean) {
+            val rect = onMain { android.graphics.Rect().also { activity.listReaderPagesForTest.getGlobalVisibleRect(it) } }
+            val x = rect.exactCenterX()
+            val from = rect.top + rect.height() * if (forward) .85f else .25f
+            val to = rect.top + rect.height() * if (forward) .25f else .85f
+            val down = SystemClock.uptimeMillis()
+            fun inject(action: Int, y: Float) {
+                MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x, y, 0).also { event ->
+                    event.source = InputDevice.SOURCE_TOUCHSCREEN
+                    try { assertTrue(instrumentation.uiAutomation.injectInputEvent(event, false)) } finally { event.recycle() }
+                }
+            }
+            inject(MotionEvent.ACTION_DOWN, from)
+            repeat(20) { move ->
+                SystemClock.sleep(16)
+                inject(MotionEvent.ACTION_MOVE, from + (to - from) * (move + 1) / 20)
+            }
+            SystemClock.sleep(150)
+            inject(MotionEvent.ACTION_MOVE, to)
+            inject(MotionEvent.ACTION_UP, to)
+        }
+        // 停下阅读：等当前可见页都拿到全图；超时不算失败，只记录。
+        val everFull = sortedSetOf<Int>()
+        val fallbackMissing = mutableListOf<String>()
+        fun hasFallback(page: Int) = onMain { adapter.hasCachedPreviewForTest(page) }
+        fun settleReading(label: String) {
+            val deadline = SystemClock.elapsedRealtime() + 3_000
+            while (SystemClock.elapsedRealtime() < deadline) {
+                val pages = visibleSourcePages()
+                if (pages.isNotEmpty() && pages.all { fullCache.snapshot().containsKey(it) }) break
+                SystemClock.sleep(50)
+            }
+            // 全图先入缓存、紧凑首图随后替换旧预览，两步之间差几毫秒；再等一会儿再判。
+            val fallbackDeadline = SystemClock.elapsedRealtime() + 1_000
+            while (SystemClock.elapsedRealtime() < fallbackDeadline &&
+                visibleSourcePages().any { fullCache.snapshot().containsKey(it) && !hasFallback(it) }) {
+                SystemClock.sleep(50)
+            }
+            val missing = visibleSourcePages().filter { fullCache.snapshot().containsKey(it) && !hasFallback(it) }
+            if (missing.isNotEmpty()) fallbackMissing += "$label pages=${missing.map { it + 1 }}"
+            everFull += fullCache.snapshot().keys
+            notes += "$label visible=${visibleSourcePages().map { it + 1 }} fullCached=${fullCache.snapshot().keys.sorted().map { it + 1 }}"
+        }
+        // 逐帧记录：有 holder 在屏幕上但没有位图，即黑屏帧。
+        val frames = java.util.concurrent.atomic.AtomicInteger()
+        val blankFrames = java.util.concurrent.atomic.AtomicInteger()
+        val sampling = java.util.concurrent.atomic.AtomicBoolean()
+        val callback = object : android.view.Choreographer.FrameCallback {
+            override fun doFrame(frameTimeNanos: Long) {
+                if (!sampling.get()) return
+                val list = activity.listReaderPagesForTest
+                val blank = (0 until list.childCount).any { index ->
+                    val child = list.getChildAt(index)
+                    val holder = list.getChildViewHolder(child) as? com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder
+                    holder != null && holder.boundPosition >= 0 && child.bottom > 100 && child.top < list.height - 100 &&
+                        (holder.imageView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap?.isRecycled != false
+                }
+                frames.incrementAndGet()
+                if (blank) blankFrames.incrementAndGet()
+                android.view.Choreographer.getInstance().postFrameCallback(this)
+            }
+        }
+        try {
+            onMain { activity.jumpReaderToPageForTest(40.coerceAtMost(activity.imageEntriesForTest.lastIndex)) }
+            settleReading("start")
+            val startPage = checkNotNull(visibleSourcePages().minOrNull()) { "no visible page after the jump" }
+            repeat(10) { step ->
+                slowDrag(forward = true)
+                settleReading("forward-$step")
+            }
+            val current = checkNotNull(visibleSourcePages().minOrNull())
+            assertTrue("the forward reading must move well past the start page", current - startPage >= 5)
+            // P4 的机制：视口里拿到全图的页，缓存里必须同时有一张预览，否则全图被裁掉后页面就是空白占位。
+            assertTrue("a page showing its full image must still have a first image in the cache: $fallbackMissing",
+                fallbackMissing.isEmpty())
+
+            // 以下只做测量、不做断言：已被裁掉全图且落在预加载窗口之外的页，预览优先级为 0，
+            // 缓存常年接近满载，它们通常很快被后来的预览挤掉，所以这里留下的紧凑首图并不保证长期存活。
+            val trimmed = everFull.filter { it <= current - 3 && !fullCache.snapshot().containsKey(it) }
+            val retained = trimmed.filter { hasFallback(it) }
+            notes += "everFull=${everFull.map { it + 1 }} trimmedOutsideWindow=${trimmed.map { it + 1 }} withCachedPreview=${retained.map { it + 1 }}"
+            assertTrue("this run must produce trimmed pages to exercise the path: $notes", trimmed.size >= 3)
+
+            onMain {
+                sampling.set(true)
+                android.view.Choreographer.getInstance().postFrameCallback(callback)
+            }
+            repeat(8) { slowDrag(forward = false) }
+            settleReading("back")
+            onMain { sampling.set(false) }
+            notes += "returnFrames=${frames.get()} blankFrames=${blankFrames.get()}"
+        } finally {
+            onMain { sampling.set(false) }
+            File(directory, "notes.txt").writeText(notes.joinToString("\n"))
+            com.example.comiclab.core.diagnostics.CrashLogManager.createLatestCrashLogExport(context)
+                ?.copyTo(File(directory, "diagnostics.txt"), overwrite = true)
+        }
+    }
+
+    // 文档约定：界面隐藏不代表内存不足，可见页不得因此失去图像，低内存标志也不得被置上。
+    // 系统只肯对前台进程送 RUNNING_* 三档，UI_HIDDEN 只能直接调用 Activity.onTrimMemory。
+    @Test
+    fun pdfUiHiddenTrimKeepsVisiblePagesDisplayableAndDoesNotLatchLowMemory() {
+        val pdf = File(context.getExternalFilesDir(null), "reader-priority.pdf")
+        assertTrue("supply the real PDF in the isolated test package", pdf.isFile)
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_TOP_TO_BOTTOM)
+        val activity = launchReader(pdf, allowPreviewReady = true)
+        val adapter = onMain { activity.pageAdapterForTest } as com.example.comiclab.ui.reader.manga.MangaPageAdapter
+        val lowMemory = adapter.javaClass.getDeclaredField("pdfLowMemoryMode").apply { isAccessible = true }
+        onMain { activity.jumpReaderToPageForTest(30) }
+        awaitCondition("visible pages did not display before the trim") {
+            visibleSourcePagesOf(activity).isNotEmpty() && !anyVisibleBlank(activity)
+        }
+        onMain { activity.onTrimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) }
+        var blankSamples = 0
+        val deadline = SystemClock.elapsedRealtime() + 2_000
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (anyVisibleBlank(activity)) blankSamples++
+            SystemClock.sleep(8)
+        }
+        assertEquals("UI hidden must not blank a visible page", 0, blankSamples)
+        assertFalse("UI hidden must not latch low-memory mode", lowMemory.getBoolean(adapter))
+    }
+
+    // 现行约定：系统送达 RUNNING_LOW 后，低内存标志一直保持到阅读器暂停再恢复，期间不再预加载前方页。
+    // 若以后有意放宽（例如静默一段时间后自动恢复），同步改这条；对照与恢复两段保证它不是空断言。
+    @Test
+    fun pdfRunningLowTrimSuppressesLookaheadUntilTheReaderResumes() {
+        val pdf = File(context.getExternalFilesDir(null), "reader-priority.pdf")
+        assertTrue("supply the real PDF in the isolated test package", pdf.isFile)
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_TOP_TO_BOTTOM)
+        val activity = launchReader(pdf, allowPreviewReady = true)
+        val adapter = onMain { activity.pageAdapterForTest } as com.example.comiclab.ui.reader.manga.MangaPageAdapter
+        @Suppress("UNCHECKED_CAST")
+        val fullCache = adapter.javaClass.getDeclaredField("fullBitmapCache").apply { isAccessible = true }
+            .get(adapter) as android.util.LruCache<Int, Bitmap>
+        val lowMemory = adapter.javaClass.getDeclaredField("pdfLowMemoryMode").apply { isAccessible = true }
+        val diagnostics = adapter.javaClass.getDeclaredField("pdfDiagnostics").apply { isAccessible = true }
+            .get(adapter) as com.example.comiclab.core.diagnostics.PdfReaderDiagnostics.Session
+        val trimLevels = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        diagnostics.eventSinkForTest = { event ->
+            if (event.contains("event=memory_trim")) trimLevels.add(Regex("level=(\\d+)").find(event)?.groupValues?.get(1) ?: "?")
+        }
+        // 跳到 page 页并等可见页拿到全图，再看紧接着的两页有没有被预加载出预览。
+        fun lookaheadCachedAfterJumpTo(page: Int): List<Boolean> {
+            onMain { activity.jumpReaderToPageForTest(page) }
+            val deadline = SystemClock.elapsedRealtime() + 3_000
+            while (SystemClock.elapsedRealtime() < deadline) {
+                val pages = visibleSourcePagesOf(activity)
+                if (pages.isNotEmpty() && pages.all { fullCache.snapshot().containsKey(it) }) break
+                SystemClock.sleep(50)
+            }
+            SystemClock.sleep(400)
+            val ahead = (1..2).map { (visibleSourcePagesOf(activity).maxOrNull() ?: -10) + it }
+            SystemClock.sleep(1_500)
+            return ahead.map { onMain { adapter.hasCachedPreviewForTest(it) } }
+        }
+        try {
+            // 阅读器真正恢复时 Activity.onResume 会调用它；这里显式调用，保证从干净状态开始。
+            onMain { adapter.onReaderResumed() }
+            val control = lookaheadCachedAfterJumpTo(30)
+            assertTrue("without memory pressure the next pages must be preloaded, or this test proves nothing: $control",
+                control.all { it })
+
+            ParcelFileDescriptor.AutoCloseInputStream(
+                instrumentation.uiAutomation.executeShellCommand("am send-trim-memory ${android.os.Process.myPid()} RUNNING_LOW 2>&1")
+            ).bufferedReader().use { it.readText() }
+            awaitCondition("the system did not deliver RUNNING_LOW (levels seen: $trimLevels)") {
+                trimLevels.contains(android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW.toString())
+            }
+            assertTrue("RUNNING_LOW must put the adapter into low-memory mode", lowMemory.getBoolean(adapter))
+            val suppressed = lookaheadCachedAfterJumpTo(45)
+            assertFalse("low-memory mode must stop look-ahead preloading: $suppressed", suppressed.any { it })
+            assertTrue("low-memory mode stays latched until the reader resumes", lowMemory.getBoolean(adapter))
+
+            onMain { adapter.onReaderResumed() }
+            assertFalse(lowMemory.getBoolean(adapter))
+            val restored = lookaheadCachedAfterJumpTo(60)
+            assertTrue("resuming must bring look-ahead preloading back: $restored", restored.all { it })
+        } finally {
+            diagnostics.eventSinkForTest = null
+        }
+    }
+
+    private fun visibleSourcePagesOf(activity: MangaReaderActivity): List<Int> = onMain {
+        val list = activity.listReaderPagesForTest
+        (0 until list.childCount).mapNotNull { index ->
+            val child = list.getChildAt(index)
+            val holder = list.getChildViewHolder(child) as? com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder
+            holder?.boundPosition?.takeIf { it >= 0 && child.bottom > 100 && child.top < list.height - 100 }
+        }
+    }
+
+    // 有 holder 在屏幕上但没有可绘制位图，即占位或黑屏。
+    private fun anyVisibleBlank(activity: MangaReaderActivity): Boolean = onMain {
+        val list = activity.listReaderPagesForTest
+        (0 until list.childCount).any { index ->
+            val child = list.getChildAt(index)
+            val holder = list.getChildViewHolder(child) as? com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder
+            holder != null && holder.boundPosition >= 0 && child.bottom > 100 && child.top < list.height - 100 &&
+                (holder.imageView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap?.isRecycled != false
+        }
+    }
+
+    @Test
+    fun pdfRapidTurnsAndBackgroundReturnKeepRenderingAvailable() {
+        val supplied = File(context.getExternalFilesDir(null), "reader-priority.pdf")
+        val pdf = if (supplied.isFile) supplied else createPdf("pdf-priority.pdf", pageCount = 30)
+        onMain { AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_TOP_TO_BOTTOM) }
+        val activity = launchReader(pdf, allowPreviewReady = true)
+        val adapter = onMain { activity.pageAdapterForTest }!!
+        val lowMemory = adapter.javaClass.getDeclaredField("pdfLowMemoryMode").apply { isAccessible = true }
+        val count = activity.imageEntriesForTest.size
+        val waits = mutableListOf<Long>()
+        repeat(12) { step ->
+            val target = (step * 7 + 1) % count
+            // Leave several pages before their deferred full render can become useful.
+            onMain {
+                activity.jumpReaderToPageForTest((target + 2) % count)
+                activity.jumpReaderToPageForTest((target + 1) % count)
+                activity.jumpReaderToPageForTest(target)
+            }
+            val started = SystemClock.elapsedRealtime()
+            awaitCondition("target PDF page $target did not acquire a readable bitmap") {
+                onMain {
+                    val holder = activity.listReaderPagesForTest.findViewHolderForAdapterPosition(target)
+                        as? com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder
+                    (holder?.imageView?.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                        ?.let { !it.isRecycled && it.width > 0 } == true
+                }
+            }
+            waits += SystemClock.elapsedRealtime() - started
+        }
+        onMain { activity.onTrimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) }
+        assertFalse("ordinary backgrounding must not latch low-memory mode", lowMemory.getBoolean(adapter))
+        ParcelFileDescriptor.AutoCloseInputStream(
+            instrumentation.uiAutomation.executeShellCommand("input keyevent KEYCODE_HOME")
+        ).close()
+        awaitCondition("reader did not leave the foreground") { onMain { resumedReader() == null } }
+        // MainActivity 为 singleTask，重新启动它会清除上面的阅读页；这里模拟从最近任务返回。
+        onMain {
+            val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            manager.appTasks.first { it.taskInfo.taskId == activity.taskId }.moveToFront()
+        }
+        awaitCondition("reader did not resume its existing session") { onMain { resumedReader() === activity } }
+        assertFalse("returning to the reader must enable normal quality and preloads", lowMemory.getBoolean(adapter))
+        android.util.Log.i("ReaderPriorityAcceptance", "pdfBytes=${pdf.length()} pages=$count targetBitmapWaitMs=$waits")
+    }
+
+    @Test
     fun preparedImagePathKeepsCacheAcrossRotationAndDeletesItAfterExit() {
         val archive = createArchive("prepared-reader.cbz", pageCount = 12)
         val cacheDirectory = File(temporaryFolder.root, "prepared-reader-cache").apply { mkdirs() }
@@ -245,7 +685,8 @@ class MangaReaderPhase5DeviceAcceptanceTest {
     private fun launchReader(
         archive: File,
         preparedCacheDirectory: File? = null,
-        debugStressIterations: Int = 0
+        debugStressIterations: Int = 0,
+        allowPreviewReady: Boolean = false
     ): MangaReaderActivity {
         val browser = ensureBrowserForeground()
         val intent = Intent(context, MangaReaderActivity::class.java)
@@ -260,12 +701,12 @@ class MangaReaderPhase5DeviceAcceptanceTest {
             intent.putExtra(MangaReaderActivity.EXTRA_DEBUG_READER_STRESS_DELAY_MS, 90L)
         }
         onMain { browser.startActivity(intent) }
-        return awaitReadyReader()
+        return awaitReadyReader(allowPreviewReady = allowPreviewReady)
     }
 
     private fun ensureBrowserForeground(): MainActivity {
         val descriptor = instrumentation.uiAutomation.executeShellCommand(
-            "am start -n com.example.comiclab/.MainActivity -f 0x10008000"
+            "am start -n ${context.packageName}/com.example.comiclab.MainActivity -f 0x10008000"
         )
         val shellOutput = ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
         assertTrue("device shell could not foreground the isolated browser: $shellOutput", shellOutput.contains("Starting:"))
@@ -275,7 +716,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         }
     }
 
-    private fun awaitReadyReader(previous: MangaReaderActivity? = null): MangaReaderActivity {
+    private fun awaitReadyReader(previous: MangaReaderActivity? = null, allowPreviewReady: Boolean = false): MangaReaderActivity {
         var readyReader: MangaReaderActivity? = null
         try {
             awaitCondition("reader did not load and render its first page") {
@@ -288,6 +729,14 @@ class MangaReaderPhase5DeviceAcceptanceTest {
                         (0 until recyclerView.childCount).any { index ->
                             (findZoomView(recyclerView.getChildAt(index)) as? ReaderSubsamplingImageView)
                                 ?.isImageLoaded() == true
+                        }
+                    } else if (allowPreviewReady) {
+                        // PDF显示回归从实际已显示的预览开始；首屏性能指标由其他验收检查。
+                        (0 until recyclerView.childCount).any { index ->
+                            val holder = recyclerView.getChildViewHolder(recyclerView.getChildAt(index))
+                                as? com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder
+                            val bitmap = (holder?.imageView?.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                            bitmap != null && !bitmap.isRecycled
                         }
                     } else {
                         current.firstReaderPageReadyMetricReportedForTest

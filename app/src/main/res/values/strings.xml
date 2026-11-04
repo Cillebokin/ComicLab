@@ -135,6 +135,7 @@
     <string name="settings_section_appearance">外观</string>
     <string name="settings_section_reading">阅读</string>
     <string name="settings_section_configuration">配置</string>
+    <string name="settings_section_auto_translation">自动翻译</string>
     <string name="settings_section_diagnostics">诊断工具</string>
     <string name="help">帮助</string>
     <string name="help_title">使用说明</string>
@@ -424,9 +425,10 @@
     <string name="custom_brightness">自定义亮度</string>
     <string name="brightness_percent">%1$d%%</string>
     <string name="stability_tools">稳定性工具</string>
-    <string name="export_crash_log">导出崩溃日志</string>
-    <string name="crash_log_empty">暂无崩溃日志</string>
-    <string name="crash_log_share_title">导出 ComicLab 崩溃日志</string>
+    <string name="export_crash_log">导出阅读诊断与崩溃日志</string>
+    <string name="crash_log_empty">暂无阅读诊断或崩溃日志</string>
+    <string name="crash_log_export_failed">诊断日志导出失败，请检查可用存储空间后重试</string>
+    <string name="crash_log_share_title">导出 ComicLab 诊断日志</string>
     <string name="run_reader_stress_test">启动阅读器压力测试</string>
     <string name="configuration_management">配置管理</string>
     <string name="export_configuration">导出配置</string>
@@ -497,6 +499,8 @@
     <string name="reader_prepare_cache_failure">准备阅读失败，可能是缓存空间不足</string>
     <string name="ebook_untitled_book">未命名电子书</string>
     <string name="ebook_untitled_chapter">未命名</string>
+    <string name="ebook_previous_chapter">上一章</string>
+    <string name="ebook_next_chapter">下一章</string>
     <string name="reader_enhance">高清化</string>
     <string name="reader_enhance_title">第%1$d页 · %2$d倍高清化</string>
     <string name="reader_enhance_preparing">正在提取原图并加载模型…</string>
@@ -510,6 +514,16 @@
     <string name="reader_enhance_busy">上一项高清任务正在处理或取消，请稍后重试</string>
     <string name="reader_enhance_save">保存</string>
     <string name="enhancement_book_menu">一键高清化</string>
+    <string name="comic_convert_to_pdf">转换为PDF</string>
+    <string name="comic_convert_to_cbz">转换为CBZ</string>
+    <string name="comic_conversion_title">漫画格式转换</string>
+    <string name="comic_conversion_choose_destination">请选择保存位置和文件名</string>
+    <string name="comic_conversion_progress">正在转换第%1$d/%2$d页 · %3$d%%</string>
+    <string name="comic_conversion_saving">正在保存文件 · %1$d%%</string>
+    <string name="comic_conversion_cancelling">正在取消并清理临时文件…</string>
+    <string name="comic_conversion_done">转换完成</string>
+    <string name="comic_conversion_busy">另一个漫画处理任务正在运行，请稍后重试</string>
+    <string name="comic_conversion_failed">转换或保存失败。请检查漫画文件、图片尺寸、可用空间和目标位置权限；原文件未修改</string>
     <string name="enhancement_book_title">整本漫画高清化 · %1$d倍</string>
     <string name="enhancement_choose_destination">请选择保存位置和文件名</string>
     <string name="enhancement_book_progress">正在处理第%1$d/%2$d页 · 当前页%3$d%%\n整本进度%4$d%%</string>
@@ -525,4 +539,5 @@
     <string name="favorite_comics_read_failed">无法读取漫画收藏，已保留原数据</string>
     <string name="favorite_paths_read_failed">无法读取目录收藏，已保留原数据</string>
     <string name="reading_history_read_failed">无法读取阅读历史，已保留原数据</string>
+    <string name="ebook_content_too_large">电子书展开内容过大，暂时无法安全加载</string>
 </resources>

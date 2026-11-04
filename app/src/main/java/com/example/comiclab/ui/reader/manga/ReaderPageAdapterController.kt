@@ -5,8 +5,6 @@ import androidx.recyclerview.widget.RecyclerView
 internal interface ReaderPageAdapterController {
     fun readerItemCount(): Int
 
-    fun allVisiblePagesHaveRenderableContent(recyclerView: RecyclerView): Boolean
-
     fun preloadAround(
         firstVisiblePosition: Int,
         visibleItemCount: Int,
@@ -24,6 +22,10 @@ internal interface ReaderPageAdapterController {
     )
 
     fun trimMemory(level: Int)
+
+    fun onReaderResumed() {}
+
+    fun onReaderPaused() {}
 
     fun flushPendingRefreshesIfIdle()
 

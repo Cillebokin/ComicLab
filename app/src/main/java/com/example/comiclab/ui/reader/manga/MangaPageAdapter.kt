@@ -4,6 +4,7 @@ import android.content.ComponentCallbacks2
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Canvas
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
@@ -16,9 +17,12 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.recyclerview.widget.RecyclerView
+import androidx.appcompat.widget.AppCompatImageView
 import com.example.comiclab.AppSettings
 import com.example.comiclab.ComicArchive
+import com.example.comiclab.core.archive.PdfRenderSizePolicy
 import com.example.comiclab.core.diagnostics.CrashLogManager
+import com.example.comiclab.core.diagnostics.PdfReaderDiagnostics
 import com.example.comiclab.core.diagnostics.formatReaderDecodeQueueTiming
 import com.example.comiclab.MAX_READER_DECODE_HEIGHT
 import com.example.comiclab.MAX_READER_DECODE_WIDTH
@@ -80,6 +84,7 @@ internal class MangaPageAdapter(
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val isPdfSource = session.isPdfSource()
+    private val pdfDiagnostics = if (isPdfSource) PdfReaderDiagnostics.begin(archiveFile) else null
     private val hasIndependentPdfSessions = isPdfSource &&
         archiveFile.extension.equals("pdf", ignoreCase = true)
     private val decoderSessions = Collections.synchronizedSet(mutableSetOf(session))
@@ -108,6 +113,9 @@ internal class MangaPageAdapter(
     private val loadingFullPages = Collections.synchronizedSet(mutableSetOf<Int>())
     private val loadingTiles = Collections.synchronizedSet(mutableSetOf<TileKey>())
     private val failedPreviewPages = Collections.synchronizedSet(mutableSetOf<Int>())
+    private val visiblePdfPreviewUpgradeRequests = Collections.synchronizedSet(mutableSetOf<Int>())
+    private val pendingPdfIdlePreviewUpgradeRequests =
+        Collections.synchronizedMap(mutableMapOf<Int, Pair<Int, Int>>())
     private val failedFullPages = Collections.synchronizedSet(mutableSetOf<Int>())
     private val loadingZoomFullPages = Collections.synchronizedSet(mutableSetOf<Int>())
     private val failedZoomFullPages = Collections.synchronizedSet(mutableSetOf<Int>())
@@ -125,6 +133,8 @@ internal class MangaPageAdapter(
     @Volatile
     private var pdfFastScrollMode = false
     @Volatile
+    private var pdfPreviewUpgradeAllowed = true
+    @Volatile
     private var pdfIdlePreviewPreloadMode = false
     private val positionMapper = ReaderPagePositionMapper(
         sourceItemCount = entries.size,
@@ -133,10 +143,17 @@ internal class MangaPageAdapter(
         spreadAnchorSourcePosition = spreadAnchorSourcePosition
     )
     private val cacheLock = Any()
+    private val previewBitmapDecodeWidths = Collections.synchronizedMap(mutableMapOf<Int, Int>())
     private val fullBitmapDecodeWidths = Collections.synchronizedMap(mutableMapOf<Int, Int>())
     private val previewBitmapCache = object : LruCache<Int, Bitmap>(previewBitmapCacheSizeKb(isPdfSource)) {
         override fun sizeOf(key: Int, value: Bitmap): Int {
             return (value.byteCount / 1024).coerceAtLeast(1)
+        }
+
+        override fun entryRemoved(evicted: Boolean, key: Int, oldValue: Bitmap, newValue: Bitmap?) {
+            previewBitmapDecodeWidths.remove(key)
+            if (isPdfSource && newValue == null) pdfDiagnostics?.note("preview_removed",
+                "page=${key + 1} reason=${if (evicted) "lru" else "explicit"} bytes=${oldValue.byteCount}")
         }
     }
     private val fullBitmapCache = object : LruCache<Int, Bitmap>(
@@ -183,8 +200,28 @@ internal class MangaPageAdapter(
         flushPendingRefreshes()
     }
 
+    private val pdfDiagnosticFlushRunnable = object : Runnable {
+        override fun run() {
+            if (!closed) {
+                persistPdfDiagnostics()
+                mainHandler.postDelayed(this, 2_000L)
+            }
+        }
+    }
+
+    private fun persistPdfDiagnostics() {
+        pdfDiagnostics?.let {
+            it.note("pipeline", "pending=${decodeExecutor.queue.size} workers=${decodeExecutor.activeCount} " +
+                "loadingPreview=${loadingPreviewPages.size} loadingFull=${loadingFullPages.size} lowMemory=$pdfLowMemoryMode")
+            runCatching { PdfReaderDiagnostics.persist(context, it) }
+        }
+    }
+
     init {
         setHasStableIds(true)
+        if (isPdfSource) {
+            persistPdfDiagnostics()
+        }
     }
 
     private val adapterItemCount = positionMapper.adapterItemCount
@@ -192,35 +229,6 @@ internal class MangaPageAdapter(
     override fun getItemCount(): Int = adapterItemCount
 
     override fun readerItemCount(): Int = entries.size
-
-    override fun allVisiblePagesHaveRenderableContent(recyclerView: RecyclerView): Boolean {
-        val recyclerBounds = Rect()
-        if (!recyclerView.getGlobalVisibleRect(recyclerBounds)) {
-            return false
-        }
-        val visibleHolders = mutableListOf<PageViewHolder>()
-        for (index in 0 until recyclerView.childCount) {
-            val child = recyclerView.getChildAt(index)
-            val childBounds = Rect()
-            if (!child.getGlobalVisibleRect(childBounds) ||
-                !Rect.intersects(recyclerBounds, childBounds)
-            ) {
-                continue
-            }
-            (recyclerView.getChildViewHolder(child) as? PageViewHolder)?.let(visibleHolders::add)
-        }
-
-        val visiblePositions = visibleHolders
-            .mapNotNull { holder -> holder.boundPosition.takeIf { it in entries.indices } }
-            .distinct()
-        return areVisibleReaderPagesRenderable(visiblePositions) { position ->
-            val holder = visibleHolders.firstOrNull { it.boundPosition == position }
-                ?: return@areVisibleReaderPagesRenderable false
-            holder.imageView.drawable != null || (0 until holder.tileContainer.childCount).any { index ->
-                (holder.tileContainer.getChildAt(index) as? ImageView)?.drawable != null
-            }
-        }
-    }
 
     override fun getItemId(position: Int): Long = position.toLong()
 
@@ -245,7 +253,19 @@ internal class MangaPageAdapter(
             isClickable = true
             layoutParams = initialContainerLayoutParams()
         }
-        val imageView = ImageView(context).apply {
+        var holderForDraw: PageViewHolder? = null
+        val imageView = object : AppCompatImageView(context) {
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val holder = holderForDraw ?: return
+                if (holder.pdfDiagnosticDrawId != 0L && drawable != null &&
+                    holder.pdfDiagnosticDrawPosition == holder.boundPosition
+                ) {
+                    pdfDiagnostics?.drawn(holder.pdfDiagnosticDrawId)
+                    holder.pdfDiagnosticDrawId = 0L
+                }
+            }
+        }.apply {
             setBackgroundColor(Color.BLACK)
             scaleType = ImageView.ScaleType.FIT_XY
             adjustViewBounds = false
@@ -258,6 +278,7 @@ internal class MangaPageAdapter(
         container.addView(imageView)
         container.addView(tileContainer)
         return PageViewHolder(container, imageView, tileContainer).also { holder ->
+            holderForDraw = holder
             holder.container.onTap = onPageTap
             holder.container.onZoomThresholdChanged = { isActive ->
                 if (isActive) {
@@ -273,13 +294,18 @@ internal class MangaPageAdapter(
     }
 
     override fun onBindViewHolder(holder: PageViewHolder, adapterPosition: Int) {
+        if (isPdfSource) pdfPreviewUpgradeAllowed = recyclerView.scrollState == RecyclerView.SCROLL_STATE_IDLE
         val previousPosition = holder.boundPosition
         if (previousPosition != RecyclerView.NO_POSITION) {
             boundPositions.remove(previousPosition)
         }
         val sourcePosition = positionMapper.sourcePositionForAdapterPosition(adapterPosition)
+        if (holder.pdfPlaceholderPosition != sourcePosition) {
+            finishPdfPlaceholder(holder, outcome = "abandoned", source = "rebound")
+        }
         holder.boundPosition = sourcePosition ?: RecyclerView.NO_POSITION
         if (previousPosition != holder.boundPosition) {
+            abandonPdfDraw(holder, "rebound")
             if (previousPosition != RecyclerView.NO_POSITION) {
                 zoomQualityRequestedPages.remove(previousPosition)
                 cancelPendingPdfIdleFullDecode(previousPosition)
@@ -307,8 +333,30 @@ internal class MangaPageAdapter(
         ensureVisiblePage(sourcePosition)
     }
 
+    override fun onViewAttachedToWindow(holder: PageViewHolder) {
+        super.onViewAttachedToWindow(holder)
+        val position = holder.boundPosition
+        if (!isPdfSource || closed || position !in entries.indices) return
+        val refresh = Runnable {
+            if (closed || holder.boundPosition != position || holder.itemView.parent !== recyclerView) return@Runnable
+            if (recyclerView.isComputingLayout) {
+                requestItemRefresh(position, immediate = true)
+            } else if (previewBitmap(position) != null || fullBitmap(position) != null) {
+                val adapterPosition = positionMapper.adapterPositionForSourcePosition(position)
+                if (adapterPosition >= 0) {
+                    pdfDiagnostics?.note("attach_cache_bind", "page=${position + 1}")
+                    bindBestAvailable(holder, position, adapterPosition)
+                }
+            }
+        }
+        // 挂载可能发生在RecyclerView布局中，等布局退出后再更新图片与页面尺寸。
+        if (recyclerView.isComputingLayout) mainHandler.post(refresh) else refresh.run()
+    }
+
     override fun onViewRecycled(holder: PageViewHolder) {
+        abandonPdfDraw(holder, "recycled")
         cancelPendingTileRefresh(holder)
+        finishPdfPlaceholder(holder, outcome = "abandoned", source = "recycled")
         if (holder.boundPosition != RecyclerView.NO_POSITION) {
             boundPositions.remove(holder.boundPosition)
             zoomQualityRequestedPages.remove(holder.boundPosition)
@@ -337,6 +385,7 @@ internal class MangaPageAdapter(
             return
         }
         pdfFastScrollMode = isPdfSource && isFastScroll && !isIdle && !isDiscreteJump
+        pdfPreviewUpgradeAllowed = isIdle || isDiscreteJump
         pdfIdlePreviewPreloadMode = isPdfSource && isIdle && !isDiscreteJump
         val desiredDecodeThreadCount = pdfDecodeThreadCountForScroll(
             isPdfSource = isPdfSource,
@@ -374,6 +423,8 @@ internal class MangaPageAdapter(
 
         visibleWindowStart = firstVisible
         visibleWindowEnd = lastVisible
+        pdfDiagnostics?.note("viewport", "first=${firstVisible + 1} last=${lastVisible + 1} " +
+            "direction=$scrollDirection fast=$isFastScroll idle=$isIdle jump=$isDiscreteJump")
         protectedWindowStart = window.protectedStart
         protectedWindowEnd = window.protectedEnd
         preloadWindowStart = window.previewStart
@@ -383,13 +434,41 @@ internal class MangaPageAdapter(
         cancelStalePreloadTasks(generation)
         trimDistantCaches()
 
+        // 预取 holder 进入视口时 RecyclerView 不一定再次 onBind；每次视口变化都补齐首图请求。
+        if (isPdfSource) {
+            (firstVisible..lastVisible).forEach { position ->
+                ensurePreview(
+                    position,
+                    visiblePreviewPriorityForReader(
+                        isPdfSource = true,
+                        previewPriority = PRIORITY_VISIBLE_PREVIEW + 1,
+                        fullPriority = PRIORITY_VISIBLE
+                    ),
+                    generation = 0,
+                    isPreload = false
+                )
+            }
+        }
+
         if (!shouldSkipPdfPreloadAfterMemoryTrim(
                 isPdfSource = isPdfSource,
                 lowMemoryMode = pdfLowMemoryMode,
                 isPreload = true
             )
         ) {
-            window.previewPositions.forEachIndexed { index, position ->
+            val adjacentPdfPreviewCount = if (isPdfSource && isIdle && !isDiscreteJump) {
+                if (doublePageReading) 2 else 1
+            } else {
+                0
+            }
+            val indexedPreviewPositions = window.previewPositions.withIndex()
+            val previewPositionsInDecodeOrder = if (adjacentPdfPreviewCount > 0) {
+                indexedPreviewPositions.drop(adjacentPdfPreviewCount) +
+                    indexedPreviewPositions.take(adjacentPdfPreviewCount)
+            } else {
+                indexedPreviewPositions
+            }
+            previewPositionsInDecodeOrder.forEach { (index, position) ->
                 val isAheadOfViewport = if (scrollDirection >= 0) {
                     position > lastVisible
                 } else {
@@ -407,7 +486,17 @@ internal class MangaPageAdapter(
                 if (isPdfSource) {
                     updateQueuedPdfPreviewPriority(position, priority)
                 }
-                ensurePreview(position, priority, generation, isPreload = true)
+                ensurePreview(
+                    position,
+                    priority,
+                    generation,
+                    isPreload = true,
+                    targetWidthOverride = if (index < adjacentPdfPreviewCount) {
+                        previewDecodeWidth(isPreload = false)
+                    } else {
+                        null
+                    }
+                )
             }
         }
 
@@ -458,6 +547,16 @@ internal class MangaPageAdapter(
     }
 
     override fun trimMemory(level: Int) {
+        pdfDiagnostics?.note("memory_trim", "level=$level")
+        if (isPdfSource && level == ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+            mainHandler.removeCallbacks(pdfDiagnosticFlushRunnable)
+            // 界面隐藏不代表内存不足；保留已显示页面，避免返回时重新出现占位。
+            cancelPendingPdfIdleFullDecodes()
+            cancelQueuedPreloadTasks()
+            trimDistantCaches()
+            persistPdfDiagnostics()
+            return
+        }
         if (isPdfSource && level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
             pdfLowMemoryMode = true
             cancelQueuedPreloadTasks()
@@ -493,6 +592,21 @@ internal class MangaPageAdapter(
         }
     }
 
+    override fun onReaderResumed() {
+        pdfLowMemoryMode = false
+        pdfDiagnostics?.note("resumed", "lowMemory=false")
+        if (isPdfSource && !closed) {
+            mainHandler.removeCallbacks(pdfDiagnosticFlushRunnable)
+            mainHandler.postDelayed(pdfDiagnosticFlushRunnable, 2_000L)
+        }
+    }
+
+    override fun onReaderPaused() {
+        pdfDiagnostics?.note("paused", "")
+        mainHandler.removeCallbacks(pdfDiagnosticFlushRunnable)
+        persistPdfDiagnostics()
+    }
+
     override fun flushPendingRefreshesIfIdle() {
         mainHandler.post {
             flushPendingRefreshes()
@@ -514,6 +628,9 @@ internal class MangaPageAdapter(
     }
 
     internal fun cachedPreviewForTest(position: Int): Bitmap? = previewBitmap(position)
+    internal fun hasCachedPreviewForTest(position: Int): Boolean = synchronized(cacheLock) {
+        previewBitmapDecodeWidths.containsKey(position)
+    }
 
     internal fun shouldUseTiledPageForTest(bounds: ComicArchive.ImageBounds): Boolean =
         shouldUseTiledPage(bounds)
@@ -538,11 +655,18 @@ internal class MangaPageAdapter(
             return
         }
         closed = true
+        mainHandler.removeCallbacks(pdfDiagnosticFlushRunnable)
         mainHandler.removeCallbacks(flushRefreshRunnable)
         cancelPendingPdfIdleFullDecodes()
+        pendingPdfIdlePreviewUpgradeRequests.clear()
         clearHolderCallbacks()
         clearVisibleBitmapReferences(clearFullBitmaps = true)
-        decodeExecutor.shutdownNow()
+        decodeExecutor.shutdownNow().filterIsInstance<DecodeTask>().forEach {
+            it.cancelled = true
+            clearLoadingForCanceledTask(it, "reader_closed")
+        }
+        pdfDiagnostics?.close()
+        pdfDiagnostics?.let { runCatching { PdfReaderDiagnostics.persist(context, it) } }
         synchronized(cacheLock) {
             previewBitmapCache.evictAll()
             fullBitmapCache.evictAll()
@@ -583,12 +707,14 @@ internal class MangaPageAdapter(
         additionalPdfSession?.let { return it }
         synchronized(additionalPdfSessionLock) {
             additionalPdfSession?.let { return it }
+            PdfReaderDiagnostics.nativePhase("session_open")
             val opened = runCatching {
                 ComicArchive.openReaderSession(archiveFile, context.cacheDir)
             }.onFailure {
                 Log.w(READER_ADAPTER_LOG_TAG, "could not open an independent PDF decode session", it)
             }.getOrNull() ?: return session
             additionalPdfSession = opened
+            PdfReaderDiagnostics.nativePhase("session_ready")
             decoderSessions.add(opened)
             return opened
         }
@@ -679,29 +805,104 @@ internal class MangaPageAdapter(
         sourcePosition: Int,
         adapterPosition: Int
     ) {
+        val started = if (isPdfSource) SystemClock.elapsedRealtimeNanos() else 0
+        try {
+            bindBestAvailableContent(holder, sourcePosition, adapterPosition)
+        } finally {
+            pdfDiagnostics?.binding(sourcePosition, SystemClock.elapsedRealtimeNanos() - started)
+        }
+    }
+
+    private fun bindBestAvailableContent(
+        holder: PageViewHolder,
+        sourcePosition: Int,
+        adapterPosition: Int
+    ) {
         val bounds = pageBounds[sourcePosition]
         val isTiled = sourcePosition in tiledPages && bounds != null
         if (isTiled) {
             bindTiledPage(holder, sourcePosition, bounds)
+            if (holder.imageView.drawable != null) {
+                finishPdfPlaceholder(holder, sourcePosition, "resolved", "tile_preview")
+            }
             return
         }
 
         val fullBitmap = fullBitmap(sourcePosition)
         if (fullBitmap != null) {
             bindBitmap(holder, adapterPosition, fullBitmap)
+            finishPdfPlaceholder(holder, sourcePosition, "resolved", "full")
             return
         }
 
         val previewBitmap = previewBitmap(sourcePosition)
         if (previewBitmap != null) {
             bindBitmap(holder, adapterPosition, previewBitmap)
+            finishPdfPlaceholder(holder, sourcePosition, "resolved", "preview")
             return
         }
 
+        startPdfPlaceholder(holder, sourcePosition)
         bindPlaceholder(holder, adapterPosition, bounds)
     }
 
+    private fun startPdfPlaceholder(holder: PageViewHolder, position: Int) {
+        if (!isPdfSource) {
+            return
+        }
+        if (holder.pdfPlaceholderPosition == position && holder.pdfPlaceholderStartedAtNanos > 0L) {
+            return
+        }
+
+        finishPdfPlaceholder(holder, outcome = "abandoned", source = "rebound")
+        abandonPdfDraw(holder, "bitmap_cleared")
+        holder.pdfPlaceholderPosition = position
+        holder.pdfDiagnosticPlaceholderId = pdfDiagnostics?.placeholderStarted(position) ?: 0
+        holder.pdfPlaceholderStartedAtNanos = SystemClock.elapsedRealtimeNanos()
+        Log.i(
+            PDF_TIMING_LOG_TAG,
+            "event=page_placeholder page=${position + 1} position=$position"
+        )
+    }
+
+    private fun finishPdfPlaceholder(
+        holder: PageViewHolder,
+        expectedPosition: Int = holder.pdfPlaceholderPosition,
+        outcome: String,
+        source: String
+    ) {
+        val position = holder.pdfPlaceholderPosition
+        val startedAtNanos = holder.pdfPlaceholderStartedAtNanos
+        if (!isPdfSource || position != expectedPosition || position !in entries.indices ||
+            startedAtNanos <= 0L
+        ) {
+            return
+        }
+
+        val elapsedMillis = (SystemClock.elapsedRealtimeNanos() - startedAtNanos) / 1_000_000.0
+        if (outcome == "resolved") {
+            pdfDiagnostics?.placeholderBound(holder.pdfDiagnosticPlaceholderId, source)
+            holder.pdfDiagnosticDrawId = holder.pdfDiagnosticPlaceholderId
+            holder.pdfDiagnosticDrawPosition = position
+        } else pdfDiagnostics?.abandoned(holder.pdfDiagnosticPlaceholderId, source)
+        holder.pdfDiagnosticPlaceholderId = 0
+        val event = if (outcome == "resolved") "page_placeholder_resolved" else "page_placeholder_abandoned"
+        Log.i(
+            PDF_TIMING_LOG_TAG,
+            "event=$event page=${position + 1} position=$position source=$source placeholderMs=" +
+                String.format(java.util.Locale.ROOT, "%.1f", elapsedMillis)
+        )
+        holder.pdfPlaceholderPosition = RecyclerView.NO_POSITION
+        holder.pdfPlaceholderStartedAtNanos = 0L
+    }
+
+    private fun abandonPdfDraw(holder: PageViewHolder, reason: String) {
+        if (holder.pdfDiagnosticDrawId != 0L) pdfDiagnostics?.abandoned(holder.pdfDiagnosticDrawId, reason)
+        holder.pdfDiagnosticDrawId = 0
+    }
+
     private fun bindBlankPage(holder: PageViewHolder) {
+        finishPdfPlaceholder(holder, outcome = "abandoned", source = "blank_slot")
         holder.tileContainer.visibility = View.GONE
         holder.tileContainer.removeAllViews()
         holder.imageView.visibility = View.VISIBLE
@@ -1030,15 +1231,32 @@ internal class MangaPageAdapter(
         position: Int,
         priority: Int,
         generation: Int,
-        isPreload: Boolean
+        isPreload: Boolean,
+        targetWidthOverride: Int? = null
     ) {
         if (!isPreload) {
             cancelQueuedPreloadForPosition(position, DecodeTaskKind.PREVIEW)
         }
 
-        if (position !in entries.indices ||
-            closed ||
-            previewBitmap(position) != null
+        if (position !in entries.indices || closed) {
+            return
+        }
+        val requestedTargetWidth =
+            (targetWidthOverride ?: previewDecodeWidth(isPreload)).coerceAtLeast(1)
+        val stageVisiblePdfPreview = isPdfSource && !isPreload &&
+            position !in failedPreviewPages &&
+            position in boundPositions &&
+            previewBitmap(position) == null &&
+            requestedTargetWidth > PDF_VISIBLE_PREVIEW_FIRST_STAGE_WIDTH
+        if (isPdfSource && fullBitmap(position) != null) {
+            return
+        }
+        // 已有首图时先保留它，移动中不反复升级大预览并挤出邻页的紧凑首图。
+        if (isPdfSource && previewBitmap(position) != null &&
+            (!pdfPreviewUpgradeAllowed || pdfFastScrollMode)
+        ) return
+        if (previewBitmap(position) != null &&
+            (!isPdfSource || previewBitmapDecodeWidth(position) >= requestedTargetWidth)
         ) {
             return
         }
@@ -1062,24 +1280,58 @@ internal class MangaPageAdapter(
 
         val registeredLoading = loadingPreviewPages.add(position)
         if (!registeredLoading) {
+            if (isPdfSource && !isPreload &&
+                previewBitmapDecodeWidth(position) < requestedTargetWidth
+            ) {
+                visiblePdfPreviewUpgradeRequests.add(position)
+            } else if (isPdfSource && isPreload && targetWidthOverride != null &&
+                previewBitmapDecodeWidth(position) < requestedTargetWidth
+            ) {
+                pendingPdfIdlePreviewUpgradeRequests[position] = requestedTargetWidth to generation
+            }
             return
         }
+        if (stageVisiblePdfPreview) {
+            visiblePdfPreviewUpgradeRequests.add(position)
+        }
         submitTask(
-            priority = priority,
+            priority = if (isPdfSource && previewBitmap(position) != null) PRIORITY_VISIBLE_PREVIEW else priority,
             position = position,
             generation = generation,
             kind = DecodeTaskKind.PREVIEW,
             cancelable = isPreload
         ) {
+            var previewAdmissionRejected = false
             try {
                 if (isPreload && !isUsefulPreviewPreload(position, generation)) {
                     return@submitTask
                 }
-                if (previewBitmap(position) != null) {
+                if (!isPreload && !isCurrentPdfPreviewRequest(position)) return@submitTask
+                if (isPdfSource && previewBitmap(position) != null &&
+                    (!pdfPreviewUpgradeAllowed || pdfFastScrollMode)
+                ) return@submitTask
+                val requestedDecodeWidth =
+                    (targetWidthOverride ?: previewDecodeWidth(isPreload)).coerceAtLeast(1)
+                        .let { width -> if (isPdfSource && pdfFastScrollMode && !isPreload)
+                            minOf(width, PDF_FAST_PREVIEW_DECODE_WIDTH) else width }
+                var targetWidth = if (stageVisiblePdfPreview &&
+                    previewBitmapDecodeWidth(position) == 0
+                ) {
+                    minOf(requestedDecodeWidth, PDF_VISIBLE_PREVIEW_FIRST_STAGE_WIDTH)
+                } else {
+                    requestedDecodeWidth
+                }
+                if (previewBitmapDecodeWidth(position) >= targetWidth) {
                     return@submitTask
                 }
-                val targetWidth = previewDecodeWidth(isPreload)
+                // 缓存放不下的预加载不渲染：等同被拒收，等视口变化后再按新的优先级判断。
+                if (isPdfSource && isPreload && !canAdmitPdfPreview(position, targetWidth)) {
+                    previewAdmissionRejected = true
+                    PdfReaderDiagnostics.nativePhase("stale", "page=${position + 1} reason=preview_wont_fit")
+                    return@submitTask
+                }
 
+                var skippedStalePreview = false
                 val bitmap = decodeWithRenderDiagnostics(
                     position = position,
                     kind = "PREVIEW",
@@ -1087,8 +1339,20 @@ internal class MangaPageAdapter(
                     targetHeight = null
                 ) {
                     runCatching {
-                        decodeSessionForCurrentThread()
-                            .decodePreviewForWidth(entries[position], targetWidth)
+                        val decoder = decodeSessionForCurrentThread()
+                        if ((!isPreload && !isCurrentPdfPreviewRequest(position)) ||
+                            (isPdfSource && previewBitmap(position) != null &&
+                                (!pdfPreviewUpgradeAllowed || pdfFastScrollMode))
+                        ) {
+                            skippedStalePreview = true
+                            PdfReaderDiagnostics.nativePhase("stale", "page=${position + 1} reason=preview_no_longer_needed")
+                            null
+                        } else {
+                            if (isPdfSource && pdfFastScrollMode && !isPreload) {
+                                targetWidth = minOf(targetWidth, PDF_FAST_PREVIEW_DECODE_WIDTH)
+                            }
+                            decoder.decodePreviewForWidth(entries[position], targetWidth)
+                        }
                     }.onFailure {
                         handleDecodeFailure(
                             position = position,
@@ -1099,12 +1363,10 @@ internal class MangaPageAdapter(
                     }.getOrNull()
                 }
 
+                if (skippedStalePreview) return@submitTask
                 if (bitmap == null) {
                     if (isPdfSource || !isPreload) {
                         failedPreviewPages.add(position)
-                    }
-                    if (isPdfSource && !isPreload) {
-                        pdfPreviewRetryUsedPages.add(position)
                     }
                     return@submitTask
                 }
@@ -1129,15 +1391,52 @@ internal class MangaPageAdapter(
                         isPreload = isPreload
                     )
                 ) {
+                    PdfReaderDiagnostics.nativePhase("discard", "page=${position + 1} reason=memory_trim tier=preview")
                     bitmap.recycle()
                     return@submitTask
                 }
 
-                putPreviewBitmap(position, bitmap)
-                requestItemRefresh(position, immediate = !isPreload)
+                previewAdmissionRejected = !putPreviewBitmap(position, bitmap, targetWidth)
+                if (!previewAdmissionRejected) requestItemRefresh(position, immediate = !isPreload)
             } finally {
                 if (registeredLoading) {
                     loadingPreviewPages.remove(position)
+                }
+                if (isPdfSource && visiblePdfPreviewUpgradeRequests.remove(position) && !previewAdmissionRejected) {
+                    mainHandler.post {
+                        if (!closed && position in boundPositions &&
+                            previewBitmapDecodeWidth(position) < previewDecodeWidth(isPreload = false)
+                        ) {
+                            ensurePreview(
+                                position,
+                                visiblePreviewPriorityForReader(
+                                    isPdfSource = true,
+                                    previewPriority = PRIORITY_VISIBLE_PREVIEW + 1,
+                                    fullPriority = PRIORITY_VISIBLE
+                                ),
+                                generation = 0,
+                                isPreload = false
+                            )
+                        }
+                    }
+                }
+                pendingPdfIdlePreviewUpgradeRequests.remove(position)?.takeUnless { previewAdmissionRejected }?.let { request ->
+                    val (targetWidth, requestGeneration) = request
+                    mainHandler.post {
+                        if (!closed && !pdfFastScrollMode && pdfIdlePreviewPreloadMode &&
+                            requestGeneration == preloadGeneration.get() &&
+                            position in preloadWindowStart..preloadWindowEnd &&
+                            previewBitmapDecodeWidth(position) < targetWidth
+                        ) {
+                            ensurePreview(
+                                position,
+                                PRIORITY_PRELOAD_PREVIEW,
+                                generation = requestGeneration,
+                                isPreload = true,
+                                targetWidthOverride = targetWidth
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1183,7 +1482,7 @@ internal class MangaPageAdapter(
         }
 
         val registeredLoading = loadingFullPages.add(position)
-        if (!registeredLoading && isPreload) {
+        if (!registeredLoading && (isPreload || isPdfSource)) {
             return
         }
 
@@ -1195,6 +1494,9 @@ internal class MangaPageAdapter(
             cancelable = isPreload
         ) {
             try {
+                if (!isPreload && !isCurrentPdfFullRequest(position)) {
+                    return@submitTask
+                }
                 if (isPreload && !isUsefulPreload(position, generation)) {
                     return@submitTask
                 }
@@ -1223,6 +1525,9 @@ internal class MangaPageAdapter(
                 }
 
                 val shouldUseTiles = shouldUseTiledPage(bounds)
+                if (!isPreload && !isCurrentPdfFullRequest(position)) {
+                    return@submitTask
+                }
                 if (shouldUseTiles) {
                     if (shouldSkipTiledPdfPreviewDecodeAfterMemoryTrim(
                             isPdfSource = isPdfSource,
@@ -1263,7 +1568,7 @@ internal class MangaPageAdapter(
                                 previewBitmap.recycle()
                                 return@submitTask
                             }
-                            putPreviewBitmap(position, previewBitmap)
+                            putPreviewBitmap(position, previewBitmap, previewWidth)
                         }
                     }
                     if (previewBitmap(position) != null) {
@@ -1295,7 +1600,7 @@ internal class MangaPageAdapter(
                     fitWithinBounds = shouldUseTiles
                 )
 
-                if (bitmap == null && isPdfSource && shouldRetryFullPageAfterFailure(
+                if (bitmap == null && isPdfSource && isCurrentPdfFullRequest(position) && shouldRetryFullPageAfterFailure(
                         isPreload = isPreload,
                         alreadyRetried = position in fullDecodeRetriedPages
                     )
@@ -1341,10 +1646,16 @@ internal class MangaPageAdapter(
                     return@submitTask
                 }
 
-                if (shouldReleasePreviewAfterFullDecode(position in tiledPages)) {
+                // PDF 的全图被接受后才处理预览：全图被拒收时页面仍保有原图；全图之后被裁掉时，
+                // 页面也还有一张紧凑首图可显示，不会回到空白占位。
+                val releasePreview = shouldReleasePreviewAfterFullDecode(position in tiledPages)
+                if (releasePreview && !isPdfSource) {
                     removePreviewBitmap(position)
                 }
                 if (putFullBitmap(position, bitmap)) {
+                    if (releasePreview && isPdfSource) {
+                        replacePreviewWithCompact(position, bitmap)
+                    }
                     notifyPageReady(position, immediate = !isPreload)
                 }
             } finally {
@@ -1440,6 +1751,8 @@ internal class MangaPageAdapter(
         targetHeight: Int?,
         block: () -> T
     ): T {
+        val diagnosticStarted = if (isPdfSource) SystemClock.elapsedRealtimeNanos() else 0
+        if (isPdfSource) PdfReaderDiagnostics.nativePhase("legacy_diagnostic_begin")
         runCatching {
             if (isPdfSource) {
                 CrashLogManager.recordReaderRenderStarted(
@@ -1462,13 +1775,25 @@ internal class MangaPageAdapter(
             }
         }
 
+        if (isPdfSource) {
+            val duration = SystemClock.elapsedRealtimeNanos() - diagnosticStarted
+            PdfReaderDiagnostics.nativePhase("legacy_diagnostic", "writeMs=${duration / 1_000_000.0}", duration)
+        }
+
         return try {
-            block()
+            block().also {
+                if (isPdfSource) PdfReaderDiagnostics.nativePhase(if (it == null) "decode_empty" else "bitmap_ready",
+                    "page=${position + 1} kind=$kind")
+            }
         } finally {
             if (isPdfSource) {
+                PdfReaderDiagnostics.nativePhase("legacy_diagnostic_finish_begin")
+                val finishStarted = SystemClock.elapsedRealtimeNanos()
                 runCatching {
                     CrashLogManager.recordReaderRenderCompleted(context)
                 }
+                val duration = SystemClock.elapsedRealtimeNanos() - finishStarted
+                PdfReaderDiagnostics.nativePhase("legacy_diagnostic_finish", "writeMs=${duration / 1_000_000.0}", duration)
             }
         }
     }
@@ -1620,12 +1945,17 @@ internal class MangaPageAdapter(
     }
 
     private fun requestItemRefresh(position: Int, immediate: Boolean) {
+        val refreshImmediately = immediate || (isPdfSource && position in boundPositions)
+        val requestedAt = SystemClock.elapsedRealtimeNanos()
+        pdfDiagnostics?.note("refresh_requested", "page=${position + 1} request=$requestedAt immediate=$refreshImmediately")
         if (closed || position !in entries.indices || !shouldRefreshPosition(position)) {
+            pdfDiagnostics?.note("refresh_skipped", "page=${position + 1} request=$requestedAt reason=closed_or_not_needed")
             return
         }
 
-        if (immediate) {
+        if (refreshImmediately) {
             mainHandler.post {
+                pdfDiagnostics?.note("refresh_main", "page=${position + 1} request=$requestedAt immediate=true postWaitMs=${(SystemClock.elapsedRealtimeNanos() - requestedAt) / 1_000_000.0}")
                 if (!closed && position in entries.indices && shouldRefreshPosition(position)) {
                     if (refreshBoundPositionDirectly(position)) {
                         return@post
@@ -1637,11 +1967,18 @@ internal class MangaPageAdapter(
         }
 
         mainHandler.post {
+            pdfDiagnostics?.note("refresh_main", "page=${position + 1} request=$requestedAt immediate=false postWaitMs=${(SystemClock.elapsedRealtimeNanos() - requestedAt) / 1_000_000.0}")
             if (closed || position !in entries.indices || !shouldRefreshPosition(position)) {
                 return@post
             }
 
+            if (isPdfSource && position in boundPositions) {
+                refreshPositionOrDefer(position)
+                return@post
+            }
+
             pendingRefreshPositions.add(position)
+            pdfDiagnostics?.note("refresh_pending", "page=${position + 1} request=$requestedAt reason=coalesce scheduled=$refreshScheduled")
             if (!refreshScheduled) {
                 refreshScheduled = true
                 mainHandler.postDelayed(flushRefreshRunnable, UI_REFRESH_THROTTLE_MS)
@@ -1651,10 +1988,12 @@ internal class MangaPageAdapter(
 
     private fun flushPendingRefreshes() {
         refreshScheduled = false
+        pdfDiagnostics?.note("refresh_flush", "pending=${pendingRefreshPositions.size} layout=${recyclerView.isComputingLayout}")
         if (closed) {
             return
         }
         if (recyclerView.isComputingLayout) {
+            pdfDiagnostics?.note("refresh_flush_wait", "reason=layout")
             scheduleRefreshFlush()
             return
         }
@@ -1666,6 +2005,7 @@ internal class MangaPageAdapter(
         }
 
         positions.forEach { position ->
+            pdfDiagnostics?.note("refresh_flush_page", "page=${position + 1}")
             if (closed || position !in entries.indices || !shouldRefreshPosition(position)) {
                 return@forEach
             }
@@ -1680,6 +2020,7 @@ internal class MangaPageAdapter(
                     notifyItemChanged(adapterPosition)
                 }
             } else {
+                pdfDiagnostics?.note("refresh_pending", "page=${position + 1} reason=notify_unavailable scroll=${recyclerView.scrollState} layout=${recyclerView.isComputingLayout}")
                 pendingRefreshPositions.add(position)
             }
         }
@@ -1703,6 +2044,7 @@ internal class MangaPageAdapter(
         }
 
         pendingRefreshPositions.add(position)
+        pdfDiagnostics?.note("refresh_pending", "page=${position + 1} reason=notify_unavailable scroll=${recyclerView.scrollState} layout=${recyclerView.isComputingLayout}")
         scheduleRefreshFlush()
     }
 
@@ -1717,24 +2059,38 @@ internal class MangaPageAdapter(
 
     private fun refreshBoundPositionDirectly(position: Int): Boolean {
         if (recyclerView.isComputingLayout) {
+            pdfDiagnostics?.note("refresh_direct_wait", "page=${position + 1} reason=layout")
             return false
         }
 
         val adapterPosition = positionMapper.adapterPositionForSourcePosition(position)
         if (adapterPosition < 0) {
+            pdfDiagnostics?.note("refresh_direct_wait", "page=${position + 1} reason=no_adapter_position")
             return false
         }
 
         val holder = recyclerView.findViewHolderForAdapterPosition(adapterPosition) as? PageViewHolder
-            ?: return false
+        if (holder == null) {
+            if (pdfDiagnostics != null) {
+                val attached = (0 until recyclerView.childCount).asSequence()
+                    .map { recyclerView.getChildViewHolder(recyclerView.getChildAt(it)) }
+                    .filterIsInstance<PageViewHolder>().firstOrNull { it.boundPosition == position }
+                pdfDiagnostics.note("refresh_direct_wait", "page=${position + 1} reason=holder_missing " +
+                    "attached=${attached != null} pendingUpdates=${recyclerView.hasPendingAdapterUpdates()} " +
+                    "bindingPosition=${attached?.bindingAdapterPosition} layoutPosition=${attached?.layoutPosition}")
+            }
+            return false
+        }
         if (!shouldRefreshBoundReaderPageImmediately(
                 isBoundToPosition = holder.boundPosition == position,
                 isComputingLayout = recyclerView.isComputingLayout
             )
         ) {
+            pdfDiagnostics?.note("refresh_direct_wait", "page=${position + 1} reason=holder_changed bound=${holder.boundPosition}")
             return false
         }
 
+        pdfDiagnostics?.note("refresh_direct_bind", "page=${position + 1}")
         bindBestAvailable(holder, position, adapterPosition)
         return true
     }
@@ -1785,12 +2141,14 @@ internal class MangaPageAdapter(
             enqueuedAtNanos = SystemClock.elapsedRealtimeNanos(),
             pendingBefore = decodeExecutor.queue.size + decodeExecutor.activeCount,
             logPdfTiming = isPdfSource,
+            diagnostics = pdfDiagnostics,
             block = block
         )
+        pdfDiagnostics?.queued(task.sequence, position, kind.name, cancelable, decodeExecutor.queue.size)
         runCatching {
             decodeExecutor.execute(task)
         }.onFailure {
-            clearLoadingForCanceledTask(task)
+            clearLoadingForCanceledTask(task, "executor_rejected")
             handleDecodeFailure(position, kind, it)
         }
     }
@@ -1805,6 +2163,8 @@ internal class MangaPageAdapter(
         if (closed) {
             return
         }
+
+        PdfReaderDiagnostics.nativePhase("decode_failure", "page=${position + 1} kind=${kind.name} error=${throwable.javaClass.simpleName}")
 
         val runtime = Runtime.getRuntime()
         val usedHeapKb = (runtime.totalMemory() - runtime.freeMemory()) / 1024L
@@ -1844,8 +2204,7 @@ internal class MangaPageAdapter(
 
     private fun cancelNonVisiblePreloadTasksAfterOom() {
         val queue = decodeExecutor.queue
-        queue.toList().forEach { runnable ->
-            val task = runnable as? DecodeTask ?: return@forEach
+        queuedDecodeTaskSnapshot().forEach { task ->
             if (!shouldCancelPreloadAfterOutOfMemory(
                     isCancelable = task.cancelable,
                     isVisible = task.position in visibleWindowStart..visibleWindowEnd
@@ -1856,22 +2215,21 @@ internal class MangaPageAdapter(
 
             if (queue.remove(task)) {
                 task.cancelled = true
-                clearLoadingForCanceledTask(task)
+                clearLoadingForCanceledTask(task, "out_of_memory")
             }
         }
     }
 
     private fun cancelQueuedPreloadTasks() {
         val queue = decodeExecutor.queue
-        queue.toList().forEach { runnable ->
-            val task = runnable as? DecodeTask ?: return@forEach
+        queuedDecodeTaskSnapshot().forEach { task ->
             if (!task.cancelable) {
                 return@forEach
             }
 
             if (queue.remove(task)) {
                 task.cancelled = true
-                clearLoadingForCanceledTask(task)
+                clearLoadingForCanceledTask(task, "preload_suspended")
             }
         }
     }
@@ -1895,16 +2253,29 @@ internal class MangaPageAdapter(
     }
 
     private fun isUsefulPreload(position: Int, generation: Int): Boolean {
-        return !closed &&
+        val useful = !closed &&
             generation == preloadGeneration.get() &&
             position in preloadWindowStart..preloadWindowEnd
+        if (isPdfSource && !useful) PdfReaderDiagnostics.nativePhase("stale", "page=${position + 1} reason=preload_window")
+        return useful
     }
 
     private fun isUsefulPreviewPreload(position: Int, generation: Int): Boolean {
-        return !closed &&
+        val useful = !closed &&
             position in preloadWindowStart..preloadWindowEnd &&
             (isPdfSource || generation == preloadGeneration.get())
+        if (isPdfSource && !useful) PdfReaderDiagnostics.nativePhase("stale", "page=${position + 1} reason=preview_window")
+        return useful
     }
+
+    private fun isCurrentPdfFullRequest(position: Int): Boolean {
+        return !isPdfSource || visibleWindowEnd < visibleWindowStart ||
+            position in visibleWindowStart..visibleWindowEnd
+    }
+
+    private fun isCurrentPdfPreviewRequest(position: Int): Boolean =
+        !isPdfSource || visibleWindowEnd < visibleWindowStart ||
+            position in visibleWindowStart..visibleWindowEnd || position in boundPositions
 
     private fun schedulePdfIdleFullDecode(position: Int) {
         if (!isPdfSource || closed || position !in entries.indices ||
@@ -1956,12 +2327,12 @@ internal class MangaPageAdapter(
 
     private fun cancelStalePreloadTasks(currentGeneration: Int) {
         val queue = decodeExecutor.queue
-        queue.toList().forEach { runnable ->
-            val task = runnable as? DecodeTask ?: return@forEach
+        queuedDecodeTaskSnapshot().forEach { task ->
             val isVisiblePdfPreview = isPdfSource &&
                 task.kind == DecodeTaskKind.PREVIEW &&
                 task.generation == 0
-            if (!task.cancelable && !isVisiblePdfPreview) {
+            val isVisiblePdfFull = isPdfSource && task.kind == DecodeTaskKind.FULL && !task.cancelable
+            if (!task.cancelable && !isVisiblePdfPreview && !isVisiblePdfFull) {
                 return@forEach
             }
 
@@ -1972,7 +2343,7 @@ internal class MangaPageAdapter(
                         task.position !in protectedWindowStart..protectedWindowEnd
                 }
 
-                isVisiblePdfPreview -> {
+                isVisiblePdfPreview || isVisiblePdfFull -> {
                     task.position !in visibleWindowStart..visibleWindowEnd
                 }
 
@@ -1988,7 +2359,7 @@ internal class MangaPageAdapter(
             if (isStale) {
                 if (queue.remove(task)) {
                     task.cancelled = true
-                    clearLoadingForCanceledTask(task)
+                    clearLoadingForCanceledTask(task, "viewport_changed")
                 }
             }
         }
@@ -1996,8 +2367,7 @@ internal class MangaPageAdapter(
 
     private fun cancelQueuedPreloadForPosition(position: Int, kind: DecodeTaskKind) {
         val queue = decodeExecutor.queue
-        queue.toList().forEach { runnable ->
-            val task = runnable as? DecodeTask ?: return@forEach
+        queuedDecodeTaskSnapshot().forEach { task ->
             val isPdfVisiblePreview = isPdfSource && kind == DecodeTaskKind.PREVIEW
             if ((task.cancelable || isPdfVisiblePreview) &&
                 task.position == position &&
@@ -2013,8 +2383,7 @@ internal class MangaPageAdapter(
 
     private fun updateQueuedPdfPreviewPriority(position: Int, priority: Int) {
         val queue = decodeExecutor.queue
-        queue.toList().forEach { runnable ->
-            val task = runnable as? DecodeTask ?: return@forEach
+        queuedDecodeTaskSnapshot().forEach { task ->
             if (task.kind != DecodeTaskKind.PREVIEW ||
                 !task.cancelable ||
                 task.position != position ||
@@ -2029,7 +2398,17 @@ internal class MangaPageAdapter(
         }
     }
 
-    private fun clearLoadingForCanceledTask(task: DecodeTask) {
+    private fun queuedDecodeTaskSnapshot(): List<DecodeTask> {
+        val snapshot = mutableListOf<DecodeTask>()
+        val iterator = decodeExecutor.queue.iterator()
+        while (iterator.hasNext()) {
+            (iterator.next() as? DecodeTask)?.let(snapshot::add)
+        }
+        return snapshot
+    }
+
+    private fun clearLoadingForCanceledTask(task: DecodeTask, reason: String = "superseded") {
+        pdfDiagnostics?.cancelled(task.sequence, reason)
         when (task.kind) {
             DecodeTaskKind.PREVIEW -> loadingPreviewPages.remove(task.position)
             DecodeTaskKind.FULL -> loadingFullPages.remove(task.position)
@@ -2164,11 +2543,8 @@ internal class MangaPageAdapter(
                 minimumWidth = PDF_MIN_PREVIEW_DECODE_WIDTH,
                 maximumWidth = PDF_MAX_PREVIEW_DECODE_WIDTH
             )
-            return if (pdfFastScrollMode || (isPreload && pdfIdlePreviewPreloadMode)) {
-                minOf(regularWidth, PDF_FAST_PREVIEW_DECODE_WIDTH)
-            } else {
-                regularWidth
-            }
+            // 预览缓存只有几MB，预加载窗口按常规宽度放不下；预加载一律用紧凑宽度，可见页自己的请求仍用常规宽度。
+            return if (isPreload) minOf(regularWidth, PDF_FAST_PREVIEW_DECODE_WIDTH) else regularWidth
         }
         return (baseDisplayWidth / 2).coerceIn(MIN_PREVIEW_DECODE_WIDTH, MAX_PREVIEW_DECODE_WIDTH)
     }
@@ -2273,10 +2649,31 @@ internal class MangaPageAdapter(
         }
     }
 
+    private fun previewBitmapDecodeWidth(position: Int): Int {
+        return synchronized(cacheLock) {
+            val bitmap = previewBitmapCache.get(position)
+            if (bitmap == null) {
+                previewBitmapDecodeWidths.remove(position)
+                return@synchronized 0
+            }
+            previewBitmapDecodeWidths[position] ?: bitmap.width
+        }
+    }
+
     private fun removePreviewBitmap(position: Int) {
         synchronized(cacheLock) {
             previewBitmapCache.remove(position)
         }
+    }
+
+    /** 用全图缩出的紧凑首图替换同页预览；约0.7MB，缩放失败时不影响已接受的全图。 */
+    private fun replacePreviewWithCompact(position: Int, full: Bitmap) {
+        val width = minOf(PDF_FAST_PREVIEW_DECODE_WIDTH, full.width)
+        val height = (full.height.toLong() * width / full.width.coerceAtLeast(1)).toInt().coerceAtLeast(1)
+        val compact = runCatching { Bitmap.createScaledBitmap(full, width, height, true) }.getOrNull() ?: return
+        // 全图本身不宽于紧凑宽度时不会产生新位图；缓存里不能放与全图同一个对象。
+        if (compact === full) return
+        putPreviewBitmap(position, compact, width)
     }
 
     private fun fullBitmap(position: Int): Bitmap? {
@@ -2307,14 +2704,96 @@ internal class MangaPageAdapter(
         }
     }
 
-    private fun putPreviewBitmap(position: Int, bitmap: Bitmap) {
+    private fun putPreviewBitmap(position: Int, bitmap: Bitmap, decodeWidth: Int): Boolean {
         if (closed) {
             bitmap.recycle()
-            return
+            return false
         }
-        synchronized(cacheLock) {
+        val accepted = synchronized(cacheLock) {
+            if (isPdfSource) {
+                val incomingKb = (bitmap.byteCount / 1024).coerceAtLeast(1)
+                val evictable = pdfPreviewEvictionsFor(position, decodeWidth, incomingKb)
+                    ?: return@synchronized false
+                evictable.forEach { previewBitmapCache.remove(it) }
+            }
             previewBitmapCache.put(position, bitmap)
+            val isAccepted = previewBitmapCache.get(position) === bitmap
+            if (isAccepted) {
+                previewBitmapDecodeWidths[position] = decodeWidth.coerceAtLeast(1)
+            } else {
+                previewBitmapDecodeWidths.remove(position)
+            }
+            isAccepted
         }
+        if (isPdfSource) PdfReaderDiagnostics.nativePhase(if (accepted) "cache_accepted" else "discard",
+            "tier=preview page=${position + 1} width=$decodeWidth bytes=${bitmap.byteCount}")
+        if (!accepted) {
+            bitmap.recycle()
+        }
+        return accepted
+    }
+
+    /**
+     * 把 [incomingKb] 大小的预览放进缓存需要先淘汰哪些页；放不下则返回 null。必须在 cacheLock 内调用。
+     * 准入判定只此一处：解码前的预检与解码后的入缓存都走它，两处不会各自漂移。
+     * 普通LRU会把早已预取、即将进入视口的首图先淘汰，所以按保留优先级先让远处预览让位；
+     * 已有首图的页做升级时不得挤掉其他可见页，否则同屏两页会轮流丢失缓存；
+     * 可见页的首图仍可让位，保证每个可见页总有图可显示。
+     */
+    private fun pdfPreviewEvictionsFor(position: Int, decodeWidth: Int, incomingKb: Int): List<Int>? {
+        val oldKb = previewBitmapCache.get(position)?.let { (it.byteCount / 1024).coerceAtLeast(1) } ?: 0
+        val neededKb = previewBitmapCache.size() - oldKb + incomingKb - previewBitmapCache.maxSize()
+        if (incomingKb > previewBitmapCache.maxSize()) return null
+        if (neededKb <= 0) return emptyList()
+        val priority = pdfPreviewRetentionPriority(position, decodeWidth)
+        val candidates = previewBitmapCache.snapshot().entries
+            .filter {
+                val retained = pdfPreviewRetentionPriority(it.key)
+                it.key != position && retained <= priority &&
+                    (retained < PDF_VISIBLE_RETENTION || oldKb == 0)
+            }
+            .sortedBy { pdfPreviewRetentionPriority(it.key) }
+        if (candidates.sumOf { (it.value.byteCount / 1024).coerceAtLeast(1) } < neededKb) return null
+        val chosen = mutableListOf<Int>()
+        var freedKb = 0
+        for ((key, value) in candidates) {
+            chosen += key
+            freedKb += (value.byteCount / 1024).coerceAtLeast(1)
+            if (freedKb >= neededKb) break
+        }
+        return chosen
+    }
+
+    /** 目标页尺寸已知时预检最小像素占用；未知或无效时放行，由实际入缓存结果决定。 */
+    private fun canAdmitPdfPreview(position: Int, targetWidth: Int): Boolean {
+        val bounds = pageBounds[position] ?: return true
+        val size = PdfRenderSizePolicy.calculatePreviewSize(
+            pageWidth = bounds.width,
+            pageHeight = bounds.height,
+            targetWidth = targetWidth,
+            maxWidth = PdfRenderSizePolicy.MAX_RENDER_WIDTH,
+            maxHeight = PdfRenderSizePolicy.MAX_PREVIEW_HEIGHT,
+            maxPixels = PdfRenderSizePolicy.MAX_PREVIEW_PIXELS
+        ) ?: return true
+        // PdfPageRenderer使用ARGB_8888；行对齐只会使实际占用更大，不能据此误拒可容纳的图片。
+        val incomingKb = (size.width.toLong() * size.height * 4L / 1024L)
+            .coerceIn(1L, Int.MAX_VALUE.toLong()).toInt()
+        synchronized(cacheLock) {
+            return pdfPreviewEvictionsFor(position, targetWidth, incomingKb) != null
+        }
+    }
+
+    private fun pdfPreviewRetentionPriority(position: Int, width: Int = previewBitmapDecodeWidths[position] ?: 0): Int = when {
+        position in visibleWindowStart..visibleWindowEnd -> PDF_VISIBLE_RETENTION
+        // 屏外holder的大预览不能长期占满预算，阻断前方紧凑首图。
+        position in boundPositions -> if (width <=
+            PDF_VISIBLE_PREVIEW_FIRST_STAGE_WIDTH) 200 else 0
+        // 预加载窗口内越靠近可见区越值得保留；同分时按LRU会因近到远的访问顺序先淘汰最近的页。
+        position in preloadWindowStart..preloadWindowEnd -> 199 - minOf(
+            99,
+            if (position < visibleWindowStart) visibleWindowStart - position else position - visibleWindowEnd
+        )
+        else -> 0
     }
 
     private fun canFitFullBitmapInCache(
@@ -2355,6 +2834,8 @@ internal class MangaPageAdapter(
             }
             isAccepted
         }
+        if (isPdfSource) PdfReaderDiagnostics.nativePhase(if (accepted) "cache_accepted" else "discard",
+            "tier=full page=${position + 1} width=$decodeWidth bytes=${bitmap.byteCount}")
         if (!accepted) {
             bitmap.recycle()
         }
@@ -2377,6 +2858,11 @@ internal class MangaPageAdapter(
         val tileContainer: FrameLayout
     ) : RecyclerView.ViewHolder(container) {
         var boundPosition: Int = RecyclerView.NO_POSITION
+        var pdfPlaceholderPosition: Int = RecyclerView.NO_POSITION
+        var pdfPlaceholderStartedAtNanos: Long = 0L
+        var pdfDiagnosticPlaceholderId = 0L
+        var pdfDiagnosticDrawId = 0L
+        var pdfDiagnosticDrawPosition = RecyclerView.NO_POSITION
         var tileRefreshRunnable: Runnable? = null
     }
 
@@ -2401,10 +2887,11 @@ internal class MangaPageAdapter(
         val kind: DecodeTaskKind,
         val cancelable: Boolean,
         val tileKey: TileKey?,
-        private val sequence: Long,
+        val sequence: Long,
         private val enqueuedAtNanos: Long,
         private val pendingBefore: Int,
         private val logPdfTiming: Boolean,
+        private val diagnostics: PdfReaderDiagnostics.Session?,
         private val block: () -> Unit
     ) : Runnable, Comparable<DecodeTask> {
 
@@ -2416,6 +2903,7 @@ internal class MangaPageAdapter(
                 return
             }
             val startedAtNanos = SystemClock.elapsedRealtimeNanos()
+            diagnostics?.started(sequence, startedAtNanos - enqueuedAtNanos, position, kind.name)
             if (logPdfTiming) {
                 Log.i(
                     PDF_TIMING_LOG_TAG,
@@ -2428,8 +2916,9 @@ internal class MangaPageAdapter(
                 )
             }
             try {
-                block()
+                PdfReaderDiagnostics.withTask(diagnostics, sequence, block)
             } catch (throwable: Throwable) {
+                diagnostics?.phase(sequence, "task_failure", "error=${throwable.javaClass.simpleName}")
                 if (throwable is OutOfMemoryError) {
                     Log.w(READER_ADAPTER_LOG_TAG, "decode task OOM kind=$kind position=$position")
                     System.gc()
@@ -2441,6 +2930,7 @@ internal class MangaPageAdapter(
                     )
                 }
             } finally {
+                diagnostics?.finished(sequence)
                 if (logPdfTiming) {
                     val elapsedNanos = SystemClock.elapsedRealtimeNanos() - startedAtNanos
                     Log.i(
@@ -2471,9 +2961,11 @@ internal class MangaPageAdapter(
         private const val MIN_PREVIEW_DECODE_WIDTH = 240
         private const val MAX_PREVIEW_DECODE_WIDTH = 720
         private const val PDF_MIN_PREVIEW_DECODE_WIDTH = 360
-        private const val PDF_FAST_PREVIEW_DECODE_WIDTH = 180
+        private const val PDF_FAST_PREVIEW_DECODE_WIDTH = 360
+        private const val PDF_VISIBLE_PREVIEW_FIRST_STAGE_WIDTH = 720
+        private const val PDF_VISIBLE_RETENTION = 300
         private const val PDF_FAST_SCROLL_DECODE_THREAD_COUNT = 2
-        private const val PDF_IDLE_FULL_DECODE_DELAY_MS = 250L
+        private const val PDF_IDLE_FULL_DECODE_DELAY_MS = 100L
         private const val PDF_MAX_PREVIEW_DECODE_WIDTH = 1080
         private const val FULL_CACHE_TRIM_THRESHOLD_PERCENT = 88
         private const val UI_REFRESH_THROTTLE_MS = 24L

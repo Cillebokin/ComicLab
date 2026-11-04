@@ -136,6 +136,7 @@
     <string name="settings_section_appearance">Appearance</string>
     <string name="settings_section_reading">Reading</string>
     <string name="settings_section_configuration">Configuration</string>
+    <string name="settings_section_auto_translation">Auto translation</string>
     <string name="settings_section_diagnostics">Diagnostics</string>
     <string name="help">Help</string>
     <string name="help_title">Help</string>
@@ -425,9 +426,10 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="custom_brightness">Custom brightness</string>
     <string name="brightness_percent">%1$d%%</string>
     <string name="stability_tools">Stability tools</string>
-    <string name="export_crash_log">Export crash log</string>
-    <string name="crash_log_empty">No crash log available</string>
-    <string name="crash_log_share_title">Export ComicLab crash log</string>
+    <string name="export_crash_log">Export reader diagnostics and crash log</string>
+    <string name="crash_log_empty">No reader diagnostics or crash log available</string>
+    <string name="crash_log_export_failed">Could not export diagnostics. Check available storage and try again</string>
+    <string name="crash_log_share_title">Export ComicLab diagnostic log</string>
     <string name="run_reader_stress_test">Run reader stress test</string>
     <string name="configuration_management">Configuration management</string>
     <string name="export_configuration">Export configuration</string>
@@ -499,6 +501,8 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="reader_prepare_cache_failure">Could not prepare the reader. There may not be enough cache space</string>
     <string name="ebook_untitled_book">Untitled e-book</string>
     <string name="ebook_untitled_chapter">Untitled</string>
+    <string name="ebook_previous_chapter">Previous chapter</string>
+    <string name="ebook_next_chapter">Next chapter</string>
     <string name="reader_enhance">Enhance</string>
     <string name="reader_enhance_title">Page %1$d · %2$d× enhancement</string>
     <string name="reader_enhance_preparing">Extracting the original and loading the model…</string>
@@ -512,6 +516,16 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="reader_enhance_busy">The previous enhancement task is still running or cancelling. Try again shortly</string>
     <string name="reader_enhance_save">Save</string>
     <string name="enhancement_book_menu">Enhance entire comic</string>
+    <string name="comic_convert_to_pdf">Convert to PDF</string>
+    <string name="comic_convert_to_cbz">Convert to CBZ</string>
+    <string name="comic_conversion_title">Comic format conversion</string>
+    <string name="comic_conversion_choose_destination">Choose a save location and filename</string>
+    <string name="comic_conversion_progress">Converting page %1$d/%2$d · %3$d%%</string>
+    <string name="comic_conversion_saving">Saving file · %1$d%%</string>
+    <string name="comic_conversion_cancelling">Cancelling and cleaning up temporary files…</string>
+    <string name="comic_conversion_done">Conversion complete</string>
+    <string name="comic_conversion_busy">Another comic processing task is running. Try again shortly</string>
+    <string name="comic_conversion_failed">Conversion or saving failed. Check the comic file, image dimensions, available storage and destination permissions. The source file is unchanged</string>
     <string name="enhancement_book_title">Enhance entire comic · %1$d×</string>
     <string name="enhancement_choose_destination">Choose a save location and filename</string>
     <string name="enhancement_book_progress">Page %1$d/%2$d · Current page %3$d%%\nOverall %4$d%%</string>
@@ -527,4 +541,5 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="favorite_comics_read_failed">Could not read favorite comics. Existing data was preserved</string>
     <string name="favorite_paths_read_failed">Could not read favorite folders. Existing data was preserved</string>
     <string name="reading_history_read_failed">Could not read reading history. Existing data was preserved</string>
+    <string name="ebook_content_too_large">This ebook is too large to load safely</string>
 </resources>

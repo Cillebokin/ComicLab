@@ -185,6 +185,39 @@ class ReaderPreviewAdapterTest {
         assertEquals(1, session.closeCount.get())
     }
 
+    @Test
+    fun hidingPanelSkipsQueuedThumbnailsAndReopeningCanLoadThemAgain() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val decoded = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val session = FakePreviewSession { name, _ ->
+            decoded += name
+            if (name == "first.png") {
+                started.countDown()
+                release.await(5, TimeUnit.SECONDS)
+            }
+            null
+        }
+        val adapter = newAdapter(session, listOf("first.png", "queued.png")) {}
+        try {
+            adapter.loadThumbnailForTest(0)
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            adapter.loadThumbnailForTest(1)
+            adapter.setDecodingEnabled(false)
+            release.countDown()
+            val drained = CountDownLatch(1)
+            adapter.decodeExecutorForTest.execute { drained.countDown() }
+            assertTrue(drained.await(5, TimeUnit.SECONDS))
+            assertEquals(listOf("first.png"), decoded.toList())
+            adapter.setDecodingEnabled(true)
+            adapter.loadThumbnailForTest(1)
+            assertTrue(awaitCondition { "queued.png" in decoded })
+        } finally {
+            release.countDown()
+            closeAndAwait(adapter, session)
+        }
+    }
+
     private fun newAdapter(
         session: FakePreviewSession,
         entries: List<String>,

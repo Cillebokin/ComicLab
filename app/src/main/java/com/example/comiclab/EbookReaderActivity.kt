@@ -6,11 +6,13 @@ import android.os.Bundle
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.RenderProcessGoneDetail
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.FrameLayout
@@ -28,8 +30,11 @@ import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.ebook.EbookReaderProgressMapper
 import com.example.comiclab.ebook.EbookSession
 import com.example.comiclab.ebook.EbookSessionFactory
-import com.example.comiclab.ebook.html.EbookHtmlRenderer
+import com.example.comiclab.ebook.PreparedEbookDocument
+import com.example.comiclab.ebook.EbookContentLimitException
 import com.example.comiclab.ebook.html.EbookStyle
+import com.example.comiclab.ebook.html.EBOOK_BASE_URL
+import com.example.comiclab.ebook.html.ebookAnchorFromUrl
 import com.example.comiclab.ebook.epub.EpubParseError
 import com.example.comiclab.ebook.epub.EpubParseException
 import com.example.comiclab.ebook.mobi.MobiParseException
@@ -56,15 +61,23 @@ class EbookReaderActivity : AppCompatActivity() {
     private lateinit var readerBrightnessController: ReaderBrightnessController
 
     private val loadExecutor = Executors.newSingleThreadExecutor()
-    private val htmlRenderer = EbookHtmlRenderer()
     @Volatile
     private var loadGeneration = 0
     @Volatile
     private var session: EbookSession? = null
+    @Volatile
+    private var preparedDocument: PreparedEbookDocument? = null
     private var bookFile: File? = null
-    private val style = EbookStyle()
+    private val style by lazy { EbookStyle(
+        previousChapterLabel = getString(R.string.ebook_previous_chapter),
+        nextChapterLabel = getString(R.string.ebook_next_chapter)) }
     private var currentProgress: EbookProgress? = null
     private var pageReady = false
+    @Volatile
+    private var navigationToken = 0
+    @Volatile
+    private var webReaderDestroyed = false
+    private var rendererErrorDialog: AlertDialog? = null
     private var lastProgressSavedAt = 0L
     private var isUpdatingProgressControls = false
     private var isDraggingReaderProgress = false
@@ -168,10 +181,17 @@ class EbookReaderActivity : AppCompatActivity() {
         destroyed = true
         loadGeneration++
         readerControlsController.close()
-        webReader.removeJavascriptInterface(JS_BRIDGE_NAME)
-        webReader.stopLoading()
-        webReader.destroy()
-        session?.close()
+        rendererErrorDialog?.dismiss()
+        rendererErrorDialog = null
+        if (!webReaderDestroyed) {
+            webReaderDestroyed = true
+            webReader.removeJavascriptInterface(JS_BRIDGE_NAME)
+            webReader.stopLoading()
+            (webReader.parent as? ViewGroup)?.removeView(webReader)
+            webReader.destroy()
+        }
+        preparedDocument?.close() ?: session?.close()
+        preparedDocument = null
         session = null
         restoreSystemBrightness()
         loadExecutor.shutdownNow()
@@ -277,9 +297,8 @@ class EbookReaderActivity : AppCompatActivity() {
                 currentProgress = target
                 updateProgressControls(target)
                 if (pageReady) {
-                    webReader.evaluateJavascript(
+                    navigateReader(
                         "javascript:window.restoreComicLabProgress(${target.chapterIndex},${target.scrollFraction});",
-                        null
                     )
                 }
                 saveCurrentProgress(force = true)
@@ -362,7 +381,36 @@ class EbookReaderActivity : AppCompatActivity() {
         }
         webReader.addJavascriptInterface(ReaderBridge(), JS_BRIDGE_NAME)
         webReader.webViewClient = object : WebViewClient() {
+            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                if (destroyed || webReaderDestroyed) return true
+                pageReady = false
+                webReaderDestroyed = true
+                loadGeneration++
+                loadExecutor.shutdownNow()
+                saveCurrentProgress(force = true)
+                preparedDocument?.close() ?: session?.close()
+                preparedDocument = null
+                session = null
+                // 进程退出后的 WebView 只能移除并销毁；重试时由 Activity 重建新的实例。
+                (view.parent as? ViewGroup)?.removeView(view)
+                view.destroy()
+                showError(getString(R.string.ebook_load_failed))
+                rendererErrorDialog = AlertDialog.Builder(this@EbookReaderActivity)
+                    .setMessage(R.string.ebook_load_failed)
+                    .setPositiveButton(R.string.retry) { _, _ -> recreate() }
+                    .setNegativeButton(R.string.back) { _, _ -> finish() }
+                    .setOnCancelListener { finish() }
+                    .show()
+                return true
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                if (request.isForMainFrame && request.url.toString() == BASE_URL) return false
+                if (request.isForMainFrame && pageReady && !destroyed && !webReaderDestroyed) {
+                    ebookAnchorFromUrl(request.url)?.let { anchor ->
+                        navigateReader("window.jumpToComicLabAnchor(${org.json.JSONObject.quote(anchor)});")
+                    }
+                }
                 return true
             }
 
@@ -371,6 +419,21 @@ class EbookReaderActivity : AppCompatActivity() {
                 request: WebResourceRequest
             ): WebResourceResponse? {
                 val uri = request.url
+                if (request.isForMainFrame && uri.toString() == BASE_URL) {
+                    val stream = preparedDocument?.openHtml() ?: return blockedResponse()
+                    return WebResourceResponse("text/html", "UTF-8", stream)
+                }
+                if (!request.isForMainFrame && uri.toString() == BASE_URL + "ebook-chapters.js") {
+                    return WebResourceResponse("application/javascript", "UTF-8", assets.open("ebook-chapters.js"))
+                }
+                val chapterIndex = if (!request.isForMainFrame && request.method == "GET" &&
+                    uri.scheme == "https" && uri.host == "comiclab.invalid" && uri.port == -1 &&
+                    uri.userInfo == null && uri.query == null && uri.fragment == null
+                ) Regex("/chapters/([0-9]+)").matchEntire(uri.path.orEmpty())?.groupValues?.get(1)?.toIntOrNull() else null
+                if (chapterIndex != null) {
+                    val stream = preparedDocument?.openChapter(chapterIndex) ?: return blockedResponse()
+                    return WebResourceResponse("text/html", "UTF-8", stream)
+                }
                 if (uri.scheme == RESOURCE_SCHEME) {
                     val currentSession = session ?: return null
                     val resourceId = uri.host ?: return null
@@ -388,10 +451,14 @@ class EbookReaderActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
-                if (destroyed) return
+                if (destroyed || webReaderDestroyed || pageReady || url.substringBefore('#') != BASE_URL) return
+                if (preparedDocument?.readFailed == true) {
+                    pageReady = false
+                    showError(getString(R.string.ebook_load_failed))
+                    return
+                }
                 pageReady = true
                 restoreProgress(currentProgress)
-                tvStatus.visibility = android.view.View.GONE
             }
         }
     }
@@ -407,34 +474,25 @@ class EbookReaderActivity : AppCompatActivity() {
         runCatching {
             loadExecutor.execute {
                 val result = runCatching {
-                    val loadedSession = EbookSessionFactory.open(
-                        file,
-                        untitledBookTitle,
-                        untitledChapterTitle
+                    PreparedEbookDocument.prepare(
+                        EbookSessionFactory.open(file, untitledBookTitle, untitledChapterTitle),
+                        cacheDir, style
                     )
-                    try {
-                        PreparedBook(
-                            session = loadedSession,
-                            html = htmlRenderer.render(loadedSession.book, style)
-                        )
-                    } catch (error: Throwable) {
-                        loadedSession.close()
-                        throw error
-                    }
                 }
                 if (destroyed || generation != loadGeneration) {
-                    result.getOrNull()?.session?.close()
+                    result.getOrNull()?.close()
                     return@execute
                 }
 
                 runOnUiThread {
                     if (destroyed || generation != loadGeneration) {
-                        result.getOrNull()?.session?.close()
+                        result.getOrNull()?.close()
                         return@runOnUiThread
                     }
 
                     result.onSuccess { preparedBook ->
-                        session?.close()
+                        preparedDocument?.close() ?: session?.close()
+                        preparedDocument = preparedBook
                         session = preparedBook.session
                         ReadingHistoryStore.record(this@EbookReaderActivity, file)
                         tvTitle.text = preparedBook.session.book.title
@@ -448,7 +506,7 @@ class EbookReaderActivity : AppCompatActivity() {
                         if (preparedBook.session.book.chapters.isEmpty()) {
                             showError(getString(R.string.ebook_empty))
                         } else {
-                            loadHtml(preparedBook.html)
+                            loadHtml()
                         }
                     }.onFailure { error ->
                         showError(errorMessage(error))
@@ -460,15 +518,9 @@ class EbookReaderActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadHtml(html: String) {
+    private fun loadHtml() {
         pageReady = false
-        webReader.loadDataWithBaseURL(
-            BASE_URL,
-            html,
-            "text/html",
-            "UTF-8",
-            null
-        )
+        webReader.loadUrl(BASE_URL)
     }
 
     private fun restoreProgress(progress: EbookProgress?) {
@@ -478,8 +530,14 @@ class EbookReaderActivity : AppCompatActivity() {
             progress ?: EbookProgress(0, 0f),
             chapterCount
         )
-        val script = "javascript:window.restoreComicLabProgress(${normalized.chapterIndex},${normalized.scrollFraction});"
-        webReader.evaluateJavascript(script, null)
+        val script = "javascript:window.restoreComicLabProgress(${normalized.chapterIndex},${normalized.scrollFraction},${normalized.coordinateVersion});"
+        navigateReader(script)
+    }
+
+    private fun navigateReader(script: String) {
+        if (!pageReady || destroyed || webReaderDestroyed) return
+        navigationToken++
+        webReader.evaluateJavascript("window.comicLabNavigationToken=$navigationToken;" + script.removePrefix("javascript:"), null)
     }
 
     private fun saveCurrentProgress(force: Boolean) {
@@ -516,9 +574,8 @@ class EbookReaderActivity : AppCompatActivity() {
                 updateProgressControls(currentProgress)
                 saveCurrentProgress(force = true)
                 if (pageReady) {
-                    webReader.evaluateJavascript(
+                    navigateReader(
                         "javascript:window.jumpToComicLabChapter($which);",
-                        null
                     )
                 }
             }
@@ -539,6 +596,7 @@ class EbookReaderActivity : AppCompatActivity() {
 
     private fun errorMessage(error: Throwable): String {
         return when (error) {
+            is EbookContentLimitException -> getString(R.string.ebook_content_too_large)
             is MobiParseException -> when (error.reason) {
                 MobiParseError.DRM_PROTECTED -> getString(R.string.ebook_drm_unsupported)
                 MobiParseError.UNSUPPORTED_COMPRESSION,
@@ -576,24 +634,35 @@ class EbookReaderActivity : AppCompatActivity() {
 
     private inner class ReaderBridge {
         @JavascriptInterface
-        fun reportProgress(chapterIndex: Int, fraction: Float) {
-            if (destroyed) return
+        fun reportProgress(chapterIndex: Int, fraction: Float, token: Int) {
+            if (destroyed || webReaderDestroyed || token != navigationToken || !fraction.isFinite()) return
             val generation = loadGeneration
             val chapterCount = session?.book?.chapters?.size ?: return
+            if (chapterIndex !in 0 until chapterCount) return
             val reportedProgress = EbookProgress(
                 chapterIndex = chapterIndex.coerceIn(0, (chapterCount - 1).coerceAtLeast(0)),
                 scrollFraction = fraction
             ).normalized()
             runOnUiThread {
-                if (destroyed || generation != loadGeneration || session == null || !pageReady) {
+                if (destroyed || generation != loadGeneration || session == null || !pageReady || token != navigationToken) {
                     return@runOnUiThread
                 }
 
                 currentProgress = reportedProgress
+                tvStatus.visibility = View.GONE
                 if (!isDraggingReaderProgress) {
                     updateProgressControls(reportedProgress)
                 }
                 saveCurrentProgress(force = false)
+            }
+        }
+
+        @JavascriptInterface
+        fun documentError(token: Int) {
+            runOnUiThread {
+                if (!destroyed && !webReaderDestroyed && token == navigationToken) {
+                    showError(getString(R.string.ebook_load_failed))
+                }
             }
         }
     }
@@ -603,13 +672,9 @@ class EbookReaderActivity : AppCompatActivity() {
         const val EXTRA_START_FROM_BEGINNING = "start_from_beginning"
 
         private const val RESOURCE_SCHEME = "ebook-resource"
-        private const val BASE_URL = "https://comiclab.invalid/"
+        private const val BASE_URL = EBOOK_BASE_URL
         private const val JS_BRIDGE_NAME = "ComicLabBridge"
         private const val MIN_PROGRESS_SAVE_INTERVAL_MS = 500L
     }
 
-    private data class PreparedBook(
-        val session: EbookSession,
-        val html: String
-    )
 }

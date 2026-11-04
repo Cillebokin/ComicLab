@@ -5,8 +5,6 @@ import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.res.Configuration
-import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
 import android.os.Build
@@ -43,6 +41,7 @@ import com.example.comiclab.core.diagnostics.CrashLogManager
 import com.example.comiclab.core.reader.layout.DoublePageModeUnavailableReason
 import com.example.comiclab.core.reader.layout.ReaderPagePositionMapper
 import com.example.comiclab.core.reader.layout.doublePageModeUnavailableReason
+import com.example.comiclab.core.reader.decode.readerScrollDirectionFromDelta
 import com.example.comiclab.core.reader.progress.READER_PROGRESS_CHECKPOINT_DELAY_MS
 import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
@@ -56,9 +55,7 @@ import com.example.comiclab.ui.reader.manga.MangaReaderProgressController
 import com.example.comiclab.ui.reader.manga.MangaReaderViewModel
 import com.example.comiclab.ui.reader.manga.ReaderPageAdapterController
 import com.example.comiclab.ui.reader.manga.ReaderPreviewAdapter
-import com.example.comiclab.ui.reader.manga.READER_CONTINUITY_OVERLAY_MAX_MS
 import com.example.comiclab.ui.reader.manga.SubsamplingMangaPageAdapter
-import com.example.comiclab.ui.reader.manga.shouldRemoveReaderContinuityOverlay
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -167,17 +164,12 @@ class MangaReaderActivity : AppCompatActivity() {
     private var currentReaderOffset = 0
     private var readerScrollDirection = SCROLL_DIRECTION_FORWARD
     private var readerScrollState = RecyclerView.SCROLL_STATE_IDLE
-    private var readerContinuitySnapshot: Bitmap? = null
-    private var readerContinuityOverlay: ImageView? = null
-    private var readerContinuityActivatedAtMs: Long? = null
-    private var readerContinuityHasScrolled = false
-    private val readerContinuityTimeoutRunnable = Runnable {
-        updateReaderContinuityOverlay()
-    }
     private var readingDirection = AppSettings.READING_DIRECTION_TOP_TO_BOTTOM
     private var doublePageReadingEnabled = AppSettings.DEFAULT_DOUBLE_PAGE_READING_ENABLED
     private var readerCoverSinglePageEnabled = false
-    private var lastReaderPreloadSpreadStart = RecyclerView.NO_POSITION
+    private data class ReaderPreloadRequest(val first: Int, val count: Int, val direction: Int,
+        val fast: Boolean, val idle: Boolean, val discrete: Boolean)
+    private var lastReaderPreloadRequest: ReaderPreloadRequest? = null
     private var volumeKeyPageTurnEnabled = true
     private var autoHideSystemBarsEnabled = true
     private var lastVolumePageTurnAt = 0L
@@ -287,6 +279,16 @@ class MangaReaderActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        pageAdapter?.onReaderResumed()
+        readerPreviewAdapter?.setDecodingEnabled(readerPreviewPanelVisible)
+        listReaderPages.post {
+            if (!destroyed && pageAdapter != null) {
+                val first = readerLayoutManager.findFirstVisibleItemPosition()
+                if (first != RecyclerView.NO_POSITION) {
+                    preloadReaderAround(first, visibleReaderItemCount(), isIdle = true, force = true)
+                }
+            }
+        }
         doublePageReadingEnabled = AppSettings.isDoublePageReadingEnabled(this)
         volumeKeyPageTurnEnabled = AppSettings.isVolumeKeyPageTurnEnabled(this)
         autoHideSystemBarsEnabled = AppSettings.isAutoHideSystemBarsEnabled(this)
@@ -298,8 +300,9 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        pageAdapter?.onReaderPaused()
+        readerPreviewAdapter?.setDecodingEnabled(false)
         handler.removeCallbacks(readerCheckpointRunnable)
-        clearReaderContinuityOverlay()
         saveReaderPosition(forceCommit = true)
         restoreSystemBrightness()
         super.onPause()
@@ -315,7 +318,6 @@ class MangaReaderActivity : AppCompatActivity() {
         destroyed = true
         pageEnhancementDialog?.close()
         pageEnhancementDialog = null
-        clearReaderContinuityOverlay()
         readerLoadGeneration.incrementAndGet()
         readerLoadExecutor.shutdownNow().forEach { task ->
             (task as? PreparedReaderCacheLeaseTask)?.cancelBeforeRun()
@@ -484,121 +486,6 @@ class MangaReaderActivity : AppCompatActivity() {
         ViewCompat.requestApplyInsets(rootView)
     }
 
-    private fun captureReaderContinuitySnapshot() {
-        if (!archiveFile?.extension.equals("pdf", ignoreCase = true) ||
-            readerContinuityActivatedAtMs != null ||
-            !::rootView.isInitialized ||
-            listReaderPages.width <= 0 ||
-            listReaderPages.height <= 0
-        ) {
-            return
-        }
-        if (readerContinuityOverlay != null) {
-            clearReaderContinuityOverlay()
-        }
-
-        val root = rootView as? FrameLayout ?: return
-        var bitmap: Bitmap? = null
-        try {
-            val snapshotWidth = (listReaderPages.width / READER_CONTINUITY_SNAPSHOT_SCALE)
-                .roundToInt()
-                .coerceAtLeast(1)
-            val snapshotHeight = (listReaderPages.height / READER_CONTINUITY_SNAPSHOT_SCALE)
-                .roundToInt()
-                .coerceAtLeast(1)
-            bitmap = Bitmap.createBitmap(snapshotWidth, snapshotHeight, Bitmap.Config.RGB_565)
-            val canvas = Canvas(bitmap)
-            canvas.scale(
-                snapshotWidth / listReaderPages.width.toFloat(),
-                snapshotHeight / listReaderPages.height.toFloat()
-            )
-            listReaderPages.draw(canvas)
-
-            val overlay = ImageView(this).apply {
-                scaleType = ImageView.ScaleType.FIT_XY
-                setImageBitmap(bitmap)
-                visibility = View.GONE
-                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            }
-            root.addView(
-                overlay,
-                1.coerceAtMost(root.childCount),
-                FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT
-                )
-            )
-            readerContinuitySnapshot = bitmap
-            readerContinuityOverlay = overlay
-            readerContinuityHasScrolled = false
-        } catch (failure: Throwable) {
-            bitmap?.takeUnless(Bitmap::isRecycled)?.recycle()
-            Log.w(READER_LOG_TAG, "reader continuity snapshot capture failed", failure)
-        }
-    }
-
-    private fun activateReaderContinuityOverlay() {
-        if (!archiveFile?.extension.equals("pdf", ignoreCase = true)) {
-            return
-        }
-        if (readerContinuityOverlay == null) {
-            captureReaderContinuitySnapshot()
-        }
-        val overlay = readerContinuityOverlay ?: return
-        if (readerContinuityActivatedAtMs != null) {
-            return
-        }
-
-        readerContinuityActivatedAtMs = SystemClock.elapsedRealtime()
-        if (BuildConfig.DEBUG) {
-            Log.d(READER_LOG_TAG, "continuity event=activate atMs=$readerContinuityActivatedAtMs")
-        }
-        overlay.visibility = View.VISIBLE
-        handler.removeCallbacks(readerContinuityTimeoutRunnable)
-        handler.postDelayed(
-            readerContinuityTimeoutRunnable,
-            READER_CONTINUITY_OVERLAY_MAX_MS
-        )
-        updateReaderContinuityOverlay()
-    }
-
-    private fun scheduleReaderContinuityOverlayUpdate() {
-        if (readerContinuityActivatedAtMs != null) {
-            handler.post { updateReaderContinuityOverlay() }
-        }
-    }
-
-    private fun updateReaderContinuityOverlay() {
-        val activatedAt = readerContinuityActivatedAtMs ?: return
-        val elapsedMs = (SystemClock.elapsedRealtime() - activatedAt).coerceAtLeast(0L)
-        val visiblePagesReady = pageAdapter?.allVisiblePagesHaveRenderableContent(listReaderPages)
-            ?: false
-        if (shouldRemoveReaderContinuityOverlay(
-                hasScrolled = readerContinuityHasScrolled,
-                visiblePagesReady = visiblePagesReady,
-                elapsedMs = elapsedMs
-            )
-        ) {
-            if (BuildConfig.DEBUG) {
-                Log.d(READER_LOG_TAG, "continuity event=remove elapsedMs=$elapsedMs ready=$visiblePagesReady")
-            }
-            clearReaderContinuityOverlay()
-        }
-    }
-
-    private fun clearReaderContinuityOverlay() {
-        handler.removeCallbacks(readerContinuityTimeoutRunnable)
-        readerContinuityActivatedAtMs = null
-        readerContinuityHasScrolled = false
-        readerContinuityOverlay?.let { overlay ->
-            (overlay.parent as? FrameLayout)?.removeView(overlay)
-            overlay.setImageDrawable(null)
-        }
-        readerContinuityOverlay = null
-        readerContinuitySnapshot?.takeUnless(Bitmap::isRecycled)?.recycle()
-        readerContinuitySnapshot = null
-    }
-
     private fun configureBackHandling() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -619,11 +506,6 @@ class MangaReaderActivity : AppCompatActivity() {
                 readerScrollState = newState
                 if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
                     clearPendingReaderPosition()
-                    captureReaderContinuitySnapshot()
-                }
-
-                if (newState == RecyclerView.SCROLL_STATE_SETTLING) {
-                    activateReaderContinuityOverlay()
                 }
 
                 if (newState == RecyclerView.SCROLL_STATE_IDLE) {
@@ -641,11 +523,6 @@ class MangaReaderActivity : AppCompatActivity() {
                         isIdle = true,
                         force = true
                     )
-                    if (readerContinuityActivatedAtMs == null) {
-                        clearReaderContinuityOverlay()
-                    } else {
-                        updateReaderContinuityOverlay()
-                    }
                 }
             }
 
@@ -660,24 +537,17 @@ class MangaReaderActivity : AppCompatActivity() {
                 scheduleReaderPositionCheckpoint()
 
                 val primaryDelta = if (isHorizontalReading()) dx else dy
-                val direction = when {
-                    primaryDelta > 0 -> SCROLL_DIRECTION_FORWARD
-                    primaryDelta < 0 -> SCROLL_DIRECTION_BACKWARD
-                    else -> readerScrollDirection
-                }
+                val direction = readerScrollDirectionFromDelta(
+                    delta = primaryDelta,
+                    reverseLayout = readerLayoutManager.reverseLayout
+                ).takeIf { it != 0 } ?: readerScrollDirection
                 if (primaryDelta != 0) {
                     readerScrollDirection = direction
-                    if (readerContinuityOverlay != null) {
-                        readerContinuityHasScrolled = true
-                    }
                 }
                 val fastThresholdBase = if (isHorizontalReading()) recyclerView.width else recyclerView.height
                 val fastThreshold = (fastThresholdBase / 4).coerceAtLeast(FAST_SCROLL_DY_THRESHOLD_PX)
                 val isFastScroll = readerScrollState == RecyclerView.SCROLL_STATE_SETTLING ||
                     abs(primaryDelta) >= fastThreshold
-                if (isFastScroll) {
-                    activateReaderContinuityOverlay()
-                }
                 preloadReaderAround(
                     firstVisiblePosition = readerSpreadStartLayoutPosition(firstVisibleItem),
                     visibleItemCount = visibleItemCount,
@@ -685,7 +555,6 @@ class MangaReaderActivity : AppCompatActivity() {
                     isFastScroll = isFastScroll,
                     isIdle = false
                 )
-                updateReaderContinuityOverlay()
             }
         })
         sliderReaderProgress.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -714,6 +583,16 @@ class MangaReaderActivity : AppCompatActivity() {
             } else {
                 showReaderPreviewPanel()
             }
+        }
+
+        val btnReaderTranslate = findViewById<Button>(R.id.btnReaderTranslate)
+        btnReaderTranslate.visibility = if (AUTO_TRANSLATION_UI_ENABLED) View.VISIBLE else View.GONE
+        btnReaderTranslate.setOnClickListener {
+            val archive = archiveFile ?: return@setOnClickListener
+            if (imageEntries.isEmpty()) return@setOnClickListener
+            val position = currentReaderPosition.coerceIn(imageEntries.indices)
+            com.example.comiclab.ui.reader.translation.PageTranslationActivity.launch(
+                this, archive, imageEntries[position], position + 1)
         }
 
         findViewById<Button>(R.id.btnReaderEnhance).setOnClickListener {
@@ -920,7 +799,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
         pageAdapter?.close()
         readerCoverSinglePageEnabled = AppSettings.isDoublePageCoverSingleEnabled(this)
-        lastReaderPreloadSpreadStart = RecyclerView.NO_POSITION
+        lastReaderPreloadRequest = null
         val adapter = SubsamplingMangaPageAdapter(
             context = this,
             recyclerView = listReaderPages,
@@ -941,7 +820,6 @@ class MangaReaderActivity : AppCompatActivity() {
                 if (isPendingReaderPosition(position)) {
                     applyPendingReaderPosition()
                 }
-                scheduleReaderContinuityOverlayUpdate()
             },
             onPageTap = {
                 handleReaderTap()
@@ -971,7 +849,7 @@ class MangaReaderActivity : AppCompatActivity() {
         pageAdapter?.close()
         readerCoverSinglePageEnabled = !session.isPdfSource() &&
             AppSettings.isDoublePageCoverSingleEnabled(this)
-        lastReaderPreloadSpreadStart = RecyclerView.NO_POSITION
+        lastReaderPreloadRequest = null
         val adapter = MangaPageAdapter(
             context = this,
             recyclerView = listReaderPages,
@@ -991,7 +869,6 @@ class MangaReaderActivity : AppCompatActivity() {
                 if (isPendingReaderPosition(position)) {
                     applyPendingReaderPosition()
                 }
-                scheduleReaderContinuityOverlayUpdate()
             },
             onPageTap = {
                 handleReaderTap()
@@ -1000,6 +877,12 @@ class MangaReaderActivity : AppCompatActivity() {
         pageAdapter = adapter
         listReaderPages.adapter = adapter
         bindReaderPreviewAdapter(entries, readerFile, previewSession)
+        // 索引可能在 Activity 暂停后才完成；新适配器不能凭初始化启动后台采样。
+        if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+            adapter.onReaderResumed()
+        } else {
+            adapter.onReaderPaused()
+        }
         initializeReaderPosition(entries)
     }
 
@@ -1034,6 +917,7 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         )
         readerPreviewAdapter = adapter
+        adapter.setDecodingEnabled(readerPreviewPanelVisible)
         listReaderPreview.adapter = adapter
         adapter.setSelectedPosition(currentReaderPosition)
     }
@@ -1293,6 +1177,7 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         readerPreviewPanelVisible = true
+        readerPreviewAdapter?.setDecodingEnabled(true)
         readerControlsController.cancelAutoHide()
         setReaderControlsVisible(true)
         scrollReaderPreviewToCurrentPage()
@@ -1321,6 +1206,7 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         readerPreviewPanelVisible = false
+        readerPreviewAdapter?.setDecodingEnabled(false)
         readerPreviewScrim.animate().cancel()
         readerPreviewScrim.animate()
             .alpha(0f)
@@ -1416,11 +1302,14 @@ class MangaReaderActivity : AppCompatActivity() {
     ) {
         val adapter = pageAdapter ?: return
         val layoutSpreadStart = readerSpreadStartLayoutPosition(firstVisiblePosition)
-        if (!force && layoutSpreadStart == lastReaderPreloadSpreadStart) {
+        val request = ReaderPreloadRequest(layoutSpreadStart, visibleItemCount, scrollDirection,
+            isFastScroll, isIdle, isDiscreteJump)
+        // 首页不变时，尾页进入视口、反向滑动与滚动模式切换仍需要更新解码窗口。
+        if (!force && request == lastReaderPreloadRequest) {
             return
         }
 
-        lastReaderPreloadSpreadStart = layoutSpreadStart
+        lastReaderPreloadRequest = request
         adapter.preloadAround(
             firstVisiblePosition = layoutSpreadStart,
             visibleItemCount = visibleItemCount,
@@ -2080,7 +1969,6 @@ class MangaReaderActivity : AppCompatActivity() {
         private const val READER_VIEW_CACHE_SIZE = 2
         private const val READER_GESTURE_EXCLUSION_EDGE_WIDTH_DP = 36f
         private const val FAST_SCROLL_DY_THRESHOLD_PX = 160
-        private const val READER_CONTINUITY_SNAPSHOT_SCALE = 0.5f
         private const val VOLUME_KEY_PAGE_TURN_MIN_INTERVAL_MS = 180L
         private const val SCROLL_DIRECTION_FORWARD = 1
         private const val SCROLL_DIRECTION_BACKWARD = -1

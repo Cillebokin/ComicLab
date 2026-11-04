@@ -44,6 +44,42 @@ class ArchiveReplacementRecoveryTest {
     private fun backups() = File(temporaryFolder.root, ".ComicLabBackups").listFiles().orEmpty()
         .filter { it.extension == "cbz" }
 
+    private fun rollbackFiles(file: File) = temporaryFolder.root.listFiles().orEmpty()
+        .filter { it.name.startsWith("${file.name}.delete_") && it.extension == "bak" }
+
+    private fun replacementFiles(file: File) = temporaryFolder.root.listFiles().orEmpty()
+        .filter { it.name.startsWith("${file.name}.delete_") && it.extension == "tmp" }
+
+    private fun createLegacyPending(file: File, token: String): Pair<File, File> {
+        val originalBytes = file.readBytes()
+        val backupDirectory = File(temporaryFolder.root, ".ComicLabBackups").apply {
+            check(mkdirs() || isDirectory)
+        }
+        val backup = File(
+            backupDirectory,
+            "${file.nameWithoutExtension}.delete_backup_$token.${file.extension}"
+        ).apply { writeBytes(originalBytes) }
+        val temporary = File(temporaryFolder.root, "${file.name}.delete_$token.tmp")
+        val rollback = File(temporaryFolder.root, "${file.name}.delete_$token.bak")
+        val restore = File(temporaryFolder.root, "${file.name}.restore_$token.tmp")
+        val marker = File(backupDirectory, file.name + ".replace.properties")
+        val originalHash = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(originalBytes)
+            .joinToString("") { "%02x".format(it) }
+        val properties = java.util.Properties().apply {
+            setProperty("version", "1")
+            setProperty("original", file.name)
+            setProperty("backup", backup.name)
+            setProperty("temporary", temporary.name)
+            setProperty("rollback", rollback.name)
+            setProperty("originalHash", originalHash)
+            setProperty("modifiedAt", file.lastModified().toString())
+        }
+        marker.outputStream().use { properties.store(it, "legacy archive replacement") }
+        check(file.delete())
+        return backup to restore
+    }
+
     @Test fun reopeningAfterOriginalWasRenamedRestoresOriginalBytesAndIdentity() {
         val file = archive()
         val bytes = file.readBytes()
@@ -53,7 +89,10 @@ class ArchiveReplacementRecoveryTest {
         assertEquals(listOf("001.png", "002.png"), ComicArchive.imageEntries(file))
         assertArrayEquals(bytes, file.readBytes())
         assertEquals(modified, file.lastModified())
-        assertArrayEquals(bytes, backups().single().readBytes())
+        assertTrue(backups().isEmpty())
+        assertFalse(ArchiveReplacementRecovery.hasPending(file))
+        assertTrue(rollbackFiles(file).isEmpty())
+        assertTrue(replacementFiles(file).isEmpty())
         assertEquals(listOf("001.png", "002.png"), ComicArchive.imageEntries(file))
     }
 
@@ -62,30 +101,39 @@ class ArchiveReplacementRecoveryTest {
         val original = file.readBytes()
         interrupt(file, afterInstall = true)
         assertEquals(listOf("001.png"), ComicArchive.imageEntries(file))
-        assertArrayEquals(original, backups().single().readBytes())
-        assertFalse(temporaryFolder.root.listFiles().orEmpty().any { ".delete_" in it.name })
+        assertFalse(original.contentEquals(file.readBytes()))
+        assertTrue(backups().isEmpty())
+        assertFalse(ArchiveReplacementRecovery.hasPending(file))
+        assertTrue(rollbackFiles(file).isEmpty())
+        assertTrue(replacementFiles(file).isEmpty())
     }
 
-    @Test fun damagedRollbackFallsBackToVerifiedPersistentBackup() {
+    @Test fun damagedCurrentRollbackRemainsForManualRecoveryWithoutOverwriting() {
         val file = archive()
-        val bytes = file.readBytes()
         interrupt(file)
-        temporaryFolder.root.listFiles()!!.single { it.extension == "bak" }.writeText("truncated")
-        assertEquals(listOf("001.png", "002.png"), ComicArchive.imageEntries(file))
-        assertArrayEquals(bytes, file.readBytes())
-        assertArrayEquals(bytes, backups().single().readBytes())
+        val rollback = rollbackFiles(file).single().apply { writeText("truncated") }
+
+        assertTrue(ComicArchive.imageEntries(file).isEmpty())
+        assertFalse(file.exists())
+        assertFalse(ArchiveReplacementRecovery.recover(file))
+        assertTrue(ArchiveReplacementRecovery.hasPending(file))
+        assertEquals("truncated", rollback.readText())
+        assertTrue(backups().isEmpty())
     }
 
     @Test fun aNewFileAtOriginalPathIsNeverOverwrittenAndPreventsAnotherDelete() {
         val file = archive()
+        val original = file.readBytes()
         interrupt(file)
+        val rollback = rollbackFiles(file).single()
         writeZip(file, "user-created.png")
         val userBytes = file.readBytes()
         assertEquals(listOf("user-created.png"), ComicArchive.imageEntries(file))
         assertFalse(ComicArchive.deleteEntry(file, "user-created.png"))
         assertArrayEquals(userBytes, file.readBytes())
-        assertEquals(1, backups().size)
-        assertTrue(temporaryFolder.root.listFiles().orEmpty().any { it.extension == "bak" })
+        assertArrayEquals(original, rollback.readBytes())
+        assertTrue(ArchiveReplacementRecovery.hasPending(file))
+        assertTrue(backups().isEmpty())
     }
 
     @Test fun unavailableBackupDirectoryDoesNotLoseRecoveryEvidence() {
@@ -116,18 +164,22 @@ class ArchiveReplacementRecoveryTest {
         assertArrayEquals(bytes, file.readBytes())
         assertEquals("keep", unrelated.readText())
         assertFalse(ArchiveReplacementRecovery.hasPending(file))
-        assertArrayEquals(bytes, backups().single().readBytes())
+        assertTrue(backups().isEmpty())
+        assertFalse(File(temporaryFolder.root, ".ComicLabBackups").exists())
+        assertTrue(rollbackFiles(file).isEmpty())
+        assertTrue(replacementFiles(file).isEmpty())
     }
 
-    @Test fun corruptCopiesAreNotInstalledAndRemainForManualRecovery() {
+    @Test fun corruptLegacyBackupIsNotInstalledAndRemainsForManualRecovery() {
         val file = archive()
-        interrupt(file)
-        temporaryFolder.root.listFiles()!!.single { it.extension == "bak" }.writeText("bad rollback")
-        backups().single().writeText("bad backup")
+        val (legacyBackup, _) = createLegacyPending(file, "corrupt")
+        legacyBackup.writeText("bad backup")
+
         assertFalse(ArchiveReplacementRecovery.recover(file))
         assertFalse(file.exists())
         assertTrue(ArchiveReplacementRecovery.hasPending(file))
-        assertEquals("bad backup", backups().single().readText())
+        assertEquals("bad backup", legacyBackup.readText())
+        assertEquals(listOf(legacyBackup), backups())
     }
 
     @Test fun malformedJournalAndTraversalPathsDoNotModifyOtherFiles() {
@@ -148,26 +200,30 @@ class ArchiveReplacementRecoveryTest {
         assertArrayEquals(bytes, untouched.readBytes())
     }
 
-    @Test fun lostPersistentBackupCanStillRecoverVerifiedRollback() {
+    @Test fun validRollbackRecoversWithoutPersistentFullArchiveBackup() {
         val file = archive()
         val bytes = file.readBytes()
         interrupt(file)
-        assertTrue(backups().single().delete())
+        assertArrayEquals(bytes, rollbackFiles(file).single().readBytes())
+        assertTrue(backups().isEmpty())
+
         assertTrue(ArchiveReplacementRecovery.recover(file))
         assertArrayEquals(bytes, file.readBytes())
+        assertTrue(rollbackFiles(file).isEmpty())
+        assertFalse(ArchiveReplacementRecovery.hasPending(file))
     }
 
-    @Test fun successfulDeleteRetainsAllFullBackupsWithoutAutomaticRotation() {
+    @Test fun successfulDeletesLeaveNoPersistentFullArchiveBackups() {
         val file = archive()
-        val original = file.readBytes()
         assertTrue(ComicArchive.deleteEntry(file, "002.png"))
-        val second = file.readBytes()
         assertTrue(ComicArchive.deleteEntry(file, "001.png"))
         ArchiveReplacementRecovery.recoverDirectory(temporaryFolder.root)
-        assertEquals(2, backups().size)
-        assertTrue(backups().any { it.readBytes().contentEquals(original) })
-        assertTrue(backups().any { it.readBytes().contentEquals(second) })
+        assertTrue(ComicArchive.imageEntries(file).isEmpty())
+        assertTrue(backups().isEmpty())
+        assertFalse(File(temporaryFolder.root, ".ComicLabBackups").exists())
         assertFalse(ArchiveReplacementRecovery.hasPending(file))
+        assertTrue(rollbackFiles(file).isEmpty())
+        assertTrue(replacementFiles(file).isEmpty())
     }
 
     @Test fun readerSessionAndPreparedExtractorRecoverBeforeOpeningZip() {
@@ -218,23 +274,35 @@ class ArchiveReplacementRecoveryTest {
             ArchiveReplacementRecovery.moveWithoutReplacing(source, destination)
         })
         assertTrue(userBytes.isNotEmpty())
+        assertFalse(original.contentEquals(userBytes))
         assertArrayEquals(userBytes, file.readBytes())
-        assertArrayEquals(original, backups().single().readBytes())
+        assertTrue(backups().isEmpty())
         assertTrue(ArchiveReplacementRecovery.hasPending(file))
+        assertTrue(rollbackFiles(file).isEmpty())
+        assertTrue(replacementFiles(file).isNotEmpty())
     }
 
-    @Test fun interruptedRestoreCopyIsReusedAndCleanedWithoutLeakingAnotherFullCopy() {
+    @Test fun legacyRestoreReplacesPartialStageAndPreservesLegacyBackup() {
         val file = archive()
-        val bytes = file.readBytes()
-        interrupt(file)
-        val staged = temporaryFolder.root.listFiles()!!.single { it.extension == "tmp" }
-        val token = staged.name.removePrefix("${file.name}.delete_").removeSuffix(".tmp")
-        val restore = File(temporaryFolder.root, "${file.name}.restore_$token.tmp").apply { writeText("partial") }
-        temporaryFolder.root.listFiles()!!.single { it.extension == "bak" }.delete()
-        assertTrue(ArchiveReplacementRecovery.recover(file))
+        val modified = file.lastModified()
+        val (legacyBackup, restore) = createLegacyPending(file, "restore")
+        val bytes = legacyBackup.readBytes()
+        restore.writeText("partial")
+
+        var restoreMoveAttempted = false
+        val recovered = ArchiveReplacementRecovery.recover(file) { source, destination ->
+            if (source == restore && destination == file) restoreMoveAttempted = true
+            ArchiveReplacementRecovery.moveWithoutReplacing(source, destination)
+        }
+        assertTrue("Legacy backup should restore the original archive", recovered)
+        assertTrue("Recovery should install the staged legacy restore", restoreMoveAttempted)
         assertArrayEquals(bytes, file.readBytes())
+        assertEquals(modified, file.lastModified())
         assertFalse(restore.exists())
         assertFalse(temporaryFolder.root.listFiles().orEmpty().any { ".restore_" in it.name })
         assertArrayEquals(bytes, backups().single().readBytes())
+        assertFalse(ArchiveReplacementRecovery.hasPending(file))
+        assertTrue(rollbackFiles(file).isEmpty())
+        assertTrue(replacementFiles(file).isEmpty())
     }
 }

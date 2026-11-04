@@ -9,6 +9,7 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import com.example.comiclab.core.diagnostics.formatPdfPageRenderTiming
+import com.example.comiclab.core.diagnostics.PdfReaderDiagnostics
 import java.io.File
 import java.util.Locale
 
@@ -155,16 +156,21 @@ internal object PdfPageRenderer {
 
         override fun readBounds(entryName: String): ArchiveReaderSessionBounds? {
             val pageIndex = pdfPageIndex(entryName) ?: return null
-            return pdfLifecycleGate.withOpen {
+            PdfReaderDiagnostics.nativePhase("bounds_wait", "page=${pageIndex + 1}")
+            return pdfLifecycleGate.withOpenTimed({ wait ->
+                PdfReaderDiagnostics.nativePhase("bounds_open", "gateWaitMs=${wait / 1_000_000.0}")
+            }) {
                 if (pageIndex !in 0 until pdfRenderer.pageCount) {
-                    return@withOpen null
+                    return@withOpenTimed null
                 }
 
                 val page = pdfRenderer.openPage(pageIndex)
                 try {
                     ArchiveReaderSessionBounds(page.width, page.height)
                 } finally {
+                    PdfReaderDiagnostics.nativePhase("native_close")
                     page.close()
+                    PdfReaderDiagnostics.nativePhase("bounds_done")
                 }
             }
         }
@@ -188,7 +194,11 @@ internal object PdfPageRenderer {
         ): Bitmap? {
             val pageIndex = pdfPageIndex(entryName) ?: return null
             var gateWaitNanos = 0L
-            return pdfLifecycleGate.withOpenTimed(onLockAcquired = { gateWaitNanos = it }) {
+            PdfReaderDiagnostics.nativePhase("native_wait", "page=${pageIndex + 1} kind=TILE")
+            return pdfLifecycleGate.withOpenTimed(onLockAcquired = {
+                gateWaitNanos = it
+                PdfReaderDiagnostics.nativePhase("native_open", "gateWaitMs=${it / 1_000_000.0}")
+            }) {
                 if (pageIndex !in 0 until pdfRenderer.pageCount) {
                     return@withOpenTimed null
                 }
@@ -202,7 +212,9 @@ internal object PdfPageRenderer {
                         PdfPageRenderTimingContext(pageIndex, "TILE", gateWaitNanos)
                     )
                 } finally {
+                    PdfReaderDiagnostics.nativePhase("native_close")
                     page.close()
+                    PdfReaderDiagnostics.nativePhase("native_closed")
                 }
             }
         }
@@ -226,8 +238,12 @@ internal object PdfPageRenderer {
             val pageIndex = pdfPageIndex(entryName) ?: return null
             var gateWaitNanos = 0L
             val operationStartedAtNanos = SystemClock.elapsedRealtimeNanos()
+            PdfReaderDiagnostics.nativePhase("native_wait", "page=${pageIndex + 1} kind=${mode.name}")
             return try {
-                pdfLifecycleGate.withOpenTimed(onLockAcquired = { gateWaitNanos = it }) {
+                pdfLifecycleGate.withOpenTimed(onLockAcquired = {
+                    gateWaitNanos = it
+                    PdfReaderDiagnostics.nativePhase("native_open", "gateWaitMs=${it / 1_000_000.0}")
+                }) {
                     if (pageIndex !in 0 until pdfRenderer.pageCount) {
                         return@withOpenTimed null
                     }
@@ -249,7 +265,9 @@ internal object PdfPageRenderer {
                             )
                         }
                     } finally {
+                        PdfReaderDiagnostics.nativePhase("native_close")
                         page.close()
+                        PdfReaderDiagnostics.nativePhase("native_closed")
                     }
                 }
             } finally {
@@ -350,9 +368,14 @@ internal object PdfPageRenderer {
             postTranslate(-boundedRect.left * scale, -boundedRect.top * scale)
         }
         val renderStartedAtNanos = SystemClock.elapsedRealtimeNanos()
+        PdfReaderDiagnostics.nativePhase("native_render", "target=${targetWidth}x$bitmapHeight")
+        var rendered = false
         try {
             page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            rendered = true
         } finally {
+            val duration = SystemClock.elapsedRealtimeNanos() - renderStartedAtNanos
+            PdfReaderDiagnostics.nativePhase("native_done", "ok=$rendered renderMs=${duration / 1_000_000.0}", duration)
             timing?.let {
                 Log.i(
                     PDF_TIMING_LOG_TAG,
@@ -387,9 +410,14 @@ internal object PdfPageRenderer {
             setScale(scale, scale)
         }
         val renderStartedAtNanos = SystemClock.elapsedRealtimeNanos()
+        PdfReaderDiagnostics.nativePhase("native_render", "target=${bitmapWidth}x$bitmapHeight")
+        var rendered = false
         try {
             page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            rendered = true
         } finally {
+            val duration = SystemClock.elapsedRealtimeNanos() - renderStartedAtNanos
+            PdfReaderDiagnostics.nativePhase("native_done", "ok=$rendered renderMs=${duration / 1_000_000.0}", duration)
             timing?.let {
                 Log.i(
                     PDF_TIMING_LOG_TAG,

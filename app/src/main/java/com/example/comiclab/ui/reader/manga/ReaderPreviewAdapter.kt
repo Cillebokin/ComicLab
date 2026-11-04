@@ -19,6 +19,7 @@ import java.util.Collections
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class ReaderPreviewAdapter(
     private val context: Context,
@@ -51,6 +52,17 @@ class ReaderPreviewAdapter(
 
     @Volatile
     private var closed = false
+
+    @Volatile
+    private var decodingEnabled = true
+    private val decodeGeneration = AtomicInteger()
+
+    fun setDecodingEnabled(enabled: Boolean) {
+        if (closed || decodingEnabled == enabled) return
+        decodingEnabled = enabled
+        decodeGeneration.incrementAndGet()
+        if (enabled) notifyDataSetChangedSafely()
+    }
 
     private var selectedPosition = RecyclerView.NO_POSITION
 
@@ -228,7 +240,7 @@ class ReaderPreviewAdapter(
         }
 
     private fun loadThumbnail(position: Int) {
-        if (closed ||
+        if (closed || !decodingEnabled ||
             position !in entries.indices ||
             position in failedPositions ||
             synchronized(cache) { cache.get(position) != null } ||
@@ -252,10 +264,11 @@ class ReaderPreviewAdapter(
             return
         }
 
+        val generation = decodeGeneration.get()
         runCatching {
             decodeExecutor.execute {
                 try {
-                    if (closed || position !in entries.indices) {
+                    if (closed || !decodingEnabled || generation != decodeGeneration.get() || position !in entries.indices) {
                         return@execute
                     }
 
@@ -270,7 +283,7 @@ class ReaderPreviewAdapter(
                     }
 
                     if (bitmap == null) {
-                        handleThumbnailDecodeFailure(
+                        if (decodingEnabled && generation == decodeGeneration.get()) handleThumbnailDecodeFailure(
                             position = position,
                             attempt = attempt,
                             failure = decodeResult.exceptionOrNull()
@@ -286,14 +299,20 @@ class ReaderPreviewAdapter(
                     }
                     failedPositions.remove(position)
                     mainHandler.post {
-                        if (!closed && position in entries.indices) {
+                        if (!closed && decodingEnabled && position in entries.indices) {
                             notifyItemChangedSafely(position)
                         }
                     }
                 } catch (throwable: Throwable) {
-                    handleThumbnailDecodeFailure(position, attempt, throwable)
+                    if (decodingEnabled && generation == decodeGeneration.get()) {
+                        handleThumbnailDecodeFailure(position, attempt, throwable)
+                    }
                 } finally {
+                    if (generation != decodeGeneration.get()) decodeAttempts.remove(position)
                     loadingPositions.remove(position)
+                    if (!closed && decodingEnabled && generation != decodeGeneration.get()) {
+                        mainHandler.post { if (!closed && decodingEnabled) notifyItemChangedSafely(position) }
+                    }
                 }
             }
         }.onFailure {
@@ -322,9 +341,10 @@ class ReaderPreviewAdapter(
         }
 
         if (failure !is OutOfMemoryError && attempt < MAX_PREVIEW_DECODE_ATTEMPTS) {
+            val generation = decodeGeneration.get()
             mainHandler.postDelayed(
                 {
-                    if (!closed && position in entries.indices) {
+                    if (!closed && decodingEnabled && generation == decodeGeneration.get() && position in entries.indices) {
                         loadThumbnail(position)
                     }
                 },

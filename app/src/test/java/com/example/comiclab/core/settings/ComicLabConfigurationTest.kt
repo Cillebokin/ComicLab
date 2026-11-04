@@ -18,6 +18,19 @@ import org.junit.Test
 class ComicLabConfigurationTest {
 
     @Test
+    fun ebookCoordinateVersionsSurviveExportAndOldExportsKeepLegacyCoordinates() {
+        val legacy = ComicLabConfigurationJson.decode(
+            """{"schemaVersion":1,"exportedAt":0,"ebookReadingProgress":[{"path":"/book.epub","chapterIndex":1,"scrollFraction":0.75}]}"""
+        ).configuration.ebookReadingProgress.single()
+        assertEquals(1, legacy.coordinateVersion)
+        val configuration = ComicLabConfiguration(
+            exportedAt = 0,
+            ebookReadingProgress = listOf(legacy, legacy.copy(path = "/new.epub", coordinateVersion = 2))
+        )
+        assertEquals(configuration, ComicLabConfigurationJson.decode(ComicLabConfigurationJson.encode(configuration)).configuration)
+    }
+
+    @Test
     fun jsonRoundTripPreservesAllConfigurationSections() {
         val configuration = sampleConfiguration()
 

@@ -3,16 +3,23 @@ package com.example.comiclab.ebook.epub
 import com.example.comiclab.ebook.EbookBook
 import com.example.comiclab.ebook.EbookResourceRecord
 import com.example.comiclab.ebook.EbookSession
+import com.example.comiclab.ebook.withoutChapterContent
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.util.zip.ZipFile
 
 class EpubBookSession private constructor(
-    override val book: EbookBook,
+    book: EbookBook,
     private val resourceRecords: Map<String, EbookResourceRecord>,
     private val zipFile: ZipFile
 ) : EbookSession {
+
+    @Volatile
+    override var book = book
+        private set
+
+    override fun releaseChapterContent() { book = book.withoutChapterContent() }
 
     @Volatile
     private var closed = false

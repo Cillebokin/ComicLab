@@ -2,8 +2,6 @@ package com.example.comiclab
 
 import com.example.comiclab.ui.common.SystemBars
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
@@ -11,7 +9,8 @@ import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import com.example.comiclab.ebook.EbookSession
+import com.example.comiclab.ebook.prepareEbookPreview
+import com.example.comiclab.ebook.EbookContentLimitException
 import com.example.comiclab.ebook.EbookSessionFactory
 import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.ebook.ReaderFileDetector
@@ -34,8 +33,8 @@ class EbookPreviewActivity : AppCompatActivity() {
     private lateinit var btnReadFromBeginning: Button
 
     private val previewExecutor = Executors.newSingleThreadExecutor()
+    @Volatile
     private var loadGeneration = 0
-    private var session: EbookSession? = null
     private var bookFile: File? = null
 
     @Volatile
@@ -87,8 +86,7 @@ class EbookPreviewActivity : AppCompatActivity() {
     override fun onDestroy() {
         destroyed = true
         loadGeneration++
-        session?.close()
-        session = null
+        imgCover.setImageDrawable(null)
         previewExecutor.shutdownNow()
         super.onDestroy()
     }
@@ -97,51 +95,44 @@ class EbookPreviewActivity : AppCompatActivity() {
         val generation = ++loadGeneration
         val untitledBookTitle = getString(R.string.ebook_untitled_book)
         val untitledChapterTitle = getString(R.string.ebook_untitled_chapter)
+        val coverMaxDimension = maxOf(imgCover.layoutParams.width, imgCover.layoutParams.height).coerceIn(1, 720)
         tvStatus.text = getString(R.string.ebook_loading)
         tvStatus.visibility = View.VISIBLE
 
         runCatching {
             previewExecutor.execute {
                 val result = runCatching {
-                    val loadedSession = EbookSessionFactory.open(
-                        file,
-                        untitledBookTitle,
-                        untitledChapterTitle
+                    prepareEbookPreview(
+                        EbookSessionFactory.open(file, untitledBookTitle, untitledChapterTitle),
+                        coverMaxDimension
                     )
-                    val cover = loadedSession.book.coverResourceId?.let { resourceId ->
-                        loadedSession.openResource(resourceId)?.use { input ->
-                            BitmapFactory.decodeStream(input)
-                        }
-                    }
-                    LoadedBook(loadedSession, cover)
                 }
 
                 if (destroyed || generation != loadGeneration) {
-                    result.getOrNull()?.session?.close()
+                    result.getOrNull()?.cover?.recycle()
                     return@execute
                 }
 
                 runOnUiThread {
                     if (destroyed || generation != loadGeneration) {
-                        result.getOrNull()?.session?.close()
+                        result.getOrNull()?.cover?.recycle()
                         return@runOnUiThread
                     }
 
                     result.onSuccess { loaded ->
-                        session?.close()
-                        session = loaded.session
-                        if (loaded.session.book.chapters.isEmpty()) {
+                        if (loaded.chapterCount == 0) {
+                            loaded.cover?.recycle()
                             showError(getString(R.string.ebook_empty))
                             return@onSuccess
                         }
-                        tvTitle.text = loaded.session.book.title
-                        tvAuthor.text = loaded.session.book.author
+                        tvTitle.text = loaded.title
+                        tvAuthor.text = loaded.author
                             ?.takeIf(String::isNotBlank)
                             ?.let { getString(R.string.ebook_author, it) }
                             ?: getString(R.string.ebook_author_unknown)
                         tvChapterCount.text = getString(
                             R.string.ebook_chapter_count,
-                            loaded.session.book.chapters.size
+                            loaded.chapterCount
                         )
                         if (loaded.cover != null) {
                             imgCover.setImageBitmap(loaded.cover)
@@ -193,6 +184,7 @@ class EbookPreviewActivity : AppCompatActivity() {
 
     private fun errorMessage(error: Throwable): String {
         return when (error) {
+            is EbookContentLimitException -> getString(R.string.ebook_content_too_large)
             is MobiParseException -> when (error.reason) {
                 MobiParseError.DRM_PROTECTED -> getString(R.string.ebook_drm_unsupported)
                 MobiParseError.UNSUPPORTED_COMPRESSION,
@@ -219,11 +211,6 @@ class EbookPreviewActivity : AppCompatActivity() {
             else -> getString(R.string.ebook_load_failed)
         }
     }
-
-    private data class LoadedBook(
-        val session: EbookSession,
-        val cover: Bitmap?
-    )
 
     companion object {
         const val EXTRA_BOOK_PATH = "archive_path"

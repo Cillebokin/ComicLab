@@ -40,7 +40,8 @@ object ComicLabConfigurationStore {
                     ComicLabEbookProgress(
                         path = file.absolutePath,
                         chapterIndex = progress.chapterIndex,
-                        scrollFraction = progress.scrollFraction
+                        scrollFraction = progress.scrollFraction,
+                        coordinateVersion = progress.coordinateVersion
                     )
                 }
             }
@@ -198,7 +199,8 @@ object ComicLabConfigurationStore {
                 file,
                 EbookProgress(
                     chapterIndex = item.chapterIndex,
-                    scrollFraction = item.scrollFraction
+                    scrollFraction = item.scrollFraction,
+                    coordinateVersion = item.coordinateVersion
                 )
             )
             if (ebookIdentities.add(identity)) restoredEntries++ else skippedEntries++

@@ -55,6 +55,9 @@ import com.example.comiclab.ebook.ReaderFileType
 import com.example.comiclab.ui.browser.FileListAdapter
 import com.example.comiclab.ui.browser.NasFileListAdapter
 import com.example.comiclab.ui.reader.enhance.ArchiveEnhancementDialog
+import com.example.comiclab.ui.reader.translation.ArchiveTranslationDialog
+import com.example.comiclab.core.archive.ComicConversionTarget
+import com.example.comiclab.ui.reader.conversion.ComicFormatConversionDialog
 import com.example.comiclab.ui.browser.DirectoryBrowserController
 import com.example.comiclab.ui.browser.DirectoryChildCountCache
 import com.example.comiclab.ui.browser.DirectoryScrollStateCache
@@ -2496,14 +2499,18 @@ class MainActivity : AppCompatActivity() {
         val btnCutFile = content.findViewById<TextView>(R.id.btnCutFile)
         val btnFavoriteComic = content.findViewById<TextView>(R.id.btnFavoriteComicAction)
         val btnRead = content.findViewById<TextView>(R.id.btnReadComic)
+        val btnConvert = content.findViewById<TextView>(R.id.btnConvertComic)
         val btnEnhance = content.findViewById<TextView>(R.id.btnEnhanceComic)
+        val btnTranslate = content.findViewById<TextView>(R.id.btnTranslateComic)
         val btnDeleteFile = content.findViewById<TextView>(R.id.btnDeleteFile)
         val isFavorite = FavoriteComicStore.isFavorite(this, file)
 
         tvArchiveActionTitle.text = file.name
         sizeBottomSheetActionIcons(
             btnRead,
+            btnConvert,
             btnEnhance,
+            btnTranslate,
             btnFavoriteComic,
             btnCopyFileName,
             btnRenameFileName,
@@ -2515,6 +2522,19 @@ class MainActivity : AppCompatActivity() {
         val canStartTransfer = pendingFileTransfer == null && !isFileTransferInProgress
         btnEnhance.visibility = if (ComicArchive.isSupportedArchive(file) &&
             !file.extension.equals("pdf", true)) View.VISIBLE else View.GONE
+        btnTranslate.visibility = if (AUTO_TRANSLATION_UI_ENABLED) btnEnhance.visibility else View.GONE
+        val conversionTarget = when {
+            ComicArchive.isPdf(file) -> ComicConversionTarget.CBZ
+            ComicArchive.isSupportedArchive(file) -> ComicConversionTarget.PDF
+            else -> null
+        }
+        btnConvert.visibility = if (conversionTarget == null) View.GONE else View.VISIBLE
+        conversionTarget?.let { target ->
+            btnConvert.setText(
+                if (target == ComicConversionTarget.PDF) R.string.comic_convert_to_pdf
+                else R.string.comic_convert_to_cbz
+            )
+        }
         val isPendingSource = pendingFileTransfer?.sourcePath == file.absolutePath
         btnCopyFile.isEnabled = canStartTransfer
         btnCutFile.isEnabled = canStartTransfer
@@ -2602,9 +2622,20 @@ class MainActivity : AppCompatActivity() {
             openMangaPreview(file)
         }
 
+        btnConvert.setOnClickListener {
+            val target = conversionTarget ?: return@setOnClickListener
+            dialog.dismiss()
+            ComicFormatConversionDialog.show(this, file, target)
+        }
+
         btnEnhance.setOnClickListener {
             dialog.dismiss()
             ArchiveEnhancementDialog.show(this, file)
+        }
+
+        btnTranslate.setOnClickListener {
+            dialog.dismiss()
+            ArchiveTranslationDialog.show(this, file)
         }
 
         btnCopyFile.setOnClickListener {
