@@ -110,6 +110,55 @@ class MangaPageAdapterTest {
         } finally { closeAndAwait(adapter, session); visible.recycle() }
     }
 
+    @Test fun aPdfPageKeepsACompactPreviewWhenItsFullImageIsLaterTrimmed() {
+        val bitmaps = CopyOnWriteArrayList<Bitmap>()
+        val session = FakeReaderSession(pdfSource = true,
+            boundsReader = { ComicArchive.ImageBounds(1000, 1000) },
+            fullDecoder = { Bitmap.createBitmap(720, 720, Bitmap.Config.ARGB_8888).also(bitmaps::add) })
+        val adapter = newAdapter(session, (0..9).map { "$it.pdf" },
+            readingDirection = AppSettings.READING_DIRECTION_TOP_TO_BOTTOM)
+        val firstImage = Bitmap.createBitmap(720, 720, Bitmap.Config.ARGB_8888).also(bitmaps::add)
+        try {
+            putPreview(adapter, 0, firstImage, 720)
+            adapter.ensureFullOrTiledPageForTest(0, 100, 0, false)
+            assertTrue("the full image should be admitted", awaitCondition { fullCache(adapter).get(0) != null })
+            // 全图先入缓存、紧凑首图随后替换旧预览；两步之间旧预览仍在，页面不会空白。
+            assertTrue("a full image must leave a compact first image behind, not delete the page's only fallback",
+                awaitCondition { adapter.cachedPreviewForTest(0)?.let { it.width in 1..360 } == true })
+
+            adapter.preloadAround(8, 1, scrollDirection = 1, isFastScroll = false, isIdle = true)
+            assertNull("the full image leaves with its protection window", fullCache(adapter).get(0))
+            assertTrue("the page can still show something after its full image is gone",
+                adapter.cachedPreviewForTest(0) != null)
+        } finally {
+            closeAndAwait(adapter, session)
+            bitmaps.forEach { it.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
+    @Test fun aRejectedPdfFullImageNeverCostsThePageItsExistingPreview() {
+        val bitmaps = CopyOnWriteArrayList<Bitmap>()
+        val session = FakeReaderSession(pdfSource = true,
+            boundsReader = { ComicArchive.ImageBounds(1000, 1000) },
+            fullDecoder = { Bitmap.createBitmap(720, 720, Bitmap.Config.ARGB_8888).also(bitmaps::add) })
+        val adapter = newAdapter(session, listOf("0.pdf", "1.pdf"),
+            readingDirection = AppSettings.READING_DIRECTION_TOP_TO_BOTTOM)
+        fullCache(adapter).resize(1)
+        val firstImage = Bitmap.createBitmap(720, 720, Bitmap.Config.ARGB_8888).also(bitmaps::add)
+        try {
+            putPreview(adapter, 0, firstImage, 720)
+            adapter.ensureFullOrTiledPageForTest(0, 100, 0, false)
+            assertTrue("the full decode should have run", awaitCondition {
+                session.fullReads.isNotEmpty() && adapter.loadingFullPagesForTest.isEmpty()
+            })
+            assertNull("the oversized full image cannot be admitted", fullCache(adapter).get(0))
+            assertSame("the page must keep the image it already had", firstImage, adapter.cachedPreviewForTest(0))
+        } finally {
+            closeAndAwait(adapter, session)
+            bitmaps.forEach { it.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
     @Test fun nearerPdfPreloadsOutlastFartherOnesUnderCachePressure() {
         val session = FakeReaderSession(pdfSource = true)
         val adapter = newAdapter(session, (0..30).map { "$it.pdf" })
@@ -1478,6 +1527,11 @@ class MangaPageAdapterTest {
 
     private fun bitmapKb(kb: Int): Bitmap = Bitmap.createBitmap(16 * kb, 16, Bitmap.Config.ARGB_8888)
 
+    @Suppress("UNCHECKED_CAST")
+    private fun fullCache(adapter: MangaPageAdapter): android.util.LruCache<Int, Bitmap> =
+        MangaPageAdapter::class.java.getDeclaredField("fullBitmapCache").apply { isAccessible = true }
+            .get(adapter) as android.util.LruCache<Int, Bitmap>
+
     private fun putPreview(adapter: MangaPageAdapter, position: Int, bitmap: Bitmap, width: Int) {
         MangaPageAdapter::class.java.getDeclaredMethod("putPreviewBitmap", Int::class.javaPrimitiveType,
             Bitmap::class.java, Int::class.javaPrimitiveType).apply { isAccessible = true }
@@ -1565,7 +1619,8 @@ class MangaPageAdapterTest {
     private class FakeReaderSession(
         private val pdfSource: Boolean = false,
         private val previewDecoder: (String) -> Bitmap? = { null },
-        private val boundsReader: (String) -> ComicArchive.ImageBounds? = { null }
+        private val boundsReader: (String) -> ComicArchive.ImageBounds? = { null },
+        private val fullDecoder: (String) -> Bitmap? = { null }
     ) : ComicArchive.ImageReaderSession {
         val closed = CountDownLatch(1)
         val closeCount = AtomicInteger(0)
@@ -1587,12 +1642,12 @@ class MangaPageAdapterTest {
 
         override fun decodeImageForWidth(entryName: String, targetWidth: Int): Bitmap? {
             fullReads.add(entryName)
-            return null
+            return fullDecoder(entryName)
         }
 
         override fun decodeImageForPage(entryName: String, targetWidth: Int, targetHeight: Int): Bitmap? {
             fullReads.add(entryName)
-            return null
+            return fullDecoder(entryName)
         }
 
         override fun decodeRegionForWidth(entryName: String, sourceRect: Rect, targetWidth: Int): Bitmap? = null

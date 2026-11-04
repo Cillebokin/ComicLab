@@ -1639,10 +1639,16 @@ internal class MangaPageAdapter(
                     return@submitTask
                 }
 
-                if (shouldReleasePreviewAfterFullDecode(position in tiledPages)) {
+                // PDF 的全图被接受后才处理预览：全图被拒收时页面仍保有原图；全图之后被裁掉时，
+                // 页面也还有一张紧凑首图可显示，不会回到空白占位。
+                val releasePreview = shouldReleasePreviewAfterFullDecode(position in tiledPages)
+                if (releasePreview && !isPdfSource) {
                     removePreviewBitmap(position)
                 }
                 if (putFullBitmap(position, bitmap)) {
+                    if (releasePreview && isPdfSource) {
+                        replacePreviewWithCompact(position, bitmap)
+                    }
                     notifyPageReady(position, immediate = !isPreload)
                 }
             } finally {
@@ -2651,6 +2657,16 @@ internal class MangaPageAdapter(
         synchronized(cacheLock) {
             previewBitmapCache.remove(position)
         }
+    }
+
+    /** 用全图缩出的紧凑首图替换同页预览；约0.7MB，缩放失败时不影响已接受的全图。 */
+    private fun replacePreviewWithCompact(position: Int, full: Bitmap) {
+        val width = minOf(PDF_FAST_PREVIEW_DECODE_WIDTH, full.width)
+        val height = (full.height.toLong() * width / full.width.coerceAtLeast(1)).toInt().coerceAtLeast(1)
+        val compact = runCatching { Bitmap.createScaledBitmap(full, width, height, true) }.getOrNull() ?: return
+        // 全图本身不宽于紧凑宽度时不会产生新位图；缓存里不能放与全图同一个对象。
+        if (compact === full) return
+        putPreviewBitmap(position, compact, width)
     }
 
     private fun fullBitmap(position: Int): Bitmap? {
