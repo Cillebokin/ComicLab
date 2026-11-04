@@ -63,7 +63,7 @@
         <Button android:id="@+id/btnReaderTranslate" android:layout_width="@dimen/reader_toolbar_preview_button_width"
             android:layout_height="@dimen/reader_toolbar_preview_button_height" android:layout_marginStart="8dp"
             android:background="@drawable/bg_preview_action_button" android:text="@string/translation_reader_action"
-            android:minWidth="0dp" android:minHeight="0dp" android:padding="0dp" android:singleLine="true"
+            android:visibility="gone" android:minWidth="0dp" android:minHeight="0dp" android:padding="0dp" android:singleLine="true"
             android:includeFontPadding="false" android:textAllCaps="false" android:textColor="@color/white"
             android:textSize="@dimen/text_caption" />
 

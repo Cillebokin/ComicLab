@@ -585,7 +585,9 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         }
 
-        findViewById<Button>(R.id.btnReaderTranslate).setOnClickListener {
+        val btnReaderTranslate = findViewById<Button>(R.id.btnReaderTranslate)
+        btnReaderTranslate.visibility = if (AUTO_TRANSLATION_UI_ENABLED) View.VISIBLE else View.GONE
+        btnReaderTranslate.setOnClickListener {
             val archive = archiveFile ?: return@setOnClickListener
             if (imageEntries.isEmpty()) return@setOnClickListener
             val position = currentReaderPosition.coerceIn(imageEntries.indices)

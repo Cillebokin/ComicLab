@@ -71,6 +71,9 @@ import kotlin.math.roundToInt
 internal const val COMICLAB_RELEASES_URL =
     "https://github.com/Cillebokin/ComicLab/releases"
 
+// 当前版本保留自动翻译实现，仅隐藏界面入口。
+internal const val AUTO_TRANSLATION_UI_ENABLED = false
+
 class SettingsActivity : AppCompatActivity() {
 
     private lateinit var btnBack: ImageButton
@@ -277,7 +280,9 @@ class SettingsActivity : AppCompatActivity() {
         add(SettingsSection(R.string.settings_section_reading, R.layout.settings_section_reading))
         add(SettingsSection(R.string.settings_section_configuration, R.layout.settings_section_configuration))
         add(SettingsSection(R.string.source_nas, R.layout.settings_section_nas))
-        add(SettingsSection(R.string.settings_section_auto_translation, R.layout.settings_section_translation))
+        if (AUTO_TRANSLATION_UI_ENABLED) {
+            add(SettingsSection(R.string.settings_section_auto_translation, R.layout.settings_section_translation))
+        }
         add(SettingsSection(R.string.about, R.layout.settings_section_about))
         if (isDebuggableBuild()) {
             add(SettingsSection(R.string.settings_section_diagnostics, R.layout.settings_section_diagnostics))

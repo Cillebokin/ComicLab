@@ -2522,7 +2522,7 @@ class MainActivity : AppCompatActivity() {
         val canStartTransfer = pendingFileTransfer == null && !isFileTransferInProgress
         btnEnhance.visibility = if (ComicArchive.isSupportedArchive(file) &&
             !file.extension.equals("pdf", true)) View.VISIBLE else View.GONE
-        btnTranslate.visibility = btnEnhance.visibility
+        btnTranslate.visibility = if (AUTO_TRANSLATION_UI_ENABLED) btnEnhance.visibility else View.GONE
         val conversionTarget = when {
             ComicArchive.isPdf(file) -> ComicConversionTarget.CBZ
             ComicArchive.isSupportedArchive(file) -> ComicConversionTarget.PDF
