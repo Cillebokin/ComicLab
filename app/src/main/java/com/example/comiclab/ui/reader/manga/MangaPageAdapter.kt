@@ -20,6 +20,7 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.appcompat.widget.AppCompatImageView
 import com.example.comiclab.AppSettings
 import com.example.comiclab.ComicArchive
+import com.example.comiclab.core.archive.PdfRenderSizePolicy
 import com.example.comiclab.core.diagnostics.CrashLogManager
 import com.example.comiclab.core.diagnostics.PdfReaderDiagnostics
 import com.example.comiclab.core.diagnostics.formatReaderDecodeQueueTiming
@@ -2763,17 +2764,21 @@ internal class MangaPageAdapter(
         return chosen
     }
 
-    /**
-     * 预加载解码前的预检：缓存按优先级放不下就不做这次原生渲染，避免滚动时反复渲染再被拒收。
-     * 页面比例未知，按驻留预览里「字节/宽度²」最小的一张估算，偏向放行：宁可漏拦，不可误拦。
-     * 缓存里没有可参照的预览时无从预判，直接放行。
-     */
+    /** 目标页尺寸已知时预检最小像素占用；未知或无效时放行，由实际入缓存结果决定。 */
     private fun canAdmitPdfPreview(position: Int, targetWidth: Int): Boolean {
+        val bounds = pageBounds[position] ?: return true
+        val size = PdfRenderSizePolicy.calculatePreviewSize(
+            pageWidth = bounds.width,
+            pageHeight = bounds.height,
+            targetWidth = targetWidth,
+            maxWidth = PdfRenderSizePolicy.MAX_RENDER_WIDTH,
+            maxHeight = PdfRenderSizePolicy.MAX_PREVIEW_HEIGHT,
+            maxPixels = PdfRenderSizePolicy.MAX_PREVIEW_PIXELS
+        ) ?: return true
+        // PdfPageRenderer使用ARGB_8888；行对齐只会使实际占用更大，不能据此误拒可容纳的图片。
+        val incomingKb = (size.width.toLong() * size.height * 4L / 1024L)
+            .coerceIn(1L, Int.MAX_VALUE.toLong()).toInt()
         synchronized(cacheLock) {
-            val bytesPerSquarePixel = previewBitmapCache.snapshot().values
-                .minOfOrNull { it.byteCount.toDouble() / (it.width.toDouble() * it.width) }
-                ?: return true
-            val incomingKb = (bytesPerSquarePixel * targetWidth * targetWidth / 1024).toInt().coerceAtLeast(1)
             return pdfPreviewEvictionsFor(position, targetWidth, incomingKb) != null
         }
     }

@@ -183,6 +183,32 @@ class MangaPageAdapterTest {
         }
     }
 
+    @Test fun aMixedAspectPdfPreloadIsRenderedWhenTargetBoundsAreUnknownOrFit() {
+        for (knownBounds in listOf(false, true)) {
+            val made = CopyOnWriteArrayList<Bitmap>()
+            val session = FakeReaderSession(pdfSource = true, previewDecoder = {
+                Bitmap.createBitmap(360, 200, Bitmap.Config.ARGB_8888).also(made::add)
+            })
+            val adapter = newAdapter(session, (0..30).map { "$it.pdf" }, archiveFileName = "reader-$knownBounds.pdf")
+            previewCache(adapter).resize(12_288)
+            setPreviewWindows(adapter, visible = 10..10, preload = 9..26)
+            val resident = (11..25).associateWith { Bitmap.createBitmap(360, 568, Bitmap.Config.ARGB_8888).also(made::add) }
+            try {
+                resident.forEach { (position, bitmap) -> putPreview(adapter, position, bitmap, 360) }
+                if (knownBounds) setPageBounds(adapter, 26, ComicArchive.ImageBounds(1800, 1000))
+                adapter.ensurePreviewForTest(26, 20, 0, true)
+                assertTrue("a wide page that fits must be rendered; knownBounds=$knownBounds", awaitCondition {
+                    session.previewWidths.any { it.first == "26.pdf" } && adapter.cachedPreviewForTest(26) != null
+                })
+                resident.forEach { (position, bitmap) -> assertSame(bitmap, adapter.cachedPreviewForTest(position)) }
+                assertFalse(adapter.failedPreviewPagesForTest.contains(26))
+            } finally {
+                closeAndAwait(adapter, session)
+                made.forEach { it.takeUnless(Bitmap::isRecycled)?.recycle() }
+            }
+        }
+    }
+
     @Test fun aPdfPreloadTheFullCacheCouldNotAdmitIsNeverRendered() {
         val made = CopyOnWriteArrayList<Bitmap>()
         val session = FakeReaderSession(pdfSource = true, previewDecoder = {
@@ -195,6 +221,7 @@ class MangaPageAdapterTest {
         val resident = (11..13).associateWith { Bitmap.createBitmap(360, 100, Bitmap.Config.ARGB_8888).also(made::add) }
         try {
             resident.forEach { (position, bitmap) -> putPreview(adapter, position, bitmap, 360) }
+            setPageBounds(adapter, 14, ComicArchive.ImageBounds(360, 100))
             adapter.ensurePreviewForTest(14, 20, 0, true)
             assertTrue(awaitCondition { adapter.loadingPreviewPagesForTest.isEmpty() })
             assertFalse("a result the cache would reject must not cost a native render", session.previewWidths.any { it.first == "14.pdf" })
@@ -1591,6 +1618,12 @@ class MangaPageAdapterTest {
         ).forEach { (field, value) ->
             MangaPageAdapter::class.java.getDeclaredField(field).apply { isAccessible = true }.setInt(adapter, value)
         }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun setPageBounds(adapter: MangaPageAdapter, position: Int, bounds: ComicArchive.ImageBounds) {
+        val field = MangaPageAdapter::class.java.getDeclaredField("pageBounds").apply { isAccessible = true }
+        (field.get(adapter) as MutableMap<Int, ComicArchive.ImageBounds>)[position] = bounds
     }
 
     private fun requestPreview(adapter: MangaPageAdapter, position: Int) {
