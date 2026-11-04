@@ -32,6 +32,8 @@ ComicLab 是一个面向 Android 的本地漫画和电子书阅读器，主要�
 
 ![ComicLab 界面展示 07](readme_pics/pic07.jpg)
 
+![ComicLab 界面展示 08](readme_pics/pic08.jpg)
+
 ## 支持格式
 
 | 类型 | 格式 |

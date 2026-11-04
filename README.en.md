@@ -32,6 +32,8 @@ Download:
 
 ![ComicLab screenshots 07](readme_pics/pic07.jpg)
 
+![ComicLab screenshots 08](readme_pics/pic08.jpg)
+
 ## Supported formats
 
 | Type | Formats |
