@@ -1,0 +1,308 @@
+{
+  "groups": {
+    "reviewed_five": {
+      "pages": 5,
+      "refs": 57,
+      "before": 228,
+      "after": 192,
+      "removed": 36,
+      "added": 0,
+      "matched_before": 50,
+      "matched_after": 49,
+      "white_before": 320976,
+      "white_after": 305877,
+      "cap_before": 0,
+      "cap_after": 0,
+      "removed_background": 31,
+      "removed_uncertain": 2,
+      "removed_oversized_text": 3
+    },
+    "unreviewed_45": {
+      "pages": 45,
+      "refs": 670,
+      "before": 4372,
+      "after": 3676,
+      "removed": 785,
+      "added": 89,
+      "matched_before": 563,
+      "matched_after": 559,
+      "white_before": 4819314,
+      "white_after": 4437593,
+      "cap_before": 1,
+      "cap_after": 0,
+      "removed_unreviewed": 785
+    }
+  },
+  "pages": [
+    {
+      "slot": "sample-00.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-03.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-06.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-09.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-12.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-15.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-18.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-21.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-24.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-27.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-30.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-33.jpg",
+      "lost_reference_indices": [
+        15,
+        26
+      ],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-36.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-39.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-42.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": [
+        18
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-48.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-01.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-04.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-07.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-10.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-13.jpg",
+      "lost_reference_indices": [
+        1
+      ],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-16.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-19.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-22.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-25.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-28.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-31.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-34.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-37.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-40.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-43.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-46.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-49.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-02.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-05.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-08.jpg",
+      "lost_reference_indices": [
+        5
+      ],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-11.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-14.jpg",
+      "lost_reference_indices": [
+        6
+      ],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-17.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-20.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-23.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-26.jpg",
+      "lost_reference_indices": [
+        16
+      ],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-29.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-32.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-35.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-38.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-41.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-44.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    },
+    {
+      "slot": "sample-47.jpg",
+      "lost_reference_indices": [],
+      "gained_reference_indices": []
+    }
+  ],
+  "limits": [
+    "DBNet is not ground truth",
+    "five reviewed pages influenced rule choice",
+    "remaining 45 pages are not human annotated",
+    "box matching uses greedy one-to-one IoU >= 0.3",
+    "raw preview mask is not final inpainting"
+  ]
+}

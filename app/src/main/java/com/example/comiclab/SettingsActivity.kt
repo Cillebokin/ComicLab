@@ -12,6 +12,8 @@ import com.example.comiclab.core.diagnostics.CrashLogManager
 import com.example.comiclab.core.reader.enhance.EnhancementRuntime
 import com.example.comiclab.core.reader.translation.TranslationApi
 import com.example.comiclab.core.reader.translation.TranslationPolicy
+import com.example.comiclab.core.reader.translation.TranslationModels
+import com.example.comiclab.core.reader.translation.TranslationModelPackageImportException
 import com.example.comiclab.core.reader.translation.TranslationSettings
 import com.example.comiclab.core.reader.translation.TranslationSettingsStore
 import com.example.comiclab.core.store.PrefsGateway
@@ -21,6 +23,7 @@ import com.example.comiclab.ui.settings.SettingsSection
 import com.example.comiclab.ui.settings.SettingsSectionAdapter
 
 import android.content.ActivityNotFoundException
+import android.content.DialogInterface
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.graphics.Paint
@@ -37,6 +40,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.ArrayAdapter
+import android.widget.AdapterView
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.ImageButton
@@ -66,13 +70,13 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.Executors
+import java.util.concurrent.CancellationException
 import kotlin.math.roundToInt
 
 internal const val COMICLAB_RELEASES_URL =
     "https://github.com/Cillebokin/ComicLab/releases"
-
-// 当前版本保留自动翻译实现，仅隐藏界面入口。
-internal const val AUTO_TRANSLATION_UI_ENABLED = false
+internal const val COMICLAB_TRANSLATION_PACKAGE_RELEASES_URL =
+    "https://github.com/Cillebokin/ComicLabTranslatePackage/releases"
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -110,7 +114,13 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var btnNasAddFirstShare: Button
     private lateinit var btnNasAddShare: Button
     private lateinit var btnTranslationTest: Button
+    private lateinit var switchTranslationEnabled: SwitchCompat
+    private lateinit var tvTranslationModelsStatus: TextView
+    private lateinit var btnTranslationModelsImport: Button
     private var translationSettingsTestCancelled: AtomicBoolean? = null
+    private var translationModelsImportCancelled: AtomicBoolean? = null
+    private var translationModelsImportDialog: AlertDialog? = null
+    private var translationModelsImportProgress: TextView? = null
     private val debugToolExecutor = Executors.newSingleThreadExecutor()
     private val configurationExecutor = Executors.newSingleThreadExecutor()
     private val releaseCheckExecutor = Executors.newSingleThreadExecutor()
@@ -133,6 +143,11 @@ class SettingsActivity : AppCompatActivity() {
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         uri?.let(::importConfiguration)
+    }
+    private val importTranslationModelsLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let(::importTranslationModels)
     }
     private var isUpdatingBrightnessControls = false
     private var configurationImportRunning = false
@@ -280,9 +295,7 @@ class SettingsActivity : AppCompatActivity() {
         add(SettingsSection(R.string.settings_section_reading, R.layout.settings_section_reading))
         add(SettingsSection(R.string.settings_section_configuration, R.layout.settings_section_configuration))
         add(SettingsSection(R.string.source_nas, R.layout.settings_section_nas))
-        if (AUTO_TRANSLATION_UI_ENABLED) {
-            add(SettingsSection(R.string.settings_section_auto_translation, R.layout.settings_section_translation))
-        }
+        add(SettingsSection(R.string.settings_section_auto_translation, R.layout.settings_section_translation))
         add(SettingsSection(R.string.about, R.layout.settings_section_about))
         if (isDebuggableBuild()) {
             add(SettingsSection(R.string.settings_section_diagnostics, R.layout.settings_section_diagnostics))
@@ -299,6 +312,10 @@ class SettingsActivity : AppCompatActivity() {
         val model = sectionView.findViewById<EditText>(R.id.inputTranslationModel)
         val key = sectionView.findViewById<EditText>(R.id.inputTranslationKey)
         val language = sectionView.findViewById<Spinner>(R.id.spinnerTranslationTargetLanguage)
+        val aiConfig = sectionView.findViewById<View>(R.id.layoutTranslationAiConfig)
+        switchTranslationEnabled = sectionView.findViewById(R.id.switchTranslationEnabled)
+        tvTranslationModelsStatus = sectionView.findViewById(R.id.tvTranslationModelsStatus)
+        btnTranslationModelsImport = sectionView.findViewById(R.id.btnTranslationModelsImport)
         val languages = resources.getStringArray(R.array.translation_languages)
         language.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, languages).apply {
             setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
@@ -306,30 +323,102 @@ class SettingsActivity : AppCompatActivity() {
         btnTranslationTest = sectionView.findViewById(R.id.btnTranslationTest)
         val save = sectionView.findViewById<Button>(R.id.btnTranslationSave)
         val licenses = sectionView.findViewById<Button>(R.id.btnTranslationLicenses)
-        runCatching { TranslationSettingsStore.load(this) }
+        val release = sectionView.findViewById<Button>(R.id.btnTranslationModelsRelease)
+        val translationEnabled = TranslationSettingsStore.isAutomaticTranslationEnabled(this)
+        val translationPackagePresent = TranslationModels.hasCompletePackage(this)
+        if (translationEnabled && !translationPackagePresent) {
+            TranslationSettingsStore.setAutomaticTranslationEnabled(this, false)
+        }
+        switchTranslationEnabled.isChecked = translationEnabled && translationPackagePresent
+        aiConfig.visibility = if (switchTranslationEnabled.isChecked) View.VISIBLE else View.GONE
+        updateTranslationModelStatus()
+        release.setOnClickListener { openTranslationPackageReleasePage() }
+        btnTranslationModelsImport.setOnClickListener {
+            importTranslationModelsLauncher.launch(
+                arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")
+            )
+        }
+        switchTranslationEnabled.setOnCheckedChangeListener { _, enabled ->
+            if (!enabled) {
+                TranslationSettingsStore.setAutomaticTranslationEnabled(this, false)
+                aiConfig.visibility = View.GONE
+                return@setOnCheckedChangeListener
+            }
+            switchTranslationEnabled.isEnabled = false
+            tvTranslationModelsStatus.setText(R.string.translation_models_checking)
+            val cancelled = AtomicBoolean()
+            EnhancementRuntime.io.execute {
+                val verification = runCatching {
+                    TranslationModels.verifyInstalled(applicationContext, cancelled) { }
+                }
+                runOnUiThread {
+                    if (destroyed) return@runOnUiThread
+                    switchTranslationEnabled.isEnabled = true
+                    if (verification.isSuccess) {
+                        TranslationSettingsStore.setAutomaticTranslationEnabled(this, true)
+                        aiConfig.visibility = View.VISIBLE
+                        updateTranslationModelStatus()
+                        showMessage(getString(R.string.translation_models_enabled))
+                    } else {
+                        switchTranslationEnabled.isChecked = false
+                        aiConfig.visibility = View.GONE
+                        updateTranslationModelStatus()
+                        showMessage(getString(R.string.translation_models_enable_requires_import))
+                    }
+                }
+            }
+        }
+        runCatching { TranslationSettingsStore.loadForEditor(this) }
             .getOrDefault(TranslationSettings("", "", ""))
             .let { saved ->
-                address.setText(saved.address.ifBlank { getString(R.string.translation_default_address) })
-                model.setText(saved.model.ifBlank { getString(R.string.translation_default_model) })
+                address.hint = getString(R.string.translation_default_address)
+                model.hint = getString(R.string.translation_default_model)
+                address.setText(saved.address.takeUnless {
+                    it == getString(R.string.translation_default_address)
+                }.orEmpty())
+                model.setText(saved.model.takeUnless {
+                    it == getString(R.string.translation_default_model)
+                }.orEmpty())
                 key.setText(saved.key)
                 language.setSelection(saved.targetLanguageIndex.coerceIn(0, languages.lastIndex))
             }
-        fun currentSettings() = TranslationSettings(
+        var savedTargetLanguageIndex = language.selectedItemPosition
+        language.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val selected = position.coerceIn(0, languages.lastIndex)
+                if (selected == savedTargetLanguageIndex) return
+                try {
+                    TranslationSettingsStore.saveTargetLanguageIndex(this@SettingsActivity, selected)
+                    savedTargetLanguageIndex = selected
+                } catch (_: Exception) {
+                    showMessage(getString(R.string.translation_target_language_save_failed))
+                }
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+        fun enteredSettings() = TranslationSettings(
             address.text.toString().trim(),
             model.text.toString().trim(),
             key.text.toString().trim(),
             language.selectedItemPosition
         )
+        fun effectiveSettings() = enteredSettings().let { entered ->
+            entered.copy(
+                address = entered.address.ifBlank { getString(R.string.translation_default_address) },
+                model = entered.model.ifBlank { getString(R.string.translation_default_model) }
+            )
+        }
         save.setOnClickListener {
             try {
-                TranslationSettingsStore.save(this, currentSettings())
+                TranslationSettingsStore.save(this, enteredSettings())
                 showMessage(getString(R.string.translation_settings_saved))
             } catch (_: Exception) {
                 showMessage(getString(R.string.translation_invalid_settings))
             }
         }
         btnTranslationTest.setOnClickListener {
-            val config = currentSettings()
+            val config = effectiveSettings()
             try {
                 TranslationPolicy.endpoint(config.address)
                 require(config.model.isNotBlank() && config.key.isNotBlank())
@@ -360,6 +449,107 @@ class SettingsActivity : AppCompatActivity() {
             val view = TextView(this).apply { this.text = text; setPadding(24, 12, 24, 12); textSize = 12f }
             AlertDialog.Builder(this).setTitle(R.string.translation_licenses)
                 .setView(android.widget.ScrollView(this).apply { addView(view) }).setPositiveButton(android.R.string.ok, null).show()
+        }
+    }
+
+    private fun updateTranslationModelStatus() {
+        if (!::tvTranslationModelsStatus.isInitialized) return
+        tvTranslationModelsStatus.setText(
+            if (TranslationModels.hasCompletePackage(this)) {
+                R.string.translation_models_status_ready
+            } else {
+                R.string.translation_models_status_missing
+            }
+        )
+    }
+
+    private fun openTranslationPackageReleasePage() {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, COMICLAB_TRANSLATION_PACKAGE_RELEASES_URL.toUri()))
+        } catch (_: ActivityNotFoundException) {
+            showMessage(getString(R.string.app_link_open_failed))
+        }
+    }
+
+    private fun importTranslationModels(uri: Uri) {
+        if (translationModelsImportCancelled != null) return
+        if (!EnhancementRuntime.busy.compareAndSet(false, true)) {
+            showMessage(getString(R.string.reader_enhance_busy))
+            return
+        }
+        val cancelled = AtomicBoolean()
+        translationModelsImportCancelled = cancelled
+        btnTranslationModelsImport.isEnabled = false
+        showTranslationModelsImportDialog(cancelled)
+        EnhancementRuntime.io.execute {
+            val result = try {
+                runCatching {
+                    val input = contentResolver.openInputStream(uri)
+                        ?: throw IllegalStateException("Cannot open selected model package")
+                    input.use {
+                        TranslationModels.importPackage(applicationContext, it, cancelled) { detail ->
+                            if (!destroyed) runOnUiThread {
+                                if (translationModelsImportCancelled === cancelled) {
+                                    translationModelsImportProgress?.text =
+                                        getString(R.string.translation_models_import_progress, detail)
+                                }
+                            }
+                        }
+                    }
+                }
+            } finally {
+                EnhancementRuntime.busy.set(false)
+            }
+            runOnUiThread {
+                if (destroyed || translationModelsImportCancelled !== cancelled) return@runOnUiThread
+                translationModelsImportCancelled = null
+                translationModelsImportDialog?.dismiss()
+                translationModelsImportDialog = null
+                translationModelsImportProgress = null
+                btnTranslationModelsImport.isEnabled = true
+                updateTranslationModelStatus()
+                result.onSuccess {
+                    showMessage(getString(R.string.translation_models_import_success))
+                }.onFailure { error ->
+                    val message = when {
+                        error is CancellationException -> R.string.translation_models_import_cancelled
+                        error is TranslationModelPackageImportException &&
+                            error.reason == TranslationModelPackageImportException.Reason.INVALID_PACKAGE ->
+                            R.string.translation_models_import_invalid
+                        error is TranslationModelPackageImportException &&
+                            error.reason == TranslationModelPackageImportException.Reason.INSUFFICIENT_STORAGE ->
+                            R.string.translation_models_storage
+                        else -> R.string.translation_models_import_failed
+                    }
+                    showMessage(getString(message))
+                }
+            }
+        }
+    }
+
+    private fun showTranslationModelsImportDialog(cancelled: AtomicBoolean) {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dpToPx(24), dpToPx(12), dpToPx(24), dpToPx(8))
+        }
+        val progressText = TextView(this).apply {
+            setText(R.string.translation_models_checking)
+            setTextColor(getColor(R.color.comiclab_text_secondary))
+        }
+        content.addView(progressText)
+        translationModelsImportProgress = progressText
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.translation_models_importing)
+            .setView(content)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setCancelable(false)
+            .createRounded()
+        translationModelsImportDialog = dialog
+        dialog.show()
+        dialog.getButton(DialogInterface.BUTTON_NEGATIVE).setOnClickListener {
+            cancelled.set(true)
+            dialog.getButton(DialogInterface.BUTTON_NEGATIVE).isEnabled = false
+            progressText.setText(R.string.translation_models_importing)
         }
     }
 
@@ -863,6 +1053,9 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         cancelTranslationSettingsTest()
+        translationModelsImportDialog?.dismiss()
+        translationModelsImportDialog = null
+        translationModelsImportProgress = null
         settingsContentsPopupWindow?.dismiss()
         settingsContentsPopupWindow = null
         destroyed = true

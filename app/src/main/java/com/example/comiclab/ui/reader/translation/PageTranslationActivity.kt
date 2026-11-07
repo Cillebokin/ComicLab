@@ -175,6 +175,8 @@ internal class PageTranslationActivity : AppCompatActivity() {
             status.text = getString(text) + state.stage.substringAfter('|', "").let { if (it.isBlank()) "" else "\n$it" } +
                 state.error?.let { "\n" + getString(when(it) {
                     "busy" -> R.string.reader_enhance_busy; "no_text" -> R.string.translation_no_text
+                    "translation_disabled" -> R.string.translation_models_disabled
+                    "models_missing" -> R.string.translation_models_enable_requires_import
                     "overflow" -> R.string.translation_overflow; "memory" -> R.string.translation_memory
                     "storage" -> R.string.translation_storage; "limit" -> R.string.translation_limit
                     else -> R.string.translation_error_help

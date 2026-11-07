@@ -94,6 +94,9 @@ internal class PageTranslationViewModel(application: Application) : AndroidViewM
         }
     }
     private fun safeError(error: Exception): String = when {
+        error.message?.contains("Automatic translation is disabled") == true -> "translation_disabled"
+        error.message?.contains("Model package is not installed") == true ||
+            error.message?.contains("Model package is incomplete or damaged") == true -> "models_missing"
         error.message?.startsWith("AI HTTP ") == true -> error.message!!
         error.message?.contains("does not fit") == true -> "overflow"
         error.message?.contains("No text") == true || error.message?.contains("No readable") == true -> "no_text"

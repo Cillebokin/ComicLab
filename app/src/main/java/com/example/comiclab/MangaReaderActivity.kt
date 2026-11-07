@@ -36,6 +36,7 @@ import androidx.recyclerview.widget.PagerSnapHelper
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseTask
+import com.example.comiclab.core.reader.translation.TranslationModels
 import com.example.comiclab.core.diagnostics.ComicLabPerformance
 import com.example.comiclab.core.diagnostics.CrashLogManager
 import com.example.comiclab.core.reader.layout.DoublePageModeUnavailableReason
@@ -279,6 +280,8 @@ class MangaReaderActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        findViewById<Button>(R.id.btnReaderTranslate)?.visibility =
+            if (TranslationModels.isAvailable(this)) View.VISIBLE else View.GONE
         pageAdapter?.onReaderResumed()
         readerPreviewAdapter?.setDecodingEnabled(readerPreviewPanelVisible)
         listReaderPages.post {
@@ -586,7 +589,7 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         val btnReaderTranslate = findViewById<Button>(R.id.btnReaderTranslate)
-        btnReaderTranslate.visibility = if (AUTO_TRANSLATION_UI_ENABLED) View.VISIBLE else View.GONE
+        btnReaderTranslate.visibility = if (TranslationModels.isAvailable(this)) View.VISIBLE else View.GONE
         btnReaderTranslate.setOnClickListener {
             val archive = archiveFile ?: return@setOnClickListener
             if (imageEntries.isEmpty()) return@setOnClickListener

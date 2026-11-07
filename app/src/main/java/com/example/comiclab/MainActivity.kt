@@ -43,6 +43,7 @@ import com.example.comiclab.core.store.FavoritePathStore
 import com.example.comiclab.core.store.PrefsGateway
 import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
+import com.example.comiclab.core.reader.translation.TranslationModels
 import com.example.comiclab.core.nas.NasDirectoryEntry
 import com.example.comiclab.core.nas.NasFailureClassifier
 import com.example.comiclab.core.nas.NasFailureDetails
@@ -2522,7 +2523,7 @@ class MainActivity : AppCompatActivity() {
         val canStartTransfer = pendingFileTransfer == null && !isFileTransferInProgress
         btnEnhance.visibility = if (ComicArchive.isSupportedArchive(file) &&
             !file.extension.equals("pdf", true)) View.VISIBLE else View.GONE
-        btnTranslate.visibility = if (AUTO_TRANSLATION_UI_ENABLED) btnEnhance.visibility else View.GONE
+        btnTranslate.visibility = if (TranslationModels.isAvailable(this)) btnEnhance.visibility else View.GONE
         val conversionTarget = when {
             ComicArchive.isPdf(file) -> ComicConversionTarget.CBZ
             ComicArchive.isSupportedArchive(file) -> ComicConversionTarget.PDF

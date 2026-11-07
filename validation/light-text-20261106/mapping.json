@@ -1,0 +1,352 @@
+[
+  {
+    "id": 141,
+    "source": "MINAMI_THE_SUPER_EVOLUTION_汉化版_漫画\\resouce\\03_第03话\\026.jpg",
+    "slot": "sample-00.jpg",
+    "book": "MINAMI_THE_SUPER_EVOLUTION_汉化版_漫画",
+    "sha256": "4674dd7e49747f125ea00b5453955385be00ab643ad4a1f1fd14f1f22002e052"
+  },
+  {
+    "id": 21,
+    "source": "MINAMI_THE_SUPER_EVOLUTION_汉化版_漫画\\resouce\\01_第01话\\020.jpg",
+    "slot": "sample-01.jpg",
+    "book": "MINAMI_THE_SUPER_EVOLUTION_汉化版_漫画",
+    "sha256": "de0317bb779f298a8dd2e5ad9428b4fa2b652e235ac172c05c3f140678dde7b6"
+  },
+  {
+    "id": 79,
+    "source": "MINAMI_THE_SUPER_EVOLUTION_汉化版_漫画\\resouce\\02_第02话\\014.jpg",
+    "slot": "sample-02.jpg",
+    "book": "MINAMI_THE_SUPER_EVOLUTION_汉化版_漫画",
+    "sha256": "8fa1114141537ef21dac94268cd6a3849a9609251f7834d7dc5de046da954cf3"
+  },
+  {
+    "id": 357,
+    "source": "MINAMI_THE_SUPER_EVOLUTION_汉化版_漫画\\resouce\\09_第08话\\004.jpg",
+    "slot": "sample-03.jpg",
+    "book": "MINAMI_THE_SUPER_EVOLUTION_汉化版_漫画",
+    "sha256": "f77a8e8938fa054ef88dd8535de2f3a287b36b4733326b6e4c360c2a060207d7"
+  },
+  {
+    "id": 185,
+    "source": "MINAMI_THE_SUPER_EVOLUTION_汉化版_漫画\\resouce\\04_第04话\\020.jpg",
+    "slot": "sample-04.jpg",
+    "book": "MINAMI_THE_SUPER_EVOLUTION_汉化版_漫画",
+    "sha256": "5c7e63b43c500dabafba8777c064049abfcb3b0a4d540e67fa39ab5c82124c7f"
+  },
+  {
+    "id": 638,
+    "source": "与猫相识尚不识恋\\resouce\\01_第01话\\027.jpg",
+    "slot": "sample-05.jpg",
+    "book": "与猫相识尚不识恋",
+    "sha256": "2b2f5818ba6f063edcd4f836788b3fe49b95998b3f85f0b84231a9454c783b9f"
+  },
+  {
+    "id": 1197,
+    "source": "与猫相识尚不识恋\\resouce\\26_03卷加笔\\017.jpg",
+    "slot": "sample-06.jpg",
+    "book": "与猫相识尚不识恋",
+    "sha256": "e9c8753d42a50e7de2b8acad4e7595a55278dd090eae191b8a9933e0d96987a2"
+  },
+  {
+    "id": 1377,
+    "source": "与猫相识尚不识恋\\resouce\\32_04卷加笔\\002.jpg",
+    "slot": "sample-07.jpg",
+    "book": "与猫相识尚不识恋",
+    "sha256": "d388470c9e1974df58557661ce6892e5c5fe6d44874d44b4142cdc4b39998905"
+  },
+  {
+    "id": 967,
+    "source": "与猫相识尚不识恋\\resouce\\18_1卷番外\\018.jpg",
+    "slot": "sample-08.jpg",
+    "book": "与猫相识尚不识恋",
+    "sha256": "8bc2472853609ebf8dbfd1088e65975e7afe41018ecbdfabd3b3bc758841edd0"
+  },
+  {
+    "id": 1433,
+    "source": "与猫相识尚不识恋\\resouce\\33_第23话\\006.jpg",
+    "slot": "sample-09.jpg",
+    "book": "与猫相识尚不识恋",
+    "sha256": "b01bafaa5dd011c3dbc5a52adf9d718c6769bc6f922ffd23779a8fa22ae13950"
+  },
+  {
+    "id": 2110,
+    "source": "主人公的妹妹爱上了我但她其实是个病娇\\resouce\\02_第02话\\013.jpg",
+    "slot": "sample-10.jpg",
+    "book": "主人公的妹妹爱上了我但她其实是个病娇",
+    "sha256": "b2aaa49dd7fe680e360f5729187f71da7b2f06840533982c0f17b8a6d6c9003c"
+  },
+  {
+    "id": 2141,
+    "source": "主人公的妹妹爱上了我但她其实是个病娇\\resouce\\03_第03话\\010.jpg",
+    "slot": "sample-11.jpg",
+    "book": "主人公的妹妹爱上了我但她其实是个病娇",
+    "sha256": "bf64044c12868f99f3463a952747ddcc3de005745a98b8c711404e1d9655167a"
+  },
+  {
+    "id": 2113,
+    "source": "主人公的妹妹爱上了我但她其实是个病娇\\resouce\\02_第02话\\016.jpg",
+    "slot": "sample-12.jpg",
+    "book": "主人公的妹妹爱上了我但她其实是个病娇",
+    "sha256": "9dd95f8476f2cea227814a9d3e3aa1d053421f8d5e3b8ca98fd40dc94999d79e"
+  },
+  {
+    "id": 2176,
+    "source": "主人公的妹妹爱上了我但她其实是个病娇\\resouce\\04_第04话\\011.jpg",
+    "slot": "sample-13.jpg",
+    "book": "主人公的妹妹爱上了我但她其实是个病娇",
+    "sha256": "c8eaaaaffc7267f7eb5a86499207bb1ef00068debbafb49a9126a33cda8af7b5"
+  },
+  {
+    "id": 2198,
+    "source": "主人公的妹妹爱上了我但她其实是个病娇\\resouce\\04_第04话\\033.jpg",
+    "slot": "sample-14.jpg",
+    "book": "主人公的妹妹爱上了我但她其实是个病娇",
+    "sha256": "87643498a1f7afdea44ee50e18d6cd3bfaff7ec2b9f8bcb03df5bf2fae705071"
+  },
+  {
+    "id": 2277,
+    "source": "二人巴士\\resouce\\04_第04话\\011.jpg",
+    "slot": "sample-15.jpg",
+    "book": "二人巴士",
+    "sha256": "f7c9d78e81231ba841193ed8f71de266069c0625d62486e0de211ba623beae5e"
+  },
+  {
+    "id": 2855,
+    "source": "二人巴士\\resouce\\35_第35话\\014.jpg",
+    "slot": "sample-16.jpg",
+    "book": "二人巴士",
+    "sha256": "94c9855fa0b60b408f30d0ca9717e803fdeef1148df13fd2610756e71cd0e51a"
+  },
+  {
+    "id": 2959,
+    "source": "二人巴士\\resouce\\40_第40话\\020.jpg",
+    "slot": "sample-17.jpg",
+    "book": "二人巴士",
+    "sha256": "f52b9861b54c0269f9f00da628251b4f7a0a4ef43310b672c3076d8a43d67f09"
+  },
+  {
+    "id": 2836,
+    "source": "二人巴士\\resouce\\34_第34话\\014.jpg",
+    "slot": "sample-18.jpg",
+    "book": "二人巴士",
+    "sha256": "46f22a67a091bc0b1d731e9bb113856a5e6169656507757850c009692af53f78"
+  },
+  {
+    "id": 2297,
+    "source": "二人巴士\\resouce\\05_第05话\\011.jpg",
+    "slot": "sample-19.jpg",
+    "book": "二人巴士",
+    "sha256": "607a999626cd98861c6856302a800119c9c49050c630809a4cbe2e8bab2b8109"
+  },
+  {
+    "id": 3452,
+    "source": "偶像大师闪耀色彩_事务的光空记录\\resouce\\15_第7话前篇\\015.jpg",
+    "slot": "sample-20.jpg",
+    "book": "偶像大师闪耀色彩_事务的光空记录",
+    "sha256": "eb9dcd482d16c4662470ca58d20c98fb8e16d08a3f67013d6cb17af56b4908bb"
+  },
+  {
+    "id": 3881,
+    "source": "偶像大师闪耀色彩_事务的光空记录\\resouce\\44_第16话前篇\\004.jpg",
+    "slot": "sample-21.jpg",
+    "book": "偶像大师闪耀色彩_事务的光空记录",
+    "sha256": "dfbab5602b8a3657401dd477688c766e3330c457795f13697ae00eb062891f74"
+  },
+  {
+    "id": 3616,
+    "source": "偶像大师闪耀色彩_事务的光空记录\\resouce\\24_第9.5话\\005.jpg",
+    "slot": "sample-22.jpg",
+    "book": "偶像大师闪耀色彩_事务的光空记录",
+    "sha256": "b277be7fbefb1367d2b9ccd8079ed1977a424f372984b50ae517cb14cdba2faf"
+  },
+  {
+    "id": 4067,
+    "source": "偶像大师闪耀色彩_事务的光空记录\\resouce\\54_第18.1话\\007.jpg",
+    "slot": "sample-23.jpg",
+    "book": "偶像大师闪耀色彩_事务的光空记录",
+    "sha256": "33477511c22c59becd7d08cbf83a41e5ceef5570f57112e80245458aeb322fd3"
+  },
+  {
+    "id": 3707,
+    "source": "偶像大师闪耀色彩_事务的光空记录\\resouce\\31_第11话后篇\\018.jpg",
+    "slot": "sample-24.jpg",
+    "book": "偶像大师闪耀色彩_事务的光空记录",
+    "sha256": "d20bc16db17ec1f89a6d7bcf02be34326076ee6915b65b4c66bb10841722dc9c"
+  },
+  {
+    "id": 4551,
+    "source": "心之程序\\resouce\\09_第09话\\019.jpg",
+    "slot": "sample-25.jpg",
+    "book": "心之程序",
+    "sha256": "adeb9900740275fe2b71c24d332ed8d410882a404f866d0e57469cb10d1be3b3"
+  },
+  {
+    "id": 4397,
+    "source": "心之程序\\resouce\\03_第03话\\016.jpg",
+    "slot": "sample-26.jpg",
+    "book": "心之程序",
+    "sha256": "d4a5b70719c9cc55ece8f92f83c8a3bf38ffb50a8d230a27677a046d7bfcc392"
+  },
+  {
+    "id": 5204,
+    "source": "心之程序\\resouce\\附录_第1卷单行本全本\\159.jpg",
+    "slot": "sample-27.jpg",
+    "book": "心之程序",
+    "sha256": "b6cdeada4d17f82e0f9ad35ea9689ceb89ed9feb0d0d60b8b6d6a3f4ea479881"
+  },
+  {
+    "id": 4548,
+    "source": "心之程序\\resouce\\09_第09话\\016.jpg",
+    "slot": "sample-28.jpg",
+    "book": "心之程序",
+    "sha256": "2f5b3b2aaaed50f264092b708a6b1732c3be2031272e30dccee3a548e510edba"
+  },
+  {
+    "id": 5074,
+    "source": "心之程序\\resouce\\附录_第1卷单行本全本\\029.jpg",
+    "slot": "sample-29.jpg",
+    "book": "心之程序",
+    "sha256": "93680ece6321d200278e83a184098bae832dc6045289a78b851477e28e92a453"
+  },
+  {
+    "id": 5251,
+    "source": "我们之间的最短距离\\images\\010.jpg",
+    "slot": "sample-30.jpg",
+    "book": "我们之间的最短距离",
+    "sha256": "107ef901636ed152666f8cb188c335f696dc809f823f34ea2e2e24d05834f8a0"
+  },
+  {
+    "id": 5243,
+    "source": "我们之间的最短距离\\images\\002.jpg",
+    "slot": "sample-31.jpg",
+    "book": "我们之间的最短距离",
+    "sha256": "46522ee07934b8d8be8aaf51af828a86f95aa38ca0a3312e6e9d0f67acf3bc8a"
+  },
+  {
+    "id": 5263,
+    "source": "我们之间的最短距离\\images\\022.jpg",
+    "slot": "sample-32.jpg",
+    "book": "我们之间的最短距离",
+    "sha256": "e7991e8eb2ca4eef92d4d6335df10589c0dee9cbee6123caf6bd54bd5608a482"
+  },
+  {
+    "id": 5246,
+    "source": "我们之间的最短距离\\images\\005.jpg",
+    "slot": "sample-33.jpg",
+    "book": "我们之间的最短距离",
+    "sha256": "f481bf6035f7c274e624420b9db10474eb977de38379aefe8b713f922a23dc64"
+  },
+  {
+    "id": 5259,
+    "source": "我们之间的最短距离\\images\\018.jpg",
+    "slot": "sample-34.jpg",
+    "book": "我们之间的最短距离",
+    "sha256": "838410c2f2dfd73fa310f8426584e207faf9579e429e96029d37b4579b045249"
+  },
+  {
+    "id": 7595,
+    "source": "我怎么可能成为你的恋人\\resouce\\115_外传_王冢真唯的故事 在目送两人去游乐园约会之后\\006.jpg",
+    "slot": "sample-35.jpg",
+    "book": "我怎么可能成为你的恋人",
+    "sha256": "0e47e83e1b06f4e351e092185158e89a7fa2c778fed1b8785a77003eaf5fe3fb"
+  },
+  {
+    "id": 6880,
+    "source": "我怎么可能成为你的恋人\\resouce\\082_第59话\\014.jpg",
+    "slot": "sample-36.jpg",
+    "book": "我怎么可能成为你的恋人",
+    "sha256": "b2cca7d9a14366b43715e6b06817916487a3b6fd5548c1080e2699e2e8d833ea"
+  },
+  {
+    "id": 6163,
+    "source": "我怎么可能成为你的恋人\\resouce\\050_第37话\\015.jpg",
+    "slot": "sample-37.jpg",
+    "book": "我怎么可能成为你的恋人",
+    "sha256": "07b01c80b68a0daf043b8aad3f0b5e62441e95e573e2d50144c26e4a47738f49"
+  },
+  {
+    "id": 7341,
+    "source": "我怎么可能成为你的恋人\\resouce\\102_第73话\\001.jpg",
+    "slot": "sample-38.jpg",
+    "book": "我怎么可能成为你的恋人",
+    "sha256": "43e4e6fe75c695cf25d5b7515fe49ca7efcaf6c8ce094a22733f75b113f80c9e"
+  },
+  {
+    "id": 6624,
+    "source": "我怎么可能成为你的恋人\\resouce\\072_第52话\\001.jpg",
+    "slot": "sample-39.jpg",
+    "book": "我怎么可能成为你的恋人",
+    "sha256": "68efb37cc68d60a3cbd896ca568a7e42926b71b79faed9b706b7e45614f32fc8"
+  },
+  {
+    "id": 7771,
+    "source": "放学后的归宅日常\\resouce\\06_第06话\\011.jpg",
+    "slot": "sample-40.jpg",
+    "book": "放学后的归宅日常",
+    "sha256": "e39d2b9fede34f350d13e04810ef5944752a241c9dd7e7d87b6b5b1c2d80183f"
+  },
+  {
+    "id": 8224,
+    "source": "放学后的归宅日常\\resouce\\29_第29话\\003.jpg",
+    "slot": "sample-41.jpg",
+    "book": "放学后的归宅日常",
+    "sha256": "76efb4a886d38db12bb8d24aa6c003805b4eeb19789c93760dd9fff67453dbd4"
+  },
+  {
+    "id": 7791,
+    "source": "放学后的归宅日常\\resouce\\07_第07话\\012.jpg",
+    "slot": "sample-42.jpg",
+    "book": "放学后的归宅日常",
+    "sha256": "52739a4f399f50531d12a0318cb8747427dc43b747ab3f168f6ae985934d960c"
+  },
+  {
+    "id": 8896,
+    "source": "放学后的归宅日常\\resouce\\60_第60话\\001.jpg",
+    "slot": "sample-43.jpg",
+    "book": "放学后的归宅日常",
+    "sha256": "44a13fd624dd1976b261880c5eaf9c5ccbd9b6b6a582dd8ddafa4080b195b96c"
+  },
+  {
+    "id": 7808,
+    "source": "放学后的归宅日常\\resouce\\08_第08话\\011.jpg",
+    "slot": "sample-44.jpg",
+    "book": "放学后的归宅日常",
+    "sha256": "33ff23179d31b35ce3a26cdea9da15f1321da3649d19951ebe59d77b7a7ae6d6"
+  },
+  {
+    "id": 9604,
+    "source": "赛马娘_芦毛灰姑娘\\resouce\\018_第18话\\015.jpg",
+    "slot": "sample-45.jpg",
+    "book": "赛马娘_芦毛灰姑娘",
+    "sha256": "c896870570bd2636c1ec63fd93d5cccbc60828b0443e6e4d511bfe750fa74c18"
+  },
+  {
+    "id": 9902,
+    "source": "赛马娘_芦毛灰姑娘\\resouce\\030_第30话\\013.jpg",
+    "slot": "sample-46.jpg",
+    "book": "赛马娘_芦毛灰姑娘",
+    "sha256": "7eacbc92daaa88b3ae5976c4211c105ab619f02822b54817cda5317620ee86fe"
+  },
+  {
+    "id": 11532,
+    "source": "赛马娘_芦毛灰姑娘\\resouce\\090_第88话\\014.jpg",
+    "slot": "sample-47.jpg",
+    "book": "赛马娘_芦毛灰姑娘",
+    "sha256": "70729acdfe4dd382797212caf74d74066f4b7f0321906cb5ed67ae536b3da393"
+  },
+  {
+    "id": 9558,
+    "source": "赛马娘_芦毛灰姑娘\\resouce\\017_第17话\\001.jpg",
+    "slot": "sample-48.jpg",
+    "book": "赛马娘_芦毛灰姑娘",
+    "sha256": "ff71609e512d3126f358dc27e8ca1ff747a4a19658de7c9005f6021ac8dbc3b0"
+  },
+  {
+    "id": 9640,
+    "source": "赛马娘_芦毛灰姑娘\\resouce\\019_第19话\\024.jpg",
+    "slot": "sample-49.jpg",
+    "book": "赛马娘_芦毛灰姑娘",
+    "sha256": "dfaeae74809bc32c1be8c175b11370616e4be4d90e53a11296e86e41df0a3988"
+  }
+]

@@ -28,61 +28,42 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/translation_section_title"
+                android:layout_marginTop="0dp"
+                android:text="@string/translation_models_heading"
                 android:textColor="@color/comiclab_text_primary"
-                android:textSize="@dimen/text_section"
+                android:textSize="@dimen/text_value"
                 android:textStyle="bold" />
 
             <TextView
+                android:id="@+id/tvTranslationModelsStatus"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:text="@string/translation_address"
+                android:layout_marginTop="6dp"
+                android:text="@string/translation_models_status_missing"
                 android:textColor="@color/comiclab_text_secondary"
                 android:textSize="@dimen/text_caption" />
 
-            <EditText
-                android:id="@+id/inputTranslationAddress"
+            <Button
+                android:id="@+id/btnTranslationModelsRelease"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:importantForAutofill="no"
-                android:inputType="textUri|textNoSuggestions"
-                android:minHeight="48dp"
-                android:singleLine="true" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_height="40dp"
                 android:layout_marginTop="8dp"
-                android:text="@string/translation_model"
-                android:textColor="@color/comiclab_text_secondary"
-                android:textSize="@dimen/text_caption" />
+                android:background="@drawable/bg_preview_action_button"
+                android:text="@string/translation_models_release"
+                android:textAllCaps="false"
+                android:textColor="@color/white"
+                android:textSize="@dimen/text_value" />
 
-            <EditText
-                android:id="@+id/inputTranslationModel"
+            <Button
+                android:id="@+id/btnTranslationModelsImport"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:importantForAutofill="no"
-                android:inputType="text|textNoSuggestions"
-                android:minHeight="48dp"
-                android:singleLine="true" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_height="40dp"
                 android:layout_marginTop="8dp"
-                android:text="@string/translation_key"
-                android:textColor="@color/comiclab_text_secondary"
-                android:textSize="@dimen/text_caption" />
-
-            <EditText
-                android:id="@+id/inputTranslationKey"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:importantForAutofill="no"
-                android:inputType="textPassword"
-                android:minHeight="48dp"
-                android:singleLine="true" />
+                android:background="@drawable/bg_preview_action_button"
+                android:text="@string/translation_models_import"
+                android:textAllCaps="false"
+                android:textColor="@color/white"
+                android:textSize="@dimen/text_value" />
 
             <TextView
                 android:layout_width="match_parent"
@@ -99,46 +80,115 @@
                 android:minHeight="48dp"
                 android:spinnerMode="dropdown" />
 
-            <TextView
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switchTranslationEnabled"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="@string/translation_api_help"
-                android:textColor="@color/comiclab_text_secondary"
-                android:textSize="@dimen/text_caption" />
-
-            <Button
-                android:id="@+id/btnTranslationTest"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:layout_marginTop="12dp"
-                android:background="@drawable/bg_preview_action_button"
-                android:text="@string/translation_test"
-                android:textAllCaps="false"
-                android:textColor="@color/white"
+                android:minHeight="48dp"
+                android:text="@string/translation_models_enable"
+                android:textColor="@color/comiclab_text_primary"
                 android:textSize="@dimen/text_value" />
 
-            <Button
-                android:id="@+id/btnTranslationSave"
+            <LinearLayout
+                android:id="@+id/layoutTranslationAiConfig"
                 android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:layout_marginTop="8dp"
-                android:background="@drawable/bg_preview_action_button"
-                android:text="@string/translation_save_settings"
-                android:textAllCaps="false"
-                android:textColor="@color/white"
-                android:textSize="@dimen/text_value" />
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
 
-            <Button
-                android:id="@+id/btnTranslationLicenses"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:layout_marginTop="8dp"
-                android:background="@drawable/bg_preview_action_button"
-                android:text="@string/translation_licenses"
-                android:textAllCaps="false"
-                android:textColor="@color/white"
-                android:textSize="@dimen/text_value" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/translation_address"
+                    android:textColor="@color/comiclab_text_secondary"
+                    android:textSize="@dimen/text_caption" />
+
+                <EditText
+                    android:id="@+id/inputTranslationAddress"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:importantForAutofill="no"
+                    android:inputType="textUri|textNoSuggestions"
+                    android:minHeight="48dp"
+                    android:singleLine="true" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/translation_model"
+                    android:textColor="@color/comiclab_text_secondary"
+                    android:textSize="@dimen/text_caption" />
+
+                <EditText
+                    android:id="@+id/inputTranslationModel"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:importantForAutofill="no"
+                    android:inputType="text|textNoSuggestions"
+                    android:minHeight="48dp"
+                    android:singleLine="true" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/translation_key"
+                    android:textColor="@color/comiclab_text_secondary"
+                    android:textSize="@dimen/text_caption" />
+
+                <EditText
+                    android:id="@+id/inputTranslationKey"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:importantForAutofill="no"
+                    android:inputType="textPassword"
+                    android:minHeight="48dp"
+                    android:singleLine="true" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/translation_api_help"
+                    android:textColor="@color/comiclab_text_secondary"
+                    android:textSize="@dimen/text_caption" />
+
+                <Button
+                    android:id="@+id/btnTranslationTest"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="12dp"
+                    android:background="@drawable/bg_preview_action_button"
+                    android:text="@string/translation_test"
+                    android:textAllCaps="false"
+                    android:textColor="@color/white"
+                    android:textSize="@dimen/text_value" />
+
+                <Button
+                    android:id="@+id/btnTranslationSave"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_preview_action_button"
+                    android:text="@string/translation_save_settings"
+                    android:textAllCaps="false"
+                    android:textColor="@color/white"
+                    android:textSize="@dimen/text_value" />
+
+                <Button
+                    android:id="@+id/btnTranslationLicenses"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_preview_action_button"
+                    android:text="@string/translation_licenses"
+                    android:textAllCaps="false"
+                    android:textColor="@color/white"
+                    android:textSize="@dimen/text_value" />
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

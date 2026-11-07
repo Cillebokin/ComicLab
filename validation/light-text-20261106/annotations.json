@@ -1,0 +1,5310 @@
+{
+  "source": "frame-shard-*.jsonl light boxes",
+  "method": "assistant visual review of numbered candidate crops; no independent human validation; uncertain retained",
+  "classes": {
+    "text": "recognizable text region",
+    "split_merge": "fragments from multiple text columns or incomplete text grouping",
+    "oversized_text": "text mixed with large areas of illustration or multiple regions",
+    "background": "art, frame, texture or non-text",
+    "uncertain": "too small, watermark or ambiguous; no forced decision"
+  },
+  "duplicate_note": "No identical boxes or candidate pairs with IoU >= 0.6 in these five pages. Text overlap and cross-column fragments are classified as split_merge, so this is not a complete duplicate audit.",
+  "confirmed_miss_examples": [
+    {
+      "slot": "sample-00.jpg",
+      "reference": "dbnet box 2",
+      "kind": "text_not_covered_by_usable_light_box",
+      "note": "body text missing; a punctuation fragment exists"
+    },
+    {
+      "slot": "sample-00.jpg",
+      "reference": "dbnet box 4",
+      "kind": "text_not_covered_by_usable_light_box",
+      "note": "body text missing; a punctuation fragment exists"
+    },
+    {
+      "slot": "sample-08.jpg",
+      "reference": "dbnet box 3",
+      "kind": "text_not_covered_by_usable_light_box",
+      "note": "vertical column has horizontal fragments only"
+    },
+    {
+      "slot": "sample-23.jpg",
+      "reference": "dbnet box 0",
+      "kind": "text_not_covered_by_usable_light_box",
+      "note": "part of a column grouped across columns"
+    },
+    {
+      "slot": "sample-23.jpg",
+      "reference": "dbnet box 5",
+      "kind": "text_not_covered_by_usable_light_box",
+      "note": "vertical dialogue column not enclosed by a matching line"
+    },
+    {
+      "slot": "sample-45.jpg",
+      "reference": "dbnet box 5",
+      "kind": "text_not_covered_by_usable_light_box",
+      "note": "short vertical dialogue not enclosed by a matching line"
+    },
+    {
+      "slot": "sample-12.jpg",
+      "reference": "manual preview rectangle [456, 546, 474, 597]",
+      "kind": "text_missed_by_both",
+      "note": "speech bubble short text; approximate region; independent of DBNet boxes"
+    }
+  ],
+  "miss_limit": "These are confirmed examples only, not a complete enumeration of page text; no recall denominator has been established.",
+  "counts": {
+    "text": 47,
+    "oversized_text": 24,
+    "background": 88,
+    "uncertain": 25,
+    "split_merge": 44
+  },
+  "entries": [
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 5,
+      "category": "text",
+      "box": [
+        [
+          330,
+          68
+        ],
+        [
+          342,
+          68
+        ],
+        [
+          342,
+          122
+        ],
+        [
+          330,
+          122
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 6,
+      "category": "text",
+      "box": [
+        [
+          176,
+          78
+        ],
+        [
+          189,
+          78
+        ],
+        [
+          189,
+          119
+        ],
+        [
+          176,
+          119
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 7,
+      "category": "text",
+      "box": [
+        [
+          485,
+          90
+        ],
+        [
+          499,
+          90
+        ],
+        [
+          499,
+          136
+        ],
+        [
+          485,
+          136
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 11,
+      "category": "text",
+      "box": [
+        [
+          105,
+          349
+        ],
+        [
+          118,
+          349
+        ],
+        [
+          118,
+          389
+        ],
+        [
+          105,
+          389
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 16,
+      "category": "oversized_text",
+      "box": [
+        [
+          48,
+          63
+        ],
+        [
+          509,
+          63
+        ],
+        [
+          509,
+          280
+        ],
+        [
+          48,
+          280
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 20,
+      "category": "oversized_text",
+      "box": [
+        [
+          281,
+          297
+        ],
+        [
+          535,
+          297
+        ],
+        [
+          535,
+          416
+        ],
+        [
+          281,
+          416
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 23,
+      "category": "oversized_text",
+      "box": [
+        [
+          58,
+          490
+        ],
+        [
+          510,
+          490
+        ],
+        [
+          510,
+          800
+        ],
+        [
+          58,
+          800
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 25,
+      "category": "oversized_text",
+      "box": [
+        [
+          169,
+          51
+        ],
+        [
+          298,
+          51
+        ],
+        [
+          298,
+          280
+        ],
+        [
+          169,
+          280
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 26,
+      "category": "oversized_text",
+      "box": [
+        [
+          58,
+          63
+        ],
+        [
+          195,
+          63
+        ],
+        [
+          195,
+          586
+        ],
+        [
+          58,
+          586
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 0,
+      "category": "background",
+      "box": [
+        [
+          308,
+          497
+        ],
+        [
+          496,
+          497
+        ],
+        [
+          496,
+          615
+        ],
+        [
+          308,
+          615
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 1,
+      "category": "background",
+      "box": [
+        [
+          107,
+          512
+        ],
+        [
+          160,
+          512
+        ],
+        [
+          160,
+          549
+        ],
+        [
+          107,
+          549
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 2,
+      "category": "background",
+      "box": [
+        [
+          336,
+          652
+        ],
+        [
+          412,
+          652
+        ],
+        [
+          412,
+          702
+        ],
+        [
+          336,
+          702
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 3,
+      "category": "background",
+      "box": [
+        [
+          70,
+          668
+        ],
+        [
+          153,
+          668
+        ],
+        [
+          153,
+          720
+        ],
+        [
+          70,
+          720
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 14,
+      "category": "background",
+      "box": [
+        [
+          97,
+          515
+        ],
+        [
+          161,
+          515
+        ],
+        [
+          161,
+          717
+        ],
+        [
+          97,
+          717
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 15,
+      "category": "background",
+      "box": [
+        [
+          421,
+          636
+        ],
+        [
+          452,
+          636
+        ],
+        [
+          452,
+          796
+        ],
+        [
+          421,
+          796
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 17,
+      "category": "background",
+      "box": [
+        [
+          361,
+          63
+        ],
+        [
+          471,
+          63
+        ],
+        [
+          471,
+          100
+        ],
+        [
+          361,
+          100
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 18,
+      "category": "background",
+      "box": [
+        [
+          79,
+          86
+        ],
+        [
+          139,
+          86
+        ],
+        [
+          139,
+          105
+        ],
+        [
+          79,
+          105
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 19,
+      "category": "background",
+      "box": [
+        [
+          58,
+          297
+        ],
+        [
+          144,
+          297
+        ],
+        [
+          144,
+          337
+        ],
+        [
+          58,
+          337
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 21,
+      "category": "background",
+      "box": [
+        [
+          188,
+          388
+        ],
+        [
+          318,
+          388
+        ],
+        [
+          318,
+          447
+        ],
+        [
+          188,
+          447
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 22,
+      "category": "background",
+      "box": [
+        [
+          351,
+          407
+        ],
+        [
+          456,
+          407
+        ],
+        [
+          456,
+          427
+        ],
+        [
+          351,
+          427
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 24,
+      "category": "background",
+      "box": [
+        [
+          289,
+          490
+        ],
+        [
+          359,
+          490
+        ],
+        [
+          359,
+          501
+        ],
+        [
+          289,
+          501
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 27,
+      "category": "background",
+      "box": [
+        [
+          467,
+          166
+        ],
+        [
+          481,
+          166
+        ],
+        [
+          481,
+          232
+        ],
+        [
+          467,
+          232
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 28,
+      "category": "background",
+      "box": [
+        [
+          222,
+          199
+        ],
+        [
+          263,
+          199
+        ],
+        [
+          263,
+          324
+        ],
+        [
+          222,
+          324
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 29,
+      "category": "background",
+      "box": [
+        [
+          303,
+          317
+        ],
+        [
+          321,
+          317
+        ],
+        [
+          321,
+          431
+        ],
+        [
+          303,
+          431
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 30,
+      "category": "background",
+      "box": [
+        [
+          380,
+          332
+        ],
+        [
+          396,
+          332
+        ],
+        [
+          396,
+          413
+        ],
+        [
+          380,
+          413
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 31,
+      "category": "background",
+      "box": [
+        [
+          138,
+          411
+        ],
+        [
+          266,
+          411
+        ],
+        [
+          266,
+          794
+        ],
+        [
+          138,
+          794
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 32,
+      "category": "background",
+      "box": [
+        [
+          58,
+          490
+        ],
+        [
+          84,
+          490
+        ],
+        [
+          84,
+          686
+        ],
+        [
+          58,
+          686
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 33,
+      "category": "background",
+      "box": [
+        [
+          67,
+          490
+        ],
+        [
+          95,
+          490
+        ],
+        [
+          95,
+          586
+        ],
+        [
+          67,
+          586
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 34,
+      "category": "background",
+      "box": [
+        [
+          304,
+          490
+        ],
+        [
+          347,
+          490
+        ],
+        [
+          347,
+          592
+        ],
+        [
+          304,
+          592
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 35,
+      "category": "background",
+      "box": [
+        [
+          347,
+          492
+        ],
+        [
+          359,
+          492
+        ],
+        [
+          359,
+          571
+        ],
+        [
+          347,
+          571
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 36,
+      "category": "background",
+      "box": [
+        [
+          412,
+          532
+        ],
+        [
+          478,
+          532
+        ],
+        [
+          478,
+          800
+        ],
+        [
+          412,
+          800
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 37,
+      "category": "background",
+      "box": [
+        [
+          58,
+          534
+        ],
+        [
+          63,
+          534
+        ],
+        [
+          63,
+          587
+        ],
+        [
+          58,
+          587
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 38,
+      "category": "background",
+      "box": [
+        [
+          286,
+          545
+        ],
+        [
+          327,
+          545
+        ],
+        [
+          327,
+          800
+        ],
+        [
+          286,
+          800
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 39,
+      "category": "background",
+      "box": [
+        [
+          493,
+          640
+        ],
+        [
+          510,
+          640
+        ],
+        [
+          510,
+          800
+        ],
+        [
+          493,
+          800
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 40,
+      "category": "background",
+      "box": [
+        [
+          317,
+          669
+        ],
+        [
+          339,
+          669
+        ],
+        [
+          339,
+          744
+        ],
+        [
+          317,
+          744
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 4,
+      "category": "uncertain",
+      "box": [
+        [
+          523,
+          785
+        ],
+        [
+          557,
+          785
+        ],
+        [
+          557,
+          795
+        ],
+        [
+          523,
+          795
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 8,
+      "category": "uncertain",
+      "box": [
+        [
+          276,
+          113
+        ],
+        [
+          279,
+          113
+        ],
+        [
+          279,
+          126
+        ],
+        [
+          276,
+          126
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 9,
+      "category": "uncertain",
+      "box": [
+        [
+          181,
+          121
+        ],
+        [
+          184,
+          121
+        ],
+        [
+          184,
+          133
+        ],
+        [
+          181,
+          133
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 10,
+      "category": "uncertain",
+      "box": [
+        [
+          490,
+          137
+        ],
+        [
+          493,
+          137
+        ],
+        [
+          493,
+          151
+        ],
+        [
+          490,
+          151
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 12,
+      "category": "uncertain",
+      "box": [
+        [
+          461,
+          364
+        ],
+        [
+          464,
+          364
+        ],
+        [
+          464,
+          376
+        ],
+        [
+          461,
+          376
+        ]
+      ]
+    },
+    {
+      "slot": "sample-00.jpg",
+      "candidate_index": 13,
+      "category": "uncertain",
+      "box": [
+        [
+          110,
+          390
+        ],
+        [
+          113,
+          390
+        ],
+        [
+          113,
+          403
+        ],
+        [
+          110,
+          403
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 15,
+      "category": "text",
+      "box": [
+        [
+          502,
+          41
+        ],
+        [
+          526,
+          41
+        ],
+        [
+          526,
+          163
+        ],
+        [
+          502,
+          163
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 16,
+      "category": "text",
+      "box": [
+        [
+          212,
+          304
+        ],
+        [
+          229,
+          304
+        ],
+        [
+          229,
+          372
+        ],
+        [
+          212,
+          372
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 17,
+      "category": "text",
+      "box": [
+        [
+          235,
+          304
+        ],
+        [
+          252,
+          304
+        ],
+        [
+          252,
+          395
+        ],
+        [
+          235,
+          395
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 19,
+      "category": "text",
+      "box": [
+        [
+          564,
+          469
+        ],
+        [
+          581,
+          469
+        ],
+        [
+          581,
+          535
+        ],
+        [
+          564,
+          535
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 20,
+      "category": "text",
+      "box": [
+        [
+          504,
+          539
+        ],
+        [
+          521,
+          539
+        ],
+        [
+          521,
+          591
+        ],
+        [
+          504,
+          591
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 22,
+      "category": "text",
+      "box": [
+        [
+          265,
+          767
+        ],
+        [
+          292,
+          767
+        ],
+        [
+          292,
+          903
+        ],
+        [
+          265,
+          903
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 23,
+      "category": "text",
+      "box": [
+        [
+          300,
+          767
+        ],
+        [
+          328,
+          767
+        ],
+        [
+          328,
+          853
+        ],
+        [
+          300,
+          853
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 24,
+      "category": "text",
+      "box": [
+        [
+          438,
+          790
+        ],
+        [
+          455,
+          790
+        ],
+        [
+          455,
+          856
+        ],
+        [
+          438,
+          856
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 25,
+      "category": "text",
+      "box": [
+        [
+          460,
+          790
+        ],
+        [
+          477,
+          790
+        ],
+        [
+          477,
+          861
+        ],
+        [
+          460,
+          861
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 39,
+      "category": "text",
+      "box": [
+        [
+          621,
+          943
+        ],
+        [
+          669,
+          943
+        ],
+        [
+          669,
+          955
+        ],
+        [
+          621,
+          955
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 2,
+      "category": "split_merge",
+      "box": [
+        [
+          212,
+          341
+        ],
+        [
+          252,
+          341
+        ],
+        [
+          252,
+          358
+        ],
+        [
+          212,
+          358
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 3,
+      "category": "split_merge",
+      "box": [
+        [
+          564,
+          487
+        ],
+        [
+          604,
+          487
+        ],
+        [
+          604,
+          503
+        ],
+        [
+          564,
+          503
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 4,
+      "category": "split_merge",
+      "box": [
+        [
+          482,
+          557
+        ],
+        [
+          521,
+          557
+        ],
+        [
+          521,
+          574
+        ],
+        [
+          482,
+          574
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 5,
+      "category": "split_merge",
+      "box": [
+        [
+          482,
+          575
+        ],
+        [
+          521,
+          575
+        ],
+        [
+          521,
+          592
+        ],
+        [
+          482,
+          592
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 7,
+      "category": "split_merge",
+      "box": [
+        [
+          265,
+          767
+        ],
+        [
+          328,
+          767
+        ],
+        [
+          328,
+          794
+        ],
+        [
+          265,
+          794
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 8,
+      "category": "split_merge",
+      "box": [
+        [
+          438,
+          790
+        ],
+        [
+          500,
+          790
+        ],
+        [
+          500,
+          807
+        ],
+        [
+          438,
+          807
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 9,
+      "category": "split_merge",
+      "box": [
+        [
+          264,
+          796
+        ],
+        [
+          328,
+          796
+        ],
+        [
+          328,
+          823
+        ],
+        [
+          264,
+          823
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 10,
+      "category": "split_merge",
+      "box": [
+        [
+          438,
+          808
+        ],
+        [
+          500,
+          808
+        ],
+        [
+          500,
+          825
+        ],
+        [
+          438,
+          825
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 12,
+      "category": "split_merge",
+      "box": [
+        [
+          438,
+          826
+        ],
+        [
+          500,
+          826
+        ],
+        [
+          500,
+          843
+        ],
+        [
+          438,
+          843
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 13,
+      "category": "split_merge",
+      "box": [
+        [
+          442,
+          845
+        ],
+        [
+          496,
+          845
+        ],
+        [
+          496,
+          861
+        ],
+        [
+          442,
+          861
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 1,
+      "category": "oversized_text",
+      "box": [
+        [
+          162,
+          323
+        ],
+        [
+          252,
+          323
+        ],
+        [
+          252,
+          362
+        ],
+        [
+          162,
+          362
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 18,
+      "category": "oversized_text",
+      "box": [
+        [
+          473,
+          454
+        ],
+        [
+          504,
+          454
+        ],
+        [
+          504,
+          610
+        ],
+        [
+          473,
+          610
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 21,
+      "category": "oversized_text",
+      "box": [
+        [
+          482,
+          737
+        ],
+        [
+          504,
+          737
+        ],
+        [
+          504,
+          856
+        ],
+        [
+          482,
+          856
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 26,
+      "category": "oversized_text",
+      "box": [
+        [
+          82,
+          0
+        ],
+        [
+          609,
+          0
+        ],
+        [
+          609,
+          214
+        ],
+        [
+          82,
+          214
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 31,
+      "category": "oversized_text",
+      "box": [
+        [
+          0,
+          256
+        ],
+        [
+          619,
+          256
+        ],
+        [
+          619,
+          424
+        ],
+        [
+          0,
+          424
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 33,
+      "category": "oversized_text",
+      "box": [
+        [
+          423,
+          522
+        ],
+        [
+          618,
+          522
+        ],
+        [
+          618,
+          664
+        ],
+        [
+          423,
+          664
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 36,
+      "category": "oversized_text",
+      "box": [
+        [
+          0,
+          736
+        ],
+        [
+          618,
+          736
+        ],
+        [
+          618,
+          960
+        ],
+        [
+          0,
+          960
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 40,
+      "category": "oversized_text",
+      "box": [
+        [
+          61,
+          0
+        ],
+        [
+          187,
+          0
+        ],
+        [
+          187,
+          424
+        ],
+        [
+          61,
+          424
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 41,
+      "category": "oversized_text",
+      "box": [
+        [
+          150,
+          0
+        ],
+        [
+          294,
+          0
+        ],
+        [
+          294,
+          424
+        ],
+        [
+          150,
+          424
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 47,
+      "category": "oversized_text",
+      "box": [
+        [
+          534,
+          442
+        ],
+        [
+          618,
+          442
+        ],
+        [
+          618,
+          960
+        ],
+        [
+          534,
+          960
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 48,
+      "category": "oversized_text",
+      "box": [
+        [
+          415,
+          522
+        ],
+        [
+          539,
+          522
+        ],
+        [
+          539,
+          891
+        ],
+        [
+          415,
+          891
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 0,
+      "category": "background",
+      "box": [
+        [
+          272,
+          0
+        ],
+        [
+          408,
+          0
+        ],
+        [
+          408,
+          78
+        ],
+        [
+          272,
+          78
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 6,
+      "category": "background",
+      "box": [
+        [
+          125,
+          640
+        ],
+        [
+          236,
+          640
+        ],
+        [
+          236,
+          694
+        ],
+        [
+          125,
+          694
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 11,
+      "category": "background",
+      "box": [
+        [
+          0,
+          811
+        ],
+        [
+          108,
+          811
+        ],
+        [
+          108,
+          879
+        ],
+        [
+          0,
+          879
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 27,
+      "category": "background",
+      "box": [
+        [
+          0,
+          73
+        ],
+        [
+          129,
+          73
+        ],
+        [
+          129,
+          110
+        ],
+        [
+          0,
+          110
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 28,
+      "category": "background",
+      "box": [
+        [
+          0,
+          104
+        ],
+        [
+          107,
+          104
+        ],
+        [
+          107,
+          136
+        ],
+        [
+          0,
+          136
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 29,
+      "category": "background",
+      "box": [
+        [
+          268,
+          105
+        ],
+        [
+          352,
+          105
+        ],
+        [
+          352,
+          161
+        ],
+        [
+          268,
+          161
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 30,
+      "category": "background",
+      "box": [
+        [
+          621,
+          185
+        ],
+        [
+          675,
+          185
+        ],
+        [
+          675,
+          201
+        ],
+        [
+          621,
+          201
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 32,
+      "category": "background",
+      "box": [
+        [
+          25,
+          261
+        ],
+        [
+          79,
+          261
+        ],
+        [
+          79,
+          281
+        ],
+        [
+          25,
+          281
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 34,
+      "category": "background",
+      "box": [
+        [
+          13,
+          550
+        ],
+        [
+          246,
+          550
+        ],
+        [
+          246,
+          708
+        ],
+        [
+          13,
+          708
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 35,
+      "category": "background",
+      "box": [
+        [
+          158,
+          640
+        ],
+        [
+          191,
+          640
+        ],
+        [
+          191,
+          660
+        ],
+        [
+          158,
+          660
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 37,
+      "category": "background",
+      "box": [
+        [
+          59,
+          832
+        ],
+        [
+          73,
+          832
+        ],
+        [
+          73,
+          840
+        ],
+        [
+          59,
+          840
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 38,
+      "category": "background",
+      "box": [
+        [
+          39,
+          838
+        ],
+        [
+          60,
+          838
+        ],
+        [
+          60,
+          853
+        ],
+        [
+          39,
+          853
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 42,
+      "category": "background",
+      "box": [
+        [
+          374,
+          0
+        ],
+        [
+          409,
+          0
+        ],
+        [
+          409,
+          103
+        ],
+        [
+          374,
+          103
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 43,
+      "category": "background",
+      "box": [
+        [
+          449,
+          0
+        ],
+        [
+          469,
+          0
+        ],
+        [
+          469,
+          36
+        ],
+        [
+          449,
+          36
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 44,
+      "category": "background",
+      "box": [
+        [
+          259,
+          105
+        ],
+        [
+          333,
+          105
+        ],
+        [
+          333,
+          406
+        ],
+        [
+          259,
+          406
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 45,
+      "category": "background",
+      "box": [
+        [
+          0,
+          267
+        ],
+        [
+          4,
+          267
+        ],
+        [
+          4,
+          424
+        ],
+        [
+          0,
+          424
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 46,
+      "category": "background",
+      "box": [
+        [
+          421,
+          393
+        ],
+        [
+          439,
+          393
+        ],
+        [
+          439,
+          419
+        ],
+        [
+          421,
+          419
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 49,
+      "category": "background",
+      "box": [
+        [
+          148,
+          586
+        ],
+        [
+          172,
+          586
+        ],
+        [
+          172,
+          677
+        ],
+        [
+          148,
+          677
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 50,
+      "category": "background",
+      "box": [
+        [
+          52,
+          634
+        ],
+        [
+          83,
+          634
+        ],
+        [
+          83,
+          689
+        ],
+        [
+          52,
+          689
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 14,
+      "category": "uncertain",
+      "box": [
+        [
+          272,
+          873
+        ],
+        [
+          284,
+          873
+        ],
+        [
+          284,
+          879
+        ],
+        [
+          272,
+          879
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 51,
+      "category": "uncertain",
+      "box": [
+        [
+          309,
+          836
+        ],
+        [
+          321,
+          836
+        ],
+        [
+          321,
+          857
+        ],
+        [
+          309,
+          857
+        ]
+      ]
+    },
+    {
+      "slot": "sample-08.jpg",
+      "candidate_index": 52,
+      "category": "uncertain",
+      "box": [
+        [
+          278,
+          858
+        ],
+        [
+          282,
+          858
+        ],
+        [
+          282,
+          869
+        ],
+        [
+          278,
+          869
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 12,
+      "category": "text",
+      "box": [
+        [
+          460,
+          207
+        ],
+        [
+          475,
+          207
+        ],
+        [
+          475,
+          287
+        ],
+        [
+          460,
+          287
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 13,
+      "category": "text",
+      "box": [
+        [
+          480,
+          208
+        ],
+        [
+          495,
+          208
+        ],
+        [
+          495,
+          305
+        ],
+        [
+          480,
+          305
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 14,
+      "category": "text",
+      "box": [
+        [
+          103,
+          334
+        ],
+        [
+          120,
+          334
+        ],
+        [
+          120,
+          404
+        ],
+        [
+          103,
+          404
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 16,
+      "category": "text",
+      "box": [
+        [
+          174,
+          545
+        ],
+        [
+          188,
+          545
+        ],
+        [
+          188,
+          590
+        ],
+        [
+          174,
+          590
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 17,
+      "category": "text",
+      "box": [
+        [
+          103,
+          571
+        ],
+        [
+          114,
+          571
+        ],
+        [
+          114,
+          666
+        ],
+        [
+          103,
+          666
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 18,
+      "category": "text",
+      "box": [
+        [
+          118,
+          571
+        ],
+        [
+          129,
+          571
+        ],
+        [
+          129,
+          654
+        ],
+        [
+          118,
+          654
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 19,
+      "category": "text",
+      "box": [
+        [
+          132,
+          572
+        ],
+        [
+          143,
+          572
+        ],
+        [
+          143,
+          618
+        ],
+        [
+          132,
+          618
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 20,
+      "category": "text",
+      "box": [
+        [
+          392,
+          572
+        ],
+        [
+          404,
+          572
+        ],
+        [
+          404,
+          653
+        ],
+        [
+          392,
+          653
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 21,
+      "category": "text",
+      "box": [
+        [
+          425,
+          572
+        ],
+        [
+          437,
+          572
+        ],
+        [
+          437,
+          652
+        ],
+        [
+          425,
+          652
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 22,
+      "category": "text",
+      "box": [
+        [
+          409,
+          573
+        ],
+        [
+          421,
+          573
+        ],
+        [
+          421,
+          626
+        ],
+        [
+          409,
+          626
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 0,
+      "category": "split_merge",
+      "box": [
+        [
+          460,
+          207
+        ],
+        [
+          495,
+          207
+        ],
+        [
+          495,
+          223
+        ],
+        [
+          460,
+          223
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 1,
+      "category": "split_merge",
+      "box": [
+        [
+          460,
+          224
+        ],
+        [
+          495,
+          224
+        ],
+        [
+          495,
+          239
+        ],
+        [
+          460,
+          239
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 2,
+      "category": "split_merge",
+      "box": [
+        [
+          460,
+          241
+        ],
+        [
+          495,
+          241
+        ],
+        [
+          495,
+          255
+        ],
+        [
+          460,
+          255
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 3,
+      "category": "split_merge",
+      "box": [
+        [
+          461,
+          257
+        ],
+        [
+          495,
+          257
+        ],
+        [
+          495,
+          272
+        ],
+        [
+          461,
+          272
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 4,
+      "category": "split_merge",
+      "box": [
+        [
+          103,
+          571
+        ],
+        [
+          143,
+          571
+        ],
+        [
+          143,
+          582
+        ],
+        [
+          103,
+          582
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 5,
+      "category": "split_merge",
+      "box": [
+        [
+          392,
+          572
+        ],
+        [
+          437,
+          572
+        ],
+        [
+          437,
+          585
+        ],
+        [
+          392,
+          585
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 6,
+      "category": "split_merge",
+      "box": [
+        [
+          103,
+          583
+        ],
+        [
+          143,
+          583
+        ],
+        [
+          143,
+          594
+        ],
+        [
+          103,
+          594
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 7,
+      "category": "split_merge",
+      "box": [
+        [
+          392,
+          586
+        ],
+        [
+          437,
+          586
+        ],
+        [
+          437,
+          598
+        ],
+        [
+          392,
+          598
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 8,
+      "category": "split_merge",
+      "box": [
+        [
+          392,
+          600
+        ],
+        [
+          437,
+          600
+        ],
+        [
+          437,
+          612
+        ],
+        [
+          392,
+          612
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 9,
+      "category": "split_merge",
+      "box": [
+        [
+          103,
+          607
+        ],
+        [
+          143,
+          607
+        ],
+        [
+          143,
+          618
+        ],
+        [
+          103,
+          618
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 10,
+      "category": "split_merge",
+      "box": [
+        [
+          392,
+          613
+        ],
+        [
+          437,
+          613
+        ],
+        [
+          437,
+          626
+        ],
+        [
+          392,
+          626
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 27,
+      "category": "oversized_text",
+      "box": [
+        [
+          94,
+          529
+        ],
+        [
+          346,
+          529
+        ],
+        [
+          346,
+          671
+        ],
+        [
+          94,
+          671
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 30,
+      "category": "oversized_text",
+      "box": [
+        [
+          151,
+          529
+        ],
+        [
+          214,
+          529
+        ],
+        [
+          214,
+          634
+        ],
+        [
+          151,
+          634
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 25,
+      "category": "background",
+      "box": [
+        [
+          424,
+          16
+        ],
+        [
+          452,
+          16
+        ],
+        [
+          452,
+          33
+        ],
+        [
+          424,
+          33
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 26,
+      "category": "background",
+      "box": [
+        [
+          98,
+          148
+        ],
+        [
+          122,
+          148
+        ],
+        [
+          122,
+          164
+        ],
+        [
+          98,
+          164
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 28,
+      "category": "background",
+      "box": [
+        [
+          411,
+          16
+        ],
+        [
+          461,
+          16
+        ],
+        [
+          461,
+          88
+        ],
+        [
+          411,
+          88
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 29,
+      "category": "background",
+      "box": [
+        [
+          392,
+          27
+        ],
+        [
+          405,
+          27
+        ],
+        [
+          405,
+          94
+        ],
+        [
+          392,
+          94
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 11,
+      "category": "uncertain",
+      "box": [
+        [
+          511,
+          786
+        ],
+        [
+          552,
+          786
+        ],
+        [
+          552,
+          795
+        ],
+        [
+          511,
+          795
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 15,
+      "category": "uncertain",
+      "box": [
+        [
+          110,
+          369
+        ],
+        [
+          113,
+          369
+        ],
+        [
+          113,
+          385
+        ],
+        [
+          110,
+          385
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 23,
+      "category": "uncertain",
+      "box": [
+        [
+          178,
+          592
+        ],
+        [
+          184,
+          592
+        ],
+        [
+          184,
+          620
+        ],
+        [
+          178,
+          620
+        ]
+      ]
+    },
+    {
+      "slot": "sample-12.jpg",
+      "candidate_index": 24,
+      "category": "uncertain",
+      "box": [
+        [
+          106,
+          667
+        ],
+        [
+          111,
+          667
+        ],
+        [
+          111,
+          686
+        ],
+        [
+          106,
+          686
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 10,
+      "category": "text",
+      "box": [
+        [
+          94,
+          48
+        ],
+        [
+          106,
+          48
+        ],
+        [
+          106,
+          123
+        ],
+        [
+          94,
+          123
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 11,
+      "category": "text",
+      "box": [
+        [
+          439,
+          54
+        ],
+        [
+          451,
+          54
+        ],
+        [
+          451,
+          129
+        ],
+        [
+          439,
+          129
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 12,
+      "category": "text",
+      "box": [
+        [
+          455,
+          54
+        ],
+        [
+          467,
+          54
+        ],
+        [
+          467,
+          129
+        ],
+        [
+          455,
+          129
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 14,
+      "category": "text",
+      "box": [
+        [
+          408,
+          314
+        ],
+        [
+          421,
+          314
+        ],
+        [
+          421,
+          415
+        ],
+        [
+          408,
+          415
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 15,
+      "category": "text",
+      "box": [
+        [
+          148,
+          334
+        ],
+        [
+          161,
+          334
+        ],
+        [
+          161,
+          396
+        ],
+        [
+          148,
+          396
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 16,
+      "category": "text",
+      "box": [
+        [
+          240,
+          475
+        ],
+        [
+          252,
+          475
+        ],
+        [
+          252,
+          576
+        ],
+        [
+          240,
+          576
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 17,
+      "category": "text",
+      "box": [
+        [
+          256,
+          475
+        ],
+        [
+          267,
+          475
+        ],
+        [
+          267,
+          525
+        ],
+        [
+          256,
+          525
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 18,
+      "category": "text",
+      "box": [
+        [
+          271,
+          475
+        ],
+        [
+          283,
+          475
+        ],
+        [
+          283,
+          537
+        ],
+        [
+          271,
+          537
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 19,
+      "category": "text",
+      "box": [
+        [
+          68,
+          490
+        ],
+        [
+          79,
+          490
+        ],
+        [
+          79,
+          547
+        ],
+        [
+          68,
+          547
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 20,
+      "category": "text",
+      "box": [
+        [
+          180,
+          637
+        ],
+        [
+          193,
+          637
+        ],
+        [
+          193,
+          687
+        ],
+        [
+          180,
+          687
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 0,
+      "category": "split_merge",
+      "box": [
+        [
+          94,
+          48
+        ],
+        [
+          121,
+          48
+        ],
+        [
+          121,
+          60
+        ],
+        [
+          94,
+          60
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 1,
+      "category": "split_merge",
+      "box": [
+        [
+          440,
+          80
+        ],
+        [
+          467,
+          80
+        ],
+        [
+          467,
+          92
+        ],
+        [
+          440,
+          92
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 2,
+      "category": "split_merge",
+      "box": [
+        [
+          440,
+          92
+        ],
+        [
+          466,
+          92
+        ],
+        [
+          466,
+          104
+        ],
+        [
+          440,
+          104
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 3,
+      "category": "split_merge",
+      "box": [
+        [
+          440,
+          105
+        ],
+        [
+          466,
+          105
+        ],
+        [
+          466,
+          116
+        ],
+        [
+          440,
+          116
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 4,
+      "category": "split_merge",
+      "box": [
+        [
+          240,
+          475
+        ],
+        [
+          282,
+          475
+        ],
+        [
+          282,
+          487
+        ],
+        [
+          240,
+          487
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 5,
+      "category": "split_merge",
+      "box": [
+        [
+          241,
+          488
+        ],
+        [
+          283,
+          488
+        ],
+        [
+          283,
+          512
+        ],
+        [
+          241,
+          512
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 6,
+      "category": "split_merge",
+      "box": [
+        [
+          240,
+          513
+        ],
+        [
+          283,
+          513
+        ],
+        [
+          283,
+          525
+        ],
+        [
+          240,
+          525
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 7,
+      "category": "split_merge",
+      "box": [
+        [
+          241,
+          525
+        ],
+        [
+          282,
+          525
+        ],
+        [
+          282,
+          538
+        ],
+        [
+          241,
+          538
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 13,
+      "category": "split_merge",
+      "box": [
+        [
+          446,
+          80
+        ],
+        [
+          451,
+          80
+        ],
+        [
+          451,
+          114
+        ],
+        [
+          446,
+          114
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 23,
+      "category": "oversized_text",
+      "box": [
+        [
+          45,
+          463
+        ],
+        [
+          520,
+          463
+        ],
+        [
+          520,
+          585
+        ],
+        [
+          45,
+          585
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 27,
+      "category": "oversized_text",
+      "box": [
+        [
+          92,
+          597
+        ],
+        [
+          511,
+          597
+        ],
+        [
+          511,
+          746
+        ],
+        [
+          92,
+          746
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 31,
+      "category": "oversized_text",
+      "box": [
+        [
+          372,
+          26
+        ],
+        [
+          497,
+          26
+        ],
+        [
+          497,
+          428
+        ],
+        [
+          372,
+          428
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 32,
+      "category": "oversized_text",
+      "box": [
+        [
+          308,
+          50
+        ],
+        [
+          410,
+          50
+        ],
+        [
+          410,
+          703
+        ],
+        [
+          308,
+          703
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 33,
+      "category": "oversized_text",
+      "box": [
+        [
+          282,
+          66
+        ],
+        [
+          325,
+          66
+        ],
+        [
+          325,
+          418
+        ],
+        [
+          282,
+          418
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 39,
+      "category": "oversized_text",
+      "box": [
+        [
+          129,
+          539
+        ],
+        [
+          202,
+          539
+        ],
+        [
+          202,
+          719
+        ],
+        [
+          129,
+          719
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 8,
+      "category": "background",
+      "box": [
+        [
+          210,
+          689
+        ],
+        [
+          229,
+          689
+        ],
+        [
+          229,
+          699
+        ],
+        [
+          210,
+          699
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 22,
+      "category": "background",
+      "box": [
+        [
+          422,
+          0
+        ],
+        [
+          520,
+          0
+        ],
+        [
+          520,
+          61
+        ],
+        [
+          422,
+          61
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 24,
+      "category": "background",
+      "box": [
+        [
+          112,
+          574
+        ],
+        [
+          179,
+          574
+        ],
+        [
+          179,
+          600
+        ],
+        [
+          112,
+          600
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 25,
+      "category": "background",
+      "box": [
+        [
+          153,
+          575
+        ],
+        [
+          179,
+          575
+        ],
+        [
+          179,
+          587
+        ],
+        [
+          153,
+          587
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 26,
+      "category": "background",
+      "box": [
+        [
+          94,
+          596
+        ],
+        [
+          190,
+          596
+        ],
+        [
+          190,
+          614
+        ],
+        [
+          94,
+          614
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 28,
+      "category": "background",
+      "box": [
+        [
+          270,
+          660
+        ],
+        [
+          316,
+          660
+        ],
+        [
+          316,
+          682
+        ],
+        [
+          270,
+          682
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 29,
+      "category": "background",
+      "box": [
+        [
+          59,
+          701
+        ],
+        [
+          79,
+          701
+        ],
+        [
+          79,
+          714
+        ],
+        [
+          59,
+          714
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 30,
+      "category": "background",
+      "box": [
+        [
+          129,
+          719
+        ],
+        [
+          202,
+          719
+        ],
+        [
+          202,
+          746
+        ],
+        [
+          129,
+          746
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 34,
+      "category": "background",
+      "box": [
+        [
+          365,
+          80
+        ],
+        [
+          422,
+          80
+        ],
+        [
+          422,
+          296
+        ],
+        [
+          365,
+          296
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 35,
+      "category": "background",
+      "box": [
+        [
+          87,
+          259
+        ],
+        [
+          105,
+          259
+        ],
+        [
+          105,
+          408
+        ],
+        [
+          87,
+          408
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 36,
+      "category": "background",
+      "box": [
+        [
+          89,
+          276
+        ],
+        [
+          96,
+          276
+        ],
+        [
+          96,
+          323
+        ],
+        [
+          89,
+          323
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 37,
+      "category": "background",
+      "box": [
+        [
+          368,
+          368
+        ],
+        [
+          386,
+          368
+        ],
+        [
+          386,
+          442
+        ],
+        [
+          368,
+          442
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 38,
+      "category": "background",
+      "box": [
+        [
+          274,
+          391
+        ],
+        [
+          296,
+          391
+        ],
+        [
+          296,
+          446
+        ],
+        [
+          274,
+          446
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 40,
+      "category": "background",
+      "box": [
+        [
+          447,
+          626
+        ],
+        [
+          460,
+          626
+        ],
+        [
+          460,
+          731
+        ],
+        [
+          447,
+          731
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 41,
+      "category": "background",
+      "box": [
+        [
+          497,
+          636
+        ],
+        [
+          511,
+          636
+        ],
+        [
+          511,
+          745
+        ],
+        [
+          497,
+          745
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 42,
+      "category": "background",
+      "box": [
+        [
+          133,
+          687
+        ],
+        [
+          165,
+          687
+        ],
+        [
+          165,
+          746
+        ],
+        [
+          133,
+          746
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 43,
+      "category": "background",
+      "box": [
+        [
+          129,
+          719
+        ],
+        [
+          142,
+          719
+        ],
+        [
+          142,
+          740
+        ],
+        [
+          129,
+          740
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 9,
+      "category": "uncertain",
+      "box": [
+        [
+          519,
+          786
+        ],
+        [
+          559,
+          786
+        ],
+        [
+          559,
+          796
+        ],
+        [
+          519,
+          796
+        ]
+      ]
+    },
+    {
+      "slot": "sample-23.jpg",
+      "candidate_index": 21,
+      "category": "uncertain",
+      "box": [
+        [
+          185,
+          688
+        ],
+        [
+          188,
+          688
+        ],
+        [
+          188,
+          707
+        ],
+        [
+          185,
+          707
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 16,
+      "category": "text",
+      "box": [
+        [
+          712,
+          90
+        ],
+        [
+          744,
+          90
+        ],
+        [
+          744,
+          286
+        ],
+        [
+          712,
+          286
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 17,
+      "category": "text",
+      "box": [
+        [
+          672,
+          91
+        ],
+        [
+          704,
+          91
+        ],
+        [
+          704,
+          319
+        ],
+        [
+          672,
+          319
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 18,
+      "category": "text",
+      "box": [
+        [
+          290,
+          99
+        ],
+        [
+          307,
+          99
+        ],
+        [
+          307,
+          173
+        ],
+        [
+          290,
+          173
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 19,
+      "category": "text",
+      "box": [
+        [
+          312,
+          99
+        ],
+        [
+          330,
+          99
+        ],
+        [
+          330,
+          154
+        ],
+        [
+          312,
+          154
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 20,
+      "category": "text",
+      "box": [
+        [
+          335,
+          105
+        ],
+        [
+          353,
+          105
+        ],
+        [
+          353,
+          192
+        ],
+        [
+          335,
+          192
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 25,
+      "category": "text",
+      "box": [
+        [
+          206,
+          583
+        ],
+        [
+          222,
+          583
+        ],
+        [
+          222,
+          684
+        ],
+        [
+          206,
+          684
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 26,
+      "category": "text",
+      "box": [
+        [
+          144,
+          584
+        ],
+        [
+          160,
+          584
+        ],
+        [
+          160,
+          667
+        ],
+        [
+          144,
+          667
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 27,
+      "category": "text",
+      "box": [
+        [
+          165,
+          584
+        ],
+        [
+          181,
+          584
+        ],
+        [
+          181,
+          667
+        ],
+        [
+          165,
+          667
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 28,
+      "category": "text",
+      "box": [
+        [
+          185,
+          584
+        ],
+        [
+          201,
+          584
+        ],
+        [
+          201,
+          667
+        ],
+        [
+          185,
+          667
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 29,
+      "category": "text",
+      "box": [
+        [
+          130,
+          743
+        ],
+        [
+          149,
+          743
+        ],
+        [
+          149,
+          861
+        ],
+        [
+          130,
+          861
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 30,
+      "category": "text",
+      "box": [
+        [
+          179,
+          743
+        ],
+        [
+          197,
+          743
+        ],
+        [
+          197,
+          842
+        ],
+        [
+          179,
+          842
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 31,
+      "category": "text",
+      "box": [
+        [
+          155,
+          744
+        ],
+        [
+          164,
+          744
+        ],
+        [
+          164,
+          781
+        ],
+        [
+          155,
+          781
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 32,
+      "category": "text",
+      "box": [
+        [
+          155,
+          744
+        ],
+        [
+          173,
+          744
+        ],
+        [
+          173,
+          861
+        ],
+        [
+          155,
+          861
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 0,
+      "category": "split_merge",
+      "box": [
+        [
+          312,
+          109
+        ],
+        [
+          376,
+          109
+        ],
+        [
+          376,
+          135
+        ],
+        [
+          312,
+          135
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 1,
+      "category": "split_merge",
+      "box": [
+        [
+          290,
+          128
+        ],
+        [
+          352,
+          128
+        ],
+        [
+          352,
+          154
+        ],
+        [
+          290,
+          154
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 2,
+      "category": "split_merge",
+      "box": [
+        [
+          673,
+          222
+        ],
+        [
+          741,
+          222
+        ],
+        [
+          741,
+          253
+        ],
+        [
+          673,
+          253
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 3,
+      "category": "split_merge",
+      "box": [
+        [
+          145,
+          583
+        ],
+        [
+          222,
+          583
+        ],
+        [
+          222,
+          599
+        ],
+        [
+          145,
+          599
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 4,
+      "category": "split_merge",
+      "box": [
+        [
+          145,
+          600
+        ],
+        [
+          221,
+          600
+        ],
+        [
+          221,
+          616
+        ],
+        [
+          145,
+          616
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 5,
+      "category": "split_merge",
+      "box": [
+        [
+          145,
+          617
+        ],
+        [
+          221,
+          617
+        ],
+        [
+          221,
+          633
+        ],
+        [
+          145,
+          633
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 6,
+      "category": "split_merge",
+      "box": [
+        [
+          145,
+          634
+        ],
+        [
+          221,
+          634
+        ],
+        [
+          221,
+          650
+        ],
+        [
+          145,
+          650
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 8,
+      "category": "split_merge",
+      "box": [
+        [
+          144,
+          651
+        ],
+        [
+          221,
+          651
+        ],
+        [
+          221,
+          667
+        ],
+        [
+          144,
+          667
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 9,
+      "category": "split_merge",
+      "box": [
+        [
+          130,
+          743
+        ],
+        [
+          197,
+          743
+        ],
+        [
+          197,
+          762
+        ],
+        [
+          130,
+          762
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 10,
+      "category": "split_merge",
+      "box": [
+        [
+          131,
+          763
+        ],
+        [
+          197,
+          763
+        ],
+        [
+          197,
+          782
+        ],
+        [
+          131,
+          782
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 11,
+      "category": "split_merge",
+      "box": [
+        [
+          131,
+          783
+        ],
+        [
+          197,
+          783
+        ],
+        [
+          197,
+          802
+        ],
+        [
+          131,
+          802
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 12,
+      "category": "split_merge",
+      "box": [
+        [
+          130,
+          824
+        ],
+        [
+          197,
+          824
+        ],
+        [
+          197,
+          842
+        ],
+        [
+          130,
+          842
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 13,
+      "category": "split_merge",
+      "box": [
+        [
+          131,
+          844
+        ],
+        [
+          172,
+          844
+        ],
+        [
+          172,
+          862
+        ],
+        [
+          131,
+          862
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 52,
+      "category": "split_merge",
+      "box": [
+        [
+          188,
+          592
+        ],
+        [
+          194,
+          592
+        ],
+        [
+          194,
+          631
+        ],
+        [
+          188,
+          631
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 7,
+      "category": "background",
+      "box": [
+        [
+          456,
+          648
+        ],
+        [
+          486,
+          648
+        ],
+        [
+          486,
+          654
+        ],
+        [
+          456,
+          654
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 33,
+      "category": "background",
+      "box": [
+        [
+          66,
+          910
+        ],
+        [
+          217,
+          910
+        ],
+        [
+          217,
+          1144
+        ],
+        [
+          66,
+          1144
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 37,
+      "category": "background",
+      "box": [
+        [
+          134,
+          367
+        ],
+        [
+          220,
+          367
+        ],
+        [
+          220,
+          423
+        ],
+        [
+          134,
+          423
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 38,
+      "category": "background",
+      "box": [
+        [
+          263,
+          752
+        ],
+        [
+          346,
+          752
+        ],
+        [
+          346,
+          758
+        ],
+        [
+          263,
+          758
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 40,
+      "category": "background",
+      "box": [
+        [
+          75,
+          971
+        ],
+        [
+          179,
+          971
+        ],
+        [
+          179,
+          974
+        ],
+        [
+          75,
+          974
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 41,
+      "category": "background",
+      "box": [
+        [
+          257,
+          1021
+        ],
+        [
+          304,
+          1021
+        ],
+        [
+          304,
+          1027
+        ],
+        [
+          257,
+          1027
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 42,
+      "category": "background",
+      "box": [
+        [
+          237,
+          1041
+        ],
+        [
+          290,
+          1041
+        ],
+        [
+          290,
+          1047
+        ],
+        [
+          237,
+          1047
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 43,
+      "category": "background",
+      "box": [
+        [
+          441,
+          1065
+        ],
+        [
+          710,
+          1065
+        ],
+        [
+          710,
+          1124
+        ],
+        [
+          441,
+          1124
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 44,
+      "category": "background",
+      "box": [
+        [
+          197,
+          1091
+        ],
+        [
+          281,
+          1091
+        ],
+        [
+          281,
+          1103
+        ],
+        [
+          197,
+          1103
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 45,
+      "category": "background",
+      "box": [
+        [
+          240,
+          1108
+        ],
+        [
+          319,
+          1108
+        ],
+        [
+          319,
+          1130
+        ],
+        [
+          240,
+          1130
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 46,
+      "category": "background",
+      "box": [
+        [
+          462,
+          1111
+        ],
+        [
+          591,
+          1111
+        ],
+        [
+          591,
+          1144
+        ],
+        [
+          462,
+          1144
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 47,
+      "category": "background",
+      "box": [
+        [
+          298,
+          1114
+        ],
+        [
+          381,
+          1114
+        ],
+        [
+          381,
+          1120
+        ],
+        [
+          298,
+          1120
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 48,
+      "category": "background",
+      "box": [
+        [
+          673,
+          1145
+        ],
+        [
+          705,
+          1145
+        ],
+        [
+          705,
+          1160
+        ],
+        [
+          673,
+          1160
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 49,
+      "category": "background",
+      "box": [
+        [
+          416,
+          181
+        ],
+        [
+          665,
+          181
+        ],
+        [
+          665,
+          1199
+        ],
+        [
+          416,
+          1199
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 50,
+      "category": "background",
+      "box": [
+        [
+          600,
+          406
+        ],
+        [
+          616,
+          406
+        ],
+        [
+          616,
+          504
+        ],
+        [
+          600,
+          504
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 51,
+      "category": "background",
+      "box": [
+        [
+          392,
+          436
+        ],
+        [
+          406,
+          436
+        ],
+        [
+          406,
+          487
+        ],
+        [
+          392,
+          487
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 53,
+      "category": "background",
+      "box": [
+        [
+          439,
+          607
+        ],
+        [
+          467,
+          607
+        ],
+        [
+          467,
+          648
+        ],
+        [
+          439,
+          648
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 54,
+      "category": "background",
+      "box": [
+        [
+          428,
+          724
+        ],
+        [
+          468,
+          724
+        ],
+        [
+          468,
+          904
+        ],
+        [
+          428,
+          904
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 55,
+      "category": "background",
+      "box": [
+        [
+          261,
+          752
+        ],
+        [
+          269,
+          752
+        ],
+        [
+          269,
+          771
+        ],
+        [
+          261,
+          771
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 56,
+      "category": "background",
+      "box": [
+        [
+          670,
+          1056
+        ],
+        [
+          710,
+          1056
+        ],
+        [
+          710,
+          1154
+        ],
+        [
+          670,
+          1154
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 57,
+      "category": "background",
+      "box": [
+        [
+          67,
+          1084
+        ],
+        [
+          97,
+          1084
+        ],
+        [
+          97,
+          1153
+        ],
+        [
+          67,
+          1153
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 58,
+      "category": "background",
+      "box": [
+        [
+          516,
+          1118
+        ],
+        [
+          521,
+          1118
+        ],
+        [
+          521,
+          1139
+        ],
+        [
+          516,
+          1139
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 14,
+      "category": "uncertain",
+      "box": [
+        [
+          777,
+          1174
+        ],
+        [
+          823,
+          1174
+        ],
+        [
+          823,
+          1191
+        ],
+        [
+          777,
+          1191
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 15,
+      "category": "uncertain",
+      "box": [
+        [
+          808,
+          1174
+        ],
+        [
+          822,
+          1174
+        ],
+        [
+          822,
+          1181
+        ],
+        [
+          808,
+          1181
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 21,
+      "category": "uncertain",
+      "box": [
+        [
+          297,
+          118
+        ],
+        [
+          300,
+          118
+        ],
+        [
+          300,
+          134
+        ],
+        [
+          297,
+          134
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 22,
+      "category": "uncertain",
+      "box": [
+        [
+          365,
+          137
+        ],
+        [
+          368,
+          137
+        ],
+        [
+          368,
+          153
+        ],
+        [
+          365,
+          153
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 23,
+      "category": "uncertain",
+      "box": [
+        [
+          239,
+          228
+        ],
+        [
+          242,
+          228
+        ],
+        [
+          242,
+          244
+        ],
+        [
+          239,
+          244
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 24,
+      "category": "uncertain",
+      "box": [
+        [
+          182,
+          258
+        ],
+        [
+          185,
+          258
+        ],
+        [
+          185,
+          279
+        ],
+        [
+          182,
+          279
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 34,
+      "category": "uncertain",
+      "box": [
+        [
+          808,
+          1174
+        ],
+        [
+          813,
+          1174
+        ],
+        [
+          813,
+          1191
+        ],
+        [
+          808,
+          1191
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 35,
+      "category": "uncertain",
+      "box": [
+        [
+          786,
+          1176
+        ],
+        [
+          791,
+          1176
+        ],
+        [
+          791,
+          1191
+        ],
+        [
+          786,
+          1191
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 36,
+      "category": "uncertain",
+      "box": [
+        [
+          682,
+          171
+        ],
+        [
+          696,
+          171
+        ],
+        [
+          696,
+          175
+        ],
+        [
+          682,
+          175
+        ]
+      ]
+    },
+    {
+      "slot": "sample-45.jpg",
+      "candidate_index": 39,
+      "category": "uncertain",
+      "box": [
+        [
+          133,
+          846
+        ],
+        [
+          146,
+          846
+        ],
+        [
+          146,
+          855
+        ],
+        [
+          133,
+          855
+        ]
+      ]
+    }
+  ]
+}

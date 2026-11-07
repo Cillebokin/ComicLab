@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import com.example.comiclab.R
 import java.io.File
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -23,6 +24,48 @@ internal data class TranslationSettings(
 internal object TranslationSettingsStore {
     private const val ALIAS = "comiclab.translation.key.v1"
     private fun file(context: Context) = File(context.noBackupFilesDir, "translation-settings.json")
+    private fun enabledFile(context: Context) = File(context.noBackupFilesDir, "translation-enabled")
+    private fun targetLanguageFile(context: Context) = File(context.noBackupFilesDir, "translation-target-language")
+
+    fun isAutomaticTranslationEnabled(context: Context): Boolean =
+        runCatching { enabledFile(context).readText() == "enabled" }.getOrDefault(false)
+
+    @Synchronized
+    fun setAutomaticTranslationEnabled(context: Context, enabled: Boolean) {
+        val target = enabledFile(context)
+        val atomic = android.util.AtomicFile(target)
+        if (!enabled) {
+            atomic.delete()
+            return
+        }
+        val output = atomic.startWrite()
+        try {
+            output.write("enabled".toByteArray(Charsets.UTF_8))
+            atomic.finishWrite(output)
+        } catch (error: Throwable) {
+            atomic.failWrite(output)
+            throw error
+        }
+    }
+
+    private fun targetLanguageIndex(context: Context, fallback: Int): Int =
+        runCatching { targetLanguageFile(context).readText().toInt().coerceIn(0, 4) }
+            .getOrDefault(fallback.coerceIn(0, 4))
+
+    @Synchronized
+    fun saveTargetLanguageIndex(context: Context, index: Int) {
+        require(index in 0..4)
+        val atomic = android.util.AtomicFile(targetLanguageFile(context))
+        val output = atomic.startWrite()
+        try {
+            output.write(index.toString().toByteArray(Charsets.UTF_8))
+            atomic.finishWrite(output)
+        } catch (error: Throwable) {
+            atomic.failWrite(output)
+            throw error
+        }
+    }
+
     private fun secret(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey(ALIAS, null) as? SecretKey)?.let { return it }
@@ -32,22 +75,35 @@ internal object TranslationSettingsStore {
             generateKey()
         }
     }
-    @Synchronized fun load(context: Context): TranslationSettings {
+    @Synchronized
+    fun load(context: Context): TranslationSettings {
+        val saved = loadStored(context)
+        return saved.copy(
+            address = saved.address.ifBlank { context.getString(R.string.translation_default_address) },
+            model = saved.model.ifBlank { context.getString(R.string.translation_default_model) }
+        )
+    }
+
+    @Synchronized
+    fun loadForEditor(context: Context): TranslationSettings = loadStored(context)
+
+    private fun loadStored(context: Context): TranslationSettings {
         val file = file(context)
-        if (!file.isFile) return TranslationSettings("", "", "")
+        if (!file.isFile) return TranslationSettings("", "", "", targetLanguageIndex(context, 0))
         val json = JSONObject(file.readText())
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, secret(), GCMParameterSpec(128, Base64.decode(json.getString("iv"), Base64.NO_WRAP)))
         val key = String(cipher.doFinal(Base64.decode(json.getString("key"), Base64.NO_WRAP)), Charsets.UTF_8)
         return TranslationSettings(
             json.getString("address"), json.getString("model"), key,
-            json.optInt("targetLanguageIndex", 0).coerceIn(0, 4)
+            targetLanguageIndex(context, json.optInt("targetLanguageIndex", 0))
         )
     }
     @Synchronized fun save(context: Context, settings: TranslationSettings) {
-        TranslationPolicy.endpoint(settings.address)
-        require(settings.model.isNotBlank() && settings.model.length <= 200 && settings.key.isNotBlank() && !settings.key.contains('\n'))
+        if (settings.address.isNotBlank()) TranslationPolicy.endpoint(settings.address)
+        require(settings.model.length <= 200 && settings.key.isNotBlank() && !settings.key.contains('\n'))
         require(settings.targetLanguageIndex in 0..4)
+        saveTargetLanguageIndex(context, settings.targetLanguageIndex)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, secret()) }
         val encrypted = cipher.doFinal(settings.key.toByteArray(Charsets.UTF_8))
         val json = JSONObject().put("address", settings.address.trim()).put("model", settings.model.trim())
