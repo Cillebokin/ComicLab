@@ -24,3 +24,7 @@ docs/
 
 *.apk
 .DS_Store
+
+__pycache__/
+*.py[cod]
+/validation/translation-model-package-*/
