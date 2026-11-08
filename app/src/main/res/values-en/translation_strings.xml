@@ -58,8 +58,8 @@
     <string name="translation_overflow">Text does not fit: shorten it or reduce font size</string>
     <string name="translation_memory">Not enough memory; close other heavy tasks and retry</string>
     <string name="translation_storage">Not enough free storage</string>
-    <string name="translation_limit">Page format, orientation or crop exceeds the supported limits</string>
-    <string name="translation_error_help">Confirm that local models are imported and enabled, then check the network, AI settings and response format</string>
+    <string name="translation_limit">This page format, orientation or crop is not supported for translation</string>
+    <string name="translation_error_help">Translation processing failed. Try again; if it continues, share the diagnostic log</string>
     <string name="translation_licenses">Translation licenses</string>
     <string name="archive_translation_menu">Translate entire comic</string>
     <string name="archive_translation_title">Translate entire comic</string>

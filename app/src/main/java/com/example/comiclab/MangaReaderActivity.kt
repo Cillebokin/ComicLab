@@ -37,6 +37,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseTask
 import com.example.comiclab.core.reader.translation.TranslationModels
+import com.example.comiclab.core.reader.translation.TranslationPageSource
 import com.example.comiclab.core.diagnostics.ComicLabPerformance
 import com.example.comiclab.core.diagnostics.CrashLogManager
 import com.example.comiclab.core.reader.layout.DoublePageModeUnavailableReason
@@ -280,8 +281,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        findViewById<Button>(R.id.btnReaderTranslate)?.visibility =
-            if (TranslationModels.isAvailable(this)) View.VISIBLE else View.GONE
+        updateReaderTranslationVisibility()
         pageAdapter?.onReaderResumed()
         readerPreviewAdapter?.setDecodingEnabled(readerPreviewPanelVisible)
         listReaderPages.post {
@@ -589,11 +589,18 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         val btnReaderTranslate = findViewById<Button>(R.id.btnReaderTranslate)
-        btnReaderTranslate.visibility = if (TranslationModels.isAvailable(this)) View.VISIBLE else View.GONE
+        updateReaderTranslationVisibility()
         btnReaderTranslate.setOnClickListener {
             val archive = archiveFile ?: return@setOnClickListener
             if (imageEntries.isEmpty()) return@setOnClickListener
             val position = currentReaderPosition.coerceIn(imageEntries.indices)
+            if (ComicArchive.isPdf(archive) ||
+                !TranslationPageSource.supportsEntry(imageEntries[position]) ||
+                !TranslationModels.isAvailable(this)
+            ) {
+                updateReaderTranslationVisibility()
+                return@setOnClickListener
+            }
             com.example.comiclab.ui.reader.translation.PageTranslationActivity.launch(
                 this, archive, imageEntries[position], position + 1)
         }
@@ -946,6 +953,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 updateReaderProgress(readerLayoutManager.findFirstVisibleItemPosition().coerceAtLeast(0), entries.size)
             }
         }
+        updateReaderTranslationVisibility()
         listReaderPages.post {
             preloadReaderAround(
                 firstVisiblePosition = readerLayoutManager.findFirstVisibleItemPosition()
@@ -1405,6 +1413,7 @@ class MangaReaderActivity : AppCompatActivity() {
         readerLayoutManager.scrollToPositionWithOffset(layoutPosition, 0)
         currentReaderPosition = readerSpreadStartSourcePosition(targetPosition)
         currentReaderOffset = 0
+        updateReaderTranslationVisibility()
         updateReaderProgress(layoutPosition, imageEntries.size)
         saveReaderPosition(forceCommit = true)
         preloadReaderAround(
@@ -1478,11 +1487,28 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun updateCurrentReaderPosition(firstVisiblePosition: Int) {
+        val previousPosition = currentReaderPosition
         currentReaderPosition = displayedReaderPosition(firstVisiblePosition, imageEntries.size)
+        if (previousPosition != currentReaderPosition) {
+            updateReaderTranslationVisibility()
+        }
         currentReaderOffset = if (isHorizontalReading()) {
             0
         } else {
             readerChildStartForPosition(currentReaderPosition) ?: currentReaderOffset
+        }
+    }
+
+    private fun updateReaderTranslationVisibility() {
+        val button = findViewById<Button>(R.id.btnReaderTranslate) ?: return
+        val archive = archiveFile
+        val entry = imageEntries.getOrNull(currentReaderPosition)
+        val supportedPage = archive != null && !ComicArchive.isPdf(archive) &&
+            entry != null && TranslationPageSource.supportsEntry(entry)
+        button.visibility = if (supportedPage && TranslationModels.isAvailable(this)) {
+            View.VISIBLE
+        } else {
+            View.GONE
         }
     }
 

@@ -3,6 +3,7 @@ package com.example.comiclab.core.reader.translation
 import android.graphics.*
 import android.media.ExifInterface
 import java.io.File
+import java.util.Locale
 
 /** Coordinates always refer to the upright page. Only the requested crop is rotated. */
 internal class TranslationPageSource(file: File) : AutoCloseable {
@@ -11,6 +12,14 @@ internal class TranslationPageSource(file: File) : AutoCloseable {
     private val decoder: BitmapRegionDecoder
     val width: Int
     val height: Int
+
+    companion object {
+        private val supportedEntryExtensions = setOf("jpg", "jpeg", "png", "webp")
+
+        fun supportsEntry(entry: String): Boolean =
+            entry.substringAfterLast('.', "").lowercase(Locale.ROOT) in supportedEntryExtensions
+    }
+
     init {
         require(orientation in listOf(1, 3, 6, 8)) { "Mirrored EXIF pages are not supported yet" }
         decoder = BitmapRegionDecoder.newInstance(file.path, false) ?: error("Cannot region-decode page")

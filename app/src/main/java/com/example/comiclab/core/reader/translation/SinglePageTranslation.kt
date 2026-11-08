@@ -29,6 +29,7 @@ internal class SinglePageTranslation(private val context: Context, private val c
         modelDirectory: File? = null, preparedSource: File? = null): TranslationAnalysis {
         checkCancelled()
         require(!ComicArchive.isPdf(archive)) { "PDF translation is not supported yet" }
+        require(TranslationPageSource.supportsEntry(entry)) { "Image format is not supported for translation" }
         val models = modelDirectory ?: TranslationModels.ensure(context, cancelled) { status("models|$it") }
         check(NcnnBackend.available) { "Native translation runtime unavailable" }
         status("extract")
