@@ -109,7 +109,12 @@ internal class SinglePageTranslation(private val context: Context, private val c
                     val right = ceil(r.x1 + 28).toInt().coerceIn(left + 1, w); val bottom = ceil(r.y1 + 28).toInt().coerceIn(top + 1, h)
                     for (window in TranslationPolicy.windows(w, h, left, top, right, bottom)) {
                         checkCancelled()
-                        val crop = decoder.decodeRegion(Rect(window.left, window.top, window.right, window.bottom))
+                        val decodedCrop = decoder.decodeRegion(Rect(window.left, window.top, window.right, window.bottom))
+                        val crop = if (decodedCrop.width == window.width && decodedCrop.height == window.height) decodedCrop else {
+                            android.util.Log.w("PageTranslation", "AOT crop ${decodedCrop.width}x${decodedCrop.height}; expected ${window.width}x${window.height}")
+                            try { Bitmap.createScaledBitmap(decodedCrop, window.width, window.height, true) }
+                            finally { decodedCrop.recycle() }
+                        }
                         try {
                             val mask = localMask(checkNotNull(smallMask), w, h, window, r)
                             if (mask.none { it }) continue
@@ -192,6 +197,10 @@ internal class SinglePageTranslation(private val context: Context, private val c
     }
 
     private fun inpaint(handle: Long, pixels: IntArray, mask: BooleanArray, w: Int, h: Int): IntArray {
+        if (pixels.size != w * h || mask.size != w * h) {
+            android.util.Log.e("PageTranslation", "AOT arrays width=$w height=$h pixels=${pixels.size} mask=${mask.size}")
+        }
+        require(pixels.size == w * h && mask.size == w * h) { "Inpaint input dimensions mismatch" }
         val size = 512; val area = size * size
         val input = FloatArray(3 * area); val m = FloatArray(area); val output = FloatArray(3 * area)
         for (y in 0 until size) for (x in 0 until size) {

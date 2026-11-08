@@ -20,6 +20,7 @@ internal class PageTranslationViewModel(application: Application) : AndroidViewM
     @Volatile var analysis: TranslationAnalysis? = null
         private set
     private var running = false
+    @Volatile private var processingStage = "ready"
     private var disposed = false
     private var previews = 0
     private var cleanupScheduled = false
@@ -59,23 +60,31 @@ internal class PageTranslationViewModel(application: Application) : AndroidViewM
         if (running || pendingPublication || disposed) return
         if (!EnhancementRuntime.busy.compareAndSet(false, true)) { state.value = (state.value ?: TranslationUiState()).copy(error = "busy"); return }
         running = true; cancelled.set(false)
+        processingStage = "models"
         state.value = TranslationUiState(stage = "models", busy = true, result = state.value?.result)
         val previous = state.value?.result
         EnhancementRuntime.worker.execute {
             try {
                 check(directory.mkdirs() || directory.isDirectory)
-                val pipeline = SinglePageTranslation(app, cancelled) { stage -> state.postValue(TranslationUiState(stage, true, previous)) }
+                val pipeline = SinglePageTranslation(app, cancelled) { stage ->
+                    processingStage = stage
+                    state.postValue(TranslationUiState(stage, true, previous))
+                }
                 val current = analysis ?: pipeline.process(archive, entry, directory, TranslationSettingsStore.load(app), language).also { analysis = it }
+                processingStage = "render"
                 val output = pipeline.render(current, directory, style)
                 publish(TranslationUiState("done", result = output))
             } catch (_: CancellationException) {
                 publish(TranslationUiState("cancelled", result = previous))
             } catch (error: Exception) {
                 // 不记录堆栈或远程正文，避免配置、原文、译文进入崩溃日志
+                logSafeFailure(error)
                 publish(TranslationUiState("failed", result = previous, error = safeError(error)))
-            } catch (_: LinkageError) {
+            } catch (error: LinkageError) {
+                logSafeFailure(error)
                 publish(TranslationUiState("failed", result = previous, error = "native"))
-            } catch (_: OutOfMemoryError) {
+            } catch (error: OutOfMemoryError) {
+                logSafeFailure(error)
                 publish(TranslationUiState("failed", result = previous, error = "memory"))
             } finally {
                 EnhancementRuntime.busy.set(false)
@@ -103,5 +112,14 @@ internal class PageTranslationViewModel(application: Application) : AndroidViewM
         error.message?.contains("storage", true) == true -> "storage"
         error.message?.contains("limit", true) == true || error.message?.contains("budget", true) == true || error.message?.contains("supported", true) == true -> "limit"
         else -> "processing"
+    }
+
+    private fun logSafeFailure(error: Throwable) {
+        val stage = processingStage.replace('|', '/')
+        fun topFrame(value: Throwable?): String = value?.stackTrace?.firstOrNull()?.let {
+            "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}"
+        } ?: "none"
+        val causeType = error.cause?.javaClass?.simpleName ?: "none"
+        android.util.Log.e("PageTranslation", "Failed at stage=$stage type=${error.javaClass.simpleName} frame=${topFrame(error)} cause=$causeType causeFrame=${topFrame(error.cause)}")
     }
 }
