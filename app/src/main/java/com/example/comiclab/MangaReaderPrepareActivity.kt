@@ -304,6 +304,10 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
         handoffLease = handoff
         val intent = Intent(this, MangaReaderActivity::class.java).apply {
             putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
+            putExtra(MangaReaderActivity.EXTRA_NEXT_HANDOFF_TOKEN,
+                this@MangaReaderPrepareActivity.intent.getStringExtra(MangaReaderActivity.EXTRA_NEXT_HANDOFF_TOKEN))
+            putExtra(MangaReaderActivity.EXTRA_RETURN_TO_CURRENT_PREVIEW,
+                this@MangaReaderPrepareActivity.intent.getBooleanExtra(MangaReaderActivity.EXTRA_RETURN_TO_CURRENT_PREVIEW, false))
             putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
             putExtra(MangaReaderActivity.EXTRA_START_PAGE_INDEX, explicitStartPageIndex)
             putExtra(MangaReaderActivity.EXTRA_PREPARED_READER_CACHE_DIR, outputDir.absolutePath)
@@ -336,6 +340,10 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
     private fun openReaderDirect(file: File) {
         val intent = Intent(this, MangaReaderActivity::class.java).apply {
             putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
+            putExtra(MangaReaderActivity.EXTRA_NEXT_HANDOFF_TOKEN,
+                this@MangaReaderPrepareActivity.intent.getStringExtra(MangaReaderActivity.EXTRA_NEXT_HANDOFF_TOKEN))
+            putExtra(MangaReaderActivity.EXTRA_RETURN_TO_CURRENT_PREVIEW,
+                this@MangaReaderPrepareActivity.intent.getBooleanExtra(MangaReaderActivity.EXTRA_RETURN_TO_CURRENT_PREVIEW, false))
             putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
             putExtra(MangaReaderActivity.EXTRA_START_PAGE_INDEX, explicitStartPageIndex)
             putExtra(

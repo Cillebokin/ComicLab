@@ -20,6 +20,29 @@ import org.robolectric.annotation.Config
 @Config(sdk = [36])
 class AppSettingsRobolectricTest {
 
+    @Test fun nextComicSettingDefaultsToEnabledAndSurvivesExportAndImport() {
+        assertTrue(AppSettings.isNextMangaEnabled(context))
+        AppSettings.setNextMangaEnabled(context, false)
+        val json = com.example.comiclab.core.settings.ComicLabConfigurationJson
+        val exported = json.encode(com.example.comiclab.core.settings.ComicLabConfiguration(
+            appSettings = AppSettings.snapshot(context)))
+        AppSettings.setNextMangaEnabled(context, true)
+        AppSettings.applySnapshot(context, json.decode(exported).configuration.appSettings)
+        assertFalse(AppSettings.isNextMangaEnabled(context))
+    }
+
+    @Test fun nextComicSwitchUpdatesTheSavedPreference() {
+        val controller = org.robolectric.Robolectric.buildActivity(SettingsActivity::class.java).setup()
+        try {
+            val toggle = controller.get().findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchNextManga)
+            assertTrue(toggle.isChecked)
+            toggle.isChecked = false
+            assertFalse(AppSettings.isNextMangaEnabled(context))
+            controller.recreate()
+            assertFalse(controller.get().findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchNextManga).isChecked)
+        } finally { controller.pause().stop().destroy() }
+    }
+
     @Test fun enhancementScalePersistsAndSurvivesConfigurationExport() {
         assertEquals(2, AppSettings.getEnhancementScale(context))
         AppSettings.setEnhancementScale(context, 3)

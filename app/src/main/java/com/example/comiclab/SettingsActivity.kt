@@ -101,6 +101,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var switchDoublePageCoverSingle: SwitchCompat
     private lateinit var inputStartMarkerErrorTags: EditText
     private lateinit var switchVolumeKeyPageTurn: SwitchCompat
+    private lateinit var switchNextManga: SwitchCompat
     private lateinit var switchAutoHideSystemBars: SwitchCompat
     private lateinit var switchCustomReaderBrightness: SwitchCompat
     private lateinit var sliderSettingsReaderBrightness: SeekBar
@@ -224,6 +225,7 @@ class SettingsActivity : AppCompatActivity() {
         switchDoublePageCoverSingle = findViewById(R.id.switchDoublePageCoverSingle)
         inputStartMarkerErrorTags = findViewById(R.id.inputStartMarkerErrorTags)
         switchVolumeKeyPageTurn = findViewById(R.id.switchVolumeKeyPageTurn)
+        switchNextManga = findViewById(R.id.switchNextManga)
         switchAutoHideSystemBars = findViewById(R.id.switchAutoHideSystemBars)
         switchCustomReaderBrightness = findViewById(R.id.switchCustomReaderBrightness)
         sliderSettingsReaderBrightness = findViewById(R.id.sliderSettingsReaderBrightness)
@@ -246,6 +248,10 @@ class SettingsActivity : AppCompatActivity() {
         bindDoublePageCoverSingle()
         bindStartMarkerErrorTags()
         bindVolumeKeyPageTurn()
+        switchNextManga.isChecked = AppSettings.isNextMangaEnabled(this)
+        switchNextManga.setOnCheckedChangeListener { _, enabled ->
+            AppSettings.setNextMangaEnabled(this, enabled)
+        }
         bindAutoHideSystemBars()
         bindCustomReaderBrightness()
         bindDebugTools()
@@ -1468,6 +1474,7 @@ class SettingsActivity : AppCompatActivity() {
         switchDoublePageCoverSingle.isChecked = AppSettings.isDoublePageCoverSingleEnabled(this)
         inputStartMarkerErrorTags.setText(AppSettings.getStartMarkerErrorTags(this))
         switchVolumeKeyPageTurn.isChecked = AppSettings.isVolumeKeyPageTurnEnabled(this)
+        switchNextManga.isChecked = AppSettings.isNextMangaEnabled(this)
         switchAutoHideSystemBars.isChecked = AppSettings.isAutoHideSystemBarsEnabled(this)
         updateBrightnessControls()
     }

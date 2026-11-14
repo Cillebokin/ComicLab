@@ -22,6 +22,7 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
 ) : SubsamplingScaleImageView(context, attrs) {
 
     var onReaderTap: (() -> Unit)? = null
+    internal var onReaderImageLoaded: (() -> Unit)? = null
 
     private val readerMainHandler = Handler(Looper.getMainLooper())
     private val readerDecodeExecutor = ReaderDecodeExecutor()
@@ -50,6 +51,15 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
     )
 
     init {
+        setOnImageEventListener(object : DefaultOnImageEventListener() {
+            override fun onImageLoaded() {
+                if (!permanentlyClosing && !imageTransitionRunning && appliedImageSource != null &&
+                    requestedImageSource === appliedImageSource
+                ) {
+                    onReaderImageLoaded?.invoke()
+                }
+            }
+        })
         setExecutor(readerDecodeExecutor)
         setBackgroundColor(Color.BLACK)
         setMinimumScaleType(SCALE_TYPE_CENTER_INSIDE)
@@ -112,6 +122,7 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
         permanentlyClosing = true
         requestedImageSource = null
         onReaderTap = null
+        onReaderImageLoaded = null
         isEnabled = false
         visibility = GONE
         requestReaderImageTransition()

@@ -2,6 +2,7 @@ package com.example.comiclab.ui.browser
 
 import java.io.File
 import java.util.Locale
+import android.content.SharedPreferences
 
 internal enum class DirectorySortOrder {
     NAME_ASC,
@@ -20,6 +21,10 @@ internal data class DirectorySortMetadata(
 )
 
 internal object DirectorySortPolicy {
+
+    fun savedOrder(prefs: SharedPreferences): DirectorySortOrder =
+        DirectorySortOrder.entries.firstOrNull { it.name == prefs.getString("sort_mode", null) }
+            ?: DirectorySortOrder.NAME_ASC
 
     fun sort(
         files: List<File>,

@@ -406,6 +406,11 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="reader_progress_dialog_title">Reading progress</string>
     <string name="reader_progress_dialog_message">A previous reading position was found. Continue reading?</string>
     <string name="continue_reading">Continue reading</string>
+    <string name="reader_next_manga">Continue reading: %1$s</string>
+    <string name="next_manga_setting">Continue to the next comic</string>
+    <string name="reader_no_next_manga">No next comic in this folder</string>
+    <string name="reader_next_loading">Finding next comic…</string>
+    <string name="reader_next_unavailable">The next comic is unavailable. Please try again.</string>
     <string name="read_from_beginning">Start from the beginning</string>
     <string name="reading_direction">Reading direction</string>
     <string name="reading_direction_current">Reading direction: %1$s</string>

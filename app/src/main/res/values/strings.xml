@@ -405,6 +405,11 @@
     <string name="reader_progress_dialog_title">阅读进度</string>
     <string name="reader_progress_dialog_message">检测到上次阅读进度，是否继续阅读？</string>
     <string name="continue_reading">继续阅读</string>
+    <string name="reader_next_manga">继续阅读：%1$s</string>
+    <string name="next_manga_setting">继续阅读下一本</string>
+    <string name="reader_no_next_manga">当前目录没有下一本</string>
+    <string name="reader_next_loading">正在查找下一本…</string>
+    <string name="reader_next_unavailable">下一本已无法访问，请重试</string>
     <string name="read_from_beginning">从头阅读</string>
     <string name="reading_direction">阅读方向</string>
     <string name="reading_direction_current">阅读方向：%1$s</string>

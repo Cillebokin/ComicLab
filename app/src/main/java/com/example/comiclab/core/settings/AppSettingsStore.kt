@@ -23,6 +23,7 @@ internal object AppSettingsStore {
     private const val KEY_DOUBLE_PAGE_READING_ENABLED = "double_page_reading_enabled"
     private const val KEY_DOUBLE_PAGE_COVER_SINGLE = "double_page_cover_single"
     private const val KEY_VOLUME_KEY_PAGE_TURN = "volume_key_page_turn"
+    private const val KEY_NEXT_MANGA_ENABLED = "next_manga_enabled"
     private const val KEY_AUTO_HIDE_SYSTEM_BARS = "auto_hide_system_bars"
     private const val KEY_BOOKCASE_DIRECTORIES = "bookcase_directories"
     private const val KEY_START_MARKER_ERROR_TAGS = "start_marker_error_tags"
@@ -101,6 +102,13 @@ internal object AppSettingsStore {
     fun isVolumeKeyPageTurnEnabled(context: Context): Boolean {
         return PrefsGateway.open(context, PREFS_NAME)
             .getBoolean(KEY_VOLUME_KEY_PAGE_TURN, true)
+    }
+
+    fun isNextMangaEnabled(context: Context): Boolean =
+        PrefsGateway.open(context, PREFS_NAME).getBoolean(KEY_NEXT_MANGA_ENABLED, true)
+
+    fun setNextMangaEnabled(context: Context, enabled: Boolean) {
+        PrefsGateway.open(context, PREFS_NAME).edit().putBoolean(KEY_NEXT_MANGA_ENABLED, enabled).apply()
     }
 
     fun setVolumeKeyPageTurnEnabled(context: Context, enabled: Boolean) {

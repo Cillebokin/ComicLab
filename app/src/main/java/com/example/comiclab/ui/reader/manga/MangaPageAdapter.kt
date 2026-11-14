@@ -79,6 +79,7 @@ internal class MangaPageAdapter(
     private val coverSinglePage: Boolean,
     private val onPageReady: (position: Int) -> Unit,
     private val onPageTap: () -> Unit,
+    private val onPageDecoded: (position: Int) -> Unit = {},
     private val spreadAnchorSourcePosition: Int? = null
 ) : RecyclerView.Adapter<MangaPageAdapter.PageViewHolder>(), ReaderPageAdapterController {
 
@@ -330,6 +331,11 @@ internal class MangaPageAdapter(
         }
         boundPositions.add(sourcePosition)
         bindBestAvailable(holder, sourcePosition, adapterPosition)
+        if (previewBitmap(sourcePosition) != null || fullBitmap(sourcePosition) != null) {
+            mainHandler.post {
+                if (!closed && holder.boundPosition == sourcePosition) onPageDecoded(sourcePosition)
+            }
+        }
         ensureVisiblePage(sourcePosition)
     }
 
@@ -1397,7 +1403,10 @@ internal class MangaPageAdapter(
                 }
 
                 previewAdmissionRejected = !putPreviewBitmap(position, bitmap, targetWidth)
-                if (!previewAdmissionRejected) requestItemRefresh(position, immediate = !isPreload)
+                if (!previewAdmissionRejected) {
+                    requestItemRefresh(position, immediate = !isPreload)
+                    mainHandler.post { if (!closed) onPageDecoded(position) }
+                }
             } finally {
                 if (registeredLoading) {
                     loadingPreviewPages.remove(position)
@@ -1940,6 +1949,7 @@ internal class MangaPageAdapter(
             }
 
             requestItemRefresh(position, immediate || position in boundPositions)
+            onPageDecoded(position)
             onPageReady(position)
         }
     }
