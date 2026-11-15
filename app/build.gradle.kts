@@ -27,8 +27,8 @@ android {
         applicationId = "com.example.comiclab"
         minSdk = 33
         targetSdk = 36
-        versionCode = 16
-        versionName = "V1.1.4.1108"
+        versionCode = 17
+        versionName = "V1.1.5.1115"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
