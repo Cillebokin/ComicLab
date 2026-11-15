@@ -101,6 +101,16 @@ internal class BoundedKeyedTaskQueue(
         return false
     }
 
+    /** 移除尚在队列中的任务；已经开始的任务继续执行。 */
+    fun cancelQueued(key: String): Boolean {
+        val state = tasks[key] ?: return false
+        if (!executor.remove(state.task)) return false
+        state.cancelled.set(true)
+        state.task.cancel(false)
+        tasks.remove(key, state)
+        return true
+    }
+
     override fun close() {
         closed = true
         tasks.values.forEach { state ->

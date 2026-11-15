@@ -1,6 +1,7 @@
 package com.example.comiclab.ui.browser.panels
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.text.format.DateFormat
 import android.util.LruCache
@@ -9,13 +10,17 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.ProgressBar
 import android.widget.TextView
+import android.os.Handler
+import android.os.Looper
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.core.concurrent.BoundedKeyedTaskQueue
 import com.example.comiclab.ComicArchive
 import com.example.comiclab.R
 import com.example.comiclab.core.store.ReadingHistoryStore
+import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.ui.common.RoundedPopupMenu
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -30,6 +35,13 @@ class ReadingHistoryAdapter(
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     private val coverCache = object : LruCache<String, Bitmap>(HISTORY_COVER_CACHE_SIZE) {}
+    private val pageCounts = object : LruCache<String, Int>(HISTORY_COVER_CACHE_SIZE) {}
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val refreshProgress = Runnable { if (!closed) notifyDataSetChanged() }
+    private val progressListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        mainHandler.removeCallbacks(refreshProgress)
+        mainHandler.post(refreshProgress)
+    }
     private val loadingCovers = Collections.synchronizedSet(mutableSetOf<String>())
     private val failedCovers = Collections.synchronizedSet(mutableSetOf<String>())
     private val coverTasks = BoundedKeyedTaskQueue(HISTORY_COVER_THREAD_COUNT)
@@ -41,6 +53,7 @@ class ReadingHistoryAdapter(
 
     init {
         setHasStableIds(true)
+        ReaderProgressStore.registerChangeListener(context, progressListener)
     }
 
     override fun getItemViewType(position: Int): Int {
@@ -76,7 +89,7 @@ class ReadingHistoryAdapter(
     override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
         if (holder is HistoryViewHolder) {
             val cacheKey = holder.imgCover.tag as? String
-            if (cacheKey != null && coverTasks.cancel(cacheKey)) {
+            if (cacheKey != null && coverTasks.cancelQueued(cacheKey)) {
                 loadingCovers.remove(cacheKey)
             }
         }
@@ -99,6 +112,8 @@ class ReadingHistoryAdapter(
 
     fun close() {
         closed = true
+        ReaderProgressStore.unregisterChangeListener(context, progressListener)
+        mainHandler.removeCallbacks(refreshProgress)
         coverTasks.close()
         loadingCovers.clear()
         failedCovers.clear()
@@ -113,6 +128,10 @@ class ReadingHistoryAdapter(
 
         holder.tvName.text = file.name
         holder.tvPath.text = file.parentFile?.absolutePath.orEmpty()
+        val cacheKey = "${file.absolutePath}:${file.lastModified()}:${file.length()}"
+        val total = pageCounts.get(cacheKey) ?: 0
+        holder.progress.max = total.coerceAtLeast(1)
+        holder.progress.progress = runCatching { ReaderProgressStore.savedReadingPageCount(context, file, total) }.getOrDefault(0)
         holder.content.setOnClickListener {
             historyItemAt(holder.bindingAdapterPosition)?.let(onItemClick)
         }
@@ -242,10 +261,10 @@ class ReadingHistoryAdapter(
             imgCover.imageTintList = null
             imgCover.scaleType = ImageView.ScaleType.CENTER_CROP
             imgCover.setImageBitmap(cachedCover)
-            return
+            if (pageCounts.get(cacheKey) != null) return
         }
 
-        if (cacheKey in failedCovers || !loadingCovers.add(cacheKey)) {
+        if ((cacheKey in failedCovers && pageCounts.get(cacheKey) != null) || !loadingCovers.add(cacheKey)) {
             return
         }
 
@@ -253,9 +272,8 @@ class ReadingHistoryAdapter(
             key = cacheKey,
             onRejected = { loadingCovers.remove(cacheKey) }
         ) { isActive ->
-            val firstImageEntry = runCatching {
-                ComicArchive.imageEntries(file).firstOrNull()
-            }.getOrNull()
+            val entries = runCatching { ComicArchive.imageEntries(file) }.getOrDefault(emptyList())
+            val firstImageEntry = entries.firstOrNull()
             if (!isActive()) {
                 loadingCovers.remove(cacheKey)
                 return@executeCancellable
@@ -271,12 +289,19 @@ class ReadingHistoryAdapter(
                 return@executeCancellable
             }
 
+            pageCounts.put(cacheKey, entries.size)
+            if (cover == null) failedCovers.add(cacheKey) else coverCache.put(cacheKey, cover)
+            mainHandler.post {
+                if (!closed) {
+                    val index = rows.indexOfFirst { it is HistoryRow.HistoryItem && it.item.file.absolutePath == file.absolutePath }
+                    if (index >= 0) notifyItemChanged(index)
+                }
+            }
+
             if (cover == null) {
-                failedCovers.add(cacheKey)
                 return@executeCancellable
             }
 
-            coverCache.put(cacheKey, cover)
             imgCover.post {
                 if (!closed && imgCover.tag == cacheKey) {
                     imgCover.imageTintList = null
@@ -308,6 +333,7 @@ class ReadingHistoryAdapter(
         val imgCover: ImageView = itemView.findViewById(R.id.imgReadingHistoryCover)
         val tvName: TextView = itemView.findViewById(R.id.tvReadingHistoryName)
         val tvPath: TextView = itemView.findViewById(R.id.tvReadingHistoryPath)
+        val progress: ProgressBar = itemView.findViewById(R.id.progressPanelReading)
     }
 
     companion object {
