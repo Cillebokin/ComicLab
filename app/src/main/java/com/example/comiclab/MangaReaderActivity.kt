@@ -3,6 +3,9 @@ package com.example.comiclab
 import com.example.comiclab.core.settings.ComicLabMangaProgress
 import android.content.ComponentCallbacks2
 import android.content.Context
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.res.Configuration
 import android.graphics.Color
@@ -28,9 +31,12 @@ import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.ViewModelProvider
 import androidx.core.view.ViewCompat
+import androidx.core.view.doOnPreDraw
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.content.ContextCompat
+import androidx.appcompat.app.AlertDialog
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.PagerSnapHelper
 import androidx.recyclerview.widget.RecyclerView
@@ -46,6 +52,7 @@ import com.example.comiclab.core.reader.layout.doublePageModeUnavailableReason
 import com.example.comiclab.core.reader.decode.readerScrollDirectionFromDelta
 import com.example.comiclab.core.reader.progress.READER_PROGRESS_CHECKPOINT_DELAY_MS
 import com.example.comiclab.core.store.ReaderProgressStore
+import com.example.comiclab.core.store.PrefsGateway
 import com.example.comiclab.core.store.ReadingHistoryStore
 import com.example.comiclab.ui.reader.common.ReaderBrightnessController
 import com.example.comiclab.ui.reader.common.ReaderControlsController
@@ -58,7 +65,11 @@ import com.example.comiclab.ui.reader.manga.MangaReaderViewModel
 import com.example.comiclab.ui.reader.manga.ReaderPageAdapterController
 import com.example.comiclab.ui.reader.manga.ReaderPreviewAdapter
 import com.example.comiclab.ui.reader.manga.SubsamplingMangaPageAdapter
+import com.example.comiclab.ui.reader.manga.findNextManga
+import com.example.comiclab.ui.browser.DirectorySortPolicy
+import com.example.comiclab.ui.common.showRounded
 import java.io.File
+import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -112,6 +123,13 @@ class MangaReaderActivity : AppCompatActivity() {
     private lateinit var tvReaderTitle: TextView
     private lateinit var tvReaderProgress: TextView
     private lateinit var tvReaderStatus: TextView
+    private lateinit var btnNextManga: Button
+    private var atMangaEnd = false
+    private var nextManga: File? = null
+    private var nextLookupGeneration = 0
+    private var nextHandoffToken: String? = null
+    private var nextHandoffReceiver: BroadcastReceiver? = null
+    private var nextReaderWasReady = false
 
     private val handler = Handler(Looper.getMainLooper())
     private var readerLoadExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -154,6 +172,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private var suppressReaderTap = false
     private var isDraggingReaderSlider = false
     private var shouldStartFromBeginning = false
+    private var startFromBeginningPending = false
     private var explicitStartPageIndex = NO_EXPLICIT_START_PAGE
     private var pendingRestorePosition: Int? = null
     private var pendingRestoreOffset = 0
@@ -214,6 +233,9 @@ class MangaReaderActivity : AppCompatActivity() {
         autoHideSystemBarsEnabled = AppSettings.isAutoHideSystemBarsEnabled(this)
 
         bindViews()
+        nextReaderWasReady = savedInstanceState?.getBoolean(STATE_NEXT_READER_READY) == true
+        nextHandoffToken = savedInstanceState?.getString(STATE_NEXT_HANDOFF_TOKEN)
+        nextHandoffToken?.let { registerNextHandoffReceiver(it) }
         configureImmersiveSystemBars()
         configureBackHandling()
         configureReaderActions()
@@ -237,18 +259,18 @@ class MangaReaderActivity : AppCompatActivity() {
         tvReaderTitle.text = file.nameWithoutExtension
         readerSessionMarker = CrashLogManager.recordReaderSessionStarted(this, file)
         val isFreshActivityLaunch = savedInstanceState == null
-        shouldStartFromBeginning = isFreshActivityLaunch &&
+        startFromBeginningPending = if (isFreshActivityLaunch) {
             intent.getBooleanExtra(EXTRA_START_FROM_BEGINNING, false)
+        } else {
+            savedInstanceState?.getBoolean(STATE_START_FROM_BEGINNING_PENDING) == true
+        }
+        shouldStartFromBeginning = startFromBeginningPending
         explicitStartPageIndex = if (isFreshActivityLaunch) {
             intent.getIntExtra(EXTRA_START_PAGE_INDEX, NO_EXPLICIT_START_PAGE)
         } else {
             NO_EXPLICIT_START_PAGE
         }
         configureDebugReaderStress()
-        if (shouldStartFromBeginning) {
-            readerProgressController.clear(file)
-        }
-
         val preparedCachePath = intent.getStringExtra(EXTRA_PREPARED_READER_CACHE_DIR)
         val preparedCacheDir = preparedCachePath?.let(::File)
         if (preparedCacheDir != null &&
@@ -266,6 +288,9 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
+        nextHandoffToken?.let { outState.putString(STATE_NEXT_HANDOFF_TOKEN, it) }
+        outState.putBoolean(STATE_NEXT_READER_READY, nextReaderWasReady)
+        outState.putBoolean(STATE_START_FROM_BEGINNING_PENDING, startFromBeginningPending)
         outState.putInt(STATE_READER_ORIENTATION, resources.configuration.orientation)
         if (::readerLayoutManager.isInitialized && imageEntries.isNotEmpty()) {
             val (position, offset) = readerPositionForRecreation
@@ -284,6 +309,7 @@ class MangaReaderActivity : AppCompatActivity() {
         updateReaderTranslationVisibility()
         pageAdapter?.onReaderResumed()
         readerPreviewAdapter?.setDecodingEnabled(readerPreviewPanelVisible)
+        updateNextMangaAtEnd()
         listReaderPages.post {
             if (!destroyed && pageAdapter != null) {
                 val first = readerLayoutManager.findFirstVisibleItemPosition()
@@ -318,6 +344,7 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        clearNextHandoff()
         destroyed = true
         pageEnhancementDialog?.close()
         pageEnhancementDialog = null
@@ -411,6 +438,8 @@ class MangaReaderActivity : AppCompatActivity() {
         tvReaderTitle = findViewById(R.id.tvReaderTitle)
         tvReaderProgress = findViewById(R.id.tvReaderProgress)
         tvReaderStatus = findViewById(R.id.tvReaderStatus)
+        btnNextManga = findViewById(R.id.btnNextManga)
+        btnNextManga.setOnClickListener { chooseNextManga() }
         readerControlsController = ReaderControlsController(
             window = window,
             rootView = rootView,
@@ -498,12 +527,30 @@ class MangaReaderActivity : AppCompatActivity() {
                 }
 
                 saveReaderPosition(forceCommit = true)
+                val file = archiveFile
+                if (intent.getBooleanExtra(EXTRA_RETURN_TO_CURRENT_PREVIEW, false) && file != null &&
+                    nextReaderWasReady
+                ) {
+                    try {
+                        startActivity(Intent(this@MangaReaderActivity, MangaPreviewActivity::class.java).apply {
+                            putExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
+                            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        })
+                    } catch (_: Exception) {
+                        Toast.makeText(this@MangaReaderActivity, R.string.reader_next_unavailable, Toast.LENGTH_SHORT).show()
+                        return
+                    }
+                }
                 finish()
             }
         })
     }
 
     private fun configureReaderActions() {
+        listReaderPages.addOnChildAttachStateChangeListener(object : RecyclerView.OnChildAttachStateChangeListener {
+            override fun onChildViewAttachedToWindow(view: View) { scheduleNextMangaEndCheck() }
+            override fun onChildViewDetachedFromWindow(view: View) { scheduleNextMangaEndCheck() }
+        })
         listReaderPages.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
                 readerScrollState = newState
@@ -512,6 +559,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 }
 
                 if (newState == RecyclerView.SCROLL_STATE_IDLE) {
+                    updateNextMangaAtEnd()
                     handler.removeCallbacks(readerCheckpointRunnable)
                     saveReaderPosition(forceCommit = true)
                     pageAdapter?.flushPendingRefreshesIfIdle()
@@ -537,6 +585,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 val totalItemCount = pageAdapter?.readerItemCount() ?: 0
                 updateCurrentReaderPosition(firstVisibleItem)
                 updateReaderProgress(firstVisibleItem, totalItemCount)
+                updateNextMangaAtEnd()
                 scheduleReaderPositionCheckpoint()
 
                 val primaryDelta = if (isHorizontalReading()) dx else dy
@@ -833,7 +882,8 @@ class MangaReaderActivity : AppCompatActivity() {
             },
             onPageTap = {
                 handleReaderTap()
-            }
+            },
+            onPageDecoded = ::onReaderPageDecoded
         )
         pageAdapter = adapter
         listReaderPages.adapter = adapter
@@ -882,7 +932,8 @@ class MangaReaderActivity : AppCompatActivity() {
             },
             onPageTap = {
                 handleReaderTap()
-            }
+            },
+            onPageDecoded = ::onReaderPageDecoded
         )
         pageAdapter = adapter
         listReaderPages.adapter = adapter
@@ -954,7 +1005,9 @@ class MangaReaderActivity : AppCompatActivity() {
             }
         }
         updateReaderTranslationVisibility()
+        scheduleNextMangaEndCheck()
         listReaderPages.post {
+            updateNextMangaAtEnd()
             preloadReaderAround(
                 firstVisiblePosition = readerLayoutManager.findFirstVisibleItemPosition()
                     .coerceAtLeast(0),
@@ -963,6 +1016,23 @@ class MangaReaderActivity : AppCompatActivity() {
                 force = true
             )
             startDebugReaderStressIfNeeded()
+        }
+    }
+
+    private fun onReaderPageDecoded(position: Int) {
+        if (!isReaderActive() || position != currentReaderPosition || position !in imageEntries.indices) return
+        if (startFromBeginningPending) {
+            val file = archiveFile ?: return
+            readerProgressController.clear(file)
+            startFromBeginningPending = false
+        }
+        if (intent.getBooleanExtra(EXTRA_RETURN_TO_CURRENT_PREVIEW, false) && !nextReaderWasReady) {
+            nextReaderWasReady = true
+            intent.getStringExtra(EXTRA_NEXT_HANDOFF_TOKEN)?.let { token ->
+                sendBroadcast(Intent(ACTION_NEXT_READER_READY).setPackage(packageName)
+                    .putExtra(EXTRA_NEXT_HANDOFF_TOKEN, token))
+                intent.removeExtra(EXTRA_NEXT_HANDOFF_TOKEN)
+            }
         }
     }
 
@@ -1411,6 +1481,7 @@ class MangaReaderActivity : AppCompatActivity() {
         val targetPosition = position.coerceIn(0, imageEntries.lastIndex)
         val layoutPosition = readerSpreadStartPosition(targetPosition)
         readerLayoutManager.scrollToPositionWithOffset(layoutPosition, 0)
+        scheduleNextMangaEndCheck()
         currentReaderPosition = readerSpreadStartSourcePosition(targetPosition)
         currentReaderOffset = 0
         updateReaderTranslationVisibility()
@@ -1458,6 +1529,9 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun saveReaderPosition(forceCommit: Boolean = false) {
+        if (startFromBeginningPending ||
+            (intent.getBooleanExtra(EXTRA_RETURN_TO_CURRENT_PREVIEW, false) && !nextReaderWasReady)
+        ) return
         val file = archiveFile ?: return
         if (imageEntries.isEmpty()) {
             return
@@ -1546,6 +1620,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
             val layoutPosition = readerSpreadStartPosition(position)
             readerLayoutManager.scrollToPositionWithOffset(layoutPosition, pendingRestoreOffset)
+            scheduleNextMangaEndCheck()
             updateReaderProgress(layoutPosition, imageEntries.size)
 
             if (restoreAttemptCount < RESTORE_READER_POSITION_MAX_ATTEMPTS) {
@@ -1629,6 +1704,136 @@ class MangaReaderActivity : AppCompatActivity() {
 
         val lastVisiblePosition = readerLayoutManager.findLastVisibleItemPosition()
         return lastVisiblePosition == totalItemCount - 1 && !listReaderPages.canScrollVertically(1)
+    }
+
+    private fun updateNextMangaAtEnd() {
+        if (!AppSettings.isNextMangaEnabled(this)) {
+            atMangaEnd = false
+            nextLookupGeneration++
+            nextManga = null
+            btnNextManga.visibility = View.GONE
+            return
+        }
+        val file = archiveFile ?: return
+        if (file.absolutePath.startsWith(cacheDir.absolutePath + File.separator)) return
+        val count = imageEntries.size
+        val atEnd = if (count == 0 || listReaderPages.childCount == 0) {
+            false
+        } else if (isHorizontalReading()) {
+            val lastPage = readerPagePositionMapper().adapterPositionForSourcePosition(count - 1)
+            readerLayoutManager.findLastVisibleItemPosition() >= lastPage &&
+                !listReaderPages.canScrollHorizontally(if (readerLayoutManager.reverseLayout) -1 else 1)
+        } else {
+            isAtVerticalReaderEnd(count)
+        }
+        if (atEnd == atMangaEnd) return
+        atMangaEnd = atEnd
+        val generation = ++nextLookupGeneration
+        nextManga = null
+        if (!atEnd) {
+            btnNextManga.visibility = View.GONE
+            return
+        }
+        btnNextManga.visibility = View.VISIBLE
+        btnNextManga.isEnabled = false
+        btnNextManga.setText(R.string.reader_next_loading)
+        val order = DirectorySortPolicy.savedOrder(PrefsGateway.open(this, "saf_prefs"))
+        executeReaderLoadTask {
+            val result = runCatching { findNextManga(file, order) }
+            runOnUiThread {
+                if (destroyed || !atMangaEnd || generation != nextLookupGeneration ||
+                    !AppSettings.isNextMangaEnabled(this)) return@runOnUiThread
+                nextManga = result.getOrNull()
+                btnNextManga.isEnabled = nextManga != null || result.isFailure
+                btnNextManga.text = when {
+                    result.isFailure -> getString(R.string.reader_next_unavailable)
+                    nextManga == null -> getString(R.string.reader_no_next_manga)
+                    else -> getString(R.string.reader_next_manga, nextManga!!.name)
+                }
+            }
+        }
+    }
+
+    private fun scheduleNextMangaEndCheck() {
+        if (destroyed) return
+        listReaderPages.doOnPreDraw {
+            if (!destroyed) updateNextMangaAtEnd()
+        }
+    }
+
+    private fun chooseNextManga() {
+        if (!AppSettings.isNextMangaEnabled(this)) {
+            updateNextMangaAtEnd()
+            return
+        }
+        val file = nextManga ?: run {
+            atMangaEnd = false
+            updateNextMangaAtEnd()
+            return
+        }
+        if (!file.isFile) {
+            Toast.makeText(this, R.string.reader_next_unavailable, Toast.LENGTH_SHORT).show()
+            atMangaEnd = false
+            updateNextMangaAtEnd()
+            return
+        }
+        if (hasSavedReadingProgress(this, file)) {
+            AlertDialog.Builder(this)
+                .setTitle(file.name)
+                .setMessage(R.string.reader_progress_dialog_message)
+                .setPositiveButton(R.string.continue_reading) { _, _ -> openNextManga(file, false) }
+                .setNegativeButton(R.string.read_from_beginning) { _, _ -> openNextManga(file, true) }
+                .setNeutralButton(R.string.cancel, null)
+                .showRounded()
+        } else {
+            openNextManga(file, false)
+        }
+    }
+
+    private fun openNextManga(file: File, fromBeginning: Boolean) {
+        if (!AppSettings.isNextMangaEnabled(this)) {
+            updateNextMangaAtEnd()
+            return
+        }
+        if (!file.isFile) {
+            Toast.makeText(this, R.string.reader_next_unavailable, Toast.LENGTH_SHORT).show()
+            return
+        }
+        saveReaderPosition(forceCommit = true)
+        clearNextHandoff()
+        val token = UUID.randomUUID().toString()
+        nextHandoffToken = token
+        registerNextHandoffReceiver(token)
+        val target = if (ComicArchive.isPdf(file)) MangaReaderActivity::class.java
+            else MangaReaderPrepareActivity::class.java
+        try {
+            startActivity(Intent(this, target).apply {
+                putExtra(EXTRA_ARCHIVE_PATH, file.absolutePath)
+                putExtra(EXTRA_START_FROM_BEGINNING, fromBeginning)
+                putExtra(EXTRA_NEXT_HANDOFF_TOKEN, token)
+                putExtra(EXTRA_RETURN_TO_CURRENT_PREVIEW, true)
+            })
+        } catch (_: Exception) {
+            clearNextHandoff()
+            Toast.makeText(this, R.string.reader_next_unavailable, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun registerNextHandoffReceiver(token: String) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                if (intent.getStringExtra(EXTRA_NEXT_HANDOFF_TOKEN) == token) finish()
+            }
+        }
+        ContextCompat.registerReceiver(this, receiver, IntentFilter(ACTION_NEXT_READER_READY),
+            ContextCompat.RECEIVER_NOT_EXPORTED)
+        nextHandoffReceiver = receiver
+    }
+
+    private fun clearNextHandoff() {
+        nextHandoffReceiver?.let { unregisterReceiver(it) }
+        nextHandoffReceiver = null
+        nextHandoffToken = null
     }
 
     private fun centerVisibleReaderPosition(): Int {
@@ -1980,6 +2185,12 @@ class MangaReaderActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_ARCHIVE_PATH = "archive_path"
+        const val EXTRA_NEXT_HANDOFF_TOKEN = "next_handoff_token"
+        const val EXTRA_RETURN_TO_CURRENT_PREVIEW = "return_to_current_preview"
+        private const val ACTION_NEXT_READER_READY = "com.example.comiclab.NEXT_READER_READY"
+        private const val STATE_NEXT_HANDOFF_TOKEN = "state_next_handoff_token"
+        private const val STATE_NEXT_READER_READY = "state_next_reader_ready"
+        private const val STATE_START_FROM_BEGINNING_PENDING = "state_start_from_beginning_pending"
         const val EXTRA_START_FROM_BEGINNING = "start_from_beginning"
         const val EXTRA_START_PAGE_INDEX = "start_page_index"
         const val EXTRA_PREPARED_READER_CACHE_DIR = "prepared_reader_cache_dir"

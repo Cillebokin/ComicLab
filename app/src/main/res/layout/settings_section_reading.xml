@@ -168,6 +168,15 @@
                 android:textColor="@color/comiclab_text_secondary"
                 android:textSize="@dimen/text_body" />
             <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switchNextManga"
+                style="@style/Widget.ComicLab.Switch"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:gravity="center_vertical"
+                android:text="@string/next_manga_setting"
+                android:textColor="@color/comiclab_text_secondary"
+                android:textSize="@dimen/text_body" />
+            <androidx.appcompat.widget.SwitchCompat
                 android:id="@+id/switchCustomReaderBrightness"
                 style="@style/Widget.ComicLab.Switch"
                 android:layout_width="match_parent"

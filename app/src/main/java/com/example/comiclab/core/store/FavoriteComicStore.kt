@@ -117,6 +117,9 @@ object FavoriteComicStore {
             favoriteFilePaths(context).contains(file.absolutePath)
     }
 
+    internal fun favoriteState(context: Context, file: File): Boolean? =
+        readStoredItems(context)?.any { it.path == file.absolutePath }
+
     fun favoriteFilePaths(context: Context): Set<String> {
         return items(context)
             .map { it.file.absolutePath }

@@ -32,14 +32,44 @@ class PhoneTranslationDeviceTest {
     @Test fun singlePageProbe() {
         val args = InstrumentationRegistry.getArguments()
         val mode = args.getString("phoneMode") ?: ""
-        assumeTrue(mode in listOf("local", "detectCancel", "ocrCancel", "repairCancel", "ai", "apiCancel", "ui", "uiReader", "settings"))
+        assumeTrue(mode in listOf("local", "book", "repair", "detectCancel", "ocrCancel", "repairCancel", "ai", "apiCancel", "ui", "uiReader", "settings"))
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val sampleId = args.getString("sampleId", "")!!
+        val ocrConcurrency = args.getString("ocrConcurrency")?.toIntOrNull()
+            ?: SinglePageTranslation.DEFAULT_OCR_CONCURRENCY
+        val inpaintConcurrency = args.getString("inpaintConcurrency")?.toIntOrNull()
+            ?: SinglePageTranslation.DEFAULT_INPAINT_CONCURRENCY
+        val inpaintThreads = args.getString("inpaintThreads")?.toIntOrNull()
+            ?: SinglePageTranslation.DEFAULT_INPAINT_THREADS
+        val inpaintWinograd = args.getString("inpaintWinograd")?.toBooleanStrictOrNull() ?: false
+        val inpaintSgemm = args.getString("inpaintSgemm")?.toBooleanStrictOrNull() ?: false
+        require(ocrConcurrency in 1..4)
+        require(inpaintConcurrency in 1..4)
+        require(inpaintThreads in 1..2)
         require(sampleId.matches(Regex("[a-zA-Z0-9_-]*")))
         val root = File(context.filesDir, "translation-phone" + if (sampleId.isEmpty()) "" else "/$sampleId").apply { mkdirs() }
         val source = File(root, "source.png")
-        check(source.isFile) { "Supply an explicit device sample first" }
+        if (!source.isFile && sampleId in listOf("synthetic", "textured")) {
+            val page = Bitmap.createBitmap(1200, 2200, Bitmap.Config.ARGB_8888)
+            try {
+                val canvas = Canvas(page); canvas.drawColor(Color.WHITE)
+                val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 76f }
+                listOf("こんにちは世界", "今日はいい天気ですね", "本当にそう思います", "もう一度お願いします",
+                    "それはとても面白い", "大丈夫ですか", "少し待ってください", "ありがとう").forEachIndexed { index, text ->
+                    val baseline = 170f + index * 250f
+                    if (sampleId == "textured") {
+                        val texture = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            shader = LinearGradient(40f, baseline - 100f, 1080f, baseline - 100f,
+                                Color.rgb(214, 214, 214), Color.rgb(250, 250, 250), Shader.TileMode.CLAMP)
+                        }
+                        canvas.drawRect(40f, baseline - 100f, 1080f, baseline + 18f, texture)
+                    }
+                    canvas.drawText(text, 80f, baseline, paint)
+                }
+            } finally { source.outputStream().use { page.compress(Bitmap.CompressFormat.PNG, 100, it) }; page.recycle() }
+        }
+        check(source.isFile) { "Supply a sample or use sampleId=synthetic" }
         val archive = File(root, "sample.cbz")
         if (!archive.exists()) ZipOutputStream(archive.outputStream()).use { zip ->
             zip.putNextEntry(ZipEntry("001.png")); source.inputStream().use { it.copyTo(zip) }; zip.closeEntry()
@@ -48,6 +78,73 @@ class PhoneTranslationDeviceTest {
         File(context.filesDir, "translation-validation-models").listFiles()?.forEach {
             val target = File(models, it.name)
             if (target.length() != it.length()) it.copyTo(target, overwrite = true)
+        }
+        if (!TranslationModels.hasCompletePackage(context)) {
+            val packageFile = File(context.getExternalFilesDir(null), "translation-models.zip")
+            require(packageFile.isFile) { "Place the official model package at ${packageFile.absolutePath}" }
+            TranslationModels.importPackage(context, packageFile.inputStream(), AtomicBoolean()) { }
+        }
+        TranslationSettingsStore.setAutomaticTranslationEnabled(context, true)
+        if (mode == "book") {
+            val pageCount = (args.getString("bookPages")?.toIntOrNull() ?: 4).coerceIn(2, 12)
+            val book = File(root, "benchmark-book.cbz")
+            ZipOutputStream(book.outputStream()).use { zip ->
+                repeat(pageCount) { index ->
+                    zip.putNextEntry(ZipEntry("%06d.png".format(index + 1)))
+                    source.inputStream().use { it.copyTo(zip) }
+                    zip.closeEntry()
+                }
+            }
+            val bookDirectory = File(root, "book-$ocrConcurrency-$inpaintConcurrency")
+            if (bookDirectory.exists()) check(bookDirectory.deleteRecursively())
+            check(bookDirectory.mkdirs() || bookDirectory.isDirectory)
+            val cancelled = AtomicBoolean()
+            val started = SystemClock.elapsedRealtime()
+            val events = JSONArray()
+            val baselinePss = Debug.getPss()
+            val peakPss = AtomicLong(baselinePss.toLong())
+            val samplePss = AtomicBoolean(true)
+            val sampler = Thread {
+                while (samplePss.get()) {
+                    peakPss.updateAndGet { maxOf(it, Debug.getPss().toLong()) }
+                    try { Thread.sleep(50) } catch (_: InterruptedException) { break }
+                }
+            }.apply { start() }
+            val settings = TranslationSettings("https://example.invalid/v1", "local-device-probe", "unused")
+            val translator: (TranslationSettings, List<String>, String, AtomicBoolean) -> List<String> =
+                { _, texts, _, _ -> texts.mapIndexed { i, _ -> "示例译文${i + 1}" } }
+            val result = try {
+                ArchiveTranslation.translate(
+                    context = context,
+                    source = book,
+                    directory = bookDirectory,
+                    cancelled = cancelled,
+                    language = args.getString("language", "English")!!,
+                    settings = settings,
+                    ocrConcurrency = ocrConcurrency,
+                    inpaintConcurrency = inpaintConcurrency,
+                    translate = translator
+                ) { page, total, percent, stage, translated, kept ->
+                    events.put(JSONObject().put("page", page).put("total", total).put("percent", percent)
+                        .put("stage", stage).put("translated", translated).put("kept", kept)
+                        .put("ms", SystemClock.elapsedRealtime() - started))
+                }
+            } finally {
+                samplePss.set(false); sampler.interrupt(); sampler.join()
+            }
+            val outputEntries = java.util.zip.ZipFile(result.file).use { zip ->
+                zip.entries().asSequence().map { it.name }.toList()
+            }
+            assertEquals(pageCount, result.translatedPages)
+            assertEquals(0, result.keptOriginalPages)
+            assertEquals(pageCount, outputEntries.size)
+            File(root, "book-$ocrConcurrency-$inpaintConcurrency-report.json").writeText(JSONObject()
+                .put("mode", mode).put("ocrConcurrency", ocrConcurrency).put("inpaintConcurrency", inpaintConcurrency)
+                .put("pageCount", pageCount)
+                .put("elapsedMs", SystemClock.elapsedRealtime() - started).put("outputEntries", JSONArray(outputEntries))
+                .put("baselinePssKiB", baselinePss).put("peakPssKiB", peakPss.get())
+                .put("events", events).toString(2))
+            return
         }
         var readerActivity: android.app.Activity? = null
         fun openPage(): PageTranslationActivity {
@@ -82,8 +179,9 @@ class PhoneTranslationDeviceTest {
             return activity
         }
         if (mode == "settings") {
-            openPage()
-            onView(withText(R.string.translation_settings)).perform(click())
+            instrumentation.startActivitySync(Intent(context, SettingsActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra(SettingsActivity.EXTRA_SETTINGS_SECTION, SettingsActivity.SETTINGS_SECTION_AUTO_TRANSLATION))
             val deadline = SystemClock.elapsedRealtime() + 10 * 60_000
             while (SystemClock.elapsedRealtime() < deadline) {
                 if (runCatching { TranslationSettingsStore.load(context).key.isNotBlank() }.getOrDefault(false)) {
@@ -151,8 +249,8 @@ class PhoneTranslationDeviceTest {
                 }
                 // Let the real region-decoded preview load, then compare and return to translated page.
                 Thread.sleep(2000)
-                press(R.string.translation_compare); Thread.sleep(500)
-                press(R.string.translation_compare); Thread.sleep(500)
+                press(R.string.reader_enhance_original); Thread.sleep(500)
+                press(R.string.translation_result); Thread.sleep(500)
                 checkNotNull(output).copyTo(File(root, "$mode-output.png"), overwrite = true)
                 report.put("success", true)
             } finally {
@@ -183,7 +281,10 @@ class PhoneTranslationDeviceTest {
             } finally { thread.interrupt(); thread.join() }
             return
         }
-        val work = File(root, mode).apply { mkdirs() }
+        val work = File(root, if (mode == "repair")
+            "$mode-$ocrConcurrency-$inpaintConcurrency-$inpaintThreads-$inpaintWinograd-$inpaintSgemm" else mode)
+        if (mode == "repair" && work.exists()) check(work.deleteRecursively())
+        check(work.mkdirs() || work.isDirectory)
         val report = JSONObject().put("mode", mode).put("abi", android.os.Build.SUPPORTED_ABIS.first())
         val events = JSONArray()
         val active = AtomicBoolean(true); val cancelled = AtomicBoolean()
@@ -198,7 +299,10 @@ class PhoneTranslationDeviceTest {
         }.apply { start() }
         var calls = 0
         val cancelledAt = AtomicLong()
-        fun pipeline(cancelPhase: String? = null) = SinglePageTranslation(context, cancelled) { stage ->
+        var analysisElapsedMs = -1L
+        var analysisPeakPssKiB = -1L
+        fun pipeline(cancelPhase: String? = null) = SinglePageTranslation(context, cancelled, ocrConcurrency,
+            inpaintConcurrency, inpaintThreads, inpaintWinograd, inpaintSgemm) { stage ->
             events.put(JSONObject().put("stage", stage).put("ms", SystemClock.elapsedRealtime() - start)
                 .put("nativeAllocatedBytes", Debug.getNativeHeapAllocatedSize()))
             if (cancelPhase != null && stage.startsWith(cancelPhase)) {
@@ -221,7 +325,12 @@ class PhoneTranslationDeviceTest {
         try {
             if (mode.endsWith("Cancel")) {
                 assertThrows(CancellationException::class.java) {
-                    pipeline(when (mode) { "detectCancel" -> "detect"; "ocrCancel" -> "ocr|2/"; else -> "inpaint|" })
+                    pipeline(when (mode) {
+                        "detectCancel" -> "detect"
+                        "ocrCancel" -> "ocr|2/"
+                        "repairCancel" -> "inpaint|1/"
+                        else -> "inpaint|"
+                    })
                         .process(archive, "001.png", work, settings, targetLanguage, translator)
                 }
                 report.put("cancelReturnMs", SystemClock.elapsedRealtime() - cancelledAt.get())
@@ -230,8 +339,102 @@ class PhoneTranslationDeviceTest {
             }
             val processor = pipeline()
             val analysis = processor.process(archive, "001.png", work, settings, targetLanguage, translator)
+            analysisElapsedMs = SystemClock.elapsedRealtime() - start
+            analysisPeakPssKiB = peak.get()
             completed = analysis
-            report.put("width", analysis.width).put("height", analysis.height)
+            if (mode == "repair") assertTrue("Textured test did not exercise AOT", analysis.inpaintCalls > 0)
+            val currentOcr = analysis.blocks.joinToString("\n") { "${it.region.sourceText}\u001f${it.region.direction}" }
+            val serialReport = File(root, "local-1-report.json")
+            if (mode == "local" && ocrConcurrency > 1) {
+                assertTrue("Run OCR concurrency 1 first", serialReport.isFile)
+                val serialBlocks = JSONObject(serialReport.readText()).getJSONArray("blocks")
+                val serialOcr = (0 until serialBlocks.length()).joinToString("\n") { index ->
+                    val block = serialBlocks.getJSONObject(index)
+                    "${block.getString("source")}\u001f${block.getString("direction")}"
+                }
+                assertEquals("OCR text/direction changed at concurrency $ocrConcurrency", serialOcr, currentOcr)
+            }
+            val patchHashes = JSONArray().apply { analysis.patches.forEach { patch ->
+                val digest = java.security.MessageDigest.getInstance("SHA-256").digest(patch.file.readBytes())
+                    .joinToString("") { "%02x".format(it) }
+                put(digest)
+            } }
+            val isAotBaseline = inpaintConcurrency == 2 && inpaintThreads == 2 && !inpaintWinograd && !inpaintSgemm
+            if (mode == "repair" && !isAotBaseline) {
+                val baselineReport = File(root, "repair-$ocrConcurrency-2-2-false-false-report.json")
+                val baselineDirectory = File(root, "repair-$ocrConcurrency-2-2-false-false")
+                assertTrue("Run default AOT baseline first", baselineReport.isFile && baselineDirectory.isDirectory)
+                val baselineJson = JSONObject(baselineReport.readText())
+                val baselineBlocks = baselineJson.getJSONArray("blocks")
+                val baselineOcr = (0 until baselineBlocks.length()).joinToString("\n") { index ->
+                    val block = baselineBlocks.getJSONObject(index)
+                    "${block.getString("source")}\u001f${block.getString("direction")}" 
+                }
+                assertEquals("OCR text/direction changed", baselineOcr, currentOcr)
+                if (!inpaintWinograd && !inpaintSgemm) {
+                    assertEquals("Repair patches changed at concurrency $inpaintConcurrency and threads $inpaintThreads",
+                        baselineJson.getJSONArray("patchHashes").toString(), patchHashes.toString())
+                } else {
+                    val baselineCount = baselineJson.getInt("patches")
+                    assertEquals("Repair patch count changed", baselineCount, analysis.patches.size)
+                    var exactFiles = true
+                    var absoluteDelta = 0L
+                    var repairedPixels = 0L
+                    var changedPixels = 0L
+                    var maxChannelDelta = 0
+                    analysis.patches.forEach { candidatePatch ->
+                        val baseFile = File(baselineDirectory, candidatePatch.file.name)
+                        assertTrue("Missing baseline patch ${candidatePatch.file.name}", baseFile.isFile)
+                        val baseBytes = baseFile.readBytes()
+                        val candidateBytes = candidatePatch.file.readBytes()
+                        if (!baseBytes.contentEquals(candidateBytes)) exactFiles = false
+                        val baseBitmap = BitmapFactory.decodeByteArray(baseBytes, 0, baseBytes.size)
+                            ?: error("Cannot decode baseline patch")
+                        val candidateBitmap = BitmapFactory.decodeByteArray(candidateBytes, 0, candidateBytes.size)
+                            ?: run { baseBitmap.recycle(); error("Cannot decode candidate patch") }
+                        try {
+                            assertEquals("Patch width changed", baseBitmap.width, candidateBitmap.width)
+                            assertEquals("Patch height changed", baseBitmap.height, candidateBitmap.height)
+                            val basePixels = IntArray(baseBitmap.width * baseBitmap.height)
+                            val candidatePixels = IntArray(basePixels.size)
+                            baseBitmap.getPixels(basePixels, 0, baseBitmap.width, 0, 0, baseBitmap.width, baseBitmap.height)
+                            candidateBitmap.getPixels(candidatePixels, 0, candidateBitmap.width, 0, 0,
+                                candidateBitmap.width, candidateBitmap.height)
+                            basePixels.indices.forEach { pixelIndex ->
+                                val basePixel = basePixels[pixelIndex]
+                                val candidatePixel = candidatePixels[pixelIndex]
+                                val basePainted = basePixel ushr 24 != 0
+                                val candidatePainted = candidatePixel ushr 24 != 0
+                                assertEquals("Repair mask changed in ${candidatePatch.file.name}", basePainted, candidatePainted)
+                                if (basePainted) {
+                                    val deltaR = kotlin.math.abs(((basePixel ushr 16) and 255) - ((candidatePixel ushr 16) and 255))
+                                    val deltaG = kotlin.math.abs(((basePixel ushr 8) and 255) - ((candidatePixel ushr 8) and 255))
+                                    val deltaB = kotlin.math.abs((basePixel and 255) - (candidatePixel and 255))
+                                    absoluteDelta += deltaR + deltaG + deltaB
+                                    maxChannelDelta = maxOf(maxChannelDelta, deltaR, deltaG, deltaB)
+                                    val pixelChanged = deltaR != 0 || deltaG != 0 || deltaB != 0
+                                    repairedPixels++
+                                    if (pixelChanged) changedPixels++
+                                }
+                            }
+                        } finally { baseBitmap.recycle(); candidateBitmap.recycle() }
+                    }
+                    report.put("aotExactPatchFiles", exactFiles)
+                        .put("aotRepairedPixelMae", if (repairedPixels == 0L) 0.0 else absoluteDelta.toDouble() / (repairedPixels * 3))
+                        .put("aotChangedPixelFraction", if (repairedPixels == 0L) 0.0 else changedPixels.toDouble() / repairedPixels)
+                        .put("aotMaxChannelDelta", maxChannelDelta)
+                }
+            }
+            report.put("width", analysis.width).put("height", analysis.height).put("ocrConcurrency", ocrConcurrency)
+                .put("inpaintConcurrency", inpaintConcurrency).put("inpaintThreads", inpaintThreads)
+                .put("inpaintWinograd", inpaintWinograd).put("inpaintSgemm", inpaintSgemm)
+                .put("inpaintCalls", analysis.inpaintCalls)
+                .put("repairSetupMs", analysis.repairTiming.setupNanos / 1_000_000.0)
+                .put("aotInputMs", analysis.repairTiming.inputNanos / 1_000_000.0)
+                .put("aotInferenceMs", analysis.repairTiming.inferenceNanos / 1_000_000.0)
+                .put("aotOutputMs", analysis.repairTiming.outputNanos / 1_000_000.0)
+                .put("patchWriteMs", analysis.repairTiming.patchNanos / 1_000_000.0)
+                .put("patchHashes", patchHashes)
             report.put("blocks", JSONArray().apply { analysis.blocks.forEach { block ->
                 val r = block.region
                 put(JSONObject().put("source", r.sourceText).put("translation", block.text).put("direction", r.direction)
@@ -240,6 +443,26 @@ class PhoneTranslationDeviceTest {
             // Preview generation is excluded from measured PSS and elapsed time.
             val output = processor.render(analysis, work, TranslationStyle())
             report.put("output", output.name).put("patches", analysis.patches.size)
+            val ocrStart = (0 until events.length()).map { events.getJSONObject(it) }
+                .firstOrNull { it.optString("stage").startsWith("ocr|0/") }
+            val ocrFinish = (0 until events.length()).map { events.getJSONObject(it) }
+                .lastOrNull { event ->
+                    val stage = event.optString("stage")
+                    if (!stage.startsWith("ocr|")) false else {
+                        val counts = stage.removePrefix("ocr|").split("/")
+                        counts.size == 2 && counts[0] == counts[1]
+                    }
+                }
+            if (ocrStart != null && ocrFinish != null) {
+                report.put("ocrElapsedMs", ocrFinish.getLong("ms") - ocrStart.getLong("ms"))
+            }
+            val inpaintStart = (0 until events.length()).map { events.getJSONObject(it) }
+                .firstOrNull { it.optString("stage").startsWith("inpaint|0/") }
+            val inpaintFinish = (0 until events.length()).map { events.getJSONObject(it) }
+                .firstOrNull { it.optString("stage") == "render" }
+            if (inpaintStart != null && inpaintFinish != null) {
+                report.put("inpaintElapsedMs", inpaintFinish.getLong("ms") - inpaintStart.getLong("ms"))
+            }
             if (mode == "repairCancel") assertEquals("Paid translation must survive repair cancellation", 1, calls)
             report.put("success", true)
         } catch (error: Throwable) {
@@ -247,10 +470,16 @@ class PhoneTranslationDeviceTest {
             throw error
         } finally {
             report.put("elapsedMs", SystemClock.elapsedRealtime() - start).put("events", events)
+                .put("analysisElapsedMs", analysisElapsedMs).put("analysisPeakPssKiB", analysisPeakPssKiB)
                 .put("baselinePssKiB", baseline).put("peakPssKiB", peak.get()).put("translatorCalls", calls)
                 .put("nativePeakAllocatedBytes", nativePeak.get()).put("nativeEndAllocatedBytes", Debug.getNativeHeapAllocatedSize())
             active.set(false); sampler.interrupt(); sampler.join()
-            File(root, "$mode-report.json").writeText(report.toString(2))
+            File(root, when (mode) {
+                "local" -> "local-$ocrConcurrency-report.json"
+                "repair" -> "repair-$ocrConcurrency-$inpaintConcurrency-$inpaintThreads-$inpaintWinograd-$inpaintSgemm-report.json"
+                else -> "$mode-report.json"
+            })
+                .writeText(report.toString(2))
         }
         // Separate diagnostic output; excluded from timing/memory benchmark and original remains untouched.
         val erased = SinglePageTranslation(context, AtomicBoolean(), {}).render(checkNotNull(completed).copy(blocks = emptyList()), work, TranslationStyle())

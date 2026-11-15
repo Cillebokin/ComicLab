@@ -64,6 +64,11 @@ object AppSettings {
     fun isVolumeKeyPageTurnEnabled(context: Context): Boolean =
         AppSettingsStore.isVolumeKeyPageTurnEnabled(context)
 
+    fun isNextMangaEnabled(context: Context): Boolean = AppSettingsStore.isNextMangaEnabled(context)
+
+    fun setNextMangaEnabled(context: Context, enabled: Boolean) =
+        AppSettingsStore.setNextMangaEnabled(context, enabled)
+
     fun setVolumeKeyPageTurnEnabled(context: Context, enabled: Boolean) =
         AppSettingsStore.setVolumeKeyPageTurnEnabled(context, enabled)
 
@@ -96,6 +101,7 @@ object AppSettings {
             doublePageReadingEnabled = isDoublePageReadingEnabled(context),
             doublePageCoverSingle = isDoublePageCoverSingleEnabled(context),
             volumeKeyPageTurn = isVolumeKeyPageTurnEnabled(context),
+            nextMangaEnabled = isNextMangaEnabled(context),
             autoHideSystemBars = isAutoHideSystemBarsEnabled(context),
             startMarkerErrorTags = getStartMarkerErrorTags(context),
             customReaderBrightnessEnabled = isCustomReaderBrightnessEnabled(context),
@@ -128,6 +134,10 @@ object AppSettings {
         }
         settings.volumeKeyPageTurn?.let {
             setVolumeKeyPageTurnEnabled(context, it)
+            appliedCount++
+        }
+        settings.nextMangaEnabled?.let {
+            setNextMangaEnabled(context, it)
             appliedCount++
         }
         settings.autoHideSystemBars?.let {

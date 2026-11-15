@@ -48,6 +48,7 @@ internal class SubsamplingMangaPageAdapter(
     private val coverSinglePage: Boolean,
     private val onPageReady: (position: Int) -> Unit,
     private val onPageTap: () -> Unit,
+    private val onPageDecoded: (position: Int) -> Unit = {},
     private val closeWaitTimeoutMs: Long = PREPARED_READER_CLOSE_WAIT_TIMEOUT_MS,
     private val spreadAnchorSourcePosition: Int? = null
 ) : RecyclerView.Adapter<SubsamplingMangaPageAdapter.PageViewHolder>(),
@@ -124,7 +125,16 @@ internal class SubsamplingMangaPageAdapter(
         }
         container.addView(imageView)
         container.addView(statusText)
-        return PageViewHolder(container, imageView, statusText)
+        val holder = PageViewHolder(container, imageView, statusText)
+        imageView.onReaderImageLoaded = {
+            val position = positionMapper.sourcePositionForAdapterPosition(holder.bindingAdapterPosition)
+            if (!closed && position != null && holder.boundFilePath == pageFiles.getOrNull(position)?.absolutePath &&
+                holder.itemView.isAttachedToWindow
+            ) {
+                onPageDecoded(position)
+            }
+        }
+        return holder
     }
 
     override fun onBindViewHolder(holder: PageViewHolder, adapterPosition: Int) {

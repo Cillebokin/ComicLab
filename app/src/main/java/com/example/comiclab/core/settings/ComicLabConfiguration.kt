@@ -42,6 +42,7 @@ data class ComicLabAppSettings(
     val doublePageReadingEnabled: Boolean? = null,
     val doublePageCoverSingle: Boolean? = null,
     val volumeKeyPageTurn: Boolean? = null,
+    val nextMangaEnabled: Boolean? = null,
     val autoHideSystemBars: Boolean? = null,
     val startMarkerErrorTags: String? = null,
     val customReaderBrightnessEnabled: Boolean? = null,
@@ -146,6 +147,9 @@ object ComicLabConfigurationJson {
         }
         configuration.appSettings.volumeKeyPageTurn?.let {
             settings.put("volumeKeyPageTurn", it)
+        }
+        configuration.appSettings.nextMangaEnabled?.let {
+            settings.put("nextMangaEnabled", it)
         }
         configuration.appSettings.autoHideSystemBars?.let {
             settings.put("autoHideSystemBars", it)
@@ -278,6 +282,10 @@ object ComicLabConfigurationJson {
                 volumeKeyPageTurn = settingsObject.optionalBoolean("volumeKeyPageTurn")
                     .also {
                         if (settingsObject.has("volumeKeyPageTurn") && it == null) skippedEntries++
+                    },
+                nextMangaEnabled = settingsObject.optionalBoolean("nextMangaEnabled")
+                    .also {
+                        if (settingsObject.has("nextMangaEnabled") && it == null) skippedEntries++
                     },
                 autoHideSystemBars = settingsObject.optionalBoolean("autoHideSystemBars")
                     .also {
@@ -456,6 +464,7 @@ object ComicLabConfigurationMerger {
                 ?: current.doublePageReadingEnabled,
             doublePageCoverSingle = imported.doublePageCoverSingle ?: current.doublePageCoverSingle,
             volumeKeyPageTurn = imported.volumeKeyPageTurn ?: current.volumeKeyPageTurn,
+            nextMangaEnabled = imported.nextMangaEnabled ?: current.nextMangaEnabled,
             autoHideSystemBars = imported.autoHideSystemBars ?: current.autoHideSystemBars,
             startMarkerErrorTags = imported.startMarkerErrorTags ?: current.startMarkerErrorTags,
             customReaderBrightnessEnabled = imported.customReaderBrightnessEnabled

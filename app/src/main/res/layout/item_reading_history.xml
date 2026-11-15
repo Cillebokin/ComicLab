@@ -54,6 +54,17 @@
                 android:maxLines="1"
                 android:textColor="@color/comiclab_text_secondary"
                 android:textSize="11sp" />
+
+            <ProgressBar
+                android:id="@+id/progressPanelReading"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="3dp"
+                android:layout_marginTop="3dp"
+                android:indeterminate="false"
+                android:progress="0"
+                android:progressBackgroundTint="@color/comiclab_divider"
+                android:progressTint="@color/comiclab_accent" />
         </LinearLayout>
     </LinearLayout>
 

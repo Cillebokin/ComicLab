@@ -8,14 +8,16 @@ data class NcnnFlavor(val numThreads: Int = 2) {
 object NcnnBackend {
     val available: Boolean = runCatching { System.loadLibrary("comiclab_translation"); true }.getOrDefault(false)
     private external fun createNetNative(paramPath: String, binPath: String): Long
-    private external fun createNetExNative(paramPath: String, binPath: String, numThreads: Int, fp16Storage: Boolean, fp16Arith: Boolean): Long
+    private external fun createNetExNative(paramPath: String, binPath: String, numThreads: Int,
+        fp16Storage: Boolean, fp16Arith: Boolean, useWinograd: Boolean, useSgemm: Boolean): Long
     private external fun cpuSupportsFp16Native(): Boolean
     external fun releaseNet(handle: Long)
     val cpuSupportsFp16: Boolean by lazy { available && cpuSupportsFp16Native() }
     fun createNet(param: String, bin: String): Long = createNetNative(param, bin)
     fun createNet(param: String, bin: String, flavor: NcnnFlavor): Long = createNetEx(param, bin, flavor.numThreads, true, true)
-    fun createNetEx(param: String, bin: String, threads: Int, storage: Boolean, arithmetic: Boolean): Long =
-        createNetExNative(param, bin, threads, storage, arithmetic)
+    fun createNetEx(param: String, bin: String, threads: Int, storage: Boolean, arithmetic: Boolean,
+        useWinograd: Boolean = false, useSgemm: Boolean = false): Long =
+        createNetExNative(param, bin, threads, storage, arithmetic, useWinograd, useSgemm)
     private external fun detectDbnetNative(handle: Long, input: FloatArray, w: Int, h: Int, db: FloatArray, mask: FloatArray): Int
     private external fun ocrCtcNative(handle: Long, input: FloatArray, w: Int, h: Int, pe: FloatArray, t: Int, indices: IntArray, logp: FloatArray): Int
     private external fun inpaintAotNative(handle: Long, image: FloatArray, mask: FloatArray, size: Int, output: FloatArray): Int

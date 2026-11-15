@@ -119,11 +119,17 @@ class MangaReaderCacheLifecycleRobolectricTest {
 
         try {
             controller.create()
-            assertEquals("a fresh start command clears older progress", null,
-                MangaReaderActivity.savedReadingProgress(application, archive))
+            assertEquals("existing progress remains until the new page is readable", 5,
+                MangaReaderActivity.savedReadingProgress(application, archive)?.position)
             executor.runNextOnWorker()
             Shadows.shadowOf(Looper.getMainLooper()).idle()
             assertEquals(0, currentReaderPosition(originalActivity))
+            assertEquals("loading alone must not erase progress", 5,
+                MangaReaderActivity.savedReadingProgress(application, archive)?.position)
+            MangaReaderActivity::class.java.getDeclaredMethod("onReaderPageDecoded", Int::class.javaPrimitiveType)
+                .apply { isAccessible = true }.invoke(originalActivity, 0)
+            assertEquals("progress is reset after successful decoding", null,
+                MangaReaderActivity.savedReadingProgress(application, archive))
 
             jumpReaderToPage(originalActivity, 3)
             setPendingReaderProgress(originalActivity, position = 3, offset = 29)

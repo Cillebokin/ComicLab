@@ -7,21 +7,69 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import com.example.comiclab.ComicArchive
 import com.example.comiclab.core.reader.enhance.StreamingRgbPng
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import li.joye.yakuyomi.engine.*
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.*
 
 internal data class TranslationBlock(val region: TextRegion, var text: String, var darkBackground: Boolean = false)
 internal data class TranslationAnalysis(val source: File, val width: Int, val height: Int,
-    val orientation: Int, val blocks: List<TranslationBlock>, val patches: List<TranslationPatch>)
+    val orientation: Int, val blocks: List<TranslationBlock>, val patches: List<TranslationPatch>,
+    val inpaintCalls: Int = 0, val repairTiming: RepairTiming = RepairTiming())
+internal data class RepairTiming(
+    val setupNanos: Long = 0L,
+    val inputNanos: Long = 0L,
+    val inferenceNanos: Long = 0L,
+    val outputNanos: Long = 0L,
+    val patchNanos: Long = 0L,
+)
 internal data class TranslationPatch(val file: File, val left: Int, val top: Int, val width: Int, val height: Int)
+private data class RepairTask(val blockIndex: Int, val region: TextRegion, val window: TranslationPolicy.Window)
+private data class RepairWindowResult(val patch: TranslationPatch?, val darkBackground: Boolean)
+private data class InpaintResult(val pixels: IntArray, val inputNanos: Long, val inferenceNanos: Long, val outputNanos: Long)
 internal data class TranslationStyle(val font: String = "sans-serif", val scale: Float = 1f)
 
 /** 一个工作线程、一页、一个阶段模型；任何时候均不创建原尺寸整页Bitmap。 */
 internal class SinglePageTranslation(private val context: Context, private val cancelled: AtomicBoolean,
-    private val status: (String) -> Unit) {
+    private val ocrConcurrency: Int, private val inpaintConcurrency: Int, private val inpaintThreads: Int,
+    private val inpaintWinograd: Boolean, private val inpaintSgemm: Boolean, private val status: (String) -> Unit) {
+    constructor(context: Context, cancelled: AtomicBoolean, status: (String) -> Unit) :
+        this(context, cancelled, DEFAULT_OCR_CONCURRENCY, DEFAULT_INPAINT_CONCURRENCY, DEFAULT_INPAINT_THREADS,
+            false, false, status)
+    constructor(context: Context, cancelled: AtomicBoolean, ocrConcurrency: Int, status: (String) -> Unit) :
+        this(context, cancelled, ocrConcurrency, DEFAULT_INPAINT_CONCURRENCY, DEFAULT_INPAINT_THREADS,
+            false, false, status)
+    constructor(context: Context, cancelled: AtomicBoolean, ocrConcurrency: Int, inpaintConcurrency: Int,
+        status: (String) -> Unit) :
+        this(context, cancelled, ocrConcurrency, inpaintConcurrency, DEFAULT_INPAINT_THREADS, false, false, status)
+    constructor(context: Context, cancelled: AtomicBoolean, ocrConcurrency: Int, inpaintConcurrency: Int,
+        inpaintThreads: Int, status: (String) -> Unit) :
+        this(context, cancelled, ocrConcurrency, inpaintConcurrency, inpaintThreads, false, false, status)
+
+    init {
+        require(ocrConcurrency in 1..MAX_OCR_CONCURRENCY)
+        require(inpaintConcurrency in 1..MAX_INPAINT_CONCURRENCY)
+        require(inpaintThreads in 1..MAX_INPAINT_THREADS)
+    }
+
+    companion object {
+        const val DEFAULT_OCR_CONCURRENCY = 4
+        const val MAX_OCR_CONCURRENCY = 4
+        const val DEFAULT_INPAINT_CONCURRENCY = 2
+        const val MAX_INPAINT_CONCURRENCY = 4
+        const val DEFAULT_INPAINT_THREADS = 2
+        const val MAX_INPAINT_THREADS = 2
+    }
+
     private fun checkCancelled() = TranslationModels.checkCancelled(cancelled)
 
     fun process(archive: File, entry: String, directory: File, settings: TranslationSettings, language: String,
@@ -61,18 +109,35 @@ internal class SinglePageTranslation(private val context: Context, private val c
             require(lines.isNotEmpty()) { "No text detected" }
             require(lines.size <= 400) { "Too many text regions for a single page" }
             val alphabet = context.assets.open("translation/alphabet-all-v5.txt").bufferedReader().use { it.readLines() }
-            Ocr(File(models, "ocr_48px_ctc.ncnn.param").path, alphabet, OcrConfig(concurrent = false)).use { ocr ->
-                lines.forEachIndexed { index, line ->
-                    checkCancelled(); status("ocr|${index + 1}/${lines.size}")
-                    val box = Rect(floor(line.quad.minOf { it.x } - 24).toInt().coerceAtLeast(0), floor(line.quad.minOf { it.y } - 24).toInt().coerceAtLeast(0),
-                        ceil(line.quad.maxOf { it.x } + 24).toInt().coerceAtMost(w), ceil(line.quad.maxOf { it.y } + 24).toInt().coerceAtMost(h))
-                    require(box.width() > 0 && box.height() > 0 && box.width().toLong() * box.height() <= 4_000_000) { "OCR region exceeds memory budget" }
-                    val crop = decoder.decodeRegion(box)
-                    try {
-                        val local = TextLine(line.quad.map { Pt(it.x - box.left, it.y - box.top) }, line.score)
-                        runBlocking { ocr.recognize(crop, listOf(local)) }
-                        line.text = local.text; line.direction = local.direction
-                    } finally { crop.recycle() }
+            Ocr(File(models, "ocr_48px_ctc.ncnn.param").path, alphabet, OcrConfig(concurrent = true)).use { ocr ->
+                val semaphore = Semaphore(ocrConcurrency)
+                val completed = AtomicInteger()
+                val progressLock = Any()
+                status("ocr|0/${lines.size}")
+                runBlocking {
+                    coroutineScope {
+                        lines.map { line ->
+                            async(Dispatchers.Default) {
+                                semaphore.withPermit {
+                                    checkCancelled()
+                                    val box = Rect(floor(line.quad.minOf { it.x } - 24).toInt().coerceAtLeast(0), floor(line.quad.minOf { it.y } - 24).toInt().coerceAtLeast(0),
+                                        ceil(line.quad.maxOf { it.x } + 24).toInt().coerceAtMost(w), ceil(line.quad.maxOf { it.y } + 24).toInt().coerceAtMost(h))
+                                    require(box.width() > 0 && box.height() > 0 && box.width().toLong() * box.height() <= 4_000_000) { "OCR region exceeds memory budget" }
+                                    val crop = synchronized(decoder) { decoder.decodeRegion(box) }
+                                    try {
+                                        val local = TextLine(line.quad.map { Pt(it.x - box.left, it.y - box.top) }, line.score)
+                                        ocr.recognize(crop, listOf(local))
+                                        checkCancelled()
+                                        line.text = local.text
+                                        line.direction = local.direction
+                                        synchronized(progressLock) {
+                                            status("ocr|${completed.incrementAndGet()}/${lines.size}")
+                                        }
+                                    } finally { crop.recycle() }
+                                }
+                            }
+                        }.awaitAll()
+                    }
                 }
             }
             val regions = Grouping.group(lines.filter { it.text.isNotBlank() })
@@ -100,52 +165,116 @@ internal class SinglePageTranslation(private val context: Context, private val c
             checkCancelled()
             val blocks = regions.mapIndexed { i, r -> TranslationBlock(r, texts[i]) }
             directory.listFiles { _, name -> name.matches(Regex("patch-[0-9]+\\.png")) }?.forEach { it.delete() }
-            val patches = mutableListOf<TranslationPatch>()
+            val repairTasks = blocks.flatMapIndexed { blockIndex, block ->
+                val r = block.region
+                val left = floor(r.x0 - 28).toInt().coerceIn(0, w - 1)
+                val top = floor(r.y0 - 28).toInt().coerceIn(0, h - 1)
+                val right = ceil(r.x1 + 28).toInt().coerceIn(left + 1, w)
+                val bottom = ceil(r.y1 + 28).toInt().coerceIn(top + 1, h)
+                TranslationPolicy.windows(w, h, left, top, right, bottom).map { RepairTask(blockIndex, r, it) }
+            }
+            val patches: List<TranslationPatch>
             var aot = 0L
+            val aotCalls = AtomicInteger()
+            val setupNanos = AtomicLong()
+            val inputNanos = AtomicLong()
+            val inferenceNanos = AtomicLong()
+            val outputNanos = AtomicLong()
+            val patchNanos = AtomicLong()
+            val aotLock = Any()
             try {
-                for ((index, block) in blocks.withIndex()) {
-                    status("inpaint|${index + 1}/${blocks.size}"); checkCancelled()
-                    val r = block.region
-                    val left = floor(r.x0 - 28).toInt().coerceIn(0, w - 1); val top = floor(r.y0 - 28).toInt().coerceIn(0, h - 1)
-                    val right = ceil(r.x1 + 28).toInt().coerceIn(left + 1, w); val bottom = ceil(r.y1 + 28).toInt().coerceIn(top + 1, h)
-                    for (window in TranslationPolicy.windows(w, h, left, top, right, bottom)) {
-                        checkCancelled()
-                        val decodedCrop = decoder.decodeRegion(Rect(window.left, window.top, window.right, window.bottom))
-                        val crop = if (decodedCrop.width == window.width && decodedCrop.height == window.height) decodedCrop else {
-                            android.util.Log.w("PageTranslation", "AOT crop ${decodedCrop.width}x${decodedCrop.height}; expected ${window.width}x${window.height}")
-                            try { Bitmap.createScaledBitmap(decodedCrop, window.width, window.height, true) }
-                            finally { decodedCrop.recycle() }
-                        }
-                        try {
-                            val mask = localMask(checkNotNull(smallMask), w, h, window, r)
-                            if (mask.none { it }) continue
-                            val pixels = IntArray(crop.width * crop.height)
-                            crop.getPixels(pixels, 0, crop.width, 0, 0, crop.width, crop.height)
-                            val color = flatBackground(pixels, mask, crop.width, crop.height, window, r)
-                            if (color != null && Color.red(color) < 64) block.darkBackground = true
-                            val repaired = if (color != null) IntArray(pixels.size) { color } else {
-                                if (aot == 0L) aot = NcnnBackend.createNet(File(models, "mit_aot_fixed512.ncnn.param").path, File(models, "mit_aot_fixed512.ncnn.bin").path)
-                                check(aot != 0L) { "Cannot load inpaint model" }
-                                inpaint(aot, pixels, mask, crop.width, crop.height)
-                            }
-                            val cw = window.coreRight - window.coreLeft; val ch = window.coreBottom - window.coreTop
-                            val patch = Bitmap.createBitmap(cw, ch, Bitmap.Config.ARGB_8888)
-                            try {
-                                val out = IntArray(cw * ch)
-                                for (y in 0 until ch) for (x in 0 until cw) {
-                                    val src = (y + window.coreTop - window.top) * crop.width + x + window.coreLeft - window.left
-                                    if (mask[src]) out[y * cw + x] = repaired[src] or (0xff shl 24)
+                fun aotHandle(): Long = synchronized(aotLock) {
+                    if (aot == 0L) {
+                        aot = NcnnBackend.createNetEx(
+                            File(models, "mit_aot_fixed512.ncnn.param").path,
+                            File(models, "mit_aot_fixed512.ncnn.bin").path,
+                            inpaintThreads,
+                            true,
+                            true,
+                            inpaintWinograd,
+                            inpaintSgemm
+                        )
+                    }
+                    check(aot != 0L) { "Cannot load inpaint model" }
+                    aot
+                }
+                val semaphore = Semaphore(inpaintConcurrency)
+                val completed = AtomicInteger()
+                val progressLock = Any()
+                status("inpaint|0/${repairTasks.size}")
+                val results = runBlocking {
+                    coroutineScope {
+                        repairTasks.mapIndexed { taskIndex, task ->
+                            async(Dispatchers.Default) {
+                                semaphore.withPermit {
+                                    checkCancelled()
+                                    val window = task.window
+                                    val setupStarted = System.nanoTime()
+                                    val decodedCrop = synchronized(decoder) {
+                                        decoder.decodeRegion(Rect(window.left, window.top, window.right, window.bottom))
+                                    }
+                                    val crop = if (decodedCrop.width == window.width && decodedCrop.height == window.height) decodedCrop else {
+                                        android.util.Log.w("PageTranslation", "AOT crop ${decodedCrop.width}x${decodedCrop.height}; expected ${window.width}x${window.height}")
+                                        try { Bitmap.createScaledBitmap(decodedCrop, window.width, window.height, true) }
+                                        finally { decodedCrop.recycle() }
+                                    }
+                                    val result = try {
+                                        val mask = localMask(checkNotNull(smallMask), w, h, window, task.region)
+                                        if (mask.none { it }) {
+                                            setupNanos.addAndGet(System.nanoTime() - setupStarted)
+                                            RepairWindowResult(null, false)
+                                        } else {
+                                            val pixels = IntArray(crop.width * crop.height)
+                                            crop.getPixels(pixels, 0, crop.width, 0, 0, crop.width, crop.height)
+                                            val color = flatBackground(pixels, mask, crop.width, crop.height, window, task.region)
+                                            val darkBackground = color != null && Color.red(color) < 64
+                                            setupNanos.addAndGet(System.nanoTime() - setupStarted)
+                                            val repaired = if (color != null) IntArray(pixels.size) { color } else {
+                                                aotCalls.incrementAndGet()
+                                                val inpaintResult = inpaint(aotHandle(), pixels, mask, crop.width, crop.height)
+                                                inputNanos.addAndGet(inpaintResult.inputNanos)
+                                                inferenceNanos.addAndGet(inpaintResult.inferenceNanos)
+                                                outputNanos.addAndGet(inpaintResult.outputNanos)
+                                                inpaintResult.pixels
+                                            }
+                                            val cw = window.coreRight - window.coreLeft
+                                            val ch = window.coreBottom - window.coreTop
+                                            val patchStarted = System.nanoTime()
+                                            val patchBitmap = Bitmap.createBitmap(cw, ch, Bitmap.Config.ARGB_8888)
+                                            val patch = try {
+                                                val out = IntArray(cw * ch)
+                                                for (y in 0 until ch) for (x in 0 until cw) {
+                                                    val src = (y + window.coreTop - window.top) * crop.width + x + window.coreLeft - window.left
+                                                    if (mask[src]) out[y * cw + x] = repaired[src] or (0xff shl 24)
+                                                }
+                                                patchBitmap.setPixels(out, 0, cw, 0, 0, cw, ch)
+                                                val file = File(directory, "patch-$taskIndex.png")
+                                                file.outputStream().use { check(patchBitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+                                                TranslationPatch(file, window.coreLeft, window.coreTop, cw, ch)
+                                            } finally {
+                                                patchBitmap.recycle()
+                                                patchNanos.addAndGet(System.nanoTime() - patchStarted)
+                                            }
+                                            RepairWindowResult(patch, darkBackground)
+                                        }
+                                    } finally { crop.recycle() }
+                                    synchronized(progressLock) {
+                                        status("inpaint|${completed.incrementAndGet()}/${repairTasks.size}")
+                                    }
+                                    result
                                 }
-                                patch.setPixels(out, 0, cw, 0, 0, cw, ch)
-                                val file = File(directory, "patch-${patches.size}.png")
-                                file.outputStream().use { check(patch.compress(Bitmap.CompressFormat.PNG, 100, it)) }
-                                patches += TranslationPatch(file, window.coreLeft, window.coreTop, cw, ch)
-                            } finally { patch.recycle() }
-                        } finally { crop.recycle() }
+                            }
+                        }.awaitAll()
                     }
                 }
+                results.forEachIndexed { index, result ->
+                    if (result.darkBackground) blocks[repairTasks[index].blockIndex].darkBackground = true
+                }
+                patches = results.mapNotNull { it.patch }
             } finally { if (aot != 0L) NcnnBackend.releaseNet(aot) }
-            return TranslationAnalysis(source, w, h, orientation, blocks, patches)
+            return TranslationAnalysis(source, w, h, orientation, blocks, patches, aotCalls.get(), RepairTiming(
+                setupNanos.get(), inputNanos.get(), inferenceNanos.get(), outputNanos.get(), patchNanos.get()
+            ))
         } finally { smallMask?.recycle(); decoder.close() }
     }
 
@@ -197,11 +326,12 @@ internal class SinglePageTranslation(private val context: Context, private val c
         return when { mean > 248 -> Color.rgb(mean.roundToInt(), mean.roundToInt(), mean.roundToInt()); mean < 7 -> Color.rgb(mean.roundToInt(), mean.roundToInt(), mean.roundToInt()); else -> null }
     }
 
-    private fun inpaint(handle: Long, pixels: IntArray, mask: BooleanArray, w: Int, h: Int): IntArray {
+    private fun inpaint(handle: Long, pixels: IntArray, mask: BooleanArray, w: Int, h: Int): InpaintResult {
         if (pixels.size != w * h || mask.size != w * h) {
             android.util.Log.e("PageTranslation", "AOT arrays width=$w height=$h pixels=${pixels.size} mask=${mask.size}")
         }
         require(pixels.size == w * h && mask.size == w * h) { "Inpaint input dimensions mismatch" }
+        val inputStarted = System.nanoTime()
         val size = 512; val area = size * size
         val input = FloatArray(3 * area); val m = FloatArray(area); val output = FloatArray(3 * area)
         for (y in 0 until size) for (x in 0 until size) {
@@ -209,14 +339,19 @@ internal class SinglePageTranslation(private val context: Context, private val c
             if (mask[src]) { m[i] = 1f; continue }
             val c = pixels[src]; input[i] = Color.red(c) / 127.5f - 1; input[area + i] = Color.green(c) / 127.5f - 1; input[2 * area + i] = Color.blue(c) / 127.5f - 1
         }
+        val inputNanos = System.nanoTime() - inputStarted
         checkCancelled()
+        val inferenceStarted = System.nanoTime()
         check(NcnnBackend.inpaintAot(handle, input, m, size, output) == 0) { "Inpainting failed" }
+        val inferenceNanos = System.nanoTime() - inferenceStarted
         checkCancelled()
-        return IntArray(w * h) { i ->
+        val outputStarted = System.nanoTime()
+        val pixelsOut = IntArray(w * h) { i ->
             val at = (i / w) * size + i % w
             fun channel(offset: Int): Int { val v = output[offset + at]; check(v.isFinite()) { "Invalid inpaint output" }; return ((v + 1) * 127.5f).roundToInt().coerceIn(0, 255) }
             Color.rgb(channel(0), channel(area), channel(2 * area))
         }
+        return InpaintResult(pixelsOut, inputNanos, inferenceNanos, System.nanoTime() - outputStarted)
     }
 
     fun render(analysis: TranslationAnalysis, directory: File, style: TranslationStyle): File {

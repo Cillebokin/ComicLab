@@ -53,17 +53,17 @@ class SinglePageTranslationNativeTest {
             val config = TranslationSettings("https://example.invalid/v1", "synthetic-test", "not-a-real-key")
             val first = SinglePageTranslation(context, cancelled) { if (it.startsWith("inpaint|")) cancelled.set(true) }
             assertThrows(java.util.concurrent.CancellationException::class.java) {
-                first.process(archive, "001.png", work, config, "Simplified Chinese") { _, texts, _, _ ->
+                first.process(archive, "001.png", work, config, "Simplified Chinese", translate = { _, texts, _, _ ->
                     requests++; assertTrue(texts.any { it.contains("こんにちは") }); texts.map { "你好" }
-                }
+                })
             }
             assertEquals(1, requests)
             assertTrue(File(work, "translations.json").isFile)
             cancelled.set(false)
             val pipeline = SinglePageTranslation(context, cancelled) { stages += it }
-            val analysis = pipeline.process(archive, "001.png", work, TranslationSettings("https://example.invalid/v1", "synthetic-test", "not-a-real-key"), "Simplified Chinese") { _, texts, _, _ ->
+            val analysis = pipeline.process(archive, "001.png", work, TranslationSettings("https://example.invalid/v1", "synthetic-test", "not-a-real-key"), "Simplified Chinese", translate = { _, texts, _, _ ->
                 error("Retry must use verified paid-translation cache")
-            }
+            })
             assertEquals(1, requests)
             assertEquals(6, analysis.orientation)
             assertTrue(analysis.patches.isNotEmpty())

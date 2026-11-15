@@ -1,6 +1,7 @@
 // Adapted from joyeli/yakuyomi-engine f990b451, GPL-3.0.
 // See assets/translation/NOTICE.txt. ComicLab: shared NCNN, serial bounded I/O.
 #include <jni.h>
+#include <allocator.h>
 #include <net.h>
 #include <cpu.h>
 #include <algorithm>
@@ -34,7 +35,8 @@ bool output(JNIEnv* env, jfloatArray a, const ncnn::Mat& m, int c) {
     }
     return true;
 }
-jlong create(JNIEnv* env, jstring param, jstring bin, int threads, bool storage, bool arithmetic) {
+jlong create(JNIEnv* env, jstring param, jstring bin, int threads, bool storage, bool arithmetic,
+    bool use_winograd, bool use_sgemm) {
     try {
         Utf p(env, param); if (!p.data) return 0;
         Utf b(env, bin); if (!b.data) return 0;
@@ -43,8 +45,8 @@ jlong create(JNIEnv* env, jstring param, jstring bin, int threads, bool storage,
         net->opt.use_vulkan_compute = false;
         net->opt.use_local_pool_allocator = false;
         // 低内存优先：避免卷积预变换权重和大工作区；不改变模型精度。
-        net->opt.use_winograd_convolution = false;
-        net->opt.use_sgemm_convolution = false;
+        net->opt.use_winograd_convolution = use_winograd;
+        net->opt.use_sgemm_convolution = use_sgemm;
         net->opt.use_fp16_storage = storage;
         net->opt.use_fp16_packed = storage;
         net->opt.use_fp16_arithmetic = arithmetic;
@@ -55,10 +57,11 @@ jlong create(JNIEnv* env, jstring param, jstring bin, int threads, bool storage,
 }
 }
 extern "C" JNIEXPORT jlong JNICALL Java_li_joye_yakuyomi_engine_NcnnBackend_createNetNative(
-    JNIEnv* env, jobject, jstring param, jstring bin) { return create(env, param, bin, 2, true, true); }
+    JNIEnv* env, jobject, jstring param, jstring bin) { return create(env, param, bin, 2, true, true, false, false); }
 extern "C" JNIEXPORT jlong JNICALL Java_li_joye_yakuyomi_engine_NcnnBackend_createNetExNative(
-    JNIEnv* env, jobject, jstring param, jstring bin, jint threads, jboolean storage, jboolean arithmetic) {
-    return create(env, param, bin, threads, storage, arithmetic);
+    JNIEnv* env, jobject, jstring param, jstring bin, jint threads, jboolean storage, jboolean arithmetic,
+    jboolean useWinograd, jboolean useSgemm) {
+    return create(env, param, bin, threads, storage, arithmetic, useWinograd, useSgemm);
 }
 extern "C" JNIEXPORT void JNICALL Java_li_joye_yakuyomi_engine_NcnnBackend_releaseNet(JNIEnv*, jobject, jlong handle) {
     delete reinterpret_cast<ncnn::Net*>(handle);
@@ -94,7 +97,11 @@ extern "C" JNIEXPORT jint JNICALL Java_li_joye_yakuyomi_engine_NcnnBackend_inpai
         if (!fits(env, result, 3 * plane)) return -2;
         ncnn::Mat image(size, size, 3), mask(size, size, 1);
         if (!input(env, src, image, 3, plane) || !input(env, maskArray, mask, 1, plane)) return -100;
+        ncnn::UnlockedPoolAllocator blob_allocator;
+        ncnn::PoolAllocator workspace_allocator;
         auto ex = reinterpret_cast<ncnn::Net*>(handle)->create_extractor();
+        ex.set_blob_allocator(&blob_allocator);
+        ex.set_workspace_allocator(&workspace_allocator);
         ncnn::Mat out;
         if (ex.input("in0", image) != 0 || ex.input("in1", mask) != 0 || ex.extract("out0", out) != 0) return -3;
         if (out.w != size || out.h != size || !output(env, result, out, 3)) return -4;

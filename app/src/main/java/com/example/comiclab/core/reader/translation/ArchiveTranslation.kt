@@ -24,6 +24,9 @@ internal object ArchiveTranslation {
         cancelled: AtomicBoolean,
         language: String,
         settings: TranslationSettings,
+        ocrConcurrency: Int = SinglePageTranslation.DEFAULT_OCR_CONCURRENCY,
+        inpaintConcurrency: Int = SinglePageTranslation.DEFAULT_INPAINT_CONCURRENCY,
+        translate: (TranslationSettings, List<String>, String, AtomicBoolean) -> List<String> = TranslationApi::translate,
         onProgress: (page: Int, total: Int, pagePercent: Int, stage: String,
             translatedPages: Int, keptOriginalPages: Int) -> Unit
     ): ArchiveTranslationResult {
@@ -59,9 +62,8 @@ internal object ArchiveTranslation {
                         val pageDirectory = File(pages, "%06d".format(Locale.ROOT, index + 1))
                         val translated = try {
                             check(pageDirectory.mkdirs() || pageDirectory.isDirectory)
-                            val pipeline = SinglePageTranslation(context, cancelled) { stage ->
-                                onProgress(index + 1, entries.size, 0, stage,
-                                    translatedPages, keptOriginalPages)
+                            val pipeline = SinglePageTranslation(context, cancelled, ocrConcurrency, inpaintConcurrency) { stage ->
+                                onProgress(index + 1, entries.size, 0, stage, translatedPages, keptOriginalPages)
                             }
                             val analysis = pipeline.process(
                                 archive = source,
@@ -69,6 +71,7 @@ internal object ArchiveTranslation {
                                 directory = pageDirectory,
                                 settings = settings,
                                 language = language,
+                                translate = translate,
                                 modelDirectory = models,
                                 preparedSource = original
                             )

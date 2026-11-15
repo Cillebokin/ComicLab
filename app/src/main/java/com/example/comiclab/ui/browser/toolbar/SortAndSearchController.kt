@@ -6,6 +6,7 @@ import android.os.Environment
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import com.example.comiclab.ui.browser.DirectorySortOrder
+import com.example.comiclab.ui.browser.DirectorySortPolicy
 import com.example.comiclab.R
 import com.example.comiclab.SearchActivity
 
@@ -52,14 +53,7 @@ internal class SortAndSearchController(
     }
 
     internal fun currentDirectorySortOrder(): DirectorySortOrder {
-        return when (currentSortMode()) {
-            FileSortMode.NAME_ASC -> DirectorySortOrder.NAME_ASC
-            FileSortMode.NAME_DESC -> DirectorySortOrder.NAME_DESC
-            FileSortMode.MODIFIED_ASC -> DirectorySortOrder.MODIFIED_ASC
-            FileSortMode.MODIFIED_DESC -> DirectorySortOrder.MODIFIED_DESC
-            FileSortMode.SIZE_ASC -> DirectorySortOrder.SIZE_ASC
-            FileSortMode.SIZE_DESC -> DirectorySortOrder.SIZE_DESC
-        }
+        return DirectorySortPolicy.savedOrder(prefsProvider())
     }
 
     private fun currentSortMode(): FileSortMode {

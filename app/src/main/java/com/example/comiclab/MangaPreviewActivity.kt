@@ -10,7 +10,9 @@ import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.res.ColorStateList
 import com.example.comiclab.core.store.ReaderProgressStore
+import com.example.comiclab.core.store.FavoriteComicStore
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -23,6 +25,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
@@ -54,6 +57,7 @@ class MangaPreviewActivity : AppCompatActivity() {
     private lateinit var tvComicName: TextView
     private lateinit var tvComicFileSize: TextView
     private lateinit var btnFullRead: ImageButton
+    private lateinit var btnFavoriteComic: ImageButton
     private lateinit var btnExitPreview: ImageButton
     private lateinit var progressReading: ProgressBar
     private lateinit var tvReadingProgress: TextView
@@ -61,6 +65,7 @@ class MangaPreviewActivity : AppCompatActivity() {
     private lateinit var scrollPreview: ScrollView
     private lateinit var btnTogglePreview: Button
     private lateinit var tvStatus: TextView
+    private lateinit var tvFavoriteError: TextView
 
     private var archiveFile: File? = null
     private val readingProgressListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
@@ -105,6 +110,7 @@ class MangaPreviewActivity : AppCompatActivity() {
         tvComicName = findViewById(R.id.tvComicName)
         tvComicFileSize = findViewById(R.id.tvComicFileSize)
         btnFullRead = findViewById(R.id.btnFullRead)
+        btnFavoriteComic = findViewById(R.id.btnFavoriteComic)
         btnExitPreview = findViewById(R.id.btnExitPreview)
         progressReading = findViewById(R.id.progressReading)
         tvReadingProgress = findViewById(R.id.tvReadingProgress)
@@ -112,6 +118,7 @@ class MangaPreviewActivity : AppCompatActivity() {
         scrollPreview = findViewById(R.id.main)
         btnTogglePreview = findViewById(R.id.btnTogglePreview)
         tvStatus = findViewById(R.id.tvStatus)
+        tvFavoriteError = findViewById(R.id.tvFavoriteError)
         scrollPreview.setOnScrollChangeListener { _, _, _, _, _ ->
             requestVisiblePreviewDecode()
         }
@@ -126,6 +133,32 @@ class MangaPreviewActivity : AppCompatActivity() {
         archiveFile = file
         tvComicName.text = file.nameWithoutExtension
         tvComicFileSize.text = CommonFunc.formatFileSize(file.length())
+
+        btnFavoriteComic.setOnClickListener {
+            if (!file.isFile || deletePreviewInProgress) {
+                updateFavoriteButton()
+                return@setOnClickListener
+            }
+            val favorite = FavoriteComicStore.favoriteState(this, file)
+            if (favorite == null) {
+                updateFavoriteButton()
+                return@setOnClickListener
+            }
+            val message = if (favorite) {
+                FavoriteComicStore.remove(this, file)
+                R.string.favorite_comic_removed
+            } else {
+                when (FavoriteComicStore.record(this, file)) {
+                    FavoriteComicStore.RecordResult.ADDED,
+                    FavoriteComicStore.RecordResult.ALREADY_EXISTS -> R.string.favorite_comic_added
+                    FavoriteComicStore.RecordResult.LIMIT_REACHED -> R.string.favorite_comic_limit_reached
+                    FavoriteComicStore.RecordResult.INVALID -> R.string.unsupported_archive_format
+                    FavoriteComicStore.RecordResult.STORAGE_ERROR -> R.string.stored_collection_unreadable
+                }
+            }
+            updateFavoriteButton()
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        }
 
         btnFullRead.setOnClickListener {
             handleReadClick(file)
@@ -156,6 +189,23 @@ class MangaPreviewActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateReadingProgress()
+        updateFavoriteButton()
+    }
+
+    private fun updateFavoriteButton() {
+        val file = archiveFile
+        val available = file != null && file.isFile && !deletePreviewInProgress
+        val favorite = file?.takeIf { available }?.let { FavoriteComicStore.favoriteState(this, it) }
+        val readError = available && favorite == null
+        btnFavoriteComic.isEnabled = available && !readError
+        btnFavoriteComic.alpha = if (btnFavoriteComic.isEnabled) 1f else 0.38f
+        btnFavoriteComic.imageTintList = ColorStateList.valueOf(
+            ContextCompat.getColor(this, if (favorite == true) R.color.comiclab_accent else R.color.comiclab_icon)
+        )
+        btnFavoriteComic.setContentDescription(
+            getString(if (readError) R.string.preview_favorite_unreadable else if (favorite == true) R.string.cancel_favorite else R.string.favorite_comic_action)
+        )
+        tvFavoriteError.visibility = if (readError) View.VISIBLE else View.GONE
     }
 
     override fun onDestroy() {
@@ -190,6 +240,8 @@ class MangaPreviewActivity : AppCompatActivity() {
                 if (!isPreviewActive() || generation != archiveGeneration) {
                     return@runOnUiThread
                 }
+
+                updateFavoriteButton()
 
                 val entries = result.getOrElse {
                     showError(getString(R.string.unsupported_archive_format))
@@ -497,6 +549,7 @@ class MangaPreviewActivity : AppCompatActivity() {
         }
 
         deletePreviewInProgress = true
+        updateFavoriteButton()
         archiveGeneration++
         coverGeneration++
         gridGeneration++
@@ -511,6 +564,7 @@ class MangaPreviewActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (isPreviewActive()) {
                         deletePreviewInProgress = false
+                        updateFavoriteButton()
                         tvStatus.visibility = View.INVISIBLE
                         Toast.makeText(
                             this,
@@ -532,6 +586,7 @@ class MangaPreviewActivity : AppCompatActivity() {
                     return@runOnUiThread
                 }
                 deletePreviewInProgress = false
+                updateFavoriteButton()
 
                 if (deleted) {
                     Toast.makeText(this, R.string.delete_archive_image_success, Toast.LENGTH_SHORT).show()

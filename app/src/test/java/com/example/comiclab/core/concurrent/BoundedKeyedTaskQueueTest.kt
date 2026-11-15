@@ -13,6 +13,35 @@ import org.junit.Test
 class BoundedKeyedTaskQueueTest {
 
     @Test
+    fun cancellingOnlyQueuedWorkLeavesRunningWorkActive() {
+        val queue = BoundedKeyedTaskQueue(threadCount = 1, queueCapacity = 1)
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val done = CountDownLatch(1)
+        val active = AtomicBoolean(false)
+        val queuedRan = AtomicBoolean(false)
+        try {
+            assertTrue(queue.executeCancellable("running") { isActive ->
+                started.countDown()
+                release.await(2, TimeUnit.SECONDS)
+                active.set(isActive())
+                done.countDown()
+            })
+            assertTrue(started.await(1, TimeUnit.SECONDS))
+            assertTrue(queue.execute("queued") { queuedRan.set(true) })
+            assertFalse(queue.cancelQueued("running"))
+            assertTrue(queue.cancelQueued("queued"))
+            release.countDown()
+            assertTrue(done.await(1, TimeUnit.SECONDS))
+            assertTrue(active.get())
+            assertFalse(queuedRan.get())
+        } finally {
+            release.countDown()
+            queue.close()
+        }
+    }
+
+    @Test
     fun cancellingQueuedKeyPreventsItsWorkFromRunning() {
         val queue = BoundedKeyedTaskQueue(threadCount = 1, queueCapacity = 1)
         val runningStarted = CountDownLatch(1)

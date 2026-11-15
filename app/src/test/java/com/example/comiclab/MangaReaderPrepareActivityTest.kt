@@ -33,6 +33,27 @@ class MangaReaderPrepareActivityTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
+    fun directReaderReceivesNextComicPreviewAndHandoffExtras() {
+        val application = RuntimeEnvironment.getApplication()
+        val archive = temporaryFolder.newFile("next.cbz")
+        val intent = Intent(application, MangaReaderPrepareActivity::class.java).apply {
+            putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, File(temporaryFolder.root, "missing.cbz").absolutePath)
+            putExtra(MangaReaderActivity.EXTRA_RETURN_TO_CURRENT_PREVIEW, true)
+            putExtra(MangaReaderActivity.EXTRA_NEXT_HANDOFF_TOKEN, "handoff")
+        }
+        val controller = Robolectric.buildActivity(MangaReaderPrepareActivity::class.java, intent).create()
+        try {
+            val activity = controller.get()
+            MangaReaderPrepareActivity::class.java.getDeclaredMethod("openReaderDirect", File::class.java)
+                .apply { isAccessible = true }.invoke(activity, archive)
+            val launched = Shadows.shadowOf(activity).nextStartedActivity
+            assertTrue(launched.getBooleanExtra(MangaReaderActivity.EXTRA_RETURN_TO_CURRENT_PREVIEW, false))
+            assertEquals("handoff", launched.getStringExtra(MangaReaderActivity.EXTRA_NEXT_HANDOFF_TOKEN))
+            assertEquals(archive.absolutePath, launched.getStringExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH))
+        } finally { controller.destroy() }
+    }
+
+    @Test
     fun staleCacheCleanupWaitsForPreparationExecutor() {
         val application = RuntimeEnvironment.getApplication()
         val archive = temporaryFolder.newFile("sample.zip")

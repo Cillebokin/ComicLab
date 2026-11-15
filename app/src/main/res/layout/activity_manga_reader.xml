@@ -14,6 +14,22 @@
         android:overScrollMode="never"
         android:scrollbarStyle="outsideOverlay" />
 
+    <Button
+        android:id="@+id/btnNextManga"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="40dp"
+        android:background="@drawable/bg_reader_control_panel"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:padding="12dp"
+        android:textAllCaps="false"
+        android:textColor="@color/white"
+        android:visibility="gone" />
+
     <LinearLayout
         android:id="@+id/layoutReaderToolbar"
         android:layout_width="match_parent"
