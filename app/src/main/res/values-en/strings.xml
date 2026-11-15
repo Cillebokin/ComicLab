@@ -175,6 +175,7 @@
     <string name="favorite_comic_removed">Comic removed from favorites</string>
     <string name="favorite_comic_limit_reached">Favorite limit reached</string>
     <string name="stored_collection_unreadable">Saved records could not be read. This operation was not saved; existing data was preserved.</string>
+    <string name="preview_favorite_unreadable">Favorites could not be read. Actions are temporarily unavailable; existing data was preserved.</string>
     <string name="delete_comic">Delete comic</string>
     <string name="favorite_comic_item_options">Favorite comic options</string>
     <string name="clear_favorite_comics_title">Clear favorite comics</string>
