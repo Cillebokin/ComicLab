@@ -43,6 +43,7 @@ object ReaderProgressStore {
         }
 
         private fun finish(commit: Boolean): Boolean = synchronized(writeLock) {
+            pendingWrites.remove(this)
             val savedPositionKey = positionKey(archiveKey)
             val savedOffsetKey = offsetKey(archiveKey)
             var existingPosition = 0
@@ -55,7 +56,6 @@ object ReaderProgressStore {
             } else {
                 true
             }
-            pendingWrites.remove(this)
             if (!shouldWrite) {
                 return@synchronized if (commit) {
                     preferences.edit()
@@ -91,16 +91,37 @@ object ReaderProgressStore {
         file: File,
         position: Int,
         offset: Int
-    ): PreparedWrite {
-        return synchronized(writeLock) {
-            PreparedWrite(
-                preferences = preferences,
-                archiveKey = readerArchiveKey(file),
-                position = position,
-                offset = offset
-            ).also { pendingWrites[it] = Unit }
+    ): PreparedWrite = synchronized(writeLock) {
+        registerWrite(preferences, readerArchiveKey(file), position, offset)
+    }
+
+    internal fun enqueueSave(
+        context: Context,
+        archiveKey: String,
+        position: Int,
+        offset: Int,
+        enqueue: (PreparedWrite) -> Unit
+    ) {
+        val prefs = preferences(context)
+        synchronized(writeLock) {
+            val write = registerWrite(prefs, archiveKey, position, offset)
+            try {
+                enqueue(write)
+            } catch (exception: RuntimeException) {
+                // A concurrent move must never observe a request the executor rejected.
+                pendingWrites.remove(write)
+                throw exception
+            }
         }
     }
+
+    private fun registerWrite(
+        preferences: SharedPreferences,
+        archiveKey: String,
+        position: Int,
+        offset: Int
+    ): PreparedWrite = PreparedWrite(preferences, archiveKey, position, offset)
+        .also { pendingWrites[it] = Unit }
 
     fun readPositionAndOffset(context: Context, file: File): Pair<Int, Int> {
         val prefs = preferences(context)
@@ -309,7 +330,7 @@ object ReaderProgressStore {
     private fun preferences(context: Context): SharedPreferences =
         PrefsGateway.open(context, PREFS_NAME)
 
-    private fun readerArchiveKey(file: File): String =
+    internal fun readerArchiveKey(file: File): String =
         "$ARCHIVE_KEY_PREFIX${file.absolutePath}:${file.lastModified()}:${file.length()}"
 
     private fun positionKey(archiveKey: String): String = "$archiveKey:position"

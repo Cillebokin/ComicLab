@@ -301,6 +301,58 @@ class MangaReaderCacheLifecycleRobolectricTest {
     }
 
     @Test
+    fun rapidExitCoalescesFinalWriteAndReopenedReaderUsesItAfterCommit() {
+        val application = RuntimeEnvironment.getApplication()
+        val (archive, preparedCache) = createPreparedReaderFixture("rapid-exit.cbz", "rapid-exit-cache")
+        MangaReaderActivity.restoreReadingProgress(
+            application, archive, ComicLabMangaProgress(archive.absolutePath, position = 1, offset = 7)
+        )
+        val loadExecutor = ManualExecutorService()
+        val writer = ManualExecutorService()
+        val controller = buildReaderController(application, archive, preparedCache, loadExecutor)
+        val activity = controller.get()
+        activity.readerProgressExecutorForTest = writer
+
+        fun reopenAndReadAnchor(): Pair<Int?, Int> {
+            val reopenExecutor = ManualExecutorService()
+            val reopened = Robolectric.buildActivity(
+                MangaReaderActivity::class.java,
+                Intent(application, MangaReaderActivity::class.java)
+                    .putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, archive.absolutePath)
+            )
+            val reader = reopened.get()
+            reader.readerLoadExecutorForTest = reopenExecutor
+            try {
+                reopened.create()
+                reopenExecutor.runNextOnWorker()
+                assertTrue(awaitReaderEntries(reader))
+                return reader.pendingRestorePositionForTest to reader.pendingRestoreOffsetForTest
+            } finally {
+                reopened.destroy()
+            }
+        }
+
+        try {
+            controller.create().start().resume()
+            loadExecutor.runNextOnWorker()
+            assertTrue(awaitReaderEntries(activity))
+            setPendingReaderProgress(activity, position = 4, offset = 27)
+            saveReaderPosition(activity, forceCommit = true)
+            activity.finish()
+            controller.pause().stop().destroy()
+
+            assertEquals(1, writer.pendingTaskCount)
+            assertEquals(1 to 7, reopenAndReadAnchor())
+            writer.runNextOnWorker()
+            assertTrue(writer.isTerminated)
+            assertEquals(4 to 27, reopenAndReadAnchor())
+        } finally {
+            if (!activity.isDestroyed) controller.destroy()
+            writer.shutdownNow()
+        }
+    }
+
+    @Test
     fun progressWritesKeepQueueOrderAndFinishAfterActivityShutdown() {
         val application = RuntimeEnvironment.getApplication()
         val (archive, preparedCache) = createPreparedReaderFixture(
