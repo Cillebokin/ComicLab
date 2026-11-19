@@ -50,6 +50,98 @@ class MangaReaderCacheLifecycleRobolectricTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
+    fun directSessionOpensOnWorkerAndClosesWhenReaderExitsBeforeBinding() {
+        verifyUnboundDirectSessionCloses(recreate = false)
+    }
+
+    @Test
+    fun directSessionFromBeforeRotationClosesWithoutBindingToOldReader() {
+        verifyUnboundDirectSessionCloses(recreate = true)
+    }
+
+    @Test
+    fun directSessionThatFinishesOpeningAfterExitClosesOnWorker() {
+        val application = RuntimeEnvironment.getApplication()
+        val archive = temporaryFolder.newFile("blocked-open.cbz")
+        writeZip(archive, "page.png" to createPng())
+        val executor = ManualExecutorService()
+        val session = BlockingPreviewSession()
+        val openStarted = CountDownLatch(1)
+        val finishOpen = CountDownLatch(1)
+        val controller = Robolectric.buildActivity(
+            MangaReaderActivity::class.java,
+            Intent(application, MangaReaderActivity::class.java)
+                .putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, archive.absolutePath)
+        )
+        val activity = controller.get()
+        activity.readerLoadExecutorForTest = executor
+        activity.openReaderSessionForTest = {
+            openStarted.countDown()
+            check(finishOpen.await(5, TimeUnit.SECONDS))
+            session
+        }
+        controller.create().start().resume()
+        val worker = executor.startNextOnWorker()
+        try {
+            assertTrue(openStarted.await(5, TimeUnit.SECONDS))
+            activity.finish()
+            controller.pause().stop().destroy()
+            finishOpen.countDown()
+            // The main looper is not drained. An invalidated open must close on the worker.
+            assertTrue(session.closeCompleted.await(5, TimeUnit.SECONDS))
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(1, session.closeCount.get())
+            assertEquals(null, activity.pageAdapterForTest)
+        } finally {
+            finishOpen.countDown()
+            worker.join(5_000)
+            if (!activity.isDestroyed) controller.pause().stop().destroy()
+        }
+    }
+
+    private fun verifyUnboundDirectSessionCloses(recreate: Boolean) {
+        val application = RuntimeEnvironment.getApplication()
+        val archive = temporaryFolder.newFile("direct-reader.cbz")
+        writeZip(archive, "page.png" to createPng())
+        val executor = ManualExecutorService()
+        val session = BlockingPreviewSession()
+        val openedOn = AtomicReference<Thread?>()
+        val controller = Robolectric.buildActivity(
+            MangaReaderActivity::class.java,
+            Intent(application, MangaReaderActivity::class.java)
+                .putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, archive.absolutePath)
+        )
+        val oldActivity = controller.get()
+        oldActivity.readerLoadExecutorForTest = executor
+        oldActivity.openReaderSessionForTest = { file ->
+            assertEquals(archive, file)
+            openedOn.set(Thread.currentThread())
+            session
+        }
+        try {
+            controller.create().start().resume()
+            executor.runNextOnWorker()
+            assertTrue("worker must open the session before the UI callback",
+                openedOn.get()?.let { it !== Looper.getMainLooper().thread } == true)
+            assertEquals(0, session.closeCount.get())
+            assertTrue(oldActivity.imageEntriesForTest.isEmpty())
+
+            if (recreate) {
+                controller.recreate()
+                assertTrue(oldActivity !== controller.get())
+            } else {
+                oldActivity.finish()
+                controller.pause().stop().destroy()
+            }
+            assertTrue(pumpMainUntil { session.closeCount.get() == 1 })
+            assertTrue(oldActivity.imageEntriesForTest.isEmpty())
+            assertEquals(null, oldActivity.pageAdapterForTest)
+        } finally {
+            if (!controller.get().isDestroyed) controller.pause().stop().destroy()
+        }
+    }
+
+    @Test
     fun staleReaderCallbackDoesNotDeleteCacheUsedByNewReader() {
         val application = RuntimeEnvironment.getApplication()
         val archive = temporaryFolder.newFile("shared-reader.cbz")
@@ -836,16 +928,17 @@ class MangaReaderCacheLifecycleRobolectricTest {
         }
 
         fun runNextOnWorker() {
+            val worker = startNextOnWorker()
+            worker.join(5_000)
+            assertFalse(worker.isAlive)
+        }
+
+        fun startNextOnWorker(): Thread {
             val task = synchronized(this) { tasks.removeAt(0) }
-            val finished = CountDownLatch(1)
-            Thread({
-                try {
-                    task.run()
-                } finally {
-                    finished.countDown()
-                }
-            }, "MangaReaderCacheLifecycleTest").apply { isDaemon = true }.start()
-            assertTrue(finished.await(5, TimeUnit.SECONDS))
+            return Thread(task, "MangaReaderCacheLifecycleTest").apply {
+                isDaemon = true
+                start()
+            }
         }
 
         @Synchronized

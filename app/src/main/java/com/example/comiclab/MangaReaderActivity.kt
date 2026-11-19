@@ -133,6 +133,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var readerLoadExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    internal var openReaderSessionForTest: ((File) -> ComicArchive.ImageReaderSession)? = null
     private var readerProgressExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private lateinit var readerProgressController: MangaReaderProgressController
     private val readerLoadGeneration = AtomicInteger(0)
@@ -730,20 +731,39 @@ class MangaReaderActivity : AppCompatActivity() {
                 return@executeReaderLoadTask
             }
 
+            if (entries.isEmpty()) {
+                runOnUiThread {
+                    if (isReaderActive() && generation == readerLoadGeneration.get()) {
+                        showError(getString(R.string.no_reading_images))
+                    }
+                }
+                return@executeReaderLoadTask
+            }
+            if (generation != readerLoadGeneration.get()) return@executeReaderLoadTask
+
+            val sessionResult = runCatching { openArchiveReaderSession(file) }
+            if (generation != readerLoadGeneration.get()) {
+                sessionResult.getOrNull()?.let(::closeUnboundReaderSession)
+                return@executeReaderLoadTask
+            }
+            // Activity's UI queue still delivers this callback after onDestroy clears our handler.
             runOnUiThread {
-                if (!isReaderActive() || generation != readerLoadGeneration.get()) {
+                if (!isReaderActive() || generation != readerLoadGeneration.get() || archiveFile != file) {
+                    sessionResult.getOrNull()?.let(::closeUnboundReaderSession)
                     return@runOnUiThread
                 }
-
-                if (entries.isEmpty()) {
-                    showError(getString(R.string.no_reading_images))
+                val session = sessionResult.getOrElse {
+                    showError(getString(R.string.unsupported_archive_format))
                     return@runOnUiThread
                 }
-
                 imageEntries = entries
+                if (!bindReaderAdapter(file, entries, session)) {
+                    imageEntries = emptyList()
+                    showError(getString(R.string.unsupported_archive_format))
+                    return@runOnUiThread
+                }
                 ReadingHistoryStore.record(this, file)
                 tvReaderStatus.visibility = View.GONE
-                bindArchiveReaderAdapter(file, entries)
             }
         }
     }
@@ -826,11 +846,11 @@ class MangaReaderActivity : AppCompatActivity() {
         }
     }
 
-    private fun bindArchiveReaderAdapter(file: File, entries: List<String>) {
+    private fun openArchiveReaderSession(file: File): ComicArchive.ImageReaderSession {
         val sessionOpenStartedAtNanos = ComicLabPerformance.nowNanos()
         val sessionResult = runCatching {
             ComicLabPerformance.trace("comiclab.reader.session_open") {
-                ComicArchive.openReaderSession(file, cacheDir)
+                openReaderSessionForTest?.invoke(file) ?: ComicArchive.openReaderSession(file, cacheDir)
             }
         }
         ComicLabPerformance.record(
@@ -838,11 +858,13 @@ class MangaReaderActivity : AppCompatActivity() {
             startedAtNanos = sessionOpenStartedAtNanos,
             fields = "format=${file.extension.lowercase()} success=${sessionResult.isSuccess}"
         )
-        val session = sessionResult.getOrElse {
-            showError(getString(R.string.unsupported_archive_format))
-            return
+        return sessionResult.getOrThrow()
+    }
+
+    private fun closeUnboundReaderSession(session: ComicArchive.ImageReaderSession) {
+        runCatching { session.close() }.onFailure {
+            Log.w(READER_LOG_TAG, "unbound reader session failed to close", it)
         }
-        bindReaderAdapter(entries, session)
     }
 
     private fun bindPreparedReaderAdapter(
@@ -891,60 +913,84 @@ class MangaReaderActivity : AppCompatActivity() {
         initializeReaderPosition(entries)
     }
 
-    private fun bindReaderAdapter(entries: List<String>, session: ComicArchive.ImageReaderSession) {
-        val readerFile = archiveFile ?: return
-        val displayWidth = readerPageDisplayWidth()
-        val displayHeight = readerPageDisplayHeight()
-        val decodeScale = readerPageDecodeScale()
-        val decodeWidth = (displayWidth * decodeScale).coerceAtMost(MAX_READER_DECODE_WIDTH)
-        val decodeHeight = (displayHeight * decodeScale).coerceAtMost(MAX_READER_DECODE_HEIGHT)
-        val sharedSession = if (session.isPdfSource()) {
-            ComicArchive.SharedImageReaderSession.wrap(session)
-        } else {
-            null
+    private fun bindReaderAdapter(
+        readerFile: File,
+        entries: List<String>,
+        session: ComicArchive.ImageReaderSession
+    ): Boolean {
+        val previousPageAdapter = pageAdapter
+        val previousPreviewAdapter = readerPreviewAdapter
+        var pageSession = session
+        var previewSession: ComicArchive.ImageReaderSession? = null
+        try {
+            val displayWidth = readerPageDisplayWidth()
+            val displayHeight = readerPageDisplayHeight()
+            val decodeScale = readerPageDecodeScale()
+            val decodeWidth = (displayWidth * decodeScale).coerceAtMost(MAX_READER_DECODE_WIDTH)
+            val decodeHeight = (displayHeight * decodeScale).coerceAtMost(MAX_READER_DECODE_HEIGHT)
+            if (session.isPdfSource()) {
+                val sharedSession = ComicArchive.SharedImageReaderSession.wrap(session)
+                pageSession = sharedSession.acquire()
+                previewSession = sharedSession.acquire()
+            }
+            pageAdapter?.close()
+            readerCoverSinglePageEnabled = !session.isPdfSource() &&
+                AppSettings.isDoublePageCoverSingleEnabled(this)
+            lastReaderPreloadRequest = null
+            val adapter = MangaPageAdapter(
+                context = this,
+                recyclerView = listReaderPages,
+                archiveFile = readerFile,
+                session = pageSession,
+                entries = entries,
+                baseDisplayWidth = displayWidth,
+                baseDisplayHeight = displayHeight,
+                decodeWidth = decodeWidth,
+                decodeHeight = decodeHeight,
+                readingDirection = readingDirection,
+                doublePageReading = isDoublePageReading(),
+                coverSinglePage = readerCoverSinglePageEnabled,
+                spreadAnchorSourcePosition = doublePageSpreadAnchorSourcePosition,
+                onPageReady = { position ->
+                    recordInitialReaderPageReady(position, prepared = false)
+                    if (isPendingReaderPosition(position)) {
+                        applyPendingReaderPosition()
+                    }
+                },
+                onPageTap = {
+                    handleReaderTap()
+                },
+                onPageDecoded = ::onReaderPageDecoded
+            )
+            pageAdapter = adapter
+            listReaderPages.adapter = adapter
+            bindReaderPreviewAdapter(entries, readerFile, previewSession)
+            // 索引可能在 Activity 暂停后才完成；新适配器不能凭初始化启动后台采样。
+            if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+                adapter.onReaderResumed()
+            } else {
+                adapter.onReaderPaused()
+            }
+            initializeReaderPosition(entries)
+            return true
+        } catch (throwable: Throwable) {
+            Log.e(READER_LOG_TAG, "reader adapter binding failed", throwable)
+            if (pageAdapter !== previousPageAdapter) {
+                pageAdapter?.close()
+                pageAdapter = null
+                listReaderPages.adapter = null
+            } else {
+                closeUnboundReaderSession(pageSession)
+            }
+            if (readerPreviewAdapter !== previousPreviewAdapter) {
+                readerPreviewAdapter?.close()
+                readerPreviewAdapter = null
+                listReaderPreview.adapter = null
+            } else {
+                previewSession?.let(::closeUnboundReaderSession)
+            }
+            return false
         }
-        val pageSession = sharedSession?.acquire() ?: session
-        val previewSession = sharedSession?.acquire()
-
-        pageAdapter?.close()
-        readerCoverSinglePageEnabled = !session.isPdfSource() &&
-            AppSettings.isDoublePageCoverSingleEnabled(this)
-        lastReaderPreloadRequest = null
-        val adapter = MangaPageAdapter(
-            context = this,
-            recyclerView = listReaderPages,
-            archiveFile = readerFile,
-            session = pageSession,
-            entries = entries,
-            baseDisplayWidth = displayWidth,
-            baseDisplayHeight = displayHeight,
-            decodeWidth = decodeWidth,
-            decodeHeight = decodeHeight,
-            readingDirection = readingDirection,
-            doublePageReading = isDoublePageReading(),
-            coverSinglePage = readerCoverSinglePageEnabled,
-            spreadAnchorSourcePosition = doublePageSpreadAnchorSourcePosition,
-            onPageReady = { position ->
-                recordInitialReaderPageReady(position, prepared = false)
-                if (isPendingReaderPosition(position)) {
-                    applyPendingReaderPosition()
-                }
-            },
-            onPageTap = {
-                handleReaderTap()
-            },
-            onPageDecoded = ::onReaderPageDecoded
-        )
-        pageAdapter = adapter
-        listReaderPages.adapter = adapter
-        bindReaderPreviewAdapter(entries, readerFile, previewSession)
-        // 索引可能在 Activity 暂停后才完成；新适配器不能凭初始化启动后台采样。
-        if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
-            adapter.onReaderResumed()
-        } else {
-            adapter.onReaderPaused()
-        }
-        initializeReaderPosition(entries)
     }
 
     private fun recordInitialReaderPageReady(position: Int, prepared: Boolean) {
