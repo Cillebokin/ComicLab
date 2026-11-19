@@ -372,6 +372,7 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="collapse_preview">Collapse preview</string>
     <string name="loading_preview">Loading preview...</string>
     <string name="loading_reading">Loading...</string>
+    <string name="reader_page_load_failed">Could not load this page. You can keep turning pages.</string>
     <string name="deleting_archive_image">Deleting image...</string>
     <string name="delete_archive_image_title">Delete image</string>
     <string name="delete_archive_image_message">Delete this image from the archive?\nThe archive will be rewritten in place. The app will not keep a full backup, and this deletion cannot be undone in the app.</string>

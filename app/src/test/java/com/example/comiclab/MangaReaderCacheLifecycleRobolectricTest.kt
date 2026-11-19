@@ -50,6 +50,34 @@ class MangaReaderCacheLifecycleRobolectricTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
+    @Config(qualifiers = "land")
+    fun preparedDoublePageReadinessRequiresTheExplicitTargetNotTheSpreadAnchor() {
+        val application = RuntimeEnvironment.getApplication()
+        AppSettings.setReadingDirection(application, AppSettings.READING_DIRECTION_LEFT_TO_RIGHT)
+        AppSettings.setDoublePageReadingEnabled(application, true)
+        AppSettings.setDoublePageCoverSingleEnabled(application, false)
+        val (archive, preparedCache) = createPreparedReaderFixture("spread.cbz", "spread-cache")
+        val executor = ManualExecutorService()
+        val controller = buildReaderController(application, archive, preparedCache, executor, startPageIndex = 1)
+        val reader = controller.get()
+        try {
+            controller.create()
+            executor.runNextOnWorker()
+            assertTrue(awaitReaderEntries(reader))
+            assertEquals(0, reader.readerSpreadStartSourcePositionForTest(1))
+            val decoded = MangaReaderActivity::class.java.getDeclaredMethod(
+                "onReaderPageDecoded", Int::class.javaPrimitiveType
+            ).apply { isAccessible = true }
+            decoded.invoke(reader, 0)
+            assertFalse(reader.firstReaderPageReadyMetricReportedForTest)
+            decoded.invoke(reader, 1)
+            assertTrue(reader.firstReaderPageReadyMetricReportedForTest)
+        } finally {
+            controller.destroy()
+        }
+    }
+
+    @Test
     fun directSessionOpensOnWorkerAndClosesWhenReaderExitsBeforeBinding() {
         verifyUnboundDirectSessionCloses(recreate = false)
     }

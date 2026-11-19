@@ -21,6 +21,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import com.example.comiclab.core.settings.ComicLabMangaProgress
+import com.example.comiclab.ui.reader.manga.SubsamplingMangaPageAdapter
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.atomic.AtomicReference
@@ -239,6 +240,37 @@ class NextMangaDeviceAcceptanceTest {
         await("undecodable comic should return to previous reader") { main { resumed() === previousReader } }
     }
 
+    @Test fun badInitialPageWithGoodNeighborDoesNotCompleteNextComicHandoff() {
+        val first = comic("01.cbz", 3)
+        val mixed = comic("02.cbz", 3, badPage = 0)
+        MangaReaderActivity.restoreReadingProgress(context, mixed,
+            ComicLabMangaProgress(mixed.absolutePath, position = 2, offset = 0))
+        val preview = launchPreview(first)
+        main { preview.findViewById<View>(R.id.btnFullRead).performClick() }
+        val previous = awaitReader(first)
+        reachEnd(previous, mixed.name)
+        main { previous.findViewById<Button>(R.id.btnNextManga).performClick() }
+        onView(withText(R.string.read_from_beginning)).inRoot(isDialog()).perform(directClick())
+        val reader = awaitReader(mixed, requireDecoded = false)
+        val pages = reader.listReaderPagesForTest
+        await("bad initial page did not show the page failure") { main {
+            val holder = pages.findViewHolderForAdapterPosition(0) as? SubsamplingMangaPageAdapter.PageViewHolder
+            holder?.statusText?.visibility == View.VISIBLE &&
+                holder.statusText.text.toString() == context.getString(R.string.reader_page_load_failed)
+        } }
+
+        main { reader.jumpReaderToPageForTest(1) }
+        await("healthy neighboring page did not decode") { main {
+            val holder = pages.findViewHolderForAdapterPosition(1) as? SubsamplingMangaPageAdapter.PageViewHolder
+            holder?.imageView?.hasLoadedReaderImage() == true
+        } }
+        assertFalse(main { reader.firstReaderPageReadyMetricReportedForTest })
+        assertFalse(main { previous.isFinishing })
+        assertEquals(2, MangaReaderActivity.savedReadingProgress(context, mixed)?.position)
+        instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+        await("back did not return to the previous reader") { main { resumed() === previous } }
+    }
+
     @Test fun successfulStartOverClearsOldProgressAfterDecoding() {
         val first = comic("01.cbz", 3)
         val next = comic("02.cbz", 4)
@@ -427,7 +459,7 @@ class NextMangaDeviceAcceptanceTest {
         assertTrue(message, condition())
     }
 
-    private fun comic(name: String, pages: Int): File {
+    private fun comic(name: String, pages: Int, badPage: Int? = null): File {
         val file = File(root, name)
         val image = Bitmap.createBitmap(400, 600, Bitmap.Config.ARGB_8888)
         image.eraseColor(Color.rgb(100, 140, 190))
@@ -439,7 +471,7 @@ class NextMangaDeviceAcceptanceTest {
         ZipOutputStream(file.outputStream()).use { zip ->
             repeat(pages) { i ->
                 zip.putNextEntry(ZipEntry("page_%03d.png".format(i)))
-                zip.write(data)
+                zip.write(if (i == badPage) "not a decodable image".toByteArray() else data)
                 zip.closeEntry()
             }
         }

@@ -18,6 +18,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.davemorrissey.labs.subscaleview.ImageSource
 import com.example.comiclab.AppSettings
+import com.example.comiclab.R
 import com.example.comiclab.ComicArchive
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
 import com.example.comiclab.core.reader.decode.preparedReaderNearbyPositions
@@ -120,6 +121,9 @@ internal class SubsamplingMangaPageAdapter(
                 Gravity.CENTER
             )
             setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            val padding = (12 * resources.displayMetrics.density).roundToInt()
+            setPadding(padding, padding, padding, padding)
             textSize = 14f
             visibility = View.GONE
         }
@@ -127,14 +131,28 @@ internal class SubsamplingMangaPageAdapter(
         container.addView(statusText)
         val holder = PageViewHolder(container, imageView, statusText)
         imageView.onReaderImageLoaded = {
-            val position = positionMapper.sourcePositionForAdapterPosition(holder.bindingAdapterPosition)
-            if (!closed && position != null && holder.boundFilePath == pageFiles.getOrNull(position)?.absolutePath &&
-                holder.itemView.isAttachedToWindow
-            ) {
-                onPageDecoded(position)
-            }
+            reportDecodedPage(holder)
+        }
+        imageView.onReaderImageLoadFailed = {
+            boundImagePosition(holder)?.let(::markPageFailed)
         }
         return holder
+    }
+
+    override fun onViewAttachedToWindow(holder: PageViewHolder) {
+        super.onViewAttachedToWindow(holder)
+        if (holder.imageView.hasLoadedReaderImage()) reportDecodedPage(holder)
+    }
+
+    private fun reportDecodedPage(holder: PageViewHolder) {
+        if (holder.itemView.isAttachedToWindow) boundImagePosition(holder)?.let(onPageDecoded)
+    }
+
+    private fun boundImagePosition(holder: PageViewHolder): Int? {
+        if (closed) return null
+        val position = positionMapper.sourcePositionForAdapterPosition(holder.bindingAdapterPosition) ?: return null
+        val file = pageFiles.getOrNull(position) ?: return null
+        return position.takeIf { it !in failedPositions && holder.boundFilePath == file.absolutePath }
     }
 
     override fun onBindViewHolder(holder: PageViewHolder, adapterPosition: Int) {
@@ -152,14 +170,20 @@ internal class SubsamplingMangaPageAdapter(
         applyPageLayout(holder.container, bounds)
         applyImageLayout(holder.imageView, bounds, adapterPosition)
 
-        if (!file.isFile || file.length() <= 0L) {
+        if (sourcePosition in failedPositions || !file.isFile || file.length() <= 0L) {
             bindEmptyPage(holder)
-            submitExtraction(sourcePosition, PRIORITY_VISIBLE)
+            if (sourcePosition !in failedPositions) submitExtraction(sourcePosition, PRIORITY_VISIBLE)
+            holder.statusText.setText(
+                if (sourcePosition in failedPositions) R.string.reader_page_load_failed
+                else R.string.loading_reading
+            )
+            holder.statusText.visibility = View.VISIBLE
             onPageReady(sourcePosition)
             return
         }
 
         readyPositions.add(sourcePosition)
+        holder.statusText.text = null
         holder.statusText.visibility = View.GONE
         holder.imageView.visibility = View.VISIBLE
         if (holder.boundFilePath != file.absolutePath) {
@@ -168,8 +192,7 @@ internal class SubsamplingMangaPageAdapter(
             runCatching {
                 holder.imageView.setReaderImage(ImageSource.uri(Uri.fromFile(file)))
             }.onFailure {
-                holder.boundFilePath = null
-                holder.imageView.clearReaderImage()
+                markPageFailed(sourcePosition)
             }
         }
 
@@ -177,6 +200,7 @@ internal class SubsamplingMangaPageAdapter(
     }
 
     private fun bindEmptyPage(holder: PageViewHolder) {
+        holder.statusText.text = null
         holder.statusText.visibility = View.GONE
         holder.boundFilePath = null
         holder.imageView.visibility = View.INVISIBLE
@@ -194,6 +218,8 @@ internal class SubsamplingMangaPageAdapter(
     }
 
     override fun onViewRecycled(holder: PageViewHolder) {
+        holder.statusText.text = null
+        holder.statusText.visibility = View.GONE
         holder.boundFilePath = null
         if (!closed) {
             holder.imageView.clearReaderImage { result ->
@@ -538,17 +564,11 @@ internal class SubsamplingMangaPageAdapter(
         if (closed ||
             position !in entryNames.indices ||
             position !in pageFiles.indices ||
-            position in readyPositions
+            position in readyPositions ||
+            position in failedPositions
         ) {
             return
         }
-        if (position in failedPositions && priority < PRIORITY_VISIBLE) {
-            return
-        }
-        if (priority >= PRIORITY_VISIBLE) {
-            failedPositions.remove(position)
-        }
-
         val wasAlreadyLoading = !loadingPositions.add(position)
         if (wasAlreadyLoading && !promoteQueuedExtraction(position, priority)) {
             return
@@ -564,6 +584,7 @@ internal class SubsamplingMangaPageAdapter(
         runCatching {
             extractExecutor.execute(task)
         }.onFailure {
+            markPageFailed(position)
             loadingPositions.remove(position)
         }
     }
@@ -606,16 +627,15 @@ internal class SubsamplingMangaPageAdapter(
 
             if (extractedFile != null && extractedFile.isFile && extractedFile.length() > 0L) {
                 readyPositions.add(position)
-                failedPositions.remove(position)
                 ComicArchive.imageFileBounds(extractedFile)?.let { bounds ->
                     pageBounds[position] = bounds
                 }
-                notifyPageFileReady(position)
+                notifyPageFileChanged(position, ready = true)
             } else {
-                failedPositions.add(position)
+                markPageFailed(position)
             }
         } catch (throwable: Throwable) {
-            failedPositions.add(position)
+            markPageFailed(position)
             if (throwable is OutOfMemoryError) {
                 Log.w(READER_ADAPTER_LOG_TAG, "prepared page extraction OOM position=$position")
                 System.gc()
@@ -631,14 +651,20 @@ internal class SubsamplingMangaPageAdapter(
         }
     }
 
-    private fun notifyPageFileReady(position: Int) {
+    private fun markPageFailed(position: Int) {
+        if (!closed && failedPositions.add(position)) {
+            notifyPageFileChanged(position, ready = false)
+        }
+    }
+
+    private fun notifyPageFileChanged(position: Int, ready: Boolean) {
         mainHandler.post {
             if (closed || position !in entryNames.indices) {
                 return@post
             }
 
             if (recyclerView.isComputingLayout) {
-                mainHandler.postDelayed({ notifyPageFileReady(position) }, UI_REFRESH_RETRY_MS)
+                mainHandler.postDelayed({ notifyPageFileChanged(position, ready) }, UI_REFRESH_RETRY_MS)
                 return@post
             }
 
@@ -646,7 +672,7 @@ internal class SubsamplingMangaPageAdapter(
             if (adapterPosition >= 0) {
                 notifyItemChanged(adapterPosition)
             }
-            onPageReady(position)
+            if (ready) onPageReady(position)
         }
     }
 

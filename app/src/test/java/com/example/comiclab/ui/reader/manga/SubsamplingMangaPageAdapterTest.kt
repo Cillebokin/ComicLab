@@ -1,5 +1,7 @@
 package com.example.comiclab.ui.reader.manga
 
+import android.os.Looper
+import android.view.View
 import android.widget.FrameLayout
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.AppSettings
@@ -13,6 +15,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
@@ -22,6 +25,49 @@ class SubsamplingMangaPageAdapterTest {
 
     @get:Rule
     val temporaryFolder = TemporaryFolder()
+
+    @Test
+    fun failedExtractionRemainsVisibleAndDoesNotRestartOnBindOrPreload() {
+        val context = RuntimeEnvironment.getApplication()
+        val cache = temporaryFolder.newFolder("failed-page")
+        val lease = checkNotNull(PreparedReaderCacheLeaseRegistry().acquireUsageLease(cache))
+        val recycler = RecyclerView(context)
+        val adapter = SubsamplingMangaPageAdapter(
+            context = context,
+            recyclerView = recycler,
+            archiveFile = temporaryFolder.newFile("invalid.cbz"),
+            entryNames = listOf("page.png"),
+            pageFiles = listOf(File(cache, "missing.png")),
+            boundsByPosition = emptyMap(),
+            preparedCacheDir = cache,
+            cacheUseLease = lease,
+            baseDisplayWidth = 400,
+            baseDisplayHeight = 600,
+            readingDirection = AppSettings.READING_DIRECTION_TOP_TO_BOTTOM,
+            doublePageReading = false,
+            coverSinglePage = false,
+            onPageReady = {},
+            onPageTap = {}
+        )
+        val executor = adapter.extractExecutorForTest
+        val holder = adapter.onCreateViewHolder(recycler, 0)
+        try {
+            adapter.onBindViewHolder(holder, 0)
+            assertTrue(awaitCondition { executor.completedTaskCount == 1L })
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+
+            repeat(3) {
+                adapter.onBindViewHolder(holder, 0)
+                adapter.preloadAround(0, 1, 1, false, true, false)
+            }
+            assertEquals(View.VISIBLE, holder.statusText.visibility)
+            assertTrue(holder.statusText.text.isNotBlank())
+            assertEquals(1L, executor.taskCount)
+        } finally {
+            adapter.close()
+            assertTrue(awaitCondition { lease.isClosed })
+        }
+    }
 
     @Test
     fun doublePageCoverSlotDoesNotChangePreparedSourceEntryCount() {

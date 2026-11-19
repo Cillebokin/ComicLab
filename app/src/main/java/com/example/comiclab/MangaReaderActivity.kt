@@ -158,6 +158,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private var imageEntries: List<String> = emptyList()
     private var readerLoadStartedAtNanos: Long? = null
     private var firstReaderPageReadyMetricReported = false
+    private var initialReaderSourcePosition: Int? = null
     private var restoreReaderPositionAfterOrientationChange = false
     private var pageAdapter: ReaderPageAdapterController? = null
     private var readerPreviewAdapter: ReaderPreviewAdapter? = null
@@ -220,6 +221,8 @@ class MangaReaderActivity : AppCompatActivity() {
                 null
             }
         }
+        initialReaderSourcePosition = savedInstanceState
+            ?.getInt(STATE_INITIAL_READER_SOURCE_POSITION, NO_EXPLICIT_START_PAGE)?.takeIf { it >= 0 }
         doublePageSpreadAnchorSourcePosition = savedInstanceState?.let { state ->
             if (state.containsKey(STATE_READER_DOUBLE_PAGE_SPREAD_ANCHOR)) {
                 state.getInt(STATE_READER_DOUBLE_PAGE_SPREAD_ANCHOR).takeIf { it >= 0 }
@@ -292,6 +295,9 @@ class MangaReaderActivity : AppCompatActivity() {
         nextHandoffToken?.let { outState.putString(STATE_NEXT_HANDOFF_TOKEN, it) }
         outState.putBoolean(STATE_NEXT_READER_READY, nextReaderWasReady)
         outState.putBoolean(STATE_START_FROM_BEGINNING_PENDING, startFromBeginningPending)
+        if (!firstReaderPageReadyMetricReported) {
+            initialReaderSourcePosition?.let { outState.putInt(STATE_INITIAL_READER_SOURCE_POSITION, it) }
+        }
         outState.putInt(STATE_READER_ORIENTATION, resources.configuration.orientation)
         if (::readerLayoutManager.isInitialized && imageEntries.isNotEmpty()) {
             val (position, offset) = readerPositionForRecreation
@@ -897,7 +903,6 @@ class MangaReaderActivity : AppCompatActivity() {
             coverSinglePage = readerCoverSinglePageEnabled,
             spreadAnchorSourcePosition = doublePageSpreadAnchorSourcePosition,
             onPageReady = { position ->
-                recordInitialReaderPageReady(position, prepared = true)
                 if (isPendingReaderPosition(position)) {
                     applyPendingReaderPosition()
                 }
@@ -994,7 +999,7 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun recordInitialReaderPageReady(position: Int, prepared: Boolean) {
-        if (firstReaderPageReadyMetricReported || position != currentReaderPosition) {
+        if (firstReaderPageReadyMetricReported || position != initialReaderSourcePosition) {
             return
         }
 
@@ -1035,6 +1040,7 @@ class MangaReaderActivity : AppCompatActivity() {
         val startPageIndex = explicitStartPageIndex.takeIf { it in entries.indices }
         when {
             startPageIndex != null -> {
+                if (initialReaderSourcePosition == null) initialReaderSourcePosition = startPageIndex
                 val layoutPosition = readerSpreadStartPosition(startPageIndex)
                 readerLayoutManager.scrollToPositionWithOffset(layoutPosition, 0)
                 currentReaderPosition = readerSpreadStartSourcePosition(startPageIndex)
@@ -1042,6 +1048,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 updateReaderProgress(layoutPosition, entries.size)
             }
             shouldStartFromBeginning -> {
+                if (initialReaderSourcePosition == null) initialReaderSourcePosition = 0
                 readerLayoutManager.scrollToPositionWithOffset(0, 0)
                 updateReaderProgress(0, entries.size)
             }
@@ -1066,7 +1073,10 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun onReaderPageDecoded(position: Int) {
-        if (!isReaderActive() || position != currentReaderPosition || position !in imageEntries.indices) return
+        if (!isReaderActive() || position != initialReaderSourcePosition || position !in imageEntries.indices) return
+        if (pageAdapter is SubsamplingMangaPageAdapter) {
+            recordInitialReaderPageReady(position, prepared = true)
+        }
         if (startFromBeginningPending) {
             val file = archiveFile ?: return
             readerProgressController.clear(file)
@@ -1638,6 +1648,7 @@ class MangaReaderActivity : AppCompatActivity() {
             ?.also { restoredReaderPosition = null }
             ?: readerProgressController.readPositionAndOffset(file)
         val position = savedPosition.coerceIn(0, imageEntries.lastIndex.coerceAtLeast(0))
+        if (initialReaderSourcePosition == null) initialReaderSourcePosition = position
         val offset = if (isHorizontalReading() || restoreReaderPositionAfterOrientationChange) {
             0
         } else {
@@ -2273,6 +2284,7 @@ class MangaReaderActivity : AppCompatActivity() {
         private const val READER_LOG_TAG = "ComicLabReader"
         private const val STATE_READER_ORIENTATION = "reader_orientation"
         private const val STATE_READER_POSITION = "reader_position"
+        private const val STATE_INITIAL_READER_SOURCE_POSITION = "initial_reader_source_position"
         private const val STATE_READER_OFFSET = "reader_offset"
         private const val STATE_READER_DOUBLE_PAGE_SPREAD_ANCHOR = "reader_double_page_spread_anchor"
         private const val NO_EXPLICIT_START_PAGE = -1

@@ -217,11 +217,12 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
         }.getOrElse {
             emptyList()
         }
+        val targetFile = ComicArchive.preparedImageFile(outputDir, startPosition, entries[startPosition])
         ComicLabPerformance.record(
             event = "reader_prepare_initial_pages",
             startedAtNanos = extractionStartedAtNanos,
             fields = "requested=${initialEntries.size} extracted=${extractedFiles.size} " +
-                "bytes=${extractedFiles.sumOf { it.length() }}"
+                "targetExtracted=${targetFile in extractedFiles} bytes=${extractedFiles.sumOf { it.length() }}"
         )
 
         handler.post {

@@ -23,6 +23,7 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
 
     var onReaderTap: (() -> Unit)? = null
     internal var onReaderImageLoaded: (() -> Unit)? = null
+    internal var onReaderImageLoadFailed: (() -> Unit)? = null
 
     private val readerMainHandler = Handler(Looper.getMainLooper())
     private val readerDecodeExecutor = ReaderDecodeExecutor()
@@ -53,11 +54,11 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
     init {
         setOnImageEventListener(object : DefaultOnImageEventListener() {
             override fun onImageLoaded() {
-                if (!permanentlyClosing && !imageTransitionRunning && appliedImageSource != null &&
-                    requestedImageSource === appliedImageSource
-                ) {
-                    onReaderImageLoaded?.invoke()
-                }
+                if (hasCurrentImageSource()) onReaderImageLoaded?.invoke()
+            }
+
+            override fun onImageLoadError(e: Exception) {
+                if (hasCurrentImageSource()) onReaderImageLoadFailed?.invoke()
             }
         })
         setExecutor(readerDecodeExecutor)
@@ -72,6 +73,12 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
         setPreferredBitmapConfig(Bitmap.Config.ARGB_8888)
         isClickable = true
     }
+
+    private fun hasCurrentImageSource(): Boolean =
+        !permanentlyClosing && !imageTransitionRunning && appliedImageSource != null &&
+            requestedImageSource === appliedImageSource
+
+    internal fun hasLoadedReaderImage(): Boolean = hasCurrentImageSource() && isImageLoaded
 
     /** Change the source only after prior Subsampling tasks and their main-thread callbacks drain. */
     fun setReaderImage(source: ImageSource) {
@@ -123,6 +130,7 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
         requestedImageSource = null
         onReaderTap = null
         onReaderImageLoaded = null
+        onReaderImageLoadFailed = null
         isEnabled = false
         visibility = GONE
         requestReaderImageTransition()
@@ -193,6 +201,7 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
         if (sourceFailure != null) {
             requestedImageSource = null
             visibility = INVISIBLE
+            onReaderImageLoadFailed?.invoke()
             dispatchTransitionCallbacks(
                 Result.failure(
                     sourceFailure ?: IllegalStateException("Subsampling source application failed")
