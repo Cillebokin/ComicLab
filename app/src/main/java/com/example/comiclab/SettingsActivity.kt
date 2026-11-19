@@ -1376,6 +1376,7 @@ class SettingsActivity : AppCompatActivity() {
                 openProjectReleasePage()
             }
             .setNegativeButton(android.R.string.ok, null)
+            .createRounded()
             .show()
     }
 
