@@ -240,6 +240,41 @@ class NextMangaDeviceAcceptanceTest {
         await("undecodable comic should return to previous reader") { main { resumed() === previousReader } }
     }
 
+    @Test fun ordinaryStartOverCanResumeFromReadablePageAfterBadCover() {
+        val mixed = comic("ordinary-start-over.cbz", 4, badPage = 0)
+        MangaReaderActivity.restoreReadingProgress(context, mixed,
+            ComicLabMangaProgress(mixed.absolutePath, position = 3, offset = 0))
+        val preview = launchPreview(mixed)
+        main { preview.findViewById<View>(R.id.btnFullRead).performClick() }
+        onView(withText(R.string.read_from_beginning)).inRoot(isDialog()).perform(directClick())
+        val reader = awaitReader(mixed)
+        val pages = reader.listReaderPagesForTest
+        await("bad cover did not show the page failure") { main {
+            val holder = pages.findViewHolderForAdapterPosition(0) as? SubsamplingMangaPageAdapter.PageViewHolder
+            holder?.statusText?.visibility == View.VISIBLE &&
+                holder.statusText.text.toString() == context.getString(R.string.reader_page_load_failed)
+        } }
+        assertEquals(3, MangaReaderActivity.savedReadingProgress(context, mixed)?.position)
+
+        main { reader.jumpReaderToPageForTest(1) }
+        await("healthy second page did not load") { main {
+            val holder = pages.findViewHolderForAdapterPosition(1) as? SubsamplingMangaPageAdapter.PageViewHolder
+            holder?.imageView?.hasLoadedReaderImage() == true && reader.currentReaderPositionForTest == 1
+        } }
+        assertFalse(main { reader.firstReaderPageReadyMetricReportedForTest })
+        instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+        val resumedPreview = awaitPreview(mixed)
+        await("ordinary start over did not save the new page") {
+            MangaReaderActivity.savedReadingProgress(context, mixed)?.position == 1
+        }
+        main { resumedPreview.findViewById<View>(R.id.btnFullRead).performClick() }
+        onView(withText(R.string.continue_reading)).inRoot(isDialog()).perform(directClick())
+        val reopened = awaitReader(mixed, previous = reader)
+        await("reopened reader did not resume at the new page") { main {
+            reopened.currentReaderPositionForTest == 1 && reopened.firstReaderPageReadyMetricReportedForTest
+        } }
+    }
+
     @Test fun badInitialPageWithGoodNeighborDoesNotCompleteNextComicHandoff() {
         val first = comic("01.cbz", 3)
         val mixed = comic("02.cbz", 3, badPage = 0)

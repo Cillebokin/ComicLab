@@ -175,6 +175,8 @@ class MangaReaderActivity : AppCompatActivity() {
     private var isDraggingReaderSlider = false
     private var shouldStartFromBeginning = false
     private var startFromBeginningPending = false
+    private var startOverNavigationRequested = false
+    private val decodedStartOverPages = mutableSetOf<Int>()
     private var explicitStartPageIndex = NO_EXPLICIT_START_PAGE
     private var pendingRestorePosition: Int? = null
     private var pendingRestoreOffset = 0
@@ -563,6 +565,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 readerScrollState = newState
                 if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
                     clearPendingReaderPosition()
+                    noteStartOverNavigation()
                 }
 
                 if (newState == RecyclerView.SCROLL_STATE_IDLE) {
@@ -591,6 +594,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 val visibleItemCount = visibleReaderItemCount()
                 val totalItemCount = pageAdapter?.readerItemCount() ?: 0
                 updateCurrentReaderPosition(firstVisibleItem)
+                saveStartOverFromReadablePage()
                 updateReaderProgress(firstVisibleItem, totalItemCount)
                 updateNextMangaAtEnd()
                 scheduleReaderPositionCheckpoint()
@@ -1073,7 +1077,14 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun onReaderPageDecoded(position: Int) {
-        if (!isReaderActive() || position != initialReaderSourcePosition || position !in imageEntries.indices) return
+        if (!isReaderActive() || position !in imageEntries.indices) return
+        if (position != initialReaderSourcePosition) {
+            if (isOrdinaryStartOverPending()) {
+                decodedStartOverPages.add(position)
+                saveStartOverFromReadablePage()
+            }
+            return
+        }
         if (pageAdapter is SubsamplingMangaPageAdapter) {
             recordInitialReaderPageReady(position, prepared = true)
         }
@@ -1081,6 +1092,7 @@ class MangaReaderActivity : AppCompatActivity() {
             val file = archiveFile ?: return
             readerProgressController.clear(file)
             startFromBeginningPending = false
+            decodedStartOverPages.clear()
         }
         if (intent.getBooleanExtra(EXTRA_RETURN_TO_CURRENT_PREVIEW, false) && !nextReaderWasReady) {
             nextReaderWasReady = true
@@ -1090,6 +1102,26 @@ class MangaReaderActivity : AppCompatActivity() {
                 intent.removeExtra(EXTRA_NEXT_HANDOFF_TOKEN)
             }
         }
+    }
+
+    private fun isOrdinaryStartOverPending(): Boolean =
+        startFromBeginningPending && !intent.getBooleanExtra(EXTRA_RETURN_TO_CURRENT_PREVIEW, false)
+
+    private fun noteStartOverNavigation() {
+        if (isOrdinaryStartOverPending()) startOverNavigationRequested = true
+    }
+
+    private fun saveStartOverFromReadablePage() {
+        if (!startOverNavigationRequested || !isOrdinaryStartOverPending() || !isReaderActive()) return
+        val firstVisible = readerLayoutManager.findFirstVisibleItemPosition()
+        if (firstVisible == RecyclerView.NO_POSITION) return
+        val position = displayedReaderPosition(firstVisible, imageEntries.size)
+        if (position !in decodedStartOverPages) return
+
+        // Replace the old position through the normal writer only after the new page is readable.
+        startFromBeginningPending = false
+        decodedStartOverPages.clear()
+        saveReaderPosition(forceCommit = true)
     }
 
     private fun configureDebugReaderStress() {
@@ -1164,7 +1196,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
         when (step % DEBUG_READER_STRESS_PATTERN_SIZE) {
             0 -> {
-                jumpReaderToPage(targetPosition)
+                jumpReaderToPage(targetPosition, userInitiated = false)
             }
 
             1 -> {
@@ -1213,17 +1245,17 @@ class MangaReaderActivity : AppCompatActivity() {
 
             4 -> {
                 applyDebugPageZoom(ReaderPageZoomLayout.MAX_SCALE, -listReaderPages.width * 0.35f, 0f)
-                jumpReaderToPage(targetPosition)
+                jumpReaderToPage(targetPosition, userInitiated = false)
             }
 
             5 -> {
                 applyDebugPageZoom(ReaderPageZoomLayout.MIN_SCALE, 0f, 0f)
-                turnReaderPage(1)
-                turnReaderPage(1)
+                turnReaderPage(1, userInitiated = false)
+                turnReaderPage(1, userInitiated = false)
             }
 
             6 -> {
-                turnReaderPage(-1)
+                turnReaderPage(-1, userInitiated = false)
                 adapter.preloadAround(
                     firstVisiblePosition = readerSpreadStartPosition(targetPosition),
                     visibleItemCount = visibleItemCount,
@@ -1528,13 +1560,14 @@ class MangaReaderActivity : AppCompatActivity() {
         jumpReaderToPage(position)
     }
 
-    private fun jumpReaderToPage(position: Int) {
+    private fun jumpReaderToPage(position: Int, userInitiated: Boolean = true) {
         if (imageEntries.isEmpty()) {
             return
         }
 
         clearPendingReaderPosition()
         val targetPosition = position.coerceIn(0, imageEntries.lastIndex)
+        if (userInitiated && targetPosition != initialReaderSourcePosition) noteStartOverNavigation()
         val layoutPosition = readerSpreadStartPosition(targetPosition)
         readerLayoutManager.scrollToPositionWithOffset(layoutPosition, 0)
         scheduleNextMangaEndCheck()
@@ -1551,7 +1584,7 @@ class MangaReaderActivity : AppCompatActivity() {
         )
     }
 
-    private fun turnReaderPage(delta: Int) {
+    private fun turnReaderPage(delta: Int, userInitiated: Boolean = true) {
         if (imageEntries.isEmpty()) {
             return
         }
@@ -1573,7 +1606,7 @@ class MangaReaderActivity : AppCompatActivity() {
             return
         }
 
-        jumpReaderToPage(targetPosition)
+        jumpReaderToPage(targetPosition, userInitiated)
     }
 
     private fun scheduleReaderPositionCheckpoint() {
