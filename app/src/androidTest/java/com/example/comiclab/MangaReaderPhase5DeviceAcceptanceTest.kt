@@ -18,6 +18,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewConfiguration
 import android.widget.ImageView
+import android.widget.SeekBar
+import android.widget.TextView
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.GeneralLocation
 import androidx.test.espresso.action.GeneralSwipeAction
@@ -194,6 +196,107 @@ class MangaReaderPhase5DeviceAcceptanceTest {
             "double-page reader progress writer should drain on exit",
             checkNotNull(progressExecutor(activity)).awaitTermination(10, TimeUnit.SECONDS)
         )
+    }
+
+    @Test
+    fun completedDoublePageSpreadPersistsProgressAndRestoresItsFirstPage() {
+        val archive = createArchive("double-page-progress.cbz", pageCount = 4)
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_LEFT_TO_RIGHT)
+        AppSettings.setDoublePageReadingEnabled(context, true)
+        AppSettings.setDoublePageCoverSingleEnabled(context, false)
+
+        val previous = launchReader(archive)
+        onMain { previous.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+        val activity = awaitReadyReader(previous)
+        onMain { activity.jumpReaderToPageForTest(2) }
+        awaitCondition("pages 3 and 4 should be visible together") {
+            visibleSourcePositions(activity).containsAll(listOf(2, 3))
+        }
+
+        assertReaderProgress(activity, page = 4, total = 4)
+        finishReader(activity)
+        awaitExecutor(checkNotNull(progressExecutor(activity)))
+
+        assertEquals(4, ReaderProgressStore.savedReadingPageCount(context, archive, 4))
+        assertEquals(2 to 0, ReaderProgressStore.readPositionAndOffset(context, archive))
+
+        val reopened = launchReader(archive, startFromBeginning = false)
+        onMain { reopened.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+        val restored = awaitReadyReader(reopened)
+        awaitCondition("the reader should reopen the same spread") {
+            visibleSourcePositions(restored).containsAll(listOf(2, 3))
+        }
+        assertEquals(2, onMain { restored.currentReaderPositionForTest })
+        assertReaderProgress(restored, page = 4, total = 4)
+    }
+
+    @Test
+    fun rightToLeftDoublePageProgressHandlesCoverLayoutChangesAndOddPageCount() {
+        val archive = createArchive("rtl-double-page-progress.cbz", pageCount = 5)
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_RIGHT_TO_LEFT)
+        AppSettings.setDoublePageReadingEnabled(context, true)
+        AppSettings.setDoublePageCoverSingleEnabled(context, true)
+
+        val previous = launchReader(archive)
+        onMain { previous.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+        val double = awaitReadyReader(previous)
+        assertReaderProgress(double, page = 1, total = 5)
+
+        onMain { double.jumpReaderToPageForTest(1) }
+        awaitCondition("the first spread after the cover should contain pages 2 and 3") {
+            visibleSourcePositions(double).containsAll(listOf(1, 2))
+        }
+        assertReaderProgress(double, page = 3, total = 5)
+
+        onMain { double.findViewById<View>(R.id.btnReaderDoublePage).performClick() }
+        val single = awaitReadyReader(double)
+        assertEquals(1, onMain { single.currentReaderPositionForTest })
+        assertReaderProgress(single, page = 2, total = 5)
+        onMain { single.jumpReaderToPageForTest(2) }
+        awaitCondition("single-page mode should move to page 3") {
+            onMain { single.currentReaderPositionForTest == 2 } && 2 in visibleSourcePositions(single)
+        }
+
+        onMain { single.findViewById<View>(R.id.btnReaderDoublePage).performClick() }
+        val reanchored = awaitReadyReader(single)
+        awaitCondition("double-page mode should start its new spread on page 3") {
+            visibleSourcePositions(reanchored).containsAll(listOf(2, 3))
+        }
+        assertReaderProgress(reanchored, page = 4, total = 5)
+        finishReader(reanchored)
+        awaitExecutor(checkNotNull(progressExecutor(reanchored)))
+        assertEquals(4, ReaderProgressStore.savedReadingPageCount(context, archive, 5))
+        assertEquals(2 to 0, ReaderProgressStore.readPositionAndOffset(context, archive))
+
+        val reopened = launchReader(archive, startFromBeginning = false)
+        onMain { reopened.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+        val restored = awaitReadyReader(reopened)
+        awaitCondition("reopening should restore the adjusted spread") {
+            visibleSourcePositions(restored).containsAll(listOf(2, 3))
+        }
+        assertEquals(2, onMain { restored.currentReaderPositionForTest })
+        assertReaderProgress(restored, page = 4, total = 5)
+
+        onMain { restored.jumpReaderToPageForTest(4) }
+        awaitCondition("the unpaired last page should be visible") {
+            onMain { restored.currentReaderPositionForTest == 4 } && 4 in visibleSourcePositions(restored)
+        }
+        assertReaderProgress(restored, page = 5, total = 5)
+        finishReader(restored)
+        awaitExecutor(checkNotNull(progressExecutor(restored)))
+        assertEquals(5, ReaderProgressStore.savedReadingPageCount(context, archive, 5))
+    }
+
+    private fun assertReaderProgress(activity: MangaReaderActivity, page: Int, total: Int) {
+        onMain {
+            assertEquals(
+                context.getString(R.string.reader_page_progress, page, total),
+                activity.findViewById<TextView>(R.id.tvReaderProgress).text.toString()
+            )
+            val slider = activity.findViewById<SeekBar>(R.id.sliderReaderProgress)
+            assertEquals(total - 1, slider.max)
+            assertEquals(page - 1, slider.progress)
+        }
     }
 
     @Test
@@ -686,12 +789,13 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         archive: File,
         preparedCacheDirectory: File? = null,
         debugStressIterations: Int = 0,
-        allowPreviewReady: Boolean = false
+        allowPreviewReady: Boolean = false,
+        startFromBeginning: Boolean = true
     ): MangaReaderActivity {
         val browser = ensureBrowserForeground()
         val intent = Intent(context, MangaReaderActivity::class.java)
             .putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, archive.absolutePath)
-            .putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, true)
+            .putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
         if (preparedCacheDirectory != null) {
             intent.putExtra(MangaReaderActivity.EXTRA_PREPARED_READER_CACHE_DIR, preparedCacheDirectory.absolutePath)
         }

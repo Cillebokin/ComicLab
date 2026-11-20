@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Looper
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseTask
+import com.example.comiclab.core.store.ReaderProgressStore
 import java.io.File
 import java.util.concurrent.AbstractExecutorService
 import java.util.concurrent.CountDownLatch
@@ -51,6 +52,23 @@ class MangaReaderPrepareActivityTest {
             assertEquals("handoff", launched.getStringExtra(MangaReaderActivity.EXTRA_NEXT_HANDOFF_TOKEN))
             assertEquals(archive.absolutePath, launched.getStringExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH))
         } finally { controller.destroy() }
+    }
+
+    @Test
+    fun initialPreparationStartsAtSpreadAnchorWhenProgressIncludesAnotherPage() {
+        val application = RuntimeEnvironment.getApplication()
+        val archive = temporaryFolder.newFile("spread.cbz")
+        ReaderProgressStore.prepareSave(application, archive, 2, 0, coveredPosition = 3).commit()
+        val controller = Robolectric.buildActivity(MangaReaderPrepareActivity::class.java).create()
+        try {
+            val initialReaderPosition = MangaReaderPrepareActivity::class.java
+                .getDeclaredMethod("initialReaderPosition", File::class.java, Int::class.javaPrimitiveType)
+                .apply { isAccessible = true }
+            assertEquals(2, initialReaderPosition.invoke(controller.get(), archive, 4))
+        } finally {
+            controller.destroy()
+            ReaderProgressStore.clearSavedReadingProgress(application, archive)
+        }
     }
 
     @Test

@@ -133,7 +133,8 @@ class ComicLabConfigurationTest {
             ),
             bookcasePaths = listOf("/bookcase"),
             mangaReadingProgress = listOf(
-                ComicLabMangaProgress("/comic.cbz", 8, 9)
+                ComicLabMangaProgress("/comic.cbz", 8, 9),
+                ComicLabMangaProgress("/spread.cbz", 2, 0, coveredPosition = 3)
             ),
             ebookReadingProgress = listOf(
                 ComicLabEbookProgress("/book.epub", 2, 0.5f)

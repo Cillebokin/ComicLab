@@ -103,6 +103,12 @@ internal class ReaderPagePositionMapper(
         return sourcePositionForAdapterPosition(spreadStart) ?: fallbackSourcePosition
     }
 
+    fun lastSourcePositionInSpread(adapterPosition: Int): Int? {
+        val spreadStart = spreadStartAdapterPosition(adapterPosition)
+        val lastSlot = if (doublePageReading) spreadStart + 1 else spreadStart
+        return sourcePositionForAdapterPosition(lastSlot) ?: sourcePositionForAdapterPosition(spreadStart)
+    }
+
     fun spreadStartAdapterPositionForSourcePosition(sourcePosition: Int): Int {
         val adapterPosition = adapterPositionForSourcePosition(sourcePosition)
         if (adapterPosition == NO_POSITION) {

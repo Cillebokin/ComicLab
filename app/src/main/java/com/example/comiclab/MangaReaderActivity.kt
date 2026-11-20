@@ -307,9 +307,13 @@ class MangaReaderActivity : AppCompatActivity() {
             outState.putInt(STATE_READER_POSITION, position)
             outState.putInt(STATE_READER_OFFSET, offset)
         }
-        doublePageSpreadAnchorSourcePosition?.let {
-            outState.putInt(STATE_READER_DOUBLE_PAGE_SPREAD_ANCHOR, it)
+        val nextDoublePageMode = AppSettings.isDoublePageReadingEnabled(this)
+        val spreadAnchor = if (nextDoublePageMode != doublePageReadingEnabled) {
+            readerPositionForRecreation?.first?.takeIf { nextDoublePageMode }
+        } else {
+            doublePageSpreadAnchorSourcePosition
         }
+        spreadAnchor?.let { outState.putInt(STATE_READER_DOUBLE_PAGE_SPREAD_ANCHOR, it) }
         super.onSaveInstanceState(outState)
     }
 
@@ -890,6 +894,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
         pageAdapter?.close()
         readerCoverSinglePageEnabled = AppSettings.isDoublePageCoverSingleEnabled(this)
+        restoreDoublePageSpreadAnchor(archiveFile, entries.size)
         lastReaderPreloadRequest = null
         val adapter = SubsamplingMangaPageAdapter(
             context = this,
@@ -945,6 +950,7 @@ class MangaReaderActivity : AppCompatActivity() {
             pageAdapter?.close()
             readerCoverSinglePageEnabled = !session.isPdfSource() &&
                 AppSettings.isDoublePageCoverSingleEnabled(this)
+            restoreDoublePageSpreadAnchor(readerFile, entries.size)
             lastReaderPreloadRequest = null
             val adapter = MangaPageAdapter(
                 context = this,
@@ -1442,13 +1448,18 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         val currentPosition = displayedReaderPosition(firstVisibleItem, totalItemCount)
+        val progressPosition = coveredReaderPosition(firstVisibleItem, totalItemCount) ?: currentPosition
         readerPreviewAdapter?.setSelectedPosition(currentPosition)
-        updateReaderProgressText(currentPosition, totalItemCount)
+        updateReaderProgressText(progressPosition, totalItemCount)
         if (!isDraggingReaderSlider) {
             sliderReaderProgress.max = (totalItemCount - 1).coerceAtLeast(0)
-            sliderReaderProgress.progress = currentPosition
+            sliderReaderProgress.progress = progressPosition
         }
     }
+
+    private fun coveredReaderPosition(adapterPosition: Int, sourceItemCount: Int): Int? =
+        if (isDoublePageReading()) readerPagePositionMapper(sourceItemCount).lastSourcePositionInSpread(adapterPosition)
+        else null
 
     private fun updateReaderProgressText(position: Int, totalItemCount: Int) {
         if (totalItemCount <= 0) {
@@ -1627,8 +1638,6 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         val firstVisible = readerLayoutManager.findFirstVisibleItemPosition()
-            .takeIf { it != RecyclerView.NO_POSITION }
-            ?: currentReaderPosition
         val pendingPosition = pendingRestorePosition
         val positionToSave: Int
         val offsetToSave: Int
@@ -1636,16 +1645,22 @@ class MangaReaderActivity : AppCompatActivity() {
             positionToSave = pendingPosition.coerceIn(0, imageEntries.lastIndex)
             offsetToSave = if (isHorizontalReading()) 0 else pendingRestoreOffset
         } else {
-            updateCurrentReaderPosition(firstVisible)
+            if (firstVisible != RecyclerView.NO_POSITION) updateCurrentReaderPosition(firstVisible)
             positionToSave = currentReaderPosition
             offsetToSave = currentReaderOffset
         }
 
+        val matchesVisiblePage = firstVisible != RecyclerView.NO_POSITION &&
+            (pendingPosition == null || displayedReaderPosition(firstVisible, imageEntries.size) == positionToSave)
+        // Recreating the reader at the same anchor may temporarily leave the spread offscreen.
+        val coveredPosition = (if (matchesVisiblePage) coveredReaderPosition(firstVisible, imageEntries.size) else null)
+            ?: ReaderProgressStore.savedCoveredPosition(this, file, positionToSave)
         readerProgressController.save(
             file = file,
             position = positionToSave,
             offset = offsetToSave,
-            forceCommit = forceCommit
+            forceCommit = forceCommit,
+            coveredPosition = coveredPosition
         )
     }
 
@@ -2020,15 +2035,9 @@ class MangaReaderActivity : AppCompatActivity() {
             null -> Unit
         }
 
-        val positionForRecreation = captureReaderPositionForRecreation()
-        readerPositionForRecreation = positionForRecreation
-        doublePageSpreadAnchorSourcePosition = if (doublePageReadingEnabled) {
-            null
-        } else {
-            positionForRecreation.first.coerceIn(0, imageEntries.lastIndex.coerceAtLeast(0))
-        }
-        doublePageReadingEnabled = !doublePageReadingEnabled
-        AppSettings.setDoublePageReadingEnabled(this, doublePageReadingEnabled)
+        readerPositionForRecreation = captureReaderPositionForRecreation()
+        // The outgoing Activity must still checkpoint using its current adapter layout.
+        AppSettings.setDoublePageReadingEnabled(this, !doublePageReadingEnabled)
         recreate()
     }
 
@@ -2078,6 +2087,19 @@ class MangaReaderActivity : AppCompatActivity() {
                 R.string.double_page_reading_disabled
             }
         )
+    }
+
+    private fun restoreDoublePageSpreadAnchor(file: File, sourceItemCount: Int) {
+        if (!isDoublePageReading() || doublePageSpreadAnchorSourcePosition != null ||
+            shouldStartFromBeginning || explicitStartPageIndex in 0 until sourceItemCount
+        ) return
+
+        val position = restoredReaderPosition?.first ?: readerProgressController.readPositionAndOffset(file).first
+        if (position !in 0 until sourceItemCount) return
+        if (ReaderProgressStore.savedCoveredPosition(this, file, position) == null) return
+        if (readerPagePositionMapper(sourceItemCount).spreadStartSourcePositionForSourcePosition(position) != position) {
+            doublePageSpreadAnchorSourcePosition = position
+        }
     }
 
     private fun readerPagePositionMapper(sourceItemCount: Int = imageEntries.size): ReaderPagePositionMapper {

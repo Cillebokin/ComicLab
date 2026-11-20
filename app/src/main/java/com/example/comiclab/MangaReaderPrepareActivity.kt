@@ -14,6 +14,7 @@ import androidx.appcompat.app.AppCompatActivity
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseTask
 import com.example.comiclab.core.diagnostics.ComicLabPerformance
+import com.example.comiclab.core.store.ReaderProgressStore
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -249,7 +250,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
             return 0
         }
 
-        return (MangaReaderActivity.savedReadingPageCount(this, file, totalCount) - 1)
+        return ReaderProgressStore.readPositionAndOffset(this, file).first
             .coerceIn(0, totalCount - 1)
     }
 

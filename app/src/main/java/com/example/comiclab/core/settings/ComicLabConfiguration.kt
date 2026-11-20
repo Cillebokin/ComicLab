@@ -25,7 +25,8 @@ data class ComicLabHistoryEntry(
 data class ComicLabMangaProgress(
     val path: String,
     val position: Int,
-    val offset: Int
+    val offset: Int,
+    val coveredPosition: Int? = null
 )
 
 data class ComicLabEbookProgress(
@@ -115,6 +116,7 @@ object ComicLabConfigurationJson {
                             .put("path", item.path)
                             .put("position", item.position)
                             .put("offset", item.offset)
+                            .put("coveredPosition", item.coveredPosition)
                     )
                 }
             })
@@ -234,7 +236,8 @@ object ComicLabConfigurationJson {
             if (path == null || position == null || offset == null) {
                 skippedEntries++
             } else {
-                mangaReadingProgress += ComicLabMangaProgress(path, position, offset)
+                val coveredPosition = obj.requiredInt("coveredPosition")?.takeIf { it >= position && it >= 0 }
+                mangaReadingProgress += ComicLabMangaProgress(path, position, offset, coveredPosition)
             }
         }.also { skippedEntries += it }
 

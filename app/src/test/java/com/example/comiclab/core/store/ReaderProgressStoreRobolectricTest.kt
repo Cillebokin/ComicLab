@@ -41,6 +41,35 @@ class ReaderProgressStoreRobolectricTest {
     }
 
     @Test
+    fun queuedSpreadCoverageSurvivesMoveAndClearsWithItsResumeAnchor() {
+        val file = temporaryFolder.newFile("spread.cbz")
+        val destination = temporaryFolder.newFile("moved-spread.cbz")
+        ReaderProgressStore.prepareSave(context, destination, 0, 0).commit()
+        lateinit var queued: ReaderProgressStore.PreparedWrite
+        ReaderProgressStore.enqueueSave(context, ReaderProgressStore.readerArchiveKey(file), 0, 0, coveredPosition = 1) {
+            queued = it
+        }
+        assertEquals(0 to 0, ReaderProgressStore.readPositionAndOffset(context, file))
+        assertEquals(2, ReaderProgressStore.savedReadingPageCount(context, file, 4))
+        assertTrue(ReaderProgressStore.hasSavedReadingProgress(context, file))
+
+        ReaderProgressStore.moveFile(context, file, destination)
+        assertEquals(0, ReaderProgressStore.savedReadingPageCount(context, file, 4))
+        assertTrue(queued.commit())
+        assertEquals(0 to 0, ReaderProgressStore.readPositionAndOffset(context, destination))
+        assertEquals(2, ReaderProgressStore.savedReadingPageCount(context, destination, 4))
+        assertEquals(
+            ComicLabMangaProgress(destination.absolutePath, 0, 0, coveredPosition = 1),
+            ReaderProgressStore.savedReadingProgress(context, destination)
+        )
+
+        ReaderProgressStore.clearSavedReadingProgress(context, destination)
+        assertEquals(0, ReaderProgressStore.savedReadingPageCount(context, destination, 4))
+        assertFalse(ReaderProgressStore.hasSavedReadingProgress(context, destination))
+        assertNull(ReaderProgressStore.savedReadingProgress(context, destination))
+    }
+
+    @Test
     fun clearImmediatelyHidesQueuedProgressAndPreventsItsWrite() {
         val file = temporaryFolder.newFile("clear-queued.cbz")
         lateinit var queued: ReaderProgressStore.PreparedWrite
@@ -226,11 +255,13 @@ class ReaderProgressStoreRobolectricTest {
         assertFalse(commitResult)
         assertEquals(
             listOf(
-                "reader:${file.absolutePath}:${file.lastModified()}:${file.length()}:position=3",
-                "reader:${file.absolutePath}:${file.lastModified()}:${file.length()}:offset=12",
+                "${positionKey(file)}=3",
+                "${offsetKey(file)}=12",
+                "remove ${archiveKey(file)}:coveredPosition",
                 "apply",
-                "reader:${file.absolutePath}:${file.lastModified()}:${file.length()}:position=4",
-                "reader:${file.absolutePath}:${file.lastModified()}:${file.length()}:offset=13",
+                "${positionKey(file)}=4",
+                "${offsetKey(file)}=13",
+                "remove ${archiveKey(file)}:coveredPosition",
                 "commit"
             ),
             calls
@@ -253,6 +284,10 @@ class ReaderProgressStoreRobolectricTest {
             when (method.name) {
                 "putInt" -> {
                     calls += "${arguments!![0]}=${arguments[1]}"
+                    proxy
+                }
+                "remove" -> {
+                    calls += "remove ${arguments!![0]}"
                     proxy
                 }
                 "apply" -> {

@@ -36,10 +36,11 @@ class MangaPreviewProgressRobolectricTest {
             assertEquals(12, progress.progress)
 
             controller.pause().stop()
-            ReaderProgressStore.prepareSave(activity, file, 15, 0).commit()
+            ReaderProgressStore.prepareSave(activity, file, 31, 0, coveredPosition = 32).commit()
             assertEquals(12, progress.progress)
             controller.restart().start().resume()
-            assertEquals(16, progress.progress)
+            assertEquals(33, progress.progress)
+            assertEquals(31 to 0, ReaderProgressStore.readPositionAndOffset(activity, file))
 
             ReaderProgressStore.clearSavedReadingProgress(activity, file)
             assertEquals(0, progress.progress)
