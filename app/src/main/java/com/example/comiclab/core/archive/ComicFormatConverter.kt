@@ -17,6 +17,7 @@ import java.util.Locale
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutionException
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
@@ -71,11 +72,12 @@ internal object ComicFormatConverter {
         }
     }
 
-    private fun convertArchiveToPdf(
+    internal fun convertArchiveToPdf(
         source: File,
         output: File,
         cancelled: AtomicBoolean,
-        onPage: (completed: Int, total: Int) -> Unit
+        onPage: (completed: Int, total: Int) -> Unit,
+        appendPage: (PdfDocument, Bitmap, Int) -> Unit = ::appendBitmapPage
     ) {
         val entries = ComicArchive.imageEntries(source)
         check(entries.isNotEmpty()) { "No readable comic pages" }
@@ -87,16 +89,19 @@ internal object ComicFormatConverter {
         val decoder = Executors.newSingleThreadExecutor { task ->
             Thread(task, "comic-conversion-decode").apply { isDaemon = true }
         }
+        val decoderShouldStop = {
+            cancelled.get() || decoder.isShutdown || Thread.currentThread().isInterrupted
+        }
         try {
             decoder.execute {
                 try {
                     ComicArchive.openPreparedImageExtractor(source, extractionDirectory).use { extractor ->
                         entries.forEachIndexed { index, entryName ->
-                            checkCancelled(cancelled)
+                            if (decoderShouldStop()) return@execute
                             val imageFile = extractor.extract(index, entryName)
                                 ?: throw IOException("Could not extract page ${index + 1}")
                             val bitmap = try {
-                                checkCancelled(cancelled)
+                                if (decoderShouldStop()) return@execute
                                 decodeBoundedImage(imageFile)
                                     ?: throw IOException("Could not decode page ${index + 1}")
                             } finally {
@@ -105,17 +110,15 @@ internal object ComicFormatConverter {
                             offerArchivePage(
                                 decodedPages,
                                 ArchivePageResult.Decoded(index, bitmap),
-                                cancelled
+                                decoderShouldStop
                             )
                         }
                     }
-                    offerArchivePage(decodedPages, ArchivePageResult.Complete, cancelled)
+                    offerArchivePage(decodedPages, ArchivePageResult.Complete, decoderShouldStop)
                 } catch (failure: Throwable) {
-                    if (failure !is CancellationException && !cancelled.get()) {
-                        offerArchivePage(decodedPages, ArchivePageResult.Failed(failure), cancelled)
+                    if (failure !is CancellationException) {
+                        offerArchivePage(decodedPages, ArchivePageResult.Failed(failure), decoderShouldStop)
                     }
-                } finally {
-                    extractionDirectory.deleteRecursively()
                 }
             }
 
@@ -125,7 +128,7 @@ internal object ComicFormatConverter {
                     is ArchivePageResult.Decoded -> {
                         try {
                             checkCancelled(cancelled)
-                            appendBitmapPage(document, next.bitmap, next.pageIndex + 1)
+                            appendPage(document, next.bitmap, next.pageIndex + 1)
                         } finally {
                             next.bitmap.recycle()
                         }
@@ -148,7 +151,8 @@ internal object ComicFormatConverter {
             output.delete()
             throw failure
         } finally {
-            if (cancelled.get()) decoder.shutdownNow() else decoder.shutdown()
+            // There is no consumer left to make room in the queue, including after a write failure.
+            decoder.shutdownNow()
             awaitWorkerExecutor(decoder)
             drainDecodedPages(decodedPages)
             extractionDirectory.deleteRecursively()
@@ -179,11 +183,11 @@ internal object ComicFormatConverter {
     private fun offerArchivePage(
         queue: ArrayBlockingQueue<ArchivePageResult>,
         result: ArchivePageResult,
-        cancelled: AtomicBoolean
+        shouldStop: () -> Boolean
     ) {
         var offered = false
         try {
-            while (!cancelled.get() && !Thread.currentThread().isInterrupted) {
+            while (!shouldStop()) {
                 if (queue.offer(result, 100, TimeUnit.MILLISECONDS)) {
                     offered = true
                     return
@@ -220,12 +224,19 @@ internal object ComicFormatConverter {
         }
     }
 
-    private fun awaitWorkerExecutor(executor: java.util.concurrent.ExecutorService) {
+    private fun awaitWorkerExecutor(executor: ExecutorService) {
+        var interrupted = false
         try {
-            executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS)
-        } catch (interrupted: InterruptedException) {
-            Thread.currentThread().interrupt()
-            executor.shutdownNow()
+            while (true) {
+                try {
+                    if (executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS)) return
+                } catch (_: InterruptedException) {
+                    interrupted = true
+                }
+            }
+        } finally {
+            // Cleanup needs exclusive ownership of the queue and temporary files.
+            if (interrupted) Thread.currentThread().interrupt()
         }
     }
 
