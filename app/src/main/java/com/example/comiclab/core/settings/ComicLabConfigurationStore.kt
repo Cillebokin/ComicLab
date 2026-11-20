@@ -1,5 +1,7 @@
 package com.example.comiclab.core.settings
 
+import com.example.comiclab.core.store.ReaderProgressStore
+
 import com.example.comiclab.AppSettings
 import com.example.comiclab.MangaReaderActivity
 import android.content.Context
@@ -157,7 +159,7 @@ object ComicLabConfigurationStore {
 
         // 配置没有单本进度更新时间，导入只补本地空缺，避免旧备份回退当前进度。
         val mangaPaths = mutableSetOf<String>()
-        val mangaPathHadLocalProgress = mutableMapOf<String, Boolean>()
+        val lastMangaProgressByPath = configuration.mangaReadingProgress.associateBy { File(it.path).absolutePath }
         configuration.mangaReadingProgress.forEach { item ->
             val file = File(item.path)
             if (!file.isFile || !ReaderFileDetector.isSupported(file) || ReaderFileDetector.isEbook(file)) {
@@ -165,16 +167,16 @@ object ComicLabConfigurationStore {
                 return@forEach
             }
             val path = file.absolutePath
-            val hadLocalProgress = mangaPathHadLocalProgress.getOrPut(path) {
-                MangaReaderActivity.savedReadingProgress(context, file) != null
-            }
-            if (hadLocalProgress) {
-                if (mangaPaths.add(path)) preservedReadingProgressEntries++
+            if (!mangaPaths.add(path)) {
                 skippedEntries++
                 return@forEach
             }
-            MangaReaderActivity.restoreReadingProgress(context, file, item)
-            if (mangaPaths.add(path)) restoredEntries++ else skippedEntries++
+            if (ReaderProgressStore.restoreReadingProgressIfMissing(context, file, lastMangaProgressByPath.getValue(path))) {
+                restoredEntries++
+            } else {
+                preservedReadingProgressEntries++
+                skippedEntries++
+            }
         }
 
         val ebookIdentities = mutableSetOf<String>()

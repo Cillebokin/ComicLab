@@ -1,5 +1,7 @@
 package com.example.comiclab.core.settings
 
+import com.example.comiclab.core.store.ReaderProgressStore
+
 import androidx.appcompat.app.AppCompatDelegate
 import com.example.comiclab.AppSettings
 import com.example.comiclab.MangaReaderActivity
@@ -248,6 +250,35 @@ class ComicLabConfigurationStoreRobolectricTest {
             assertEquals(2, result.preservedReadingProgressEntries)
             assertEquals(localManga, MangaReaderActivity.savedReadingProgress(context, comic))
             assertEquals(localEbook, com.example.comiclab.core.store.EbookProgressStore.load(context, ebook))
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test
+    fun importPreservesQueuedFirstPageProgressAndFillsMissingComic() {
+        val root = tempDirectory("comiclab-progress-pending")
+        try {
+            val local = File(root, "local.cbz").apply { writeText("comic") }
+            val missing = File(root, "missing.cbz").apply { writeText("comic") }
+            lateinit var queued: ReaderProgressStore.PreparedWrite
+            ReaderProgressStore.enqueueSave(context, ReaderProgressStore.readerArchiveKey(local), 0, 0) {
+                queued = it
+            }
+            val result = ComicLabConfigurationStore.importAndMerge(
+                context,
+                ComicLabConfiguration(mangaReadingProgress = listOf(
+                    ComicLabMangaProgress(local.absolutePath, 6, -15),
+                    ComicLabMangaProgress(missing.absolutePath, 3, -27)
+                )),
+                applyAppSettings = false
+            )
+
+            assertEquals(1, result.restoredEntries)
+            assertEquals(1, result.skippedEntries)
+            assertEquals(1, result.preservedReadingProgressEntries)
+            assertEquals(null, MangaReaderActivity.savedReadingProgress(context, local))
+            assertEquals(3 to -27, ReaderProgressStore.readPositionAndOffset(context, missing))
+            assertTrue(queued.commit())
+            assertEquals(ComicLabMangaProgress(local.absolutePath, 0, 0), MangaReaderActivity.savedReadingProgress(context, local))
         } finally { root.deleteRecursively() }
     }
 

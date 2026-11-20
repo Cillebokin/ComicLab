@@ -17,7 +17,10 @@ object ReaderProgressStore {
     }
 
     private val writeLock = Any()
+    // Clear can invalidate requests while the writer is blocked in commit().
+    private val stateLock = Any()
     private val pendingWrites = WeakHashMap<PreparedWrite, Unit>()
+    private var activeWrite: PreparedWrite? = null
     private var nextEnqueueOrder = 0L
 
     // Readers use this snapshot without acquiring the lock held by commit().
@@ -47,20 +50,34 @@ object ReaderProgressStore {
             mergeWithExisting = true
         }
 
-        private fun finish(commit: Boolean): Boolean = synchronized(writeLock) {
-            if (pendingWrites.remove(this) == null) return@synchronized false
+        private fun finish(commit: Boolean): Boolean = synchronized(writeLock) writer@{
+            synchronized(stateLock) {
+                if (this !in pendingWrites) return@writer false
+                activeWrite = this
+            }
+            var saved = false
             try {
-                val saved = persist(commit)
-                if (saved && enqueueOrder > 0 && !mergeWithExisting) {
-                    // A newly opened reader can finish its write before the previous reader drains.
-                    pendingWrites.keys.removeAll {
-                        it.archiveKey == archiveKey && it.enqueueOrder in 1 until enqueueOrder
+                saved = persist(commit)
+            } finally {
+                synchronized(stateLock) {
+                    val cancelled = pendingWrites.remove(this) == null
+                    try {
+                        if (cancelled) {
+                            // Hide and remove values applied by a commit that was already running.
+                            saved = false
+                            removeStoredProgress(preferences, archiveKey)
+                        } else if (saved && enqueueOrder > 0 && !mergeWithExisting) {
+                            pendingWrites.keys.removeAll {
+                                it.archiveKey == archiveKey && it.enqueueOrder in 1 until enqueueOrder
+                            }
+                        }
+                    } finally {
+                        activeWrite = null
+                        if (enqueueOrder > 0 || cancelled) publishPendingResumeProgress()
                     }
                 }
-                saved
-            } finally {
-                if (enqueueOrder > 0) publishPendingResumeProgress()
             }
+            saved
         }
 
         private fun persist(commit: Boolean): Boolean {
@@ -112,7 +129,8 @@ object ReaderProgressStore {
         position: Int,
         offset: Int
     ): PreparedWrite = synchronized(writeLock) {
-        registerWrite(preferences, readerArchiveKey(file), position, offset)
+        val archiveKey = readerArchiveKey(file)
+        synchronized(stateLock) { registerWrite(preferences, archiveKey, position, offset) }
     }
 
     internal fun enqueueSave(
@@ -124,28 +142,36 @@ object ReaderProgressStore {
     ) {
         val prefs = preferences(context)
         synchronized(writeLock) {
-            val write = registerWrite(prefs, archiveKey, position, offset)
-            write.enqueueOrder = ++nextEnqueueOrder
+            val write = synchronized(stateLock) { registerWrite(prefs, archiveKey, position, offset) }
             try {
                 enqueue(write)
             } catch (exception: RuntimeException) {
                 // A concurrent move must never observe a request the executor rejected.
-                pendingWrites.remove(write)
+                synchronized(stateLock) { pendingWrites.remove(write) }
                 throw exception
             }
-            publishPendingResumeProgress()
+            synchronized(stateLock) {
+                if (write in pendingWrites) {
+                    write.enqueueOrder = ++nextEnqueueOrder
+                    publishPendingResumeProgress()
+                }
+            }
         }
     }
 
-    private fun publishPendingResumeProgress() {
+    private fun publishPendingResumeProgress(clearedKey: String? = null) {
         val snapshot = mutableMapOf<String, PendingResumeProgress>()
         pendingWrites.keys.filter { it.enqueueOrder > 0 }.sortedBy { it.enqueueOrder }.forEach { write ->
-            val previous = snapshot[write.archiveKey]
+            val previous = snapshot[write.archiveKey]?.value
             val value = write.progressValue()
-            if (!write.mergeWithExisting || previous == null || value.isFurtherThan(previous.value)) {
+            if (!write.mergeWithExisting || previous == null || value.isFurtherThan(previous)) {
                 snapshot[write.archiveKey] = PendingResumeProgress(value, write.mergeWithExisting)
             }
         }
+        activeWrite?.takeIf { it !in pendingWrites }?.let {
+            snapshot.putIfAbsent(it.archiveKey, PendingResumeProgress(null, false))
+        }
+        if (clearedKey != null) snapshot[clearedKey] = PendingResumeProgress(null, false)
         pendingResumeProgress = snapshot
     }
 
@@ -160,16 +186,16 @@ object ReaderProgressStore {
     fun readPositionAndOffset(context: Context, file: File): Pair<Int, Int> {
         val archiveKey = readerArchiveKey(file)
         val pending = pendingResumeProgress[archiveKey]
-        if (pending != null && !pending.mergeWithSaved) return pending.value.toPair()
+        if (pending != null && !pending.mergeWithSaved) return pending.value?.toPair() ?: (0 to 0)
 
         val prefs = preferences(context)
         val positionKey = positionKey(archiveKey)
         val offsetKey = offsetKey(archiveKey)
         val saved = prefs.getInt(positionKey, 0) to prefs.getInt(offsetKey, 0)
-        if (pending == null) return saved
+        val pendingValue = pending?.value ?: return saved
         return if ((!prefs.contains(positionKey) && !prefs.contains(offsetKey)) ||
-            isFurtherProgress(pending.value.position, pending.value.offset, saved.first, saved.second)
-        ) pending.value.toPair() else saved
+            isFurtherProgress(pendingValue.position, pendingValue.offset, saved.first, saved.second)
+        ) pendingValue.toPair() else saved
     }
 
     fun savedReadingProgress(context: Context, file: File): ComicLabMangaProgress? {
@@ -197,6 +223,25 @@ object ReaderProgressStore {
         ).apply()
     }
 
+    internal fun restoreReadingProgressIfMissing(
+        context: Context,
+        file: File,
+        progress: ComicLabMangaProgress
+    ): Boolean = synchronized(writeLock) {
+        val prefs = preferences(context)
+        val key = readerArchiveKey(file)
+        val write = synchronized(stateLock) {
+            if (pendingResumeProgress[key]?.value != null ||
+                (prefs.contains(positionKey(key)) && prefs.contains(offsetKey(key)))
+            ) {
+                null
+            } else {
+                registerWrite(prefs, key, progress.position.coerceAtLeast(0), progress.offset)
+            }
+        }
+        write?.apply() == true
+    }
+
     fun hasSavedReadingProgress(context: Context, file: File): Boolean {
         val (position, offset) = readPositionAndOffset(context, file)
         return position > 0 || offset != 0
@@ -217,10 +262,20 @@ object ReaderProgressStore {
 
     fun clearSavedReadingProgress(context: Context, file: File) {
         val archiveKey = readerArchiveKey(file)
-        preferences(context).edit()
-            .remove(positionKey(archiveKey))
-            .remove(offsetKey(archiveKey))
-            .apply()
+        val prefs = preferences(context)
+        synchronized(stateLock) {
+            pendingWrites.keys.removeAll { it.archiveKey == archiveKey }
+            publishPendingResumeProgress(clearedKey = archiveKey)
+            try {
+                removeStoredProgress(prefs, archiveKey)
+            } finally {
+                publishPendingResumeProgress()
+            }
+        }
+    }
+
+    private fun removeStoredProgress(prefs: SharedPreferences, archiveKey: String) {
+        prefs.edit().remove(positionKey(archiveKey)).remove(offsetKey(archiveKey)).apply()
     }
 
     /**
@@ -241,92 +296,96 @@ object ReaderProgressStore {
 
     private fun moveProgress(context: Context, oldPath: String, newPath: String) {
         synchronized(writeLock) {
-            val prefs = preferences(context)
-            // Read the SharedPreferences map once. getAll() copies the backing map,
-            // so calling it for every stored key makes large libraries quadratic.
-            val snapshot = prefs.all
-            val migrations = linkedMapOf<String, ProgressMigration>()
-
-            snapshot.keys.mapNotNull(::archiveKeyOf).distinct().forEach { archiveKey ->
-                val source = parseArchiveKey(archiveKey) ?: return@forEach
-                val movedPath = BookcaseFolderPaths.remapPath(source.path, oldPath, newPath)
-                if (movedPath == source.path) return@forEach
-
-                val target = File(movedPath)
-                if (!target.isFile || target.length() != source.length) return@forEach
-
-                val position = snapshot[positionKey(archiveKey)] as? Int
-                val offset = snapshot[offsetKey(archiveKey)] as? Int
-                if (position == null && offset == null) return@forEach
-
-                val targetKey = readerArchiveKey(target)
-                val migration = migrations.getOrPut(targetKey) {
-                    ProgressMigration(targetKey)
-                }
-                migration.sourceArchiveKeys += archiveKey
-                migration.candidates += ProgressValue(position ?: 0, offset ?: 0)
-            }
-
-            // A save can be queued on the reader executor before a browser cut. If
-            // the cut wins the race, redirect that still-pending write to the new key.
-            pendingWrites.keys.toList().forEach { write ->
-                val source = parseArchiveKey(write.archiveKey) ?: return@forEach
-                val movedPath = BookcaseFolderPaths.remapPath(source.path, oldPath, newPath)
-                if (movedPath == source.path) return@forEach
-
-                val target = File(movedPath)
-                if (!target.isFile || target.length() != source.length) return@forEach
-
-                val targetKey = readerArchiveKey(target)
-                val migration = migrations.getOrPut(targetKey) {
-                    ProgressMigration(targetKey)
-                }
-                migration.candidates += write.progressValue()
-                write.redirectTo(targetKey)
-            }
-
-            // A pending write already prepared for the destination must merge with
-            // the migrated source instead of overwriting it after the cut.
-            pendingWrites.keys.toList().forEach { write ->
-                if (write.archiveKey in migrations) {
-                    write.mergeWithCurrent()
-                }
-            }
-
-            if (migrations.isEmpty()) return
-
-            val editor = prefs.edit()
-            migrations.values.forEach { migration ->
-                val positionKey = positionKey(migration.targetArchiveKey)
-                val offsetKey = offsetKey(migration.targetArchiveKey)
-                val hasTargetProgress =
-                    snapshot.containsKey(positionKey) || snapshot.containsKey(offsetKey)
-                var best = if (hasTargetProgress) {
-                    ProgressValue(
-                        position = snapshot[positionKey] as? Int ?: 0,
-                        offset = snapshot[offsetKey] as? Int ?: 0
-                    )
-                } else {
-                    null
-                }
-                migration.candidates.forEach { candidate ->
-                    if (best == null || candidate.isFurtherThan(best!!)) {
-                        best = candidate
-                    }
-                }
-                best?.let { progress ->
-                    editor.putInt(positionKey, progress.position)
-                    editor.putInt(offsetKey, progress.offset)
-                }
-                migration.sourceArchiveKeys.forEach { archiveKey ->
-                    editor.remove(positionKey(archiveKey))
-                    editor.remove(offsetKey(archiveKey))
-                }
-            }
-            // A preference listener may read progress as soon as apply updates memory.
-            publishPendingResumeProgress()
-            editor.apply()
+            synchronized(stateLock) { moveProgressLocked(context, oldPath, newPath) }
         }
+    }
+
+    private fun moveProgressLocked(context: Context, oldPath: String, newPath: String) {
+        val prefs = preferences(context)
+        // Read the SharedPreferences map once. getAll() copies the backing map,
+        // so calling it for every stored key makes large libraries quadratic.
+        val snapshot = prefs.all
+        val migrations = linkedMapOf<String, ProgressMigration>()
+
+        snapshot.keys.mapNotNull(::archiveKeyOf).distinct().forEach { archiveKey ->
+            val source = parseArchiveKey(archiveKey) ?: return@forEach
+            val movedPath = BookcaseFolderPaths.remapPath(source.path, oldPath, newPath)
+            if (movedPath == source.path) return@forEach
+
+            val target = File(movedPath)
+            if (!target.isFile || target.length() != source.length) return@forEach
+
+            val position = snapshot[positionKey(archiveKey)] as? Int
+            val offset = snapshot[offsetKey(archiveKey)] as? Int
+            if (position == null && offset == null) return@forEach
+
+            val targetKey = readerArchiveKey(target)
+            val migration = migrations.getOrPut(targetKey) {
+                ProgressMigration(targetKey)
+            }
+            migration.sourceArchiveKeys += archiveKey
+            migration.candidates += ProgressValue(position ?: 0, offset ?: 0)
+        }
+
+        // A save can be queued on the reader executor before a browser cut. If
+        // the cut wins the race, redirect that still-pending write to the new key.
+        pendingWrites.keys.toList().forEach { write ->
+            val source = parseArchiveKey(write.archiveKey) ?: return@forEach
+            val movedPath = BookcaseFolderPaths.remapPath(source.path, oldPath, newPath)
+            if (movedPath == source.path) return@forEach
+
+            val target = File(movedPath)
+            if (!target.isFile || target.length() != source.length) return@forEach
+
+            val targetKey = readerArchiveKey(target)
+            val migration = migrations.getOrPut(targetKey) {
+                ProgressMigration(targetKey)
+            }
+            migration.candidates += write.progressValue()
+            write.redirectTo(targetKey)
+        }
+
+        // A pending write already prepared for the destination must merge with
+        // the migrated source instead of overwriting it after the cut.
+        pendingWrites.keys.toList().forEach { write ->
+            if (write.archiveKey in migrations) {
+                write.mergeWithCurrent()
+            }
+        }
+
+        if (migrations.isEmpty()) return
+
+        val editor = prefs.edit()
+        migrations.values.forEach { migration ->
+            val positionKey = positionKey(migration.targetArchiveKey)
+            val offsetKey = offsetKey(migration.targetArchiveKey)
+            val hasTargetProgress =
+                snapshot.containsKey(positionKey) || snapshot.containsKey(offsetKey)
+            var best = if (hasTargetProgress) {
+                ProgressValue(
+                    position = snapshot[positionKey] as? Int ?: 0,
+                    offset = snapshot[offsetKey] as? Int ?: 0
+                )
+            } else {
+                null
+            }
+            migration.candidates.forEach { candidate ->
+                if (best == null || candidate.isFurtherThan(best!!)) {
+                    best = candidate
+                }
+            }
+            best?.let { progress ->
+                editor.putInt(positionKey, progress.position)
+                editor.putInt(offsetKey, progress.offset)
+            }
+            migration.sourceArchiveKeys.forEach { archiveKey ->
+                editor.remove(positionKey(archiveKey))
+                editor.remove(offsetKey(archiveKey))
+            }
+        }
+        // A preference listener may read progress as soon as apply updates memory.
+        publishPendingResumeProgress()
+        editor.apply()
     }
 
     private data class ProgressMigration(
@@ -342,7 +401,7 @@ object ReaderProgressStore {
             isFurtherProgress(position, offset, other.position, other.offset)
     }
 
-    private data class PendingResumeProgress(val value: ProgressValue, val mergeWithSaved: Boolean)
+    private data class PendingResumeProgress(val value: ProgressValue?, val mergeWithSaved: Boolean)
 
     private fun isFurtherProgress(
         position: Int,

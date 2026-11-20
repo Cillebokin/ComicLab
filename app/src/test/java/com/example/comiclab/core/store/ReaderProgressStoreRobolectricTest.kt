@@ -4,6 +4,9 @@ import android.content.SharedPreferences
 import com.example.comiclab.core.settings.ComicLabMangaProgress
 import java.io.File
 import java.lang.reflect.Proxy
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -35,6 +38,69 @@ class ReaderProgressStoreRobolectricTest {
     @After
     fun clearPreferencesAfterTest() {
         context.getSharedPreferences(PREFS_NAME, 0).edit().clear().commit()
+    }
+
+    @Test
+    fun clearImmediatelyHidesQueuedProgressAndPreventsItsWrite() {
+        val file = temporaryFolder.newFile("clear-queued.cbz")
+        lateinit var queued: ReaderProgressStore.PreparedWrite
+        ReaderProgressStore.enqueueSave(context, ReaderProgressStore.readerArchiveKey(file), 5, -24) {
+            queued = it
+        }
+        assertEquals(5 to -24, ReaderProgressStore.readPositionAndOffset(context, file))
+
+        ReaderProgressStore.clearSavedReadingProgress(context, file)
+
+        assertEquals(0 to 0, ReaderProgressStore.readPositionAndOffset(context, file))
+        val destination = temporaryFolder.newFile("after-clear-move.cbz")
+        ReaderProgressStore.moveFile(context, file, destination)
+        assertNull(ReaderProgressStore.savedReadingProgress(context, destination))
+        assertFalse(queued.commit())
+        assertNull(ReaderProgressStore.savedReadingProgress(context, file))
+        ReaderProgressStore.restoreReadingProgress(context, file, ComicLabMangaProgress(file.absolutePath, 2, -8))
+        assertEquals(2 to -8, ReaderProgressStore.readPositionAndOffset(context, file))
+    }
+
+    @Test
+    fun clearCompletesWhileOlderCommitIsBlockedAndLateWriteCannotRestoreProgress() {
+        val file = temporaryFolder.newFile("clear-during-commit.cbz")
+        val original = context.getSharedPreferences(PREFS_NAME, 0)
+        val commitStarted = CountDownLatch(1)
+        val finishCommit = CountDownLatch(1)
+        val prefs = object : SharedPreferences by original {
+            override fun edit(): SharedPreferences.Editor {
+                val editor = original.edit()
+                return object : SharedPreferences.Editor by editor {
+                    override fun putInt(key: String, value: Int): SharedPreferences.Editor {
+                        editor.putInt(key, value)
+                        return this
+                    }
+
+                    override fun commit(): Boolean {
+                        commitStarted.countDown()
+                        check(finishCommit.await(5, TimeUnit.SECONDS))
+                        return editor.commit()
+                    }
+                }
+            }
+        }
+        val oldWrite = ReaderProgressStore.prepareSave(prefs, file, 5, -24)
+        val writer = FutureTask { oldWrite.commit() }
+        Thread(writer).apply { isDaemon = true }.start()
+        try {
+            assertTrue(commitStarted.await(3, TimeUnit.SECONDS))
+            val clearAndRead = FutureTask {
+                ReaderProgressStore.clearSavedReadingProgress(context, file)
+                ReaderProgressStore.readPositionAndOffset(context, file)
+            }
+            Thread(clearAndRead).apply { isDaemon = true }.start()
+            assertEquals(0 to 0, clearAndRead.get(2, TimeUnit.SECONDS))
+        } finally {
+            finishCommit.countDown()
+        }
+        assertFalse(writer.get(5, TimeUnit.SECONDS))
+        assertEquals(0 to 0, ReaderProgressStore.readPositionAndOffset(context, file))
+        assertNull(ReaderProgressStore.savedReadingProgress(context, file))
     }
 
     @Test
