@@ -196,15 +196,14 @@ class ComicMigrationPlanner(
             return ComicMigrationCopyResult(ComicMigrationCopyStatus.PREVIEW_ONLY)
         }
 
-        val destinationFile = File(targetDirectory, sourceFile.name)
-        if (destinationFile.exists()) {
-            return ComicMigrationCopyResult(ComicMigrationCopyStatus.ALREADY_EXISTS)
-        }
-
         var temporaryPath: java.nio.file.Path? = null
         return try {
             if (isCopyCancelled(shouldCancel)) {
-                throw ComicMigrationCopyCancelledException()
+                return ComicMigrationCopyResult(ComicMigrationCopyStatus.CANCELLED)
+            }
+            val destinationFile = File(targetDirectory, sourceFile.name)
+            if (destinationFile.exists()) {
+                return ComicMigrationCopyResult(ComicMigrationCopyStatus.ALREADY_EXISTS)
             }
             val tempPath = Files.createTempFile(targetDirectory.toPath(), ".cl-", ".part")
             temporaryPath = tempPath

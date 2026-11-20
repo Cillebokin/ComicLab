@@ -257,6 +257,8 @@
     <string name="comic_migration_failed_detail">逐条迁移失败：%1$s</string>
     <string name="comic_migration_running">逐条迁移正在进行中</string>
     <string name="comic_migration_aborted">终止迁移</string>
+    <string name="comic_migration_stopping">正在停止迁移，等待当前复制返回结果…</string>
+    <string name="comic_migration_stopped">迁移已停止：复制 %1$d 项，同名冲突跳过 %2$d 项，失败 %3$d 项</string>
     <string name="classify_comics_confirm_title">漫画分类</string>
     <string name="classify_comics_confirm_message">是否根据特征标记对当前路径下的所有文件进行分类？\n（谨慎使用！）</string>
     <string name="classify_comics_scanning">正在扫描漫画文件...</string>

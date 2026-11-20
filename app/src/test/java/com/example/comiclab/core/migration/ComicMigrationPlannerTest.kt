@@ -575,6 +575,23 @@ class ComicMigrationPlannerTest {
     }
 
     @Test
+    fun cancellationBeforeCopyDoesNotCountAnExistingTargetAsProcessed() {
+        withTemporaryDirectory { root ->
+            val source = File(root, "source.cbz").apply { writeText("source bytes") }
+            val target = File(root, "target").apply { mkdir() }
+            val existing = File(target, source.name).apply { writeText("keep existing") }
+
+            val result = ComicMigrationPlanner(allowFileCopy = true)
+                .copyComicFile(source, target, shouldCancel = { true })
+
+            assertEquals(ComicMigrationCopyStatus.CANCELLED, result.status)
+            assertEquals("source bytes", source.readText())
+            assertEquals("keep existing", existing.readText())
+            assertEquals(listOf(existing), target.listFiles()?.toList())
+        }
+    }
+
+    @Test
     fun copyCancellationKeepsSourceAndRemovesPartialDestination() {
         withTemporaryDirectory { root ->
             val source = File(root, "large.cbz").apply {
@@ -586,7 +603,15 @@ class ComicMigrationPlannerTest {
             val result = ComicMigrationPlanner(allowFileCopy = true) { false }.copyComicFile(
                 source,
                 destination,
-                shouldCancel = { ++cancellationChecks >= 3 }
+                shouldCancel = {
+                    cancellationChecks++
+                    if (cancellationChecks == 3) {
+                        val partial = destination.listFiles().orEmpty().single()
+                        assertTrue(partial.name.endsWith(".part"))
+                        assertTrue(partial.length() in 1 until source.length())
+                    }
+                    cancellationChecks >= 3
+                }
             )
 
             assertEquals(ComicMigrationCopyStatus.CANCELLED, result.status)

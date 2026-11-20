@@ -257,7 +257,9 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="comic_migration_failed">Could not prepare the migration</string>
     <string name="comic_migration_failed_detail">Migration failed: %1$s</string>
     <string name="comic_migration_running">Migration is already in progress</string>
-    <string name="comic_migration_aborted">Migration stopped</string>
+    <string name="comic_migration_aborted">Stop migration</string>
+    <string name="comic_migration_stopping">Stopping migration. Waiting for the current copy to finish…</string>
+    <string name="comic_migration_stopped">Migration stopped: copied %1$d, same-name conflicts skipped %2$d, failed %3$d</string>
     <string name="classify_comics_confirm_title">Classify comics</string>
     <string name="classify_comics_confirm_message">Classify all files in the current path by their feature markers?\n(Use with care!)</string>
     <string name="classify_comics_scanning">Scanning comic files...</string>

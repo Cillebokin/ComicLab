@@ -54,6 +54,7 @@ class ComicMigrationActivity : AppCompatActivity() {
     private var skippedCount = 0
     private var failedCount = 0
     private var isMigrationActive = false
+    @Volatile private var copyState = CopyState.IDLE
     private var destroyed = false
     private var pickerDirectory: File? = null
     private var directoryPickerDialog: AlertDialog? = null
@@ -487,13 +488,14 @@ class ComicMigrationActivity : AppCompatActivity() {
             return
         }
 
+        copyState = CopyState.COPYING
         tvMigrationStatus.text = getString(R.string.comic_migration_copying)
 
         val generation = migrationGeneration.get()
         runCatching {
             migrationExecutor.execute {
                 val result = planner.copyComicFile(currentFile, targetDirectory) {
-                    destroyed || !isMigrationActive || generation != migrationGeneration.get()
+                    copyState == CopyState.STOP_REQUESTED || generation != migrationGeneration.get()
                 }
                 runOnUiThread {
                     if (destroyed || generation != migrationGeneration.get() ||
@@ -502,6 +504,8 @@ class ComicMigrationActivity : AppCompatActivity() {
                         return@runOnUiThread
                     }
 
+                    val stopRequested = copyState == CopyState.STOP_REQUESTED
+                    copyState = CopyState.IDLE
                     val (copyStatus, historyDestination) = when (result.status) {
                         ComicMigrationCopyStatus.COPIED -> {
                             copiedCount++
@@ -555,10 +559,15 @@ class ComicMigrationActivity : AppCompatActivity() {
                     dialog.dismiss()
                     currentIndex++
                     updateMigrationProgress(currentIndex, targetPlans.size)
-                    processCurrentComic()
+                    if (stopRequested && currentIndex < targetPlans.size) {
+                        abortMigration()
+                    } else {
+                        processCurrentComic()
+                    }
                 }
             }
         }.onFailure { error ->
+            copyState = CopyState.IDLE
             failMigration(error.localizedMessage)
         }
     }
@@ -610,6 +619,12 @@ class ComicMigrationActivity : AppCompatActivity() {
     }
 
     private fun abortMigration() {
+        if (copyState != CopyState.IDLE) {
+            copyState = CopyState.STOP_REQUESTED
+            targetDirectoryDialog?.dismiss()
+            tvMigrationStatus.text = getString(R.string.comic_migration_stopping)
+            return
+        }
         migrationGeneration.incrementAndGet()
         isMigrationActive = false
         preparationTask?.cancel(true)
@@ -619,7 +634,12 @@ class ComicMigrationActivity : AppCompatActivity() {
         targetDirectoryDialog = null
         dialog?.dismiss()
         dismissPreparationProgressDialog()
-        tvMigrationStatus.text = getString(R.string.comic_migration_aborted)
+        tvMigrationStatus.text = getString(
+            R.string.comic_migration_stopped,
+            copiedCount,
+            skippedCount,
+            failedCount
+        )
     }
 
     private fun handleBackAction() {
@@ -671,6 +691,12 @@ class ComicMigrationActivity : AppCompatActivity() {
 
     private fun dpToPx(value: Int): Int {
         return (value * resources.displayMetrics.density).toInt()
+    }
+
+    private enum class CopyState {
+        IDLE,
+        COPYING,
+        STOP_REQUESTED
     }
 
     private enum class DirectoryPickerPurpose {
