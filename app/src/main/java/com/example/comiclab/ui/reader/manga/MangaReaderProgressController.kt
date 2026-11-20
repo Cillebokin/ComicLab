@@ -61,8 +61,11 @@ internal class MangaReaderProgressController(
                     }
                 }
             }
-        } catch (_: RejectedExecutionException) {
+        } catch (exception: RuntimeException) {
             latestSave.compareAndSet(request, null)
+            if (exception !is RejectedExecutionException) {
+                Log.w("ComicLabReader", "reader progress enqueue failed", exception)
+            }
         }
     }
 

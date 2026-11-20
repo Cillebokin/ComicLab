@@ -20,6 +20,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLog
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -118,7 +119,7 @@ class MangaReaderProgressControllerTest {
         val executor = QueuedExecutorService()
         val controller = MangaReaderProgressController(application) { executor }
 
-        executor.rejectNext = true
+        executor.nextEnqueueFailure = RejectedExecutionException("test")
         controller.save(archive, 6, 21, forceCommit = true)
         assertTrue(archive.renameTo(moved))
         ReaderProgressStore.moveFile(application, archive, moved)
@@ -134,6 +135,34 @@ class MangaReaderProgressControllerTest {
         assertEquals(6 to 21, controller.readPositionAndOffset(moved))
         assertEquals(0 to 0, controller.readPositionAndOffset(archive))
         assertTrue(executor.isTerminated)
+    }
+
+    @Test
+    fun unexpectedEnqueueFailureIsLoggedAndRetryStillMigratesPendingProgress() {
+        val application = RuntimeEnvironment.getApplication()
+        val archive = temporaryFolder.newFile("unexpected-before-move.cbz")
+        val moved = File(archive.parentFile, "unexpected-after-move.cbz")
+        val failure = IllegalStateException("test enqueue fault")
+        val executor = QueuedExecutorService().apply { nextEnqueueFailure = failure }
+        val controller = MangaReaderProgressController(application) { executor }
+
+        controller.save(archive, 6, 21, forceCommit = true)
+        assertEquals(0, executor.pendingTaskCount)
+        assertTrue(ShadowLog.getLogsForTag("ComicLabReader").any {
+            it.msg == "reader progress enqueue failed" && it.throwable === failure
+        })
+        assertTrue(archive.renameTo(moved))
+        ReaderProgressStore.moveFile(application, archive, moved)
+        assertNull(ReaderProgressStore.savedReadingProgress(application, moved))
+        assertTrue(moved.renameTo(archive))
+
+        controller.save(archive, 6, 21, forceCommit = true)
+        assertEquals(1, executor.pendingTaskCount)
+        assertTrue(archive.renameTo(moved))
+        ReaderProgressStore.moveFile(application, archive, moved)
+        executor.runNext()
+        assertEquals(6 to 21, controller.readPositionAndOffset(moved))
+        assertNull(ReaderProgressStore.savedReadingProgress(application, archive))
     }
 
     @Test
@@ -188,7 +217,7 @@ class MangaReaderProgressControllerTest {
     private class QueuedExecutorService : AbstractExecutorService() {
         private val tasks = mutableListOf<Runnable>()
         private var shutdown = false
-        var rejectNext = false
+        var nextEnqueueFailure: RuntimeException? = null
 
         val pendingTaskCount: Int
             get() = tasks.size
@@ -199,9 +228,9 @@ class MangaReaderProgressControllerTest {
 
         override fun execute(command: Runnable) {
             check(!shutdown)
-            if (rejectNext) {
-                rejectNext = false
-                throw RejectedExecutionException("test")
+            nextEnqueueFailure?.let { failure ->
+                nextEnqueueFailure = null
+                throw failure
             }
             tasks += command
         }
