@@ -311,8 +311,8 @@
     <string name="folder_copy_success">已复制文件夹</string>
     <string name="folder_cut_success">已剪切文件夹</string>
     <string name="file_transfer_failed">文件或文件夹操作失败</string>
-    <string name="file_cut_source_delete_failed">无法删除原文件，剪切未完成，请检查目标文件夹</string>
-    <string name="folder_cut_source_delete_failed">目标文件夹已复制，但无法删除原文件夹，剪切未完成</string>
+    <string name="file_transfer_copied_source_retained">当前存储不支持安全移动，已复制到目标，原内容已保留</string>
+    <string name="file_transfer_copy_incomplete">复制未完成，原内容已保留，请检查目标中的副本</string>
     <string name="file_transfer_source_missing">源文件或文件夹不存在，无法粘贴</string>
     <string name="file_transfer_source_in_use">当前路径包含待操作的文件或文件夹，暂不能修改</string>
     <string name="file_operation_progress_title">文件操作</string>
@@ -321,8 +321,9 @@
     <string name="file_operation_scanned_items">已扫描 %1$d 项</string>
     <string name="file_operation_copying">正在复制…</string>
     <string name="file_operation_copying_item">正在复制：%1$s</string>
-    <string name="file_operation_deleting_source">正在删除源文件或文件夹…</string>
-    <string name="file_operation_deleting_source_item">正在删除源项：%1$s</string>
+    <string name="file_operation_moving">正在移动…</string>
+    <string name="file_operation_publishing_copy">正在写入目标副本…</string>
+    <string name="file_operation_moving_item">正在移动：%1$s</string>
     <string name="file_operation_deleting">正在删除…</string>
     <string name="file_operation_deleting_item">正在删除：%1$s</string>
     <string name="file_operation_copy_progress">已复制 %1$s / %2$s（%3$d / %4$d 项）</string>

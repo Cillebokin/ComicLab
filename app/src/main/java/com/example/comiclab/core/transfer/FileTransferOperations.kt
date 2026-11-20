@@ -2,7 +2,6 @@ package com.example.comiclab.core.transfer
 
 import java.io.File
 import java.io.FileOutputStream
-import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 
 internal object FileTransferOperations {
@@ -12,7 +11,8 @@ internal object FileTransferOperations {
         SOURCE_NOT_FILE,
         DESTINATION_NOT_DIRECTORY,
         TARGET_EXISTS,
-        SOURCE_DELETE_FAILED,
+        COPIED_SOURCE_RETAINED,
+        COPY_INCOMPLETE,
         FAILED
     }
 
@@ -60,9 +60,10 @@ internal object FileTransferOperations {
         sourceFile: File,
         targetFile: File,
         moveSource: Boolean,
+        move: (File, File) -> TransferFileMove.Result = TransferFileMove::move,
         onProgress: (FileOperationProgress) -> Unit = {}
     ): Result {
-        if (!sourceFile.isFile) {
+        if (!sourceFile.isFile || (moveSource && Files.isSymbolicLink(sourceFile.toPath()))) {
             return Result.SOURCE_NOT_FILE
         }
         val destinationDirectory = targetFile.parentFile
@@ -75,6 +76,19 @@ internal object FileTransferOperations {
 
         var temporaryFile: File? = null
         return try {
+            if (Thread.currentThread().isInterrupted) return Result.FAILED
+            if (moveSource) {
+                onProgress(
+                    FileOperationProgress(FileOperationProgress.Phase.MOVING, currentItemName = sourceFile.name)
+                )
+                if (Thread.currentThread().isInterrupted) return Result.FAILED
+                when (move(sourceFile, targetFile)) {
+                    TransferFileMove.Result.MOVED -> return Result.SUCCESS
+                    TransferFileMove.Result.TARGET_EXISTS -> return Result.TARGET_EXISTS
+                    TransferFileMove.Result.FAILED -> return Result.FAILED
+                    TransferFileMove.Result.UNAVAILABLE -> Unit
+                }
+            }
             val totalBytes = sourceFile.length().coerceAtLeast(0)
             var copiedBytes = 0L
             onProgress(
@@ -129,43 +143,25 @@ internal object FileTransferOperations {
                 )
             )
 
-            try {
-                Files.move(tempFile.toPath(), targetFile.toPath())
-                temporaryFile = null
-            } catch (_: FileAlreadyExistsException) {
-                return Result.TARGET_EXISTS
+            if (Thread.currentThread().isInterrupted) return Result.FAILED
+            // 复制完成也不能证明此刻的源路径仍指向相同内容，回退时保留原件。
+            val publication = TransferFileMove.publish(tempFile, targetFile, move.takeIf { moveSource }) {
+                onProgress(FileOperationProgress(FileOperationProgress.Phase.PUBLISHING))
             }
-
-            if (moveSource) {
-                onProgress(
-                    FileOperationProgress(
-                        phase = FileOperationProgress.Phase.DELETING_SOURCE,
-                        totalItems = 1,
-                        currentItemName = sourceFile.name
-                    )
-                )
+            when (publication) {
+                TransferFileMove.Publication.MOVED -> {
+                    temporaryFile = null
+                    if (moveSource) Result.COPIED_SOURCE_RETAINED else Result.SUCCESS
+                }
+                TransferFileMove.Publication.COPIED -> Result.COPIED_SOURCE_RETAINED
+                TransferFileMove.Publication.TARGET_EXISTS -> Result.TARGET_EXISTS
+                TransferFileMove.Publication.INCOMPLETE -> Result.COPY_INCOMPLETE
+                TransferFileMove.Publication.FAILED -> Result.FAILED
             }
-            val sourceDeleted = !moveSource ||
-                runCatching { sourceFile.delete() }.getOrDefault(false)
-            if (!sourceDeleted) {
-                runCatching { targetFile.delete() }
-                return Result.SOURCE_DELETE_FAILED
-            }
-            if (moveSource) {
-                onProgress(
-                    FileOperationProgress(
-                        phase = FileOperationProgress.Phase.DELETING_SOURCE,
-                        completedItems = 1,
-                        totalItems = 1,
-                        currentItemName = sourceFile.name
-                    )
-                )
-            }
-            Result.SUCCESS
         } catch (_: InterruptedException) {
             Result.FAILED
         } catch (_: Exception) {
-            if (targetFile.exists()) Result.TARGET_EXISTS else Result.FAILED
+            Result.FAILED
         } finally {
             temporaryFile?.delete()
         }

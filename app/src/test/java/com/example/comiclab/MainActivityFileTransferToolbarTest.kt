@@ -29,6 +29,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowAlertDialog
 import org.robolectric.shadows.ShadowEnvironment
+import org.robolectric.shadows.ShadowToast
 
 @RunWith(org.robolectric.RobolectricTestRunner::class)
 @Config(sdk = [36], shadows = [ShadowManageExternalStorage::class])
@@ -159,6 +160,32 @@ class MainActivityFileTransferToolbarTest {
     }
 
     @Test
+    fun cutFallbackReportsRetainedSourceAndFinishesPaste() {
+        val storageRoot = temporaryFolder.newFolder("cut-fallback-storage")
+        val destination = File(storageRoot, "destination").apply { mkdir() }
+        val source = File(storageRoot, "source.cbz").apply { writeText("comic bytes") }
+        ShadowEnvironment.setExternalStorageDirectory(storageRoot.toPath())
+        prepareBrowserPreferences(destination)
+
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        try {
+            startFilePaste(activity, source, FileTransferMode.CUT, destination)
+            awaitFileTransfer(activity)
+
+            assertEquals("comic bytes", source.readText())
+            assertEquals("comic bytes", File(destination, source.name).readText())
+            assertEquals(
+                activity.getString(R.string.file_transfer_copied_source_retained),
+                ShadowToast.getTextOfLatestToast()
+            )
+            assertEquals(View.GONE, activity.findViewById<View>(R.id.btnPasteFile).visibility)
+        } finally {
+            controller.pause().stop().destroy()
+        }
+    }
+
+    @Test
     fun failedFilePasteRetainsPendingToolbarAfterActivityCallback() {
         val storageRoot = temporaryFolder.newFolder("failed-transfer-storage")
         val destination = File(storageRoot, "destination").apply { mkdir() }
@@ -191,7 +218,7 @@ class MainActivityFileTransferToolbarTest {
     }
 
     @Test
-    fun failedDirectoryCutCallbackClosesProgressRetainsPendingAndReloadsDirectory() {
+    fun incompleteDirectoryCopyClosesProgressRetainsPendingAndReloadsDirectory() {
         val storageRoot = temporaryFolder.newFolder("failed-directory-transfer-storage")
         val destination = File(storageRoot, "destination").apply { mkdir() }
         val sourceDirectory = File(storageRoot, "source").apply { mkdir() }
@@ -216,7 +243,7 @@ class MainActivityFileTransferToolbarTest {
             val generationBeforeCallback = activity.directoryLoadGenerationForTest
             activity.handleDirectoryTransferFailureForTest(
                 transfer,
-                DirectoryTransferOperations.Result.SOURCE_DELETE_FAILED,
+                DirectoryTransferOperations.Result.COPY_INCOMPLETE,
                 destination
             )
 

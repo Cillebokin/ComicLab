@@ -129,7 +129,7 @@ class FileTransferControllerTest {
     }
 
     @Test
-    fun fileResultsClearOnlyAfterSuccessIncludingDeleteFailure() {
+    fun fileResultsClearAfterMoveOrCompleteCopyFallback() {
         FileTransferOperations.Result.values().forEach { result ->
             val controller = FileTransferController()
             val pending = transfer("/source.cbz", FileTransferMode.CUT)
@@ -138,7 +138,8 @@ class FileTransferControllerTest {
 
             assertTrue(controller.finishPaste(pending, result))
             assertEquals(
-                result != FileTransferOperations.Result.SUCCESS,
+                result != FileTransferOperations.Result.SUCCESS &&
+                    result != FileTransferOperations.Result.COPIED_SOURCE_RETAINED,
                 controller.pendingTransfer != null
             )
             assertFalse(controller.isTransferInProgress)
@@ -146,7 +147,7 @@ class FileTransferControllerTest {
     }
 
     @Test
-    fun directoryResultsClearOnlyAfterSuccessIncludingDeleteFailure() {
+    fun directoryResultsClearAfterMoveOrCompleteCopyFallback() {
         DirectoryTransferOperations.Result.values().forEach { result ->
             val controller = FileTransferController()
             val pending = transfer("/source", FileTransferMode.CUT, isDirectory = true)
@@ -155,7 +156,8 @@ class FileTransferControllerTest {
 
             assertTrue(controller.finishPaste(pending, result))
             assertEquals(
-                result != DirectoryTransferOperations.Result.SUCCESS,
+                result != DirectoryTransferOperations.Result.SUCCESS &&
+                    result != DirectoryTransferOperations.Result.COPIED_SOURCE_RETAINED,
                 controller.pendingTransfer != null
             )
             assertFalse(controller.isTransferInProgress)

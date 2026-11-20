@@ -2436,10 +2436,14 @@ class MainActivity : AppCompatActivity() {
                 getString(R.string.file_operation_copying_item, itemName)
             }
 
-            FileOperationProgress.Phase.DELETING_SOURCE -> if (itemName.isBlank()) {
-                getString(R.string.file_operation_deleting_source)
+            FileOperationProgress.Phase.MOVING -> if (itemName.isBlank()) {
+                getString(R.string.file_operation_moving)
             } else {
-                getString(R.string.file_operation_deleting_source_item, itemName)
+                getString(R.string.file_operation_moving_item, itemName)
+            }
+
+            FileOperationProgress.Phase.PUBLISHING -> {
+                getString(R.string.file_operation_publishing_copy)
             }
 
             FileOperationProgress.Phase.DELETING -> if (itemName.isBlank()) {

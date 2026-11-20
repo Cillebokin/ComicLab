@@ -3,7 +3,6 @@ package com.example.comiclab.core.transfer
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 
 internal object DirectoryTransferOperations {
@@ -24,7 +23,8 @@ internal object DirectoryTransferOperations {
         DESTINATION_INSIDE_SOURCE,
         INVALID_TARGET_NAME,
         TARGET_EXISTS,
-        SOURCE_DELETE_FAILED,
+        COPIED_SOURCE_RETAINED,
+        COPY_INCOMPLETE,
         FAILED
     }
 
@@ -102,6 +102,7 @@ internal object DirectoryTransferOperations {
         destinationDirectory: File,
         targetName: String,
         moveSource: Boolean,
+        move: (File, File) -> TransferFileMove.Result = TransferFileMove::move,
         onProgress: (FileOperationProgress) -> Unit = {}
     ): Result {
         if (!sourceDirectory.isDirectory) {
@@ -138,6 +139,16 @@ internal object DirectoryTransferOperations {
                 rejectSymbolicLinks = true,
                 onProgress = onProgress
             )
+            if (moveSource) {
+                onProgress(FileOperationProgress(FileOperationProgress.Phase.MOVING, currentItemName = sourceDirectory.name))
+                if (Thread.currentThread().isInterrupted) return Result.FAILED
+                when (move(sourceDirectory, targetDirectory)) {
+                    TransferFileMove.Result.MOVED -> return Result.SUCCESS
+                    TransferFileMove.Result.TARGET_EXISTS -> return Result.TARGET_EXISTS
+                    TransferFileMove.Result.FAILED -> return Result.FAILED
+                    TransferFileMove.Result.UNAVAILABLE -> Unit
+                }
+            }
             onProgress(
                 FileOperationProgress(
                     phase = FileOperationProgress.Phase.COPYING,
@@ -157,31 +168,33 @@ internal object DirectoryTransferOperations {
                 throw InterruptedException("Directory transfer interrupted")
             }
 
-            try {
-                Files.move(staging.toPath(), targetDirectory.toPath())
-                stagingDirectory = null
-            } catch (_: FileAlreadyExistsException) {
-                return Result.TARGET_EXISTS
+            // 回退时不再遍历和删除实时源目录，第三方可能已经写入新内容。
+            val publication = TransferFileMove.publish(staging, targetDirectory, move.takeIf { moveSource }) {
+                onProgress(FileOperationProgress(FileOperationProgress.Phase.PUBLISHING))
             }
-
-            val sourceDeleted = !moveSource ||
-                (!Thread.currentThread().isInterrupted &&
-                    DirectoryFileTree.deleteWithSummary(
-                        directory = sourceDirectory,
-                        summary = summary,
-                        phase = FileOperationProgress.Phase.DELETING_SOURCE,
-                        onProgress = onProgress
-                    ))
-            if (!sourceDeleted) {
-                return Result.SOURCE_DELETE_FAILED
+            when (publication) {
+                TransferFileMove.Publication.MOVED -> {
+                    stagingDirectory = null
+                    if (moveSource) Result.COPIED_SOURCE_RETAINED else Result.SUCCESS
+                }
+                TransferFileMove.Publication.COPIED -> Result.COPIED_SOURCE_RETAINED
+                TransferFileMove.Publication.TARGET_EXISTS -> Result.TARGET_EXISTS
+                TransferFileMove.Publication.INCOMPLETE -> Result.COPY_INCOMPLETE
+                TransferFileMove.Publication.FAILED -> Result.FAILED
             }
-            Result.SUCCESS
         } catch (_: InterruptedException) {
             Result.FAILED
         } catch (_: Exception) {
-            if (targetDirectory.exists()) Result.TARGET_EXISTS else Result.FAILED
+            Result.FAILED
         } finally {
-            stagingDirectory?.deleteRecursively()
+            stagingDirectory?.let {
+                val interrupted = Thread.interrupted()
+                try {
+                    DirectoryFileTree.deleteRecursively(it)
+                } finally {
+                    if (interrupted) Thread.currentThread().interrupt()
+                }
+            }
         }
     }
 

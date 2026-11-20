@@ -312,8 +312,8 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="folder_copy_success">Folder copied</string>
     <string name="folder_cut_success">Folder cut</string>
     <string name="file_transfer_failed">File operation failed</string>
-    <string name="file_cut_source_delete_failed">Could not delete the source file; the cut was not completed</string>
-    <string name="folder_cut_source_delete_failed">The folder was copied, but the source folder could not be deleted</string>
+    <string name="file_transfer_copied_source_retained">A safe move is unavailable on this storage. A copy was made and the original was kept.</string>
+    <string name="file_transfer_copy_incomplete">Copy incomplete. The original was kept. Check the copy at the destination.</string>
     <string name="file_transfer_source_missing">The source file or folder no longer exists</string>
     <string name="file_transfer_source_in_use">The source file or folder is part of a pending transfer and cannot be modified</string>
     <string name="file_operation_progress_title">File operation</string>
@@ -322,8 +322,9 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="file_operation_scanned_items">Scanned %1$d items</string>
     <string name="file_operation_copying">Copying…</string>
     <string name="file_operation_copying_item">Copying: %1$s</string>
-    <string name="file_operation_deleting_source">Removing the source file or folder…</string>
-    <string name="file_operation_deleting_source_item">Removing source item: %1$s</string>
+    <string name="file_operation_moving">Moving…</string>
+    <string name="file_operation_publishing_copy">Writing the destination copy…</string>
+    <string name="file_operation_moving_item">Moving: %1$s</string>
     <string name="file_operation_deleting">Deleting…</string>
     <string name="file_operation_deleting_item">Deleting: %1$s</string>
     <string name="file_operation_copy_progress">Copied %1$s / %2$s (%3$d / %4$d items)</string>

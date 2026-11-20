@@ -31,6 +31,7 @@ import com.example.comiclab.core.store.FavoritePathStore
 import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
 import java.io.File
+import com.example.comiclab.core.transfer.TransferFileMove
 import java.nio.file.Files
 import java.util.UUID
 import java.util.zip.ZipEntry
@@ -188,9 +189,10 @@ class FileTransferFlowTest {
     }
 
     @Test
-    fun cutFileCopiesExactBytesAndRemovesSourceAfterCompletion() {
+    fun cutFileTransfersExactBytesAndKeepsSourceWhenMoveIsUnavailable() {
         val source = createComicFile(SOURCE_DIRECTORY_NAME, "sample.cbz", "cut bytes")
         val expectedBytes = source.readBytes()
+        val supportsMove = supportsDirectMove(source)
 
         openDirectory(SOURCE_DIRECTORY_NAME)
         chooseFileAction(source.name, R.id.btnCutFile)
@@ -198,7 +200,8 @@ class FileTransferFlowTest {
         onView(withId(R.id.btnPasteFile)).perform(click())
         awaitTransferModeEnded()
 
-        assertFalse(source.exists())
+        assertEquals(!supportsMove, source.exists())
+        if (!supportsMove) assertArrayEquals(expectedBytes, source.readBytes())
         assertArrayEquals(expectedBytes, File(destinationDirectory(), source.name).readBytes())
     }
 
@@ -222,9 +225,10 @@ class FileTransferFlowTest {
     }
 
     @Test
-    fun cutFolderCopiesCompleteTreeBeforeRemovingSource() {
+    fun cutFolderTransfersFullTreeAndKeepsSourceWhenMoveIsUnavailable() {
         val source = createComicFolder("cut-folder")
         val expectedBytes = File(source, "nested/chapter.cbz").readBytes()
+        val supportsMove = supportsDirectMove(source)
 
         openDirectory(SOURCE_DIRECTORY_NAME)
         chooseDirectoryAction(source.name, R.id.btnCutDirectory)
@@ -232,7 +236,8 @@ class FileTransferFlowTest {
         onView(withId(R.id.btnPasteFile)).perform(click())
         awaitTransferModeEnded()
 
-        assertFalse(source.exists())
+        assertEquals(!supportsMove, source.exists())
+        if (!supportsMove) assertArrayEquals(expectedBytes, File(source, "nested/chapter.cbz").readBytes())
         val moved = File(destinationDirectory(), source.name)
         assertArrayEquals(expectedBytes, File(moved, "nested/chapter.cbz").readBytes())
         assertTrue(File(moved, "empty").isDirectory)
@@ -309,8 +314,9 @@ class FileTransferFlowTest {
     }
 
     @Test
-    fun cutDirectoryMigratesBookcaseFavoritesHistoryAndProgressOnDevice() {
+    fun cutDirectoryMovesMetadataOnlyWhenSourceIsMoved() {
         val sourceDirectory = createComicFolder("cut-metadata")
+        val supportsMove = supportsDirectMove(sourceDirectory)
         val sourceArchive = File(sourceDirectory, "nested/chapter.cbz")
         val expectedBytes = sourceArchive.readBytes()
         val lastReadAt = System.currentTimeMillis() - 1_000L
@@ -344,21 +350,24 @@ class FileTransferFlowTest {
         onView(withId(R.id.btnPasteFile)).perform(click())
         awaitTransferModeEnded()
 
-        val movedDirectory = File(destinationDirectory(), sourceDirectory.name)
-        val movedArchive = File(movedDirectory, "nested/chapter.cbz")
-        assertFalse(sourceDirectory.exists())
-        assertArrayEquals(expectedBytes, movedArchive.readBytes())
-        assertEquals(setOf(movedDirectory.absolutePath), FavoritePathStore.favoriteDirectoryPaths(context))
-        assertEquals(setOf(movedArchive.absolutePath), FavoriteComicStore.favoriteFilePaths(context))
+        val targetDirectory = File(destinationDirectory(), sourceDirectory.name)
+        val targetArchive = File(targetDirectory, "nested/chapter.cbz")
+        assertEquals(!supportsMove, sourceDirectory.exists())
+        assertArrayEquals(expectedBytes, targetArchive.readBytes())
+
+        val metadataDirectory = if (supportsMove) targetDirectory else sourceDirectory
+        val metadataArchive = if (supportsMove) targetArchive else sourceArchive
+        val otherArchive = if (supportsMove) sourceArchive else targetArchive
+        assertEquals(setOf(metadataDirectory.absolutePath), FavoritePathStore.favoriteDirectoryPaths(context))
+        assertEquals(setOf(metadataArchive.absolutePath), FavoriteComicStore.favoriteFilePaths(context))
         val history = ReadingHistoryStore.items(context)
-        assertEquals(listOf(movedArchive.absolutePath), history.map { it.file.absolutePath })
+        assertEquals(listOf(metadataArchive.absolutePath), history.map { it.file.absolutePath })
         assertEquals(lastReadAt, history.single().lastReadAt)
-        assertEquals(4 to -91, ReaderProgressStore.readPositionAndOffset(context, movedArchive))
-        assertTrue(AppSettings.bookcaseDirectoryPaths(context).contains(movedDirectory.absolutePath))
-        assertFalse(AppSettings.bookcaseDirectoryPaths(context).contains(sourceDirectory.absolutePath))
+        assertEquals(4 to -91, ReaderProgressStore.readPositionAndOffset(context, metadataArchive))
+        assertEquals(setOf(metadataDirectory.absolutePath), AppSettings.bookcaseDirectoryPaths(context))
         assertFalse(
             context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-                .all.keys.any { it.startsWith("reader:${sourceArchive.absolutePath}:") }
+                .all.keys.any { it.startsWith("reader:${otherArchive.absolutePath}:") }
         )
     }
 
@@ -713,6 +722,22 @@ class FileTransferFlowTest {
             SystemClock.sleep(POLL_INTERVAL_MS)
         }
         assertTrue(description, condition())
+    }
+
+    private fun supportsDirectMove(source: File): Boolean {
+        val probe = File(source.parentFile, ".cut-probe-${UUID.randomUUID()}")
+        val target = File(destinationDirectory(), probe.name)
+        if (source.isDirectory) check(probe.mkdir()) else check(probe.createNewFile())
+        return try {
+            when (TransferFileMove.move(probe, target)) {
+                TransferFileMove.Result.MOVED -> true
+                TransferFileMove.Result.UNAVAILABLE -> false
+                else -> error("Could not probe atomic move support with a temporary fixture")
+            }
+        } finally {
+            probe.delete()
+            target.delete()
+        }
     }
 
     private fun destinationDirectory(): File =

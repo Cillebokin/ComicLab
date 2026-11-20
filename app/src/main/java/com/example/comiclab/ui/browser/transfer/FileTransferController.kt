@@ -57,7 +57,8 @@ class FileTransferController {
         result: FileTransferOperations.Result
     ): Boolean = finishPaste(
         transfer,
-        succeeded = result == FileTransferOperations.Result.SUCCESS
+        completed = result == FileTransferOperations.Result.SUCCESS ||
+            result == FileTransferOperations.Result.COPIED_SOURCE_RETAINED
     )
 
     internal fun finishPaste(
@@ -65,13 +66,14 @@ class FileTransferController {
         result: DirectoryTransferOperations.Result
     ): Boolean = finishPaste(
         transfer,
-        succeeded = result == DirectoryTransferOperations.Result.SUCCESS
+        completed = result == DirectoryTransferOperations.Result.SUCCESS ||
+            result == DirectoryTransferOperations.Result.COPIED_SOURCE_RETAINED
     )
 
-    private fun finishPaste(transfer: PendingFileTransfer, succeeded: Boolean): Boolean {
+    private fun finishPaste(transfer: PendingFileTransfer, completed: Boolean): Boolean {
         if (pendingTransfer != transfer || !isTransferInProgress) return false
         isTransferInProgress = false
-        if (succeeded) pendingTransfer = null
+        if (completed) pendingTransfer = null
         return true
     }
 

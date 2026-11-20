@@ -3,6 +3,9 @@ package com.example.comiclab.core.transfer
 import com.example.comiclab.core.transfer.FileOperationProgress
 import com.example.comiclab.core.transfer.FileTransferOperations
 import java.io.File
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -60,7 +63,7 @@ class FileTransferOperationsTest {
     }
 
     @Test
-    fun cutCopiesContentsAndRemovesSourceOnlyAfterCopySucceeds() {
+    fun cutUsesDirectMoveWithoutCopyingOrDeletingSource() {
         val source = File(temporaryFolder.root, "source.cbz").apply { writeText("comic data") }
         val destination = temporaryFolder.newFolder("destination")
         val target = File(destination, "moved.cbz")
@@ -70,14 +73,17 @@ class FileTransferOperationsTest {
             source,
             target,
             moveSource = true,
+            move = { from, to ->
+                Files.move(from.toPath(), to.toPath())
+                TransferFileMove.Result.MOVED
+            },
             onProgress = { progress += it }
         )
 
         assertEquals(FileTransferOperations.Result.SUCCESS, result)
         assertFalse(source.exists())
         assertEquals("comic data", target.readText())
-        assertTrue(progress.any { it.phase == FileOperationProgress.Phase.DELETING_SOURCE })
-        assertEquals(1, progress.last { it.phase == FileOperationProgress.Phase.DELETING_SOURCE }.completedItems)
+        assertEquals(listOf(FileOperationProgress.Phase.MOVING), progress.map { it.phase })
     }
 
     @Test
@@ -143,20 +149,80 @@ class FileTransferOperationsTest {
     }
 
     @Test
-    fun cutSourceDeletionFailureRemovesPublishedCopyAndPreservesSource() {
-        val sourcePath = File(temporaryFolder.root, "undeletable-source.cbz").apply {
-            writeText("source data")
-        }
-        val source = NonDeletableFile(sourcePath.path)
-        val destination = temporaryFolder.newFolder("undeletable-destination")
+    fun unavailableSourceMovePublishesCopyAndNeverTriesToDeleteSource() {
+        val source = File(temporaryFolder.root, "source.cbz").apply { writeText("source data") }
+        val destination = temporaryFolder.newFolder("destination")
         val target = File(destination, "copy.cbz")
 
-        val result = FileTransferOperations.transfer(source, target, moveSource = true)
+        val result = FileTransferOperations.transfer(source, target, moveSource = true, move = { from, to ->
+            if (from == source) {
+                TransferFileMove.Result.UNAVAILABLE
+            } else {
+                Files.move(from.toPath(), to.toPath())
+                TransferFileMove.Result.MOVED
+            }
+        })
 
-        assertEquals(FileTransferOperations.Result.SOURCE_DELETE_FAILED, result)
-        assertTrue(sourcePath.isFile)
-        assertEquals("source data", sourcePath.readText())
-        assertFalse(target.exists())
+        assertEquals(FileTransferOperations.Result.COPIED_SOURCE_RETAINED, result)
+        assertEquals("source data", source.readText())
+        assertEquals("source data", target.readText())
+        assertEquals(listOf(target.name), destination.list()?.toList())
+    }
+
+    @Test
+    fun cutFallbackKeepsTargetCreatedBeforeExclusivePublication() {
+        val source = File(temporaryFolder.root, "source.cbz").apply { writeText("source data") }
+        val destination = temporaryFolder.newFolder("destination")
+        val target = File(destination, source.name)
+
+        val result = FileTransferOperations.transfer(source, target, moveSource = true) {
+            if (it.phase == FileOperationProgress.Phase.PUBLISHING) target.writeText("concurrent target")
+        }
+
+        assertEquals(FileTransferOperations.Result.TARGET_EXISTS, result)
+        assertEquals("source data", source.readText())
+        assertEquals("concurrent target", target.readText())
+        assertEquals(listOf(target.name), destination.list()?.toList())
+    }
+
+    @Test
+    fun atomicPublicationDoesNotDeleteARecreatedStagingPath() {
+        val source = File(temporaryFolder.root, "source.cbz").apply { writeText("source data") }
+        val destination = temporaryFolder.newFolder("destination")
+        val target = File(destination, source.name)
+        var recreated: File? = null
+
+        val result = FileTransferOperations.transfer(source, target, moveSource = true, move = { from, to ->
+            if (from == source) {
+                TransferFileMove.Result.UNAVAILABLE
+            } else {
+                Files.move(from.toPath(), to.toPath())
+                from.writeText("new content")
+                recreated = from
+                TransferFileMove.Result.MOVED
+            }
+        })
+
+        assertEquals(FileTransferOperations.Result.COPIED_SOURCE_RETAINED, result)
+        assertEquals("new content", checkNotNull(recreated).readText())
+        assertEquals("source data", source.readText())
+        assertEquals("source data", target.readText())
+    }
+
+    @Test
+    fun cutFallbackWriteFailureKeepsSourceAndDoesNotPublishAStagedCopy() {
+        val source = File(temporaryFolder.root, "source.cbz").apply { writeText("source data") }
+        val destination = temporaryFolder.newFolder("destination")
+        val target = File(destination, source.name)
+
+        val result = FileTransferOperations.transfer(source, target, moveSource = true) { progress ->
+            if (progress.phase == FileOperationProgress.Phase.COPYING && progress.completedBytes > 0) {
+                throw IOException("Injected failure after writing to the staging file")
+            }
+        }
+
+        assertEquals(FileTransferOperations.Result.FAILED, result)
+        assertEquals("source data", source.readText())
         assertTrue(destination.list().orEmpty().isEmpty())
     }
 
@@ -207,7 +273,57 @@ class FileTransferOperationsTest {
         assertEquals("source data", source.readText())
     }
 
-    private class NonDeletableFile(path: String) : File(path) {
-        override fun delete(): Boolean = false
+    @Test
+    fun cutPreservesSourceChangedAfterItWasCopied() {
+        val source = File(temporaryFolder.root, "source.cbz").apply { writeText("before") }
+        val destination = temporaryFolder.newFolder("destination")
+        val target = File(destination, source.name)
+        var modified = false
+
+        val result = FileTransferOperations.transfer(source, target, moveSource = true) { progress ->
+            if (!modified && progress.phase == FileOperationProgress.Phase.COPYING &&
+                progress.completedItems == 1
+            ) {
+                val oldTime = source.lastModified()
+                source.writeText("update")
+                assertTrue(source.setLastModified(oldTime))
+                modified = true
+            }
+        }
+
+        assertTrue(modified)
+        assertTrue("the updated source must still exist", source.isFile)
+        assertEquals("update", source.readText())
+        assertEquals("before", target.readText())
+        assertEquals(FileTransferOperations.Result.COPIED_SOURCE_RETAINED, result)
     }
+
+    @Test
+    fun cutPreservesReplacementAtTheSourcePath() {
+        val source = File(temporaryFolder.root, "source.cbz").apply { writeText("original") }
+        val destination = temporaryFolder.newFolder("destination")
+        val replacement = File(temporaryFolder.root, "replacement.cbz").apply { writeText("new file") }
+        val target = File(destination, source.name)
+        var replaced = false
+
+        val result = FileTransferOperations.transfer(source, target, moveSource = true) { progress ->
+            if (!replaced && progress.phase == FileOperationProgress.Phase.COPYING &&
+                progress.completedItems == 1
+            ) {
+                Files.move(
+                    replacement.toPath(),
+                    source.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING
+                )
+                replaced = true
+            }
+        }
+
+        assertTrue(replaced)
+        assertTrue("the replacement must still exist", source.isFile)
+        assertEquals("new file", source.readText())
+        assertEquals("original", target.readText())
+        assertEquals(FileTransferOperations.Result.COPIED_SOURCE_RETAINED, result)
+    }
+
 }

@@ -11,7 +11,8 @@ internal data class FileOperationProgress(
     enum class Phase {
         SCANNING,
         COPYING,
-        DELETING_SOURCE,
+        MOVING,
+        PUBLISHING,
         DELETING
     }
 }
@@ -20,6 +21,8 @@ internal object FileOperationProgressPolicy {
 
     fun percentage(progress: FileOperationProgress): Int? {
         if (progress.phase == FileOperationProgress.Phase.SCANNING ||
+            progress.phase == FileOperationProgress.Phase.MOVING ||
+            progress.phase == FileOperationProgress.Phase.PUBLISHING ||
             (progress.phase == FileOperationProgress.Phase.DELETING && progress.totalItems <= 0)
         ) {
             return null

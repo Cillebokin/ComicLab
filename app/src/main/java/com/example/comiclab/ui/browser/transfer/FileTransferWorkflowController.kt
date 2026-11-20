@@ -332,7 +332,8 @@ internal class FileTransferWorkflowController(
                 )
             }
             if (result == FileTransferOperations.Result.SUCCESS ||
-                result == FileTransferOperations.Result.SOURCE_DELETE_FAILED
+                result == FileTransferOperations.Result.COPIED_SOURCE_RETAINED ||
+                result == FileTransferOperations.Result.COPY_INCOMPLETE
             ) {
                 invalidateDirectoryChildCount(destinationDirectory)
                 if (result == FileTransferOperations.Result.SUCCESS &&
@@ -373,8 +374,14 @@ internal class FileTransferWorkflowController(
                         showMessage(getString(R.string.file_transfer_source_missing))
                     }
 
-                    FileTransferOperations.Result.SOURCE_DELETE_FAILED -> {
-                        showMessage(getString(R.string.file_cut_source_delete_failed))
+                    FileTransferOperations.Result.COPIED_SOURCE_RETAINED -> {
+                        showMessage(getString(R.string.file_transfer_copied_source_retained))
+                        loadCurrentDirectory(scrollStateToRestore = scrollState)
+                    }
+
+                    FileTransferOperations.Result.COPY_INCOMPLETE -> {
+                        showMessage(getString(R.string.file_transfer_copy_incomplete))
+                        loadCurrentDirectory(scrollStateToRestore = scrollState)
                     }
 
                     FileTransferOperations.Result.DESTINATION_NOT_DIRECTORY,
@@ -466,14 +473,14 @@ internal class FileTransferWorkflowController(
                 )
             }
             if (result == DirectoryTransferOperations.Result.SUCCESS ||
-                result == DirectoryTransferOperations.Result.SOURCE_DELETE_FAILED
+                result == DirectoryTransferOperations.Result.COPIED_SOURCE_RETAINED ||
+                result == DirectoryTransferOperations.Result.COPY_INCOMPLETE
             ) {
                 invalidateDirectoryChildCount(destinationDirectory)
-                if (transfer.mode == FileTransferMode.CUT) {
+                if (result == DirectoryTransferOperations.Result.SUCCESS &&
+                    transfer.mode == FileTransferMode.CUT
+                ) {
                     invalidateDirectoryChildCount(sourceDirectory.parentFile)
-                    if (result == DirectoryTransferOperations.Result.SOURCE_DELETE_FAILED) {
-                        invalidateDirectoryChildCount(sourceDirectory)
-                    }
                 }
             }
             runOnUiThread {
@@ -527,8 +534,13 @@ internal class FileTransferWorkflowController(
                 showMessage(getString(R.string.folder_paste_into_source))
             }
 
-            DirectoryTransferOperations.Result.SOURCE_DELETE_FAILED -> {
-                showMessage(getString(R.string.folder_cut_source_delete_failed))
+            DirectoryTransferOperations.Result.COPIED_SOURCE_RETAINED -> {
+                showMessage(getString(R.string.file_transfer_copied_source_retained))
+                loadCurrentDirectory(scrollStateToRestore = scrollState)
+            }
+
+            DirectoryTransferOperations.Result.COPY_INCOMPLETE -> {
+                showMessage(getString(R.string.file_transfer_copy_incomplete))
                 loadCurrentDirectory(scrollStateToRestore = scrollState)
             }
 

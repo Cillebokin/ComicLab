@@ -13,3 +13,6 @@ target_link_options(comiclab_superresolution PRIVATE "-Wl,-z,max-page-size=16384
 add_library(comiclab_translation SHARED translation.cpp)
 target_link_libraries(comiclab_translation PRIVATE ncnn jnigraphics android log)
 target_link_options(comiclab_translation PRIVATE "-Wl,-z,max-page-size=16384")
+
+add_library(comiclab_filetransfer SHARED filetransfer.cpp)
+target_link_options(comiclab_filetransfer PRIVATE "-Wl,-z,max-page-size=16384")
