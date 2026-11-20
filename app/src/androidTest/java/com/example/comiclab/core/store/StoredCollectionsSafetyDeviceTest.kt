@@ -22,7 +22,9 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class StoredCollectionsSafetyDeviceTest {
     private val base = InstrumentationRegistry.getInstrumentation().targetContext
-    private val names = listOf("favorite_comic_prefs", "favorite_path_prefs", "reading_history_prefs")
+    private val names = listOf(
+        "favorite_comic_prefs", "favorite_path_prefs", "reading_history_prefs", "ebook_progress_prefs"
+    )
     private lateinit var prefix: String
     private lateinit var root: File
     private lateinit var context: Context

@@ -19,6 +19,8 @@ import androidx.test.espresso.action.ViewActions.longClick
 import androidx.test.espresso.action.ViewActions.replaceText
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.RootMatchers.isDialog
+import androidx.test.espresso.matcher.RootMatchers.isPlatformPopup
+import androidx.test.espresso.matcher.ViewMatchers.hasDescendant
 import androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.withId
@@ -50,6 +52,8 @@ import java.util.zip.ZipOutputStream
 import org.hamcrest.Description
 import org.hamcrest.Matcher
 import org.hamcrest.TypeSafeMatcher
+import org.hamcrest.Matchers.allOf
+import org.json.JSONArray
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -395,10 +399,8 @@ class FileTransferFlowTest {
         val targetDirectory = File(sourceDirectory.parentFile, "renamed-directory")
         val staleTargetArchive = File(targetDirectory, "nested/chapter.cbz")
 
-        assertEquals(
-            FavoritePathStore.RecordResult.ADDED,
-            FavoritePathStore.record(context, sourceDirectory)
-        )
+        val parentFavorite = FavoritePathStore.Item(sourceDirectory, sourceReadAt)
+        assertEquals(1, FavoritePathStore.merge(context, listOf(parentFavorite)))
         assertEquals(
             FavoriteComicStore.RecordResult.ADDED,
             FavoriteComicStore.record(context, sourceArchive)
@@ -431,7 +433,10 @@ class FileTransferFlowTest {
         assertFalse(sourceDirectory.exists())
         assertTrue(AppSettings.bookcaseDirectoryPaths(context).contains(targetDirectory.absolutePath))
         assertFalse(AppSettings.bookcaseDirectoryPaths(context).contains(sourceDirectory.absolutePath))
-        assertEquals(setOf(targetDirectory.absolutePath), FavoritePathStore.favoriteDirectoryPaths(context))
+        assertEquals(
+            listOf(parentFavorite.copy(directory = targetDirectory)),
+            FavoritePathStore.items(context)
+        )
         assertEquals(setOf(movedArchive.absolutePath), FavoriteComicStore.favoriteFilePaths(context))
         val history = ReadingHistoryStore.items(context)
         assertEquals(listOf(movedArchive.absolutePath), history.map { it.file.absolutePath })
@@ -441,6 +446,63 @@ class FileTransferFlowTest {
             context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
                 .all.keys.any { it.startsWith("reader:${sourceArchive.absolutePath}:") }
         )
+    }
+
+    @Test
+    fun renamingAnUnfavoritedParentKeepsNestedFavoritesAndResolvesStoredPathCollisions() {
+        val parent = File(sandbox, SOURCE_DIRECTORY_NAME)
+        val source = File(parent, "shelf")
+        val sourceMiddle = File(source, "series")
+        val sourceDeep = File(sourceMiddle, "volume").apply { check(mkdirs()) }
+        val sourceSolo = File(sourceDeep, "only-source-favorite").apply { check(mkdir()) }
+        File(sourceSolo, "marker.cbz").writeText("favorite destination marker")
+        val target = File(parent, "renamed-shelf")
+        val targetMiddle = File(target, "series")
+        val targetDeep = File(targetMiddle, "volume").apply { check(mkdirs()) }
+        val targetSolo = File(targetDeep, "only-source-favorite")
+        val unrelated = File(parent, "shelf-other/series").apply { check(mkdirs()) }
+        val favorites = listOf(
+            FavoritePathStore.Item(unrelated, 50L),
+            FavoritePathStore.Item(sourceMiddle, 200L),
+            FavoritePathStore.Item(sourceDeep, 300L),
+            FavoritePathStore.Item(sourceSolo, 350L),
+            FavoritePathStore.Item(targetMiddle, 100L),
+            FavoritePathStore.Item(targetDeep, 400L)
+        )
+        assertEquals(favorites.size, FavoritePathStore.merge(context, favorites))
+        val prefs = context.getSharedPreferences("favorite_path_prefs", Context.MODE_PRIVATE)
+        val before = prefs.getString("favorite_paths", null)
+
+        openDirectory(SOURCE_DIRECTORY_NAME)
+        renameDirectoryInBrowser(source.name, target.name)
+        assertTrue(sourceSolo.isDirectory)
+        assertTrue(targetDeep.isDirectory)
+        assertEquals(before, prefs.getString("favorite_paths", null))
+
+        // Keep the destination's saved favorites while removing its physical name conflict.
+        check(targetDeep.delete())
+        check(targetMiddle.delete())
+        check(target.delete())
+        renameDirectoryInBrowser(source.name, target.name)
+
+        assertFalse(source.exists())
+        val expected = listOf(
+            FavoritePathStore.Item(unrelated, 50L),
+            FavoritePathStore.Item(targetMiddle, 100L),
+            FavoritePathStore.Item(targetDeep, 300L),
+            FavoritePathStore.Item(targetSolo, 350L)
+        )
+        assertEquals(expected, FavoritePathStore.items(context))
+        val stored = JSONArray(checkNotNull(prefs.getString("favorite_paths", null)))
+        assertEquals(expected.map { it.directory.absolutePath }, List(stored.length()) { index ->
+            stored.getJSONObject(index).getString("path")
+        })
+
+        onView(withId(R.id.btnFavoritePaths)).perform(click())
+        onView(allOf(withId(R.id.layoutFavoritePathContent), hasDescendant(withText(targetSolo.absolutePath))))
+            .inRoot(isPlatformPopup()).perform(click())
+        awaitListItem("marker.cbz")
+        assertEquals(targetSolo.absolutePath, onMain { checkNotNull(activity).currentPathForTest })
     }
 
     @Test

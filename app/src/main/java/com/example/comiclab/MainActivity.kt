@@ -1268,7 +1268,6 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val wasFavorite = FavoritePathStore.isFavorite(this, directory)
         val updateEbookProgress = EbookProgressStore.prepareMove(this, directory)
         val renamed = directory.renameTo(targetDirectory)
         if (!renamed) {
@@ -1277,10 +1276,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         updateEbookProgress?.invoke(targetDirectory)
-        if (wasFavorite) {
-            FavoritePathStore.remove(this, directory)
-            FavoritePathStore.record(this, targetDirectory)
-        }
+        FavoritePathStore.moveDirectory(this, directory, targetDirectory)
         FavoriteComicStore.moveDirectory(this, directory, targetDirectory)
         ReadingHistoryStore.moveDirectory(this, directory, targetDirectory)
         ReaderProgressStore.moveDirectory(this, directory, targetDirectory)
