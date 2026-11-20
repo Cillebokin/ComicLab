@@ -52,6 +52,36 @@ class DirectoryTransferOperationsTest {
     }
 
     @Test
+    fun createDirectoryRejectsLeadingDotAfterTrimming() {
+        val parent = temporaryFolder.newFolder("parent")
+
+        val result = DirectoryTransferOperations.createDirectory(parent, "  .Private  ")
+
+        assertEquals(DirectoryTransferOperations.CreateDirectoryResult.HIDDEN_NAME, result)
+        assertFalse(File(parent, ".Private").exists())
+    }
+
+    @Test
+    fun transferRejectsHiddenTargetForCopyAndCut() {
+        val source = temporaryFolder.newFolder("source")
+        val destination = temporaryFolder.newFolder("destination")
+        val chapter = File(source, "chapter.cbz").apply { writeText("chapter data") }
+
+        for (moveSource in listOf(false, true)) {
+            val result = DirectoryTransferOperations.transfer(
+                sourceDirectory = source,
+                destinationDirectory = destination,
+                targetName = ".Private",
+                moveSource = moveSource
+            )
+
+            assertEquals(DirectoryTransferOperations.Result.INVALID_TARGET_NAME, result)
+            assertEquals("chapter data", chapter.readText())
+            assertFalse(File(destination, ".Private").exists())
+        }
+    }
+
+    @Test
     fun createDirectoryRejectsEmptyName() {
         val parent = temporaryFolder.newFolder("parent")
 
@@ -83,11 +113,16 @@ class DirectoryTransferOperationsTest {
     }
 
     @Test
-    fun targetDirectoryNameRejectsEmptyOrPathLikeNames() {
-        assertEquals(null, DirectoryTransferOperations.targetDirectoryName("  "))
-        assertEquals(null, DirectoryTransferOperations.targetDirectoryName("../Other"))
-        assertEquals(null, DirectoryTransferOperations.targetDirectoryName("Bad:name"))
-        assertEquals("New Manga", DirectoryTransferOperations.targetDirectoryName(" New Manga "))
+    fun directoryNameRulesAllowInteriorDotsAndRejectPathLikeNames() {
+        assertEquals(DirectoryTransferOperations.CreateDirectoryResult.EMPTY_NAME,
+            DirectoryTransferOperations.directoryNameError(""))
+        for (name in listOf(".", "..", "../Other", "Bad:name")) {
+            assertEquals(DirectoryTransferOperations.CreateDirectoryResult.INVALID_NAME,
+                DirectoryTransferOperations.directoryNameError(name))
+        }
+        assertEquals(DirectoryTransferOperations.CreateDirectoryResult.HIDDEN_NAME,
+            DirectoryTransferOperations.directoryNameError(".Private"))
+        assertEquals(null, DirectoryTransferOperations.directoryNameError("Manga.v1"))
     }
 
     @Test
@@ -95,6 +130,8 @@ class DirectoryTransferOperationsTest {
         val source = temporaryFolder.newFolder("source")
         val nested = File(source, "nested/empty").apply { mkdirs() }
         File(source, ".hidden.cbz").writeText("hidden data")
+        val hiddenDirectory = File(source, ".private").apply { mkdir() }
+        File(hiddenDirectory, "chapter.cbz").writeText("hidden chapter data")
         File(nested.parentFile, "chapter.cbz").writeText("chapter data")
         val destination = temporaryFolder.newFolder("destination")
         val target = File(destination, "Manga copy")
@@ -109,6 +146,7 @@ class DirectoryTransferOperationsTest {
         assertEquals(DirectoryTransferOperations.Result.SUCCESS, result)
         assertTrue(source.isDirectory)
         assertEquals("hidden data", File(target, ".hidden.cbz").readText())
+        assertEquals("hidden chapter data", File(target, ".private/chapter.cbz").readText())
         assertEquals("chapter data", File(target, "nested/chapter.cbz").readText())
         assertTrue(File(target, "nested/empty").isDirectory)
         assertEquals(listOf("Manga copy"), destination.list()?.toList())

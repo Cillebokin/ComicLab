@@ -192,16 +192,15 @@ internal class FileTransferWorkflowController(
             .createRounded()
         dialog.show()
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val targetName = DirectoryTransferOperations.targetDirectoryName(
-                input.text?.toString().orEmpty()
-            )
-            if (targetName == null) {
-                val errorMessage = if (input.text.isNullOrBlank()) {
-                    getString(R.string.rename_directory_name_empty)
-                } else {
-                    getString(R.string.rename_directory_name_invalid)
-                }
-                input.error = errorMessage
+            val targetName = input.text?.toString().orEmpty().trim()
+            val nameErrorMessage = when (DirectoryTransferOperations.directoryNameError(targetName)) {
+                null -> null
+                DirectoryTransferOperations.CreateDirectoryResult.EMPTY_NAME -> R.string.rename_directory_name_empty
+                DirectoryTransferOperations.CreateDirectoryResult.HIDDEN_NAME -> R.string.directory_name_hidden
+                else -> R.string.rename_directory_name_invalid
+            }
+            if (nameErrorMessage != null) {
+                input.error = getString(nameErrorMessage)
                 return@setOnClickListener
             }
 

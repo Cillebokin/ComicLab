@@ -951,6 +951,9 @@ class MainActivity : AppCompatActivity() {
             DirectoryTransferOperations.CreateDirectoryResult.INVALID_NAME ->
                 showMessage(getString(R.string.create_directory_name_invalid))
 
+            DirectoryTransferOperations.CreateDirectoryResult.HIDDEN_NAME ->
+                showMessage(R.string.directory_name_hidden)
+
             DirectoryTransferOperations.CreateDirectoryResult.TARGET_EXISTS ->
                 showMessage(getString(R.string.create_directory_name_exists))
 
@@ -1246,16 +1249,14 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val trimmedName = rawName.trim()
-        if (trimmedName.isEmpty()) {
-            showMessage(getString(R.string.rename_directory_name_empty))
-            return
+        val nameErrorMessage = when (DirectoryTransferOperations.directoryNameError(trimmedName)) {
+            null -> null
+            DirectoryTransferOperations.CreateDirectoryResult.EMPTY_NAME -> R.string.rename_directory_name_empty
+            DirectoryTransferOperations.CreateDirectoryResult.HIDDEN_NAME -> R.string.directory_name_hidden
+            else -> R.string.rename_directory_name_invalid
         }
-        if (trimmedName.any { it.code < 32 || it in INVALID_FILE_NAME_CHARS }) {
-            showMessage(getString(R.string.rename_directory_name_invalid))
-            return
-        }
-        if (trimmedName == "." || trimmedName == "..") {
-            showMessage(getString(R.string.rename_directory_name_invalid))
+        if (nameErrorMessage != null) {
+            showMessage(nameErrorMessage)
             return
         }
         if (trimmedName == directory.name) {

@@ -21,6 +21,7 @@ import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.espresso.matcher.RootMatchers.isPlatformPopup
 import androidx.test.espresso.matcher.ViewMatchers.hasDescendant
+import androidx.test.espresso.matcher.ViewMatchers.hasErrorText
 import androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.withId
@@ -260,6 +261,84 @@ class FileTransferFlowTest {
         val moved = File(destinationDirectory(), source.name)
         assertArrayEquals(expectedBytes, File(moved, "nested/chapter.cbz").readBytes())
         assertTrue(File(moved, "empty").isDirectory)
+    }
+
+    @Test
+    fun directoryCreateAndRenameKeepNewFoldersVisibleInBrowserAndSearch() {
+        val parent = File(sandbox, SOURCE_DIRECTORY_NAME)
+        val hidden = File(parent, ".CL014-existing").apply { check(mkdir()) }
+
+        openDirectory(SOURCE_DIRECTORY_NAME)
+        createDirectoryInBrowser("  .CL014-create  ")
+        assertFalse(File(parent, ".CL014-create").exists())
+
+        createDirectoryInBrowser(" CL014.v1 ")
+        awaitListItem("CL014.v1")
+        renameDirectoryInBrowser("CL014.v1", "  .CL014-rename  ")
+        assertTrue(File(parent, "CL014.v1").isDirectory)
+        assertFalse(File(parent, ".CL014-rename").exists())
+
+        renameDirectoryInBrowser("CL014.v1", " CL014.v2 ")
+        awaitListItem("CL014.v2")
+        val visible = File(parent, "CL014.v2")
+        assertTrue(visible.isDirectory)
+        assertFalse(File(parent, "CL014.v1").exists())
+        assertTrue(hidden.isDirectory)
+        assertFalse(onMain {
+            val adapter = checkNotNull(activity).findViewById<ListView>(R.id.listFiles).adapter
+            (0 until adapter.count).any { (adapter.getItem(it) as? FileItem)?.file == hidden }
+        })
+
+        onView(withId(R.id.btnSearch)).perform(click())
+        try {
+            onView(withId(R.id.inputSearchKeyword)).perform(replaceText("CL014"))
+            onView(withId(R.id.btnRunSearch)).perform(click())
+            awaitCondition("search should show only the visible directory") {
+                onMain {
+                    val search = ActivityLifecycleMonitorRegistry.getInstance()
+                        .getActivitiesInStage(Stage.RESUMED)
+                        .filterIsInstance<SearchActivity>()
+                        .singleOrNull()
+                    val adapter = search?.findViewById<ListView>(R.id.listSearchResults)?.adapter
+                    adapter?.count == 1 && adapter.getItem(0) == visible
+                }
+            }
+        } finally {
+            onMain {
+                ActivityLifecycleMonitorRegistry.getInstance()
+                    .getActivitiesInStage(Stage.RESUMED)
+                    .filterIsInstance<SearchActivity>()
+                    .forEach { it.finish() }
+            }
+        }
+    }
+
+    @Test
+    fun folderNameConflictRejectsHiddenNameAndAcceptsVisibleCorrection() {
+        val source = createComicFolder("CL014")
+        val destination = destinationDirectory()
+        val existing = File(destination, source.name).apply { check(mkdir()) }
+        val original = File(existing, "existing.cbz").apply { writeText("existing bytes") }
+
+        openDirectory(SOURCE_DIRECTORY_NAME)
+        chooseDirectoryAction(source.name, R.id.btnCopyDirectory)
+        navigateToDestination()
+        onView(withId(R.id.btnPasteFile)).perform(click())
+
+        onView(withText(R.string.paste_folder_conflict_title)).check(matches(isDisplayed()))
+        val input = onView(isAssignableFrom(EditText::class.java)).inRoot(isDialog())
+        input.perform(replaceText(" .CL014-copy "))
+        onView(withText(R.string.confirm)).inRoot(isDialog()).perform(click())
+        input.check(matches(hasErrorText(context.getString(R.string.directory_name_hidden))))
+        assertFalse(File(destination, ".CL014-copy").exists())
+
+        input.perform(replaceText("CL014.copy"))
+        onView(withText(R.string.confirm)).inRoot(isDialog()).perform(click())
+        awaitTransferModeEnded()
+
+        val copied = File(destination, "CL014.copy/nested/chapter.cbz")
+        assertArrayEquals(File(source, "nested/chapter.cbz").readBytes(), copied.readBytes())
+        assertEquals("existing bytes", original.readText())
     }
 
     @Test
@@ -955,6 +1034,13 @@ class FileTransferFlowTest {
         fileSize = file.length(),
         modifiedAt = file.lastModified()
     )
+
+    private fun createDirectoryInBrowser(name: String) {
+        onView(withId(R.id.btnClassify)).perform(click())
+        onView(withText(R.string.create_directory_name)).inRoot(isPlatformPopup()).perform(click())
+        onView(isAssignableFrom(EditText::class.java)).inRoot(isDialog()).perform(replaceText(name))
+        onView(withText(R.string.confirm)).inRoot(isDialog()).perform(click())
+    }
 
     private fun renameDirectoryInBrowser(oldName: String, newName: String) {
         awaitListItem(oldName)

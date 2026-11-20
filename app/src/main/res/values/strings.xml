@@ -342,6 +342,7 @@
     <string name="rename_directory_name_title">修改文件夹名</string>
     <string name="rename_directory_name_empty">文件夹名不能为空</string>
     <string name="rename_directory_name_invalid">文件夹名包含非法字符</string>
+    <string name="directory_name_hidden">文件夹名不能以点号开头，因为这类文件夹在浏览和搜索中会被隐藏</string>
     <string name="rename_directory_name_exists">已存在同名文件夹</string>
     <string name="rename_directory_name_success">已修改文件夹名</string>
     <string name="rename_directory_name_failed">修改文件夹名失败</string>

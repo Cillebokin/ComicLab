@@ -12,6 +12,7 @@ internal object DirectoryTransferOperations {
         PARENT_NOT_DIRECTORY,
         EMPTY_NAME,
         INVALID_NAME,
+        HIDDEN_NAME,
         TARGET_EXISTS,
         FAILED
     }
@@ -56,12 +57,7 @@ internal object DirectoryTransferOperations {
         }
 
         val name = requestedName.trim()
-        if (name.isEmpty()) {
-            return CreateDirectoryResult.EMPTY_NAME
-        }
-        if (!isValidDirectoryName(name)) {
-            return CreateDirectoryResult.INVALID_NAME
-        }
+        directoryNameError(name)?.let { return it }
 
         val targetDirectory = File(parentDirectory, name)
         if (targetDirectory.exists()) {
@@ -77,16 +73,13 @@ internal object DirectoryTransferOperations {
         }
     }
 
-    fun targetDirectoryName(requestedName: String): String? {
-        val name = requestedName.trim()
-        return name.takeIf(::isValidDirectoryName)
-    }
+    fun directoryNameError(name: String): CreateDirectoryResult? = when {
+        name.isBlank() -> CreateDirectoryResult.EMPTY_NAME
+        name == "." || name == ".." || name.any { it.code < 32 || it in INVALID_DIRECTORY_NAME_CHARS } ->
+            CreateDirectoryResult.INVALID_NAME
 
-    fun isValidDirectoryName(name: String): Boolean {
-        return name.isNotBlank() &&
-            name != "." &&
-            name != ".." &&
-            name.none { it.code < 32 || it in INVALID_DIRECTORY_NAME_CHARS }
+        name.startsWith(".") -> CreateDirectoryResult.HIDDEN_NAME
+        else -> null
     }
 
     fun isDestinationInsideSource(sourceDirectory: File, destinationDirectory: File): Boolean {
@@ -114,7 +107,7 @@ internal object DirectoryTransferOperations {
         if (!destinationDirectory.isDirectory) {
             return Result.DESTINATION_NOT_DIRECTORY
         }
-        if (!isValidDirectoryName(targetName)) {
+        if (directoryNameError(targetName) != null) {
             return Result.INVALID_TARGET_NAME
         }
         if (isDestinationInsideSource(sourceDirectory, destinationDirectory)) {
