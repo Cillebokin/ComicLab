@@ -2,9 +2,12 @@ package com.example.comiclab
 
 import android.content.Intent
 import android.os.Looper
+import android.webkit.WebView
 import com.example.comiclab.ebook.EbookProgress
 import com.example.comiclab.core.store.EbookProgressStore
 import java.io.File
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Rule
@@ -13,6 +16,7 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
 import org.robolectric.RobolectricTestRunner
@@ -136,6 +140,81 @@ class EbookReaderLifecycleRobolectricTest {
             }
             org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle()
         }
+    }
+
+    @Test
+    fun rapidProgressReportsPersistTheLatestPositionWithoutWaitingForExit() {
+        val application = RuntimeEnvironment.getApplication()
+        val book = temporaryFolder.newFile("trailing-progress.txt").apply { writeText("isolated chapter") }
+        val controller = buildReaderController(application, book, startFromBeginning = false).setup()
+        val looper = shadowOf(Looper.getMainLooper())
+
+        try {
+            val report = prepareProgressReporter(controller.get())
+            report(0.2f)
+            assertEquals(EbookProgress(0, 0.2f), EbookProgressStore.load(application, book))
+
+            looper.idleFor(100, TimeUnit.MILLISECONDS)
+            report(0.6f)
+            looper.idleFor(150, TimeUnit.MILLISECONDS)
+            report(0.45f)
+            assertEquals(EbookProgress(0, 0.45f), controller.get().progressForTest)
+            assertEquals(EbookProgress(0, 0.2f), EbookProgressStore.load(application, book))
+
+            looper.idleFor(249, TimeUnit.MILLISECONDS)
+            assertEquals(EbookProgress(0, 0.2f), EbookProgressStore.load(application, book))
+
+            looper.idleFor(1, TimeUnit.MILLISECONDS)
+            assertEquals(EbookProgress(0, 0.45f), EbookProgressStore.load(application, book))
+        } finally {
+            controller.pause().stop().destroy()
+        }
+    }
+
+    @Test
+    fun leavingReaderFlushesQueuedProgressAndCancelsItsDelayedWrite() {
+        val application = RuntimeEnvironment.getApplication()
+        val book = temporaryFolder.newFile("pause-progress.txt").apply { writeText("isolated chapter") }
+        val controller = buildReaderController(application, book, startFromBeginning = false).setup()
+        val looper = shadowOf(Looper.getMainLooper())
+
+        try {
+            val report = prepareProgressReporter(controller.get())
+            report(0.2f)
+            report(0.55f)
+            assertEquals(EbookProgress(0, 0.2f), EbookProgressStore.load(application, book))
+
+            controller.pause().stop()
+            assertEquals(EbookProgress(0, 0.55f), EbookProgressStore.load(application, book))
+
+            // A newer reader may have already updated this book in the meantime.
+            EbookProgressStore.save(application, book, EbookProgress(0, 0.9f))
+            looper.idleFor(500, TimeUnit.MILLISECONDS)
+            assertEquals(EbookProgress(0, 0.9f), EbookProgressStore.load(application, book))
+        } finally {
+            controller.destroy()
+        }
+    }
+
+    private fun prepareProgressReporter(activity: EbookReaderActivity): (Float) -> Unit {
+        val executor = EbookReaderActivity::class.java.getDeclaredField("loadExecutor")
+            .apply { isAccessible = true }.get(activity) as ExecutorService
+        executor.submit {}.get(5, TimeUnit.SECONDS)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val web = activity.findViewById<WebView>(R.id.webEbookReader)
+        val shadowWeb = shadowOf(web)
+        val bookUrl = "https://comiclab.invalid/"
+        assertEquals(bookUrl, shadowWeb.lastLoadedUrl)
+        shadowWeb.webViewClient.onPageFinished(web, bookUrl)
+        val bridge = checkNotNull(shadowWeb.getJavascriptInterface("ComicLabBridge"))
+        val report = bridge.javaClass.getDeclaredMethod(
+            "reportProgress",
+            Int::class.javaPrimitiveType,
+            Float::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType
+        ).apply { isAccessible = true }
+        return { fraction -> report.invoke(bridge, 0, fraction, 1) }
     }
 
     private fun buildReaderController(

@@ -3,6 +3,9 @@ package com.example.comiclab
 import android.annotation.SuppressLint
 import android.graphics.Color
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
@@ -78,7 +81,9 @@ class EbookReaderActivity : AppCompatActivity() {
     @Volatile
     private var webReaderDestroyed = false
     private var rendererErrorDialog: AlertDialog? = null
-    private var lastProgressSavedAt = 0L
+    private val progressSaveHandler = Handler(Looper.getMainLooper())
+    private val savePendingProgress = Runnable { saveCurrentProgress(force = false) }
+    private var lastProgressSavedAt: Long? = null
     private var isUpdatingProgressControls = false
     private var isDraggingReaderProgress = false
     private lateinit var readerControlsController: ReaderControlsController
@@ -179,6 +184,7 @@ class EbookReaderActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         destroyed = true
+        progressSaveHandler.removeCallbacks(savePendingProgress)
         loadGeneration++
         readerControlsController.close()
         rendererErrorDialog?.dismiss()
@@ -543,10 +549,16 @@ class EbookReaderActivity : AppCompatActivity() {
     private fun saveCurrentProgress(force: Boolean) {
         val file = bookFile ?: return
         val progress = currentProgress ?: return
-        val now = System.currentTimeMillis()
-        if (!force && now - lastProgressSavedAt < MIN_PROGRESS_SAVE_INTERVAL_MS) {
+        val now = SystemClock.uptimeMillis()
+        val nextSaveAt = lastProgressSavedAt?.plus(MIN_PROGRESS_SAVE_INTERVAL_MS) ?: now
+        if (!force && now < nextSaveAt) {
+            // 保留原写入期限，执行时读取最新位置。
+            if (!progressSaveHandler.hasCallbacks(savePendingProgress)) {
+                progressSaveHandler.postAtTime(savePendingProgress, nextSaveAt)
+            }
             return
         }
+        progressSaveHandler.removeCallbacks(savePendingProgress)
         lastProgressSavedAt = now
         EbookProgressStore.save(this, file, progress)
     }
