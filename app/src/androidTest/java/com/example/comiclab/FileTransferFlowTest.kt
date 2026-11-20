@@ -6,8 +6,10 @@ import android.graphics.Rect
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.View
+import android.webkit.WebView
 import android.widget.EditText
 import android.widget.ListView
+import android.widget.SeekBar
 import androidx.test.espresso.Espresso.onData
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.UiController
@@ -26,11 +28,20 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import com.example.comiclab.ui.browser.model.FileItem
+import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.core.store.FavoriteComicStore
 import com.example.comiclab.core.store.FavoritePathStore
 import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
+import com.example.comiclab.ebook.EbookProgress
+import com.example.comiclab.ebook.EbookReaderProgressMapper
+import com.example.comiclab.ui.browser.transfer.FileTransferMode
 import java.io.File
+import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.abs
 import com.example.comiclab.core.transfer.TransferFileMove
 import java.nio.file.Files
 import java.util.UUID
@@ -43,8 +54,11 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
+import org.junit.rules.TemporaryFolder
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -52,6 +66,7 @@ import org.junit.runner.RunWith
 class FileTransferFlowTest {
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    @get:Rule val privateFiles = TemporaryFolder(instrumentation.targetContext.cacheDir)
     private lateinit var context: Context
     private var activity: MainActivity? = null
     private var preferences: android.content.SharedPreferences? = null
@@ -472,6 +487,216 @@ class FileTransferFlowTest {
         )
     }
 
+    @Test
+    fun renamingEbookResumesAtFurthestPositionAndKeepsSourceOnNameConflict() {
+        val source = File(File(sandbox, SOURCE_DIRECTORY_NAME), "novel.txt").apply {
+            writeText((1..300).joinToString("\n\n") { "Paragraph $it. Reader position migration fixture." })
+        }
+        val target = File(source.parentFile, "renamed.txt")
+        val sourceProgress = EbookProgress(0, 0.75f)
+        val targetProgress = EbookProgress(0, 0.4f)
+        EbookProgressStore.save(context, source, sourceProgress)
+        rememberProgressForTarget(source, target, targetProgress, keepFile = true)
+
+        openDirectory(SOURCE_DIRECTORY_NAME)
+        renameFileInBrowser(source.name, target.nameWithoutExtension)
+        assertTrue(source.isFile)
+        assertEquals(sourceProgress, EbookProgressStore.load(context, source))
+        assertEquals(targetProgress, EbookProgressStore.load(context, target))
+
+        assertTrue(target.delete())
+        renameFileInBrowser(source.name, target.nameWithoutExtension)
+        assertFalse(source.exists())
+        assertEquals(sourceProgress, EbookProgressStore.load(context, target))
+
+        awaitListItem(target.name)
+        onData(fileItemNamed(target.name)).inAdapterView(withId(R.id.listFiles)).perform(click())
+        waitForActionToSettle(R.id.btnReadComic)
+        onView(withId(R.id.btnReadComic)).inRoot(isDialog()).perform(click())
+        awaitCondition("ebook preview did not make Continue available") {
+            onMain {
+                ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                    .filterIsInstance<EbookPreviewActivity>()
+                    .any { it.findViewById<View>(R.id.btnEbookContinue).isEnabled }
+            }
+        }
+        try {
+            onView(withId(R.id.btnEbookContinue)).perform(click())
+            awaitCondition("the renamed TXT did not resume its saved WebView position") {
+                onMain {
+                    ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                        .filterIsInstance<EbookReaderActivity>()
+                        .any { reader ->
+                            val slider = reader.findViewById<SeekBar>(R.id.sliderEbookReaderProgress)
+                            val expected = EbookReaderProgressMapper.toSlider(sourceProgress, 1)
+                            abs(slider.progress - expected) <= 5 &&
+                                reader.findViewById<WebView>(R.id.webEbookReader).scrollY > 0
+                        }
+                }
+            }
+        } finally {
+            onMain {
+                listOf(Stage.RESUMED, Stage.PAUSED, Stage.STOPPED).flatMap {
+                    ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(it)
+                }.filter { it is EbookReaderActivity || it is EbookPreviewActivity }
+                    .forEach { it.finish() }
+            }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
+    @Test
+    fun renamingEbookParentMigratesBothIndexedAndLegacyProgress() {
+        val parent = File(File(sandbox, SOURCE_DIRECTORY_NAME), "books")
+        val ebook = createEbookFixture(parent, "nested/novel.epub")
+        val legacy = createEbookFixture(parent, "nested/deeper/old.mobi")
+        val current = EbookProgress(3, 0.62f)
+        val old = EbookProgress(2, 0.8f, coordinateVersion = 1)
+        EbookProgressStore.save(context, ebook, current)
+        saveLegacyEbookProgress(legacy, old)
+
+        openDirectory(SOURCE_DIRECTORY_NAME)
+        renameDirectoryInBrowser(parent.name, "renamed-books")
+        val target = File(parent.parentFile, "renamed-books")
+        assertFalse(parent.exists())
+        assertEquals(current, EbookProgressStore.load(context, File(target, "nested/novel.epub")))
+        assertEquals(old, EbookProgressStore.load(context, File(target, "nested/deeper/old.mobi")))
+    }
+
+    @Test
+    fun cuttingEbookFileOnPrivateStorageKeepsFurtherTargetChapter() {
+        val source = createEbookFixture(privateFiles.root, "source/novel.epub")
+        val destination = privateFiles.newFolder("destination")
+        val target = File(destination, source.name)
+        EbookProgressStore.save(context, source, EbookProgress(2, 0.9f))
+        val sourceKey = ebookProgressKey(source)
+        val targetProgress = EbookProgress(3, 0.1f)
+        rememberProgressForTarget(source, target, targetProgress)
+
+        pastePrivateCut(source, destination)
+        awaitTransferModeEnded()
+        assertFalse(source.exists())
+        assertTrue(target.isFile)
+        assertEquals(targetProgress, EbookProgressStore.load(context, target))
+        assertFalse(context.getSharedPreferences("ebook_progress_prefs", 0)
+            .contains("ebook_progress_${sourceKey}_chapter"))
+    }
+
+    @Test
+    fun cuttingEbookParentOnPrivateStorageMigratesNestedProgress() {
+        val sourceDirectory = privateFiles.newFolder("source")
+        val source = createEbookFixture(sourceDirectory, "nested/novel.mobi")
+        val progress = EbookProgress(2, 0.64f, coordinateVersion = 1)
+        EbookProgressStore.save(context, source, progress)
+        val destination = privateFiles.newFolder("destination")
+        val otherSource = createEbookFixture(sourceDirectory, "another.txt")
+        val otherTarget = File(destination, "source/another.txt")
+        val otherTargetDirectory = checkNotNull(otherTarget.parentFile)
+        check(otherTargetDirectory.mkdir())
+        EbookProgressStore.save(context, otherSource, EbookProgress(1, 0.9f, coordinateVersion = 1))
+        val existing = EbookProgress(1, 0.25f, coordinateVersion = 2)
+        rememberProgressForTarget(otherSource, otherTarget, existing)
+        check(otherTargetDirectory.delete())
+
+        pastePrivateCut(sourceDirectory, destination)
+        awaitTransferModeEnded()
+        assertFalse(sourceDirectory.exists())
+        val target = File(destination, "source/nested/novel.mobi")
+        assertEquals(progress, EbookProgressStore.load(context, target))
+        assertEquals(existing, EbookProgressStore.load(context, otherTarget))
+    }
+
+    @Test
+    fun failedEbookCutKeepsOriginalProgressForFileAndParent() {
+        val sourceDirectory = privateFiles.newFolder("source")
+        val source = createEbookFixture(sourceDirectory, "novel.epub")
+        val progress = EbookProgress(2, 0.62f)
+        EbookProgressStore.save(context, source, progress)
+        val browser = checkNotNull(activity)
+
+        listOf(source, sourceDirectory).forEachIndexed { index, entry ->
+            val destination = privateFiles.newFolder("destination-$index")
+            val releaseWorker = CountDownLatch(1)
+            browser.fileTransferExecutorForTest.execute { check(releaseWorker.await(10, TimeUnit.SECONDS)) }
+            try {
+                pastePrivateCut(entry, destination)
+                assertTrue(browser.fileTransferControllerForTest.isTransferInProgress)
+                // The actual transfer observes an invalid destination after the request was accepted.
+                assertTrue(destination.delete())
+                destination.writeText("destination is now a file")
+            } finally {
+                releaseWorker.countDown()
+            }
+            awaitCondition("failed cut did not finish") {
+                onMain { !browser.fileTransferControllerForTest.isTransferInProgress }
+            }
+            assertTrue(source.isFile)
+            assertEquals(progress, EbookProgressStore.load(context, source))
+            assertTrue(browser.fileTransferControllerForTest.pendingTransfer != null)
+            onView(withId(R.id.btnExitFileTransfer)).perform(click())
+        }
+    }
+
+    @Test
+    fun cuttingEbookOnSharedStorageMovesProgressOnlyWhenSourceMoves() {
+        val source = createEbookFixture(File(sandbox, SOURCE_DIRECTORY_NAME), "novel.txt")
+        val progress = EbookProgress(0, 0.71f)
+        EbookProgressStore.save(context, source, progress)
+        val supportsMove = supportsDirectMove(source)
+
+        openDirectory(SOURCE_DIRECTORY_NAME)
+        chooseFileAction(source.name, R.id.btnCutFile)
+        navigateToDestination()
+        onView(withId(R.id.btnPasteFile)).perform(click())
+        awaitTransferModeEnded()
+        val target = File(destinationDirectory(), source.name)
+        assertTrue(target.isFile)
+        assertEquals(!supportsMove, source.isFile)
+        assertEquals(progress, EbookProgressStore.load(context, if (supportsMove) target else source))
+        if (!supportsMove) assertNull(EbookProgressStore.load(context, target))
+    }
+
+    private fun pastePrivateCut(source: File, destination: File) {
+        val browser = checkNotNull(activity)
+        onMain {
+            browser.currentPathForTest = destination.absolutePath
+            browser.beginFileTransferForTest(source, FileTransferMode.CUT)
+            assertTrue(browser.findViewById<View>(R.id.btnPasteFile).performClick())
+            assertTrue(browser.fileTransferControllerForTest.isTransferInProgress)
+        }
+    }
+
+    private fun createEbookFixture(directory: File, name: String): File = File(directory, name).apply {
+        check(parentFile?.let { it.mkdirs() || it.isDirectory } == true)
+        writeText("book content for progress migration")
+    }
+
+    private fun rememberProgressForTarget(source: File, target: File, progress: EbookProgress, keepFile: Boolean = false) {
+        source.copyTo(target)
+        check(target.setLastModified(source.lastModified()))
+        check(target.lastModified() == source.lastModified())
+        EbookProgressStore.save(context, target, progress)
+        if (!keepFile) check(target.delete())
+    }
+
+    private fun saveLegacyEbookProgress(file: File, progress: EbookProgress) {
+        val key = ebookProgressKey(file)
+        check(context.getSharedPreferences("ebook_progress_prefs", 0).edit()
+            .putInt("ebook_progress_${key}_chapter", progress.chapterIndex)
+            .putFloat("ebook_progress_${key}_fraction", progress.scrollFraction)
+            .commit())
+    }
+
+    private fun ebookProgressKey(file: File): String = MessageDigest.getInstance("SHA-256")
+        .digest(EbookProgressStore.fileIdentity(file).toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+
+    private fun <T> onMain(action: () -> T): T {
+        val result = AtomicReference<T>()
+        instrumentation.runOnMainSync { result.set(action()) }
+        return result.get()
+    }
+
     private fun createComicFile(parentName: String, name: String, contents: String): File {
         val file = File(File(sandbox, parentName), name)
         ZipOutputStream(file.outputStream()).use { zip ->
@@ -757,7 +982,7 @@ class FileTransferFlowTest {
     private companion object {
         const val TEST_ROOT_PATH = "/sdcard/Download/CMCNList"
         const val TEST_SANDBOX_PREFIX = "ComicLab-DeviceValidation-"
-        val PROTECTED_PREFERENCE_NAMES = listOf("reader_prefs", "app_settings")
+        val PROTECTED_PREFERENCE_NAMES = listOf("reader_prefs", "ebook_progress_prefs", "app_settings")
         const val PREFS_NAME = "saf_prefs"
         const val KEY_CURRENT_PATH = "current_path"
         const val KEY_STORAGE_PERMISSION_PROMPTED = "storage_permission_prompted"

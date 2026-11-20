@@ -3,6 +3,7 @@ package com.example.comiclab.core.store
 import com.example.comiclab.core.store.FavoriteComicStore
 import com.example.comiclab.core.store.FavoritePathStore
 import com.example.comiclab.core.store.ReadingHistoryStore
+import com.example.comiclab.ebook.EbookProgress
 import java.io.File
 import java.nio.file.Files
 import org.json.JSONArray
@@ -525,6 +526,56 @@ class AndroidStoresRobolectricTest {
 
     private fun comicFile(directory: File, name: String): File =
         File(directory, name).apply { writeBytes(byteArrayOf(1, 2, 3)) }
+
+    @Test
+    fun ebookProgressMoveRekeysForTheDestinationModificationTime() {
+        val root = tempDirectory("ebook-progress-new-mtime")
+        try {
+            val source = File(root, "source.epub").apply { writeText("book") }
+            val target = File(root, "target.epub")
+            val progress = EbookProgress(2, 0.64f)
+            EbookProgressStore.save(context, source, progress)
+            val update = checkNotNull(EbookProgressStore.prepareMove(context, source))
+            val originalTime = source.lastModified()
+            assertTrue(source.renameTo(target))
+            assertTrue(target.setLastModified(originalTime + 60_000L))
+
+            update(target)
+
+            assertEquals(progress, EbookProgressStore.load(context, target))
+            assertEquals(
+                listOf(target.absolutePath),
+                EbookProgressStore.exportSavedProgress(context, emptyList()).map { it.path }
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun ebookProgressMoveRetainsOriginalWhenDestinationIsMissingOrHasDifferentLength() {
+        val root = tempDirectory("ebook-progress-invalid-target")
+        try {
+            val source = File(root, "source.epub").apply { writeText("book") }
+            val target = File(root, "target.epub")
+            val progress = EbookProgress(2, 0.64f)
+            val existing = EbookProgress(1, 0.2f)
+            EbookProgressStore.save(context, source, progress)
+            val update = checkNotNull(EbookProgressStore.prepareMove(context, source))
+
+            update(target)
+            assertEquals(progress, EbookProgressStore.load(context, source))
+
+            target.writeText("different book")
+            EbookProgressStore.save(context, target, existing)
+            update(target)
+
+            assertEquals(progress, EbookProgressStore.load(context, source))
+            assertEquals(existing, EbookProgressStore.load(context, target))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 
     private fun tempDirectory(prefix: String): File = Files.createTempDirectory(prefix).toFile()
 }

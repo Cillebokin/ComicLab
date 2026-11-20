@@ -16,6 +16,7 @@ import androidx.test.runner.lifecycle.Stage
 import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.ebook.EbookProgress
 import com.example.comiclab.ebook.EbookReaderProgressMapper
+import com.example.comiclab.ui.browser.transfer.FileTransferMode
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
@@ -26,6 +27,7 @@ import java.util.zip.ZipOutputStream
 import kotlin.math.abs
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -156,6 +158,41 @@ class EbookReaderDeviceAcceptanceTest {
         val after = awaitReader(null, true)
         val restoredY = evaluate(after, "window.scrollY").toDouble()
         assertTrue("chapter-tail position moved from $expectedY to $restoredY", abs(expectedY - restoredY) <= 2)
+    }
+
+    @Test
+    fun cuttingEpubParentStillOpensAtTheSavedChapterAndScrollPosition() {
+        val original = File(testRoot, "source").apply { check(mkdir()) }
+        val source = File(original, bookFile.name)
+        check(bookFile.renameTo(source))
+        val destination = File(testRoot, "destination").apply { check(mkdir()) }
+        val target = File(destination, "source/${source.name}")
+        val expected = EbookProgress(chapterIndex = 1, scrollFraction = 0.62f)
+        EbookProgressStore.save(context, source, expected)
+
+        val launchOutput = ParcelFileDescriptor.AutoCloseInputStream(
+            instrumentation.uiAutomation.executeShellCommand(
+                "am start -W -n ${context.packageName}/com.example.comiclab.MainActivity"
+            )
+        ).bufferedReader().use { it.readText() }
+        check("Status: ok" in launchOutput)
+        val browser = awaitBrowser().also { browserActivity = it }
+        onMain {
+            browser.currentPathForTest = destination.absolutePath
+            browser.beginFileTransferForTest(original, FileTransferMode.CUT)
+            assertTrue(browser.findViewById<View>(R.id.btnPasteFile).performClick())
+        }
+        awaitCondition("cut did not move the EPUB and finish the workflow") {
+            target.isFile && onMain { browser.fileTransferControllerForTest.pendingTransfer == null }
+        }
+        assertFalse(source.exists())
+        assertEquals(expected, EbookProgressStore.load(context, target))
+
+        onMain {
+            browser.startActivity(Intent(context, EbookReaderActivity::class.java)
+                .putExtra(EbookReaderActivity.EXTRA_BOOK_PATH, target.absolutePath))
+        }
+        assertReaderProgress(awaitReader(null, requireRestoredScroll = true), expected)
     }
 
     private fun evaluate(activity: EbookReaderActivity, script: String): String {

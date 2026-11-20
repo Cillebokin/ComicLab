@@ -41,6 +41,7 @@ import androidx.core.content.FileProvider
 import com.example.comiclab.core.store.FavoriteComicStore
 import com.example.comiclab.core.store.FavoritePathStore
 import com.example.comiclab.core.store.PrefsGateway
+import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
 import com.example.comiclab.core.reader.translation.TranslationModels
@@ -1268,12 +1269,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         val wasFavorite = FavoritePathStore.isFavorite(this, directory)
+        val updateEbookProgress = EbookProgressStore.prepareMove(this, directory)
         val renamed = directory.renameTo(targetDirectory)
         if (!renamed) {
             showMessage(getString(R.string.rename_directory_name_failed))
             return
         }
 
+        updateEbookProgress?.invoke(targetDirectory)
         if (wasFavorite) {
             FavoritePathStore.remove(this, directory)
             FavoritePathStore.record(this, targetDirectory)
@@ -2829,12 +2832,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         val wasFavorite = FavoriteComicStore.isFavorite(this, file)
+        val updateEbookProgress = EbookProgressStore.prepareMove(this, file)
         val renamed = file.renameTo(targetFile)
         if (!renamed) {
             showMessage(getString(R.string.rename_file_name_failed))
             return
         }
 
+        updateEbookProgress?.invoke(targetFile)
         if (wasFavorite) {
             FavoriteComicStore.remove(this, file)
             FavoriteComicStore.record(this, targetFile)

@@ -12,6 +12,7 @@ import android.widget.TextView
 import com.example.comiclab.AppSettings
 import com.example.comiclab.MainActivity.FileOperationProgressViews
 import com.example.comiclab.R
+import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.core.store.FavoriteComicStore
 import com.example.comiclab.core.store.FavoritePathStore
 import com.example.comiclab.core.store.ReaderProgressStore
@@ -304,6 +305,9 @@ internal class FileTransferWorkflowController(
         val progressViews = showFileOperationProgress()
         val reportProgress = createFileOperationProgressReporter(progressViews)
         executor.execute {
+            val updateEbookProgress = if (transfer.mode == FileTransferMode.CUT) {
+                EbookProgressStore.prepareMove(applicationContext, sourceFile)
+            } else null
             val result = FileTransferOperations.transfer(
                 sourceFile = sourceFile,
                 targetFile = targetFile,
@@ -313,6 +317,7 @@ internal class FileTransferWorkflowController(
             if (result == FileTransferOperations.Result.SUCCESS &&
                 transfer.mode == FileTransferMode.CUT
             ) {
+                runCatching { updateEbookProgress?.invoke(targetFile) }
                 FileTransferMetadataUpdatePolicy.applyFileCut(
                     updateFavorites = {
                         if (wasFavorite) {
@@ -424,6 +429,9 @@ internal class FileTransferWorkflowController(
         val progressViews = showFileOperationProgress()
         val reportProgress = createFileOperationProgressReporter(progressViews)
         executor.execute {
+            val updateEbookProgress = if (transfer.mode == FileTransferMode.CUT) {
+                EbookProgressStore.prepareMove(applicationContext, sourceDirectory)
+            } else null
             val result = DirectoryTransferOperations.transfer(
                 sourceDirectory = sourceDirectory,
                 destinationDirectory = destinationDirectory,
@@ -434,6 +442,7 @@ internal class FileTransferWorkflowController(
             if (result == DirectoryTransferOperations.Result.SUCCESS &&
                 transfer.mode == FileTransferMode.CUT
             ) {
+                runCatching { updateEbookProgress?.invoke(targetDirectory) }
                 FileTransferMetadataUpdatePolicy.applyDirectoryCut(
                     updateFavoritePaths = {
                         FavoritePathStore.moveDirectory(
