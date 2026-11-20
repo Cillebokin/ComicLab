@@ -56,6 +56,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -352,23 +353,8 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         AppSettings.setDoublePageReadingEnabled(context, savedCoveredPage != null)
         AppSettings.setDoublePageCoverSingleEnabled(context, false)
 
-        val browser = ensureBrowserForeground()
-        val previewIntent = Intent(context, MangaPreviewActivity::class.java)
-            .putExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH, archive.absolutePath)
-        onMain { browser.startActivity(previewIntent) }
-        var preview: MangaPreviewActivity? = null
-        awaitCondition("preview should show the original pages") {
-            onMain {
-                preview = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
-                    .filterIsInstance<MangaPreviewActivity>().firstOrNull()
-                preview?.findViewById<GridLayout>(R.id.gridPreview)?.childCount == originalEntries.size
-            }
-        }
-        val activity = checkNotNull(preview).also { trackedActivities += it }
-
-        onMain { check(activity.findViewById<GridLayout>(R.id.gridPreview).getChildAt(deletedPage).performClick()) }
-        onView(withText(R.string.delete)).inRoot(isPlatformPopup()).perform(click())
-        onView(withText(R.string.yes)).inRoot(isDialog()).perform(click())
+        val activity = launchDeletionPreview(archive, originalEntries.size)
+        deletePageFromPreview(activity, page = deletedPage)
 
         awaitCondition("preview should reload with one fewer page") {
             onMain { activity.findViewById<ProgressBar>(R.id.progressReading).max == remainingEntries.size }
@@ -402,6 +388,137 @@ class MangaReaderPhase5DeviceAcceptanceTest {
             assertTrue(visibleSourcePositions(reader).containsAll(listOf(expectedPosition, expectedCoveredPosition)))
         }
         finishReader(reader)
+    }
+
+    @Test
+    fun deletingTheOnlyPreviewPageClearsItsImagesProgressAndActions() {
+        val archive = createArchive("delete-only-preview.cbz", pageCount = 1)
+        check(ReaderProgressStore.prepareSave(context, archive, 0, 0, coveredPosition = 0).commit())
+        val preview = launchDeletionPreview(archive, pageCount = 1)
+        awaitDecodedPreview(preview)
+        val oldThumbnail = onMain {
+            assertEquals(1, preview.findViewById<ProgressBar>(R.id.progressReading).progress)
+            assertTrue(preview.findViewById<View>(R.id.btnFullRead).isEnabled)
+            preview.findViewById<GridLayout>(R.id.gridPreview).getChildAt(0)
+        }
+
+        deletePageFromPreview(preview, page = 0)
+        awaitEmptyPreview(preview)
+
+        assertTrue(ComicArchive.imageEntries(archive).isEmpty())
+        assertNull(ReaderProgressStore.savedReadingProgress(context, archive))
+        assertEmptyPreview(preview)
+        onMain {
+            assertNull(oldThumbnail.parent)
+            oldThumbnail.performClick()
+            preview.findViewById<View>(R.id.btnFullRead).performClick()
+        }
+        instrumentation.waitForIdleSync()
+        assertEquals(preview, onMain { resumedPreview() })
+        assertEmptyPreview(preview)
+    }
+
+    @Test
+    fun openingAnAlreadyEmptyZipShowsNoReadingActions() {
+        val archive = createArchive("opened-empty-preview.zip", pageCount = 0)
+        val preview = launchDeletionPreview(archive, pageCount = 0)
+
+        awaitEmptyPreview(preview)
+        assertEmptyPreview(preview)
+    }
+
+    @Test
+    fun failedPreviewDeletionLeavesTheCurrentImagesAndReadingAvailable() {
+        val archive = createArchive("failed-preview-delete.cbz", pageCount = 2)
+        check(ReaderProgressStore.prepareSave(context, archive, 1, 0).commit())
+        File(archive.parentFile, ".ComicLabBackups").writeText("blocks archive recovery directory")
+        val preview = launchDeletionPreview(archive, pageCount = 2)
+        awaitDecodedPreview(preview)
+
+        deletePageFromPreview(preview, page = 0)
+        awaitCondition("preview did not become usable after the failed deletion") {
+            onMain { preview.findViewById<View>(R.id.btnFavoriteComic).isEnabled }
+        }
+
+        assertEquals(2, ComicArchive.imageEntries(archive).size)
+        assertEquals(1 to 0, ReaderProgressStore.readPositionAndOffset(context, archive))
+        onMain {
+            assertNotNull(preview.findViewById<ImageView>(R.id.imgCover).drawable)
+            assertEquals(2, preview.findViewById<GridLayout>(R.id.gridPreview).childCount)
+            assertEquals(2, preview.findViewById<ProgressBar>(R.id.progressReading).progress)
+            val read = preview.findViewById<View>(R.id.btnFullRead)
+            assertTrue(read.isShown && read.isEnabled)
+            check(read.performClick())
+        }
+        onView(withId(R.id.btnContinueReading)).inRoot(isDialog()).check(matches(isDisplayed()))
+        instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+    }
+
+    private fun awaitDecodedPreview(preview: MangaPreviewActivity) {
+        awaitCondition("preview should display its cover and first thumbnail") {
+            onMain {
+                val first = preview.findViewById<GridLayout>(R.id.gridPreview).getChildAt(0) as? ImageView
+                preview.findViewById<ImageView>(R.id.imgCover).drawable != null && first?.drawable != null
+            }
+        }
+    }
+
+    private fun awaitEmptyPreview(preview: MangaPreviewActivity) {
+        awaitCondition("preview should show its empty-archive message") {
+            onMain {
+                val status = preview.findViewById<TextView>(R.id.tvStatus)
+                status.isShown && status.text.toString() == context.getString(R.string.no_preview_images)
+            }
+        }
+    }
+
+    private fun assertEmptyPreview(preview: MangaPreviewActivity) {
+        onMain {
+            val grid = preview.findViewById<GridLayout>(R.id.gridPreview)
+            assertNull(preview.findViewById<ImageView>(R.id.imgCover).drawable)
+            assertEquals(0, grid.childCount)
+            val progress = preview.findViewById<ProgressBar>(R.id.progressReading)
+            assertEquals(0, progress.max)
+            assertEquals(0, progress.progress)
+            assertEquals(
+                context.getString(R.string.preview_reading_progress, 0, 0),
+                preview.findViewById<TextView>(R.id.tvReadingProgress).text.toString()
+            )
+            val status = preview.findViewById<TextView>(R.id.tvStatus)
+            assertTrue(status.isShown)
+            assertEquals(context.getString(R.string.no_preview_images), status.text.toString())
+            val read = preview.findViewById<View>(R.id.btnFullRead)
+            assertFalse(read.isEnabled)
+            assertFalse(read.isShown)
+            assertFalse(preview.findViewById<View>(R.id.btnTogglePreview).isShown)
+            assertTrue(preview.findViewById<View>(R.id.btnExitPreview).isEnabled)
+        }
+    }
+
+    private fun launchDeletionPreview(archive: File, pageCount: Int): MangaPreviewActivity {
+        val browser = ensureBrowserForeground()
+        val previewIntent = Intent(context, MangaPreviewActivity::class.java)
+            .putExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH, archive.absolutePath)
+        onMain { browser.startActivity(previewIntent) }
+        var preview: MangaPreviewActivity? = null
+        awaitCondition("preview should load the requested archive") {
+            onMain {
+                preview = resumedPreview()
+                preview?.findViewById<GridLayout>(R.id.gridPreview)?.childCount == pageCount
+            }
+        }
+        return checkNotNull(preview).also { trackedActivities += it }
+    }
+
+    private fun resumedPreview(): MangaPreviewActivity? = ActivityLifecycleMonitorRegistry.getInstance()
+        .getActivitiesInStage(Stage.RESUMED)
+        .filterIsInstance<MangaPreviewActivity>()
+        .firstOrNull { !it.isFinishing && !it.isDestroyed }
+
+    private fun deletePageFromPreview(preview: MangaPreviewActivity, page: Int) {
+        onMain { check(preview.findViewById<GridLayout>(R.id.gridPreview).getChildAt(page).performClick()) }
+        onView(withText(R.string.delete)).inRoot(isPlatformPopup()).perform(click())
+        onView(withText(R.string.yes)).inRoot(isDialog()).perform(click())
     }
 
     @Test

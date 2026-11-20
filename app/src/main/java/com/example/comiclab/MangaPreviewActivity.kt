@@ -72,7 +72,6 @@ class MangaPreviewActivity : AppCompatActivity() {
         updateReadingProgress()
     }
     private var imageEntries: List<String> = emptyList()
-    private var renderedEntryNames: List<String> = emptyList()
     private var renderedPreviewCount = 0
     private var showingAll = false
     private val archiveOperationLock = Any()
@@ -119,6 +118,7 @@ class MangaPreviewActivity : AppCompatActivity() {
         btnTogglePreview = findViewById(R.id.btnTogglePreview)
         tvStatus = findViewById(R.id.tvStatus)
         tvFavoriteError = findViewById(R.id.tvFavoriteError)
+        updatePageActions()
         scrollPreview.setOnScrollChangeListener { _, _, _, _, _ ->
             requestVisiblePreviewDecode()
         }
@@ -169,6 +169,7 @@ class MangaPreviewActivity : AppCompatActivity() {
         }
 
         btnTogglePreview.setOnClickListener {
+            if (!canUsePreviewPages()) return@setOnClickListener
             showingAll = !showingAll
             renderPreviewGrid()
         }
@@ -220,8 +221,13 @@ class MangaPreviewActivity : AppCompatActivity() {
 
     private fun loadArchive(file: File) {
         val generation = ++archiveGeneration
-        cancelLatestPreviewTask(COVER_TASK_KEY)
-        cancelLatestPreviewTask(GRID_TASK_KEY)
+        invalidatePreviewDecodes()
+        imageEntries = emptyList()
+        imgCover.setImageDrawable(null)
+        imgCover.visibility = View.INVISIBLE
+        clearPreviewGrid()
+        updateReadingProgress()
+        updatePageActions()
         tvStatus.text = getString(R.string.loading_preview)
         tvStatus.visibility = View.VISIBLE
         btnTogglePreview.visibility = View.GONE
@@ -256,11 +262,21 @@ class MangaPreviewActivity : AppCompatActivity() {
                 imageEntries = entries
                 tvComicFileSize.text = CommonFunc.formatFileSize(file.length())
                 tvStatus.visibility = View.INVISIBLE
+                imgCover.visibility = View.VISIBLE
                 updateReadingProgress()
+                updatePageActions()
                 loadCover(entries.first())
                 renderPreviewGrid()
             }
         }
+    }
+
+    private fun canUsePreviewPages(): Boolean = imageEntries.isNotEmpty() && !deletePreviewInProgress
+
+    private fun updatePageActions() {
+        btnFullRead.visibility = if (imageEntries.isEmpty()) View.GONE else View.VISIBLE
+        btnFullRead.isEnabled = canUsePreviewPages()
+        btnTogglePreview.isEnabled = btnFullRead.isEnabled
     }
 
     private fun updateReadingProgress() {
@@ -301,20 +317,30 @@ class MangaPreviewActivity : AppCompatActivity() {
         }
     }
 
-    private fun renderPreviewGrid() {
-        if (archiveFile == null) return
-        val generation = ++gridGeneration
+    private fun invalidatePreviewDecodes() {
+        coverGeneration++
+        cancelLatestPreviewTask(COVER_TASK_KEY)
+        invalidateGridDecode()
+    }
+
+    private fun invalidateGridDecode() {
+        gridGeneration++
         cancelLatestPreviewTask(GRID_TASK_KEY)
         gridPreviewDecodeRunning = false
         gridPreviewDecodeWindowDirty = false
-        val entriesToShowCount = if (showingAll) imageEntries.size else minOf(imageEntries.size, DEFAULT_PREVIEW_COUNT)
+    }
 
-        if (renderedEntryNames != imageEntries) {
-            gridPreview.removeAllViews()
-            renderedEntryNames = imageEntries.toList()
-            renderedPreviewCount = 0
-            decodedPreviewIndices.clear()
-        }
+    private fun clearPreviewGrid() {
+        gridPreview.removeAllViews()
+        renderedPreviewCount = 0
+        decodedPreviewIndices.clear()
+    }
+
+    private fun renderPreviewGrid() {
+        if (archiveFile == null || !canUsePreviewPages()) return
+        invalidateGridDecode()
+        val generation = gridGeneration
+        val entriesToShowCount = if (showingAll) imageEntries.size else minOf(imageEntries.size, DEFAULT_PREVIEW_COUNT)
 
         if (renderedPreviewCount > entriesToShowCount) {
             gridPreview.removeViews(entriesToShowCount, renderedPreviewCount - entriesToShowCount)
@@ -328,11 +354,6 @@ class MangaPreviewActivity : AppCompatActivity() {
 
         tvStatus.text = getString(R.string.loading_preview)
         tvStatus.visibility = View.VISIBLE
-
-        if (entriesToShowCount == 0) {
-            tvStatus.visibility = View.INVISIBLE
-            return
-        }
 
         btnTogglePreview.text = if (showingAll) {
             getString(R.string.collapse_preview)
@@ -349,7 +370,7 @@ class MangaPreviewActivity : AppCompatActivity() {
     }
 
     private fun requestVisiblePreviewDecode(generation: Int = gridGeneration) {
-        if (!isPreviewActive() || generation != gridGeneration) return
+        if (!isPreviewActive() || generation != gridGeneration || !canUsePreviewPages()) return
         if (archiveFile == null) return
         val visibleIndices = visiblePreviewIndices()
         if (visibleIndices.isEmpty()) {
@@ -455,7 +476,7 @@ class MangaPreviewActivity : AppCompatActivity() {
 
     private fun hidePreviewLoading(generation: Int) {
         runOnUiThread {
-            if (isPreviewActive() && generation == gridGeneration) {
+            if (isPreviewActive() && generation == gridGeneration && canUsePreviewPages()) {
                 tvStatus.visibility = View.INVISIBLE
             }
         }
@@ -491,6 +512,7 @@ class MangaPreviewActivity : AppCompatActivity() {
     }
 
     private fun showPreviewImageMenu(anchor: View, imageIndex: Int) {
+        if (!canUsePreviewPages()) return
         val file = archiveFile ?: return
         val entryName = imageEntries.getOrNull(imageIndex) ?: return
 
@@ -500,9 +522,12 @@ class MangaPreviewActivity : AppCompatActivity() {
             widthDp = 148,
             items = listOf(
                 RoundedPopupMenu.Item(getString(R.string.jump)) {
-                    openMangaReader(file, startFromBeginning = false, startPageIndex = imageIndex)
+                    if (imageEntries.getOrNull(imageIndex) == entryName) {
+                        openMangaReader(file, startFromBeginning = false, startPageIndex = imageIndex)
+                    }
                 },
                 RoundedPopupMenu.Item(getString(R.string.delete)) {
+                    if (!canUsePreviewPages() || imageEntries.getOrNull(imageIndex) != entryName) return@Item
                     if (ComicArchive.isPdf(file)) {
                         Toast.makeText(
                             this@MangaPreviewActivity,
@@ -535,9 +560,7 @@ class MangaPreviewActivity : AppCompatActivity() {
     }
 
     private fun deletePreviewImage(file: File, entryName: String) {
-        if (deletePreviewInProgress) {
-            return
-        }
+        if (!canUsePreviewPages() || entryName !in imageEntries) return
         if (ComicArchive.isPdf(file)) {
             Toast.makeText(this, R.string.delete_pdf_page_unsupported, Toast.LENGTH_SHORT).show()
             return
@@ -550,30 +573,15 @@ class MangaPreviewActivity : AppCompatActivity() {
 
         deletePreviewInProgress = true
         updateFavoriteButton()
+        updatePageActions()
         archiveGeneration++
-        coverGeneration++
-        gridGeneration++
-        cancelLatestPreviewTask(COVER_TASK_KEY)
-        cancelLatestPreviewTask(GRID_TASK_KEY)
+        invalidatePreviewDecodes()
         tvStatus.text = getString(R.string.deleting_archive_image)
         tvStatus.visibility = View.VISIBLE
 
         executePreviewTask(
             taskKey = DELETE_TASK_KEY,
-            onRejected = {
-                runOnUiThread {
-                    if (isPreviewActive()) {
-                        deletePreviewInProgress = false
-                        updateFavoriteButton()
-                        tvStatus.visibility = View.INVISIBLE
-                        Toast.makeText(
-                            this,
-                            R.string.delete_archive_image_failed,
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                }
-            }
+            onRejected = { runOnUiThread { finishPreviewDeletion(file, deleted = false) } }
         ) { _ ->
             val deleted = runCatching {
                 synchronized(archiveOperationLock) {
@@ -581,23 +589,27 @@ class MangaPreviewActivity : AppCompatActivity() {
                 }
             }.getOrDefault(false)
 
-            runOnUiThread {
-                if (!isPreviewActive()) {
-                    return@runOnUiThread
-                }
-                deletePreviewInProgress = false
-                updateFavoriteButton()
-
-                if (deleted) {
-                    Toast.makeText(this, R.string.delete_archive_image_success, Toast.LENGTH_SHORT).show()
-                    tvComicFileSize.text = CommonFunc.formatFileSize(file.length())
-                    loadArchive(file)
-                } else {
-                    tvStatus.visibility = View.INVISIBLE
-                    Toast.makeText(this, R.string.delete_archive_image_failed, Toast.LENGTH_SHORT).show()
-                }
-            }
+            runOnUiThread { finishPreviewDeletion(file, deleted) }
         }
+    }
+
+    private fun finishPreviewDeletion(file: File, deleted: Boolean) {
+        if (!isPreviewActive()) return
+        deletePreviewInProgress = false
+        updateFavoriteButton()
+
+        if (deleted) {
+            tvComicFileSize.text = CommonFunc.formatFileSize(file.length())
+            loadArchive(file)
+        } else {
+            updatePageActions()
+            tvStatus.text = getString(R.string.loading_preview)
+            tvStatus.visibility = View.INVISIBLE
+            if (imgCover.drawable == null) imageEntries.firstOrNull()?.let(::loadCover)
+            requestVisiblePreviewDecode()
+        }
+        val message = if (deleted) R.string.delete_archive_image_success else R.string.delete_archive_image_failed
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
     private fun showError(message: String) {
@@ -619,6 +631,7 @@ class MangaPreviewActivity : AppCompatActivity() {
     }
 
     private fun handleReadClick(file: File) {
+        if (!canUsePreviewPages()) return
         if (MangaReaderActivity.hasSavedReadingProgress(this, file)) {
             showReadingProgressDialog(file)
         } else {
@@ -652,6 +665,7 @@ class MangaPreviewActivity : AppCompatActivity() {
         startFromBeginning: Boolean,
         startPageIndex: Int = NO_EXPLICIT_START_PAGE
     ) {
+        if (!canUsePreviewPages()) return
         val targetActivity = if (ComicArchive.isPdf(file)) {
             MangaReaderActivity::class.java
         } else {
