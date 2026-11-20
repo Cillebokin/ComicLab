@@ -17,10 +17,15 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewConfiguration
+import android.widget.GridLayout
 import android.widget.ImageView
+import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.matcher.RootMatchers.isDialog
+import androidx.test.espresso.matcher.RootMatchers.isPlatformPopup
 import androidx.test.espresso.action.GeneralLocation
 import androidx.test.espresso.action.GeneralSwipeAction
 import androidx.test.espresso.action.Press
@@ -28,6 +33,7 @@ import androidx.test.espresso.action.Swipe
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.withId
+import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -297,6 +303,105 @@ class MangaReaderPhase5DeviceAcceptanceTest {
             assertEquals(total - 1, slider.max)
             assertEquals(page - 1, slider.progress)
         }
+    }
+
+    @Test
+    fun deletingEarlierZipPageResumesAtTheSameImageNowOnPageOne() {
+        assertResumeAfterDeletingPage("delete-earlier.zip", savedPage = 1, deletedPage = 0, expectedOldPage = 1)
+    }
+
+    @Test
+    fun deletingLaterCbzPageResumesAtTheSameImage() {
+        assertResumeAfterDeletingPage("delete-later.cbz", savedPage = 2, deletedPage = 3, expectedOldPage = 2)
+    }
+
+    @Test
+    fun deletingTheResumeImageOpensTheFollowingImage() {
+        assertResumeAfterDeletingPage("delete-current.cbz", savedPage = 2, deletedPage = 2, expectedOldPage = 3)
+    }
+
+    @Test
+    fun deletingTheLastResumeImageOpensThePreviousImage() {
+        assertResumeAfterDeletingPage("delete-last.cbz", savedPage = 4, deletedPage = 4, expectedOldPage = 3)
+    }
+
+    @Test
+    fun deletingEarlierPageKeepsTheSavedDoublePageAnchorAfterItsParityChanges() {
+        assertResumeAfterDeletingPage(
+            "delete-before-spread.cbz", savedPage = 2, deletedPage = 0,
+            expectedOldPage = 2, savedCoveredPage = 3
+        )
+    }
+
+    private fun assertResumeAfterDeletingPage(
+        name: String,
+        savedPage: Int,
+        deletedPage: Int,
+        expectedOldPage: Int,
+        savedCoveredPage: Int? = null
+    ) {
+        val archive = createArchive(name, pageCount = 5)
+        val originalEntries = ComicArchive.imageEntries(archive)
+        val expectedEntry = originalEntries[expectedOldPage]
+        val remainingEntries = originalEntries.filterIndexed { index, _ -> index != deletedPage }
+        val expectedPosition = remainingEntries.indexOf(expectedEntry)
+        val expectedCoveredPosition = savedCoveredPage?.let { remainingEntries.indexOf(originalEntries[it]) }
+            ?: expectedPosition
+        check(ReaderProgressStore.prepareSave(context, archive, savedPage, 0, savedCoveredPage).commit())
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_LEFT_TO_RIGHT)
+        AppSettings.setDoublePageReadingEnabled(context, savedCoveredPage != null)
+        AppSettings.setDoublePageCoverSingleEnabled(context, false)
+
+        val browser = ensureBrowserForeground()
+        val previewIntent = Intent(context, MangaPreviewActivity::class.java)
+            .putExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH, archive.absolutePath)
+        onMain { browser.startActivity(previewIntent) }
+        var preview: MangaPreviewActivity? = null
+        awaitCondition("preview should show the original pages") {
+            onMain {
+                preview = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                    .filterIsInstance<MangaPreviewActivity>().firstOrNull()
+                preview?.findViewById<GridLayout>(R.id.gridPreview)?.childCount == originalEntries.size
+            }
+        }
+        val activity = checkNotNull(preview).also { trackedActivities += it }
+
+        onMain { check(activity.findViewById<GridLayout>(R.id.gridPreview).getChildAt(deletedPage).performClick()) }
+        onView(withText(R.string.delete)).inRoot(isPlatformPopup()).perform(click())
+        onView(withText(R.string.yes)).inRoot(isDialog()).perform(click())
+
+        awaitCondition("preview should reload with one fewer page") {
+            onMain { activity.findViewById<ProgressBar>(R.id.progressReading).max == remainingEntries.size }
+        }
+        assertEquals(remainingEntries, ComicArchive.imageEntries(archive))
+        assertEquals(expectedPosition to 0, ReaderProgressStore.readPositionAndOffset(context, archive))
+        assertEquals(expectedCoveredPosition + 1, onMain {
+            activity.findViewById<ProgressBar>(R.id.progressReading).progress
+        })
+
+        onMain { check(activity.findViewById<View>(R.id.btnFullRead).performClick()) }
+        onView(withId(R.id.btnContinueReading)).inRoot(isDialog()).perform(click())
+        val openedReader = awaitReadyReader()
+        val reader = if (savedCoveredPage != null) {
+            onMain { openedReader.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+            awaitReadyReader(openedReader)
+        } else {
+            openedReader
+        }
+        awaitCondition("reader should reopen at $expectedEntry") {
+            onMain {
+                val mapper = reader.readerPagePositionMapperForTest(remainingEntries.size)
+                val position = reader.currentReaderPositionForTest
+                reader.pendingRestorePositionForTest == null &&
+                    reader.imageEntriesForTest.getOrNull(position) == expectedEntry &&
+                    reader.readerLayoutManagerForTest.findFirstVisibleItemPosition() ==
+                    mapper.spreadStartAdapterPositionForSourcePosition(expectedPosition)
+            }
+        }
+        if (savedCoveredPage != null) {
+            assertTrue(visibleSourcePositions(reader).containsAll(listOf(expectedPosition, expectedCoveredPosition)))
+        }
+        finishReader(reader)
     }
 
     @Test

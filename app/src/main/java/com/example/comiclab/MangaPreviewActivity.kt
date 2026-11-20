@@ -577,7 +577,7 @@ class MangaPreviewActivity : AppCompatActivity() {
         ) { _ ->
             val deleted = runCatching {
                 synchronized(archiveOperationLock) {
-                    ComicArchive.deleteEntry(file, entryName)
+                    ComicArchive.deleteImagePage(applicationContext, file, entryName)
                 }
             }.getOrDefault(false)
 

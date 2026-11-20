@@ -179,10 +179,14 @@ object ReaderProgressStore {
 
     private fun readCurrentProgress(context: Context, file: File): ProgressValue? {
         val archiveKey = readerArchiveKey(file)
+        return readCurrentProgress(archiveKey) { preferences(context).readProgress(archiveKey) }
+    }
+
+    private inline fun readCurrentProgress(archiveKey: String, readSaved: () -> ProgressValue?): ProgressValue? {
         val pending = pendingResumeProgress[archiveKey]
         if (pending != null && !pending.mergeWithSaved) return pending.value
 
-        val saved = preferences(context).readProgress(archiveKey)
+        val saved = readSaved()
         val pendingValue = pending?.value ?: return saved
         return if (saved == null || pendingValue.isFurtherThan(saved)) pendingValue else saved
     }
@@ -282,6 +286,36 @@ object ReaderProgressStore {
                 removeStoredProgress(prefs, archiveKey)
             } finally {
                 publishPendingResumeProgress()
+            }
+        }
+    }
+
+    internal fun updateAfterPageDeletion(
+        context: Context,
+        file: File,
+        originalKey: String,
+        remainingPositions: List<Int>
+    ) {
+        val prefs = preferences(context)
+        val newKey = readerArchiveKey(file)
+        synchronized(writeLock) {
+            synchronized(stateLock) {
+                val snapshot = prefs.all
+                val original = readCurrentProgress(originalKey) { snapshot.readProgress(originalKey) }
+                val existing = readCurrentProgress(newKey) { snapshot.readProgress(newKey) }
+
+                // Keep the latest queued position and prevent writes using the old page indices.
+                pendingWrites.keys.removeAll {
+                    it.archiveKey == originalKey || (remainingPositions.isEmpty() && it.archiveKey == newKey)
+                }
+                val editor = prefs.edit().removeProgress(originalKey)
+                if (remainingPositions.isEmpty()) {
+                    editor.removeProgress(newKey)
+                } else if (original != null && (newKey == originalKey || existing == null)) {
+                    editor.putProgress(newKey, original.afterPageDeletion(remainingPositions))
+                }
+                publishPendingResumeProgress()
+                editor.apply()
             }
         }
     }
@@ -393,6 +427,22 @@ object ReaderProgressStore {
 
     private data class ProgressValue(val position: Int, val offset: Int, val coveredPosition: Int?) {
         fun hasReadPages(): Boolean = coveredPosition != null || position > 0 || offset != 0
+
+        fun afterPageDeletion(remainingPositions: List<Int>): ProgressValue {
+            val retainedIndex = remainingPositions.indexOf(position)
+            val newPosition = if (retainedIndex >= 0) {
+                retainedIndex
+            } else {
+                remainingPositions.indexOfFirst { it > position }.takeIf { it >= 0 }
+                    ?: remainingPositions.lastIndex
+            }
+            val newOffset = if (retainedIndex >= 0) offset else 0
+            val newCoveredPosition = coveredPosition?.let { covered ->
+                remainingPositions.indexOfLast { it <= covered }.coerceAtLeast(newPosition)
+            } ?: newPosition.takeIf { hasReadPages() }
+
+            return ProgressValue(newPosition, newOffset, newCoveredPosition)
+        }
 
         fun isFurtherThan(other: ProgressValue): Boolean = position > other.position ||
             // Vertical reader offsets are child.top, so scrolling forward decreases them.

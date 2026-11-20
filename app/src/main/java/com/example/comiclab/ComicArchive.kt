@@ -1,5 +1,6 @@
 package com.example.comiclab
 
+import android.content.Context
 import android.graphics.Bitmap
 import com.example.comiclab.core.archive.ArchiveImageDecoder
 import com.example.comiclab.core.archive.ArchiveImageDecoder.decodeZipImages
@@ -23,6 +24,7 @@ import android.graphics.Rect
 import net.sf.sevenzipjbinding.IInArchive
 import net.sf.sevenzipjbinding.PropID
 import com.example.comiclab.core.archive.cache.ArchiveEntryFileCache
+import com.example.comiclab.core.store.ReaderProgressStore
 import java.io.Closeable
 import java.io.File
 import java.io.InputStream
@@ -140,6 +142,18 @@ object ComicArchive {
         file = file,
         entryName = entryName
     )
+
+    internal fun deleteImagePage(context: Context, file: File, entryName: String): Boolean =
+        synchronized(ArchiveReplacementRecovery) {
+            val entries = imageEntries(file)
+            val remainingPositions = entries.indices.filter { entries[it] != entryName }
+            if (remainingPositions.size == entries.size) return@synchronized false
+
+            val originalKey = ReaderProgressStore.readerArchiveKey(file)
+            if (!deleteEntry(file, entryName)) return@synchronized false
+            ReaderProgressStore.updateAfterPageDeletion(context, file, originalKey, remainingPositions)
+            true
+        }
 
     fun decodeImage(file: File, entryName: String, maxSize: Int, cacheRoot: File): Bitmap? {
         ArchiveReplacementRecovery.recover(file)

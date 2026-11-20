@@ -1,12 +1,15 @@
 package com.example.comiclab.core.store
 
 import android.content.SharedPreferences
+import com.example.comiclab.ComicArchive
 import com.example.comiclab.core.settings.ComicLabMangaProgress
 import java.io.File
 import java.lang.reflect.Proxy
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -38,6 +41,90 @@ class ReaderProgressStoreRobolectricTest {
     @After
     fun clearPreferencesAfterTest() {
         context.getSharedPreferences(PREFS_NAME, 0).edit().clear().commit()
+    }
+
+    @Test
+    fun pageDeletionMigratesTheLatestQueuedCheckpointAndRemapsSpreadCoverage() {
+        val file = archiveWithPages("delete-queued.cbz", 5)
+        val originalKey = ReaderProgressStore.readerArchiveKey(file)
+        ReaderProgressStore.prepareSave(context, file, 4, -80).commit()
+        lateinit var queued: ReaderProgressStore.PreparedWrite
+        ReaderProgressStore.enqueueSave(context, originalKey, 2, -37, coveredPosition = 3) { queued = it }
+
+        assertTrue(ComicArchive.deleteImagePage(context, file, "page-1.png"))
+        assertEquals(
+            ComicLabMangaProgress(file.absolutePath, 1, -37, coveredPosition = 2),
+            ReaderProgressStore.savedReadingProgress(context, file)
+        )
+        assertFalse(queued.commit())
+        val prefs = context.getSharedPreferences(PREFS_NAME, 0)
+        assertFalse(prefs.contains("$originalKey:position"))
+
+        val expectedEntry = "page-2.png"
+        assertTrue(ComicArchive.deleteImagePage(context, file, "page-3.png"))
+        assertEquals(expectedEntry, ComicArchive.imageEntries(file)[1])
+        assertEquals(
+            ComicLabMangaProgress(file.absolutePath, 1, -37, coveredPosition = 1),
+            ReaderProgressStore.savedReadingProgress(context, file)
+        )
+        assertEquals(2, ReaderProgressStore.savedReadingPageCount(context, file, 3))
+    }
+
+    @Test
+    fun deletingTheSavedImageResetsItsOffset() {
+        val file = archiveWithPages("delete-anchored.cbz", 5)
+        ReaderProgressStore.prepareSave(context, file, 2, -119).commit()
+
+        assertTrue(ComicArchive.deleteImagePage(context, file, "page-2.png"))
+
+        assertEquals(2 to 0, ReaderProgressStore.readPositionAndOffset(context, file))
+        assertEquals("page-3.png", ComicArchive.imageEntries(file)[2])
+    }
+
+    @Test
+    fun failedPageReplacementLeavesReadingProgressAndQueuedWritesIntact() {
+        val file = archiveWithPages("delete-blocked.cbz", 3)
+        File(file.parentFile, ".ComicLabBackups").writeText("blocks journal directory")
+        val originalKey = ReaderProgressStore.readerArchiveKey(file)
+        ReaderProgressStore.prepareSave(context, file, 2, -17).commit()
+        lateinit var queued: ReaderProgressStore.PreparedWrite
+        ReaderProgressStore.enqueueSave(context, originalKey, 1, -24) { queued = it }
+
+        assertFalse(ComicArchive.deleteImagePage(context, file, "page-0.png"))
+
+        assertEquals(originalKey, ReaderProgressStore.readerArchiveKey(file))
+        assertEquals(listOf("page-0.png", "page-1.png", "page-2.png"), ComicArchive.imageEntries(file))
+        assertEquals(1 to -24, ReaderProgressStore.readPositionAndOffset(context, file))
+        assertTrue(queued.commit())
+        assertEquals(1 to -24, ReaderProgressStore.readPositionAndOffset(context, file))
+    }
+
+    @Test
+    fun deletingTheOnlyImageClearsProgressAndInvalidatesOldWrites() {
+        val file = archiveWithPages("delete-only.cbz", 1)
+        val originalKey = ReaderProgressStore.readerArchiveKey(file)
+        ReaderProgressStore.prepareSave(context, file, 0, -18).commit()
+        lateinit var queued: ReaderProgressStore.PreparedWrite
+        ReaderProgressStore.enqueueSave(context, originalKey, 0, -22) { queued = it }
+
+        assertTrue(ComicArchive.deleteImagePage(context, file, "page-0.png"))
+
+        assertTrue(ComicArchive.imageEntries(file).isEmpty())
+        assertFalse(queued.commit())
+        assertFalse(ReaderProgressStore.hasSavedReadingProgress(context, file))
+        assertNull(ReaderProgressStore.savedReadingProgress(context, file))
+        val prefs = context.getSharedPreferences(PREFS_NAME, 0)
+        assertFalse(prefs.all.keys.any { it.startsWith("$originalKey:") })
+    }
+
+    private fun archiveWithPages(name: String, pageCount: Int): File = temporaryFolder.newFile(name).also { file ->
+        ZipOutputStream(file.outputStream()).use { archive ->
+            repeat(pageCount) { index ->
+                archive.putNextEntry(ZipEntry("page-$index.png"))
+                archive.write(byteArrayOf(index.toByte()))
+                archive.closeEntry()
+            }
+        }
     }
 
     @Test
