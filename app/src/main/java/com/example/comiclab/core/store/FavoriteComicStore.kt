@@ -139,8 +139,18 @@ object FavoriteComicStore {
     @Synchronized
     fun remove(context: Context, file: File) {
         val path = file.absolutePath
+        removeMatching(context) { it == path }
+    }
+
+    @Synchronized
+    internal fun removeDirectory(context: Context, directory: File) {
+        val path = directory.absolutePath
+        removeMatching(context) { BookcaseFolderPaths.isPathInDirectory(it, path) }
+    }
+
+    private fun removeMatching(context: Context, matches: (String) -> Boolean) {
         val updatedItems = (readStoredItems(context) ?: return)
-            .filterNot { it.path == path }
+            .filterNot { matches(it.path) }
 
         if (updatedItems.isEmpty()) {
             clear(context)

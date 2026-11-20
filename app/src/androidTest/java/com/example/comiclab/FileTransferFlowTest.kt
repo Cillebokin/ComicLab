@@ -449,6 +449,114 @@ class FileTransferFlowTest {
     }
 
     @Test
+    fun deletingDirectoryFreesOnlyItsBookAndDirectoryFavoriteSlots() {
+        val parent = File(sandbox, SOURCE_DIRECTORY_NAME)
+        val root = File(parent, "library")
+        val child = File(root, "series")
+        val deep = File(child, "volume").apply { check(mkdirs()) }
+        val deletedPaths = listOf(root, child, deep)
+        val deletedBooks = listOf(
+            File(root, "book.cbz").apply { writeText("comic") },
+            File(child, "novel.epub").apply { writeText("ebook") },
+            File(deep, "text.txt").apply { writeText("ebook") }
+        )
+        val sibling = File(parent, "library-other").apply { check(mkdir()) }
+        val offline = File(parent, "library-offline").apply { check(mkdir()) }
+        val parked = File(parent, "offline-storage")
+        val offlineBook = File(offline, "offline.epub").apply { writeText("offline content") }
+        val otherPaths = listOf(sibling, offline) + List(15) { index ->
+            File(sibling, "path-$index").apply { check(mkdir()) }
+        }
+        val otherBooks = listOf(offlineBook) + List(96) { index ->
+            File(sibling, "book-$index.cbz").apply { writeText("unrelated comic") }
+        }
+        assertEquals(20, FavoritePathStore.merge(context, (deletedPaths + otherPaths).mapIndexed { index, file ->
+            FavoritePathStore.Item(file, index + 1L)
+        }))
+        assertEquals(100, FavoriteComicStore.merge(context, (deletedBooks + otherBooks).mapIndexed { index, file ->
+            FavoriteComicStore.Item(file, index + 1L, file.length(), file.lastModified())
+        }))
+        check(offline.renameTo(parked))
+        assertFalse(FavoritePathStore.isFavorite(context, offline))
+        assertFalse(FavoriteComicStore.isFavorite(context, offlineBook))
+
+        val newPaths = List(4) { index -> File(sibling, "new-path-$index").apply { check(mkdir()) } }
+        val newBooks = List(4) { index -> File(sibling, "new-book-$index.cbz").apply { writeText("new") } }
+        assertEquals(FavoritePathStore.RecordResult.LIMIT_REACHED, FavoritePathStore.record(context, newPaths.first()))
+        assertEquals(FavoriteComicStore.RecordResult.LIMIT_REACHED, FavoriteComicStore.record(context, newBooks.first()))
+
+        openDirectory(SOURCE_DIRECTORY_NAME)
+        openDirectoryDeleteConfirmation(root.name)
+        onView(withText(R.string.yes)).inRoot(isDialog()).perform(click())
+        awaitDirectoryDeletion()
+
+        assertFalse(root.exists())
+        assertEquals(otherPaths.map { it.absolutePath }.toSet(), storedPaths("favorite_path_prefs", "favorite_paths"))
+        assertEquals(otherBooks.map { it.absolutePath }.toSet(), storedPaths("favorite_comic_prefs", "favorite_comics"))
+        newPaths.take(3).forEach { assertEquals(FavoritePathStore.RecordResult.ADDED, FavoritePathStore.record(context, it)) }
+        newBooks.take(3).forEach { assertEquals(FavoriteComicStore.RecordResult.ADDED, FavoriteComicStore.record(context, it)) }
+        assertEquals(FavoritePathStore.RecordResult.LIMIT_REACHED, FavoritePathStore.record(context, newPaths.last()))
+        assertEquals(FavoriteComicStore.RecordResult.LIMIT_REACHED, FavoriteComicStore.record(context, newBooks.last()))
+
+        check(parked.renameTo(offline))
+        assertTrue(FavoritePathStore.isFavorite(context, offline))
+        assertTrue(FavoriteComicStore.isFavorite(context, offlineBook))
+    }
+
+    @Test
+    fun directoryDeletionThatFailsWhileUnavailableRetainsAllFavorites() {
+        val parent = File(sandbox, SOURCE_DIRECTORY_NAME)
+        val root = File(parent, "missing-during-delete")
+        val child = File(root, "subdir").apply { check(mkdirs()) }
+        val book = File(child, "book.cbz").apply { writeText("comic") }
+        val parked = File(parent, "offline-delete-source")
+        assertEquals(FavoritePathStore.RecordResult.ADDED, FavoritePathStore.record(context, root))
+        assertEquals(FavoritePathStore.RecordResult.ADDED, FavoritePathStore.record(context, child))
+        assertEquals(FavoriteComicStore.RecordResult.ADDED, FavoriteComicStore.record(context, book))
+        val directoryPrefs = snapshotPreferences("favorite_path_prefs")
+        val bookPrefs = snapshotPreferences("favorite_comic_prefs")
+
+        openDirectory(SOURCE_DIRECTORY_NAME)
+        openDirectoryDeleteConfirmation(root.name)
+        val releaseWorker = CountDownLatch(1)
+        val executor = checkNotNull(activity).directoryLoadExecutorForTest
+        executor.execute { check(releaseWorker.await(10, TimeUnit.SECONDS)) }
+        try {
+            onView(withText(R.string.yes)).inRoot(isDialog()).perform(click())
+            check(root.renameTo(parked))
+        } finally {
+            releaseWorker.countDown()
+        }
+        awaitDirectoryDeletion()
+
+        assertTrue(File(parked, "subdir/book.cbz").isFile)
+        assertEquals(directoryPrefs, snapshotPreferences("favorite_path_prefs"))
+        assertEquals(bookPrefs, snapshotPreferences("favorite_comic_prefs"))
+        check(parked.renameTo(root))
+        assertTrue(FavoritePathStore.isFavorite(context, root))
+        assertTrue(FavoritePathStore.isFavorite(context, child))
+        assertTrue(FavoriteComicStore.isFavorite(context, book))
+    }
+
+    private fun openDirectoryDeleteConfirmation(name: String) {
+        awaitListItem(name)
+        onData(fileItemNamed(name)).inAdapterView(withId(R.id.listFiles)).perform(longClick())
+        waitForActionToSettle(R.id.btnDeleteDirectory)
+        onView(withId(R.id.btnDeleteDirectory)).inRoot(isDialog()).perform(click())
+        onView(withText(R.string.delete_directory_message)).inRoot(isDialog()).check(matches(isDisplayed()))
+    }
+
+    private fun awaitDirectoryDeletion() {
+        checkNotNull(activity).directoryLoadExecutorForTest.submit {}.get(10, TimeUnit.SECONDS)
+        instrumentation.waitForIdleSync()
+    }
+
+    private fun storedPaths(preferences: String, key: String): Set<String> {
+        val rows = JSONArray(context.getSharedPreferences(preferences, 0).getString(key, "[]"))
+        return (0 until rows.length()).mapTo(mutableSetOf()) { rows.getJSONObject(it).getString("path") }
+    }
+
+    @Test
     fun renamingAnUnfavoritedParentKeepsNestedFavoritesAndResolvesStoredPathCollisions() {
         val parent = File(sandbox, SOURCE_DIRECTORY_NAME)
         val source = File(parent, "shelf")

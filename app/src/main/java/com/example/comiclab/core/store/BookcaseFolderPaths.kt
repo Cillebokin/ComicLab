@@ -37,23 +37,21 @@ internal object BookcaseFolderPaths {
     }
 
     fun remapPath(path: String, oldPath: String, newPath: String): String {
-        val oldPrefix = directoryPrefix(oldPath)
-        return if (path == oldPath || path.startsWith(oldPrefix)) {
+        return if (isPathInDirectory(path, oldPath)) {
             newPath + path.removePrefix(oldPath)
         } else {
             path
         }
     }
 
-    fun underDirectory(paths: Set<String>, directoryPath: String): Set<String> {
-        val prefix = directoryPrefix(directoryPath)
-        return paths.filterNot { path ->
-            path == directoryPath || path.startsWith(prefix)
-        }.toSet()
-    }
+    fun underDirectory(paths: Set<String>, directoryPath: String): Set<String> =
+        paths.filterNot { isPathInDirectory(it, directoryPath) }.toSet()
+
+    fun isPathInDirectory(path: String, directoryPath: String): Boolean =
+        path == directoryPath || path.startsWith(directoryPrefix(directoryPath))
 
     private fun directoryPrefix(path: String): String {
-        val separator = if ('\\' in path) '\\' else '/'
-        return if (path.endsWith('/') || path.endsWith('\\')) path else "$path$separator"
+        val separator = if (path.startsWith('/') || '\\' !in path) '/' else '\\'
+        return if (path.endsWith(separator) || path.endsWith('/')) path else "$path$separator"
     }
 }

@@ -2750,13 +2750,16 @@ class MainActivity : AppCompatActivity() {
         val reportProgress = createFileOperationProgressReporter(progressViews)
         directoryLoadExecutor.execute {
             val deleted = DirectoryFileTree.deleteRecursively(directory, reportProgress)
+            if (deleted) {
+                FavoritePathStore.removeDirectory(applicationContext, directory)
+                FavoriteComicStore.removeDirectory(applicationContext, directory)
+            }
             runOnUiThread {
                 dismissFileOperationProgress(progressViews)
                 if (isDestroyed || isFinishing) {
                     return@runOnUiThread
                 }
                 if (deleted) {
-                    FavoritePathStore.remove(this, directory)
                     AppSettings.removeBookcaseDirectory(this, directory)
                     invalidateDirectoryChildCount(File(currentPath))
                     invalidateDirectoryChildCount(directory)

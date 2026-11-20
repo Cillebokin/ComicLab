@@ -107,6 +107,15 @@ class BookcaseFolderPathsTest {
     }
 
     @Test
+    fun removeDirectory_handlesALiteralBackslashInAnAndroidDirectoryName() {
+        val parent = "/storage/comics/shelf\\"
+        val sibling = "${parent}extra"
+        val paths = setOf(parent, "$parent/series", sibling)
+
+        assertEquals(setOf(sibling), BookcaseFolderPaths.underDirectory(paths, parent))
+    }
+
+    @Test
     fun remapPath_movesOnlyTheSelectedDirectoryAndItsDescendants() {
         assertEquals(
             "/storage/target/shelf/inner",
