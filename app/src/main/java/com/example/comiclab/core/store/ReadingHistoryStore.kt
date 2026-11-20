@@ -37,7 +37,7 @@ object ReadingHistoryStore {
             .take(MAX_HISTORY_COUNT - 1)
             .forEach { updatedItems.add(it) }
 
-        saveStoredItems(context, updatedItems)
+        saveStoredItems(context, updatedItems, storedItems)
     }
 
     /** 仅统计被采用且留在最终窗口中的导入记录，同路径计一次。 */
@@ -70,14 +70,7 @@ object ReadingHistoryStore {
         }
 
         val retainedItems = mergedItems.values.sortedByDescending { it.lastReadAt }.take(MAX_HISTORY_COUNT)
-        if (retainedItems.isEmpty()) {
-            clear(context)
-        } else {
-            saveStoredItems(
-                context,
-                retainedItems
-            )
-        }
+        saveStoredItems(context, retainedItems, storedItems)
         return retainedItems.count { it.path in importedPaths }
     }
 
@@ -105,21 +98,13 @@ object ReadingHistoryStore {
     }
 
     fun clear(context: Context) {
-        prefs(context).edit()
-            .remove(KEY_READING_HISTORY)
-            .apply()
+        saveStoredItems(context, emptyList(), readStoredItems(context).orEmpty())
     }
 
     fun remove(context: Context, file: File) {
-        val path = file.absolutePath
-        val updatedItems = (readStoredItems(context) ?: return)
-            .filterNot { it.path == path }
-
-        if (updatedItems.isEmpty()) {
-            clear(context)
-        } else {
-            saveStoredItems(context, updatedItems)
-        }
+        val storedItems = readStoredItems(context) ?: return
+        val updatedItems = storedItems.filterNot { it.path == file.absolutePath }
+        saveStoredItems(context, updatedItems, storedItems)
     }
 
     /**
@@ -171,9 +156,26 @@ object ReadingHistoryStore {
             )
         }
 
-    private fun saveStoredItems(context: Context, items: List<StoredItem>) {
+    private fun saveStoredItems(
+        context: Context,
+        items: List<StoredItem>,
+        previousItems: List<StoredItem> = emptyList()
+    ) {
+        val retained = items.take(MAX_HISTORY_COUNT)
+        if (previousItems.isNotEmpty()) {
+            val retainedPaths = retained.mapTo(mutableSetOf()) { it.path }
+            // Legacy ebook progress must keep its path before the history entry disappears.
+            previousItems.filterNot { it.path in retainedPaths }.forEach { item ->
+                EbookProgressStore.rememberLegacyPath(context, File(item.path), item.fileSize, item.modifiedAt)
+            }
+        }
+
+        if (retained.isEmpty()) {
+            prefs(context).edit().remove(KEY_READING_HISTORY).apply()
+            return
+        }
         val array = JSONArray()
-        items.take(MAX_HISTORY_COUNT).forEach { item ->
+        retained.forEach { item ->
             array.put(
                 JSONObject()
                     .put(FIELD_PATH, item.path)

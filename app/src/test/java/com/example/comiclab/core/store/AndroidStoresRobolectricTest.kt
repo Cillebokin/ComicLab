@@ -496,7 +496,13 @@ class AndroidStoresRobolectricTest {
                 com.example.comiclab.ebook.EbookProgress(0, 1f),
                 com.example.comiclab.core.store.EbookProgressStore.load(context, file)
             )
-            assertEquals(setOf(fileChapterKey, fileFractionKey, "ebook_progress_${key}_coordinate_version", otherChapterKey, otherFractionKey), preferences.all.keys)
+            val filePathKey = "ebook_progress_${key}_path"
+            val fileVersionKey = "ebook_progress_${key}_coordinate_version"
+            assertEquals(
+                setOf(fileChapterKey, fileFractionKey, fileVersionKey, filePathKey, otherChapterKey, otherFractionKey),
+                preferences.all.keys
+            )
+            assertEquals(file.absolutePath, preferences.getString(filePathKey, null))
             assertEquals(3, preferences.getInt(otherChapterKey, -1))
             assertEquals(0.4f, preferences.getFloat(otherFractionKey, -1f))
 

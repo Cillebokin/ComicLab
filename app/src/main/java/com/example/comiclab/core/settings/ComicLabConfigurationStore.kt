@@ -1,15 +1,14 @@
 package com.example.comiclab.core.settings
 
-import com.example.comiclab.core.store.ReaderProgressStore
-
+import android.content.Context
 import com.example.comiclab.AppSettings
 import com.example.comiclab.MangaReaderActivity
-import android.content.Context
+import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.core.store.FavoriteComicStore
 import com.example.comiclab.core.store.FavoritePathStore
+import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
 import com.example.comiclab.ebook.EbookProgress
-import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.ebook.ReaderFileDetector
 import java.io.File
 
@@ -27,26 +26,8 @@ object ComicLabConfigurationStore {
         val favoriteComics = FavoriteComicStore.items(context)
         val favoritePaths = FavoritePathStore.items(context)
         val history = ReadingHistoryStore.items(context)
-        val candidateFiles = LinkedHashMap<String, File>()
-        (favoriteComics.map { it.file } + history.map { it.file }).forEach { file ->
-            candidateFiles.putIfAbsent(file.absolutePath, file)
-        }
-
-        val mangaProgress = candidateFiles.values
-            .filter { !ReaderFileDetector.isEbook(it) }
-            .mapNotNull { MangaReaderActivity.savedReadingProgress(context, it) }
-        val ebookProgress = candidateFiles.values
-            .filter { ReaderFileDetector.isEbook(it) }
-            .mapNotNull { file ->
-                EbookProgressStore.load(context, file)?.let { progress ->
-                    ComicLabEbookProgress(
-                        path = file.absolutePath,
-                        chapterIndex = progress.chapterIndex,
-                        scrollFraction = progress.scrollFraction,
-                        coordinateVersion = progress.coordinateVersion
-                    )
-                }
-            }
+        val knownFiles = favoriteComics.mapTo(linkedSetOf()) { it.file }
+        history.mapTo(knownFiles) { it.file }
 
         return ComicLabConfiguration(
             schemaVersion = ComicLabConfigurationJson.CURRENT_SCHEMA_VERSION,
@@ -74,8 +55,8 @@ object ComicLabConfigurationStore {
                 )
             },
             bookcasePaths = AppSettings.bookcaseDirectoryPaths(context).sorted(),
-            mangaReadingProgress = mangaProgress,
-            ebookReadingProgress = ebookProgress,
+            mangaReadingProgress = ReaderProgressStore.exportSavedProgress(context),
+            ebookReadingProgress = EbookProgressStore.exportSavedProgress(context, knownFiles),
             appSettings = AppSettings.snapshot(context)
         )
     }

@@ -12,6 +12,7 @@ import com.example.comiclab.core.store.ReadingHistoryStore
 import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.ebook.EbookProgress
 import java.io.File
+import java.security.MessageDigest
 import java.util.UUID
 import org.junit.After
 import org.junit.Assert.*
@@ -55,6 +56,108 @@ class ConfigurationImportCountInstrumentedTest {
     private fun file(name: String) = File(temporaryFolder.root, name).apply { writeText("fixture") }
     private fun comic(file: File, time: Long) = ComicLabFavoriteComic(file.absolutePath, time, file.length(), file.lastModified())
     private fun history(file: File, time: Long) = ComicLabHistoryEntry(file.absolutePath, time, file.length(), file.lastModified())
+
+    @Test fun backupRestoresProgressAfterHistoryIsCleared() {
+        verifyProgressRoundTripAfterHistoryChanges { ReadingHistoryStore.clear(context) }
+    }
+
+    @Test fun backupRestoresProgressAfterBooksFallOutOfRecentHistory() {
+        verifyProgressRoundTripAfterHistoryChanges {
+            repeat(30) { index -> ReadingHistoryStore.record(context, file("recent-${index + 1}.cbz")) }
+            assertEquals(30, ReadingHistoryStore.items(context).size)
+        }
+    }
+
+    @Test fun legacyProgressCanBeExportedFromFavoritesAndAfterAnOfflineBookReturns() {
+        val favorite = file("favorite-legacy.epub")
+        val offline = file("offline-legacy.txt")
+        saveLegacyEbookProgress(favorite, EbookProgress(4, 0.25f, coordinateVersion = 1))
+        saveLegacyEbookProgress(offline, EbookProgress(8, 0.75f, coordinateVersion = 1))
+        FavoriteComicStore.record(context, favorite)
+        ReadingHistoryStore.record(context, offline)
+        val moved = File(temporaryFolder.root, "unavailable.txt")
+
+        assertTrue(offline.renameTo(moved))
+        ReadingHistoryStore.clear(context)
+        assertEquals(listOf(favorite.absolutePath), ComicLabConfigurationStore.export(context).ebookReadingProgress.map { it.path })
+
+        assertTrue(moved.renameTo(offline))
+        assertEquals(
+            setOf(
+                ComicLabEbookProgress(favorite.absolutePath, 4, 0.25f, coordinateVersion = 1),
+                ComicLabEbookProgress(offline.absolutePath, 8, 0.75f, coordinateVersion = 1)
+            ),
+            ComicLabConfigurationStore.export(context).ebookReadingProgress.toSet()
+        )
+
+        offline.appendText("changed book")
+        assertNull(EbookProgressStore.load(context, offline))
+        assertEquals(listOf(favorite.absolutePath), ComicLabConfigurationStore.export(context).ebookReadingProgress.map { it.path })
+    }
+
+    private fun verifyProgressRoundTripAfterHistoryChanges(changeHistory: () -> Unit) {
+        val comic = file("standalone.cbz")
+        val legacyComic = file("old:comic.cbz")
+        val ebook = file("standalone.epub")
+        val legacyEbook = file("old-novel.mobi")
+        val mangaProgress = ComicLabMangaProgress(comic.absolutePath, 2, 0, coveredPosition = 3)
+        val legacyMangaProgress = ComicLabMangaProgress(legacyComic.absolutePath, 5, -32)
+        val ebookProgress = EbookProgress(3, 0.4f)
+        val legacyProgress = EbookProgress(6, 0.8f, coordinateVersion = 1)
+
+        ReaderProgressStore.restoreReadingProgress(context, comic, mangaProgress)
+        val legacyComicKey = "reader:${legacyComic.absolutePath}:${legacyComic.lastModified()}:${legacyComic.length()}"
+        assertTrue(context.getSharedPreferences("reader_prefs", 0).edit()
+            .putInt("$legacyComicKey:position", legacyMangaProgress.position)
+            .putInt("$legacyComicKey:offset", legacyMangaProgress.offset)
+            .commit())
+        EbookProgressStore.save(context, ebook, ebookProgress)
+        saveLegacyEbookProgress(legacyEbook, legacyProgress)
+
+        val books = listOf(comic, legacyComic, ebook, legacyEbook)
+        books.forEach { ReadingHistoryStore.record(context, it) }
+        changeHistory()
+        assertTrue(FavoriteComicStore.items(context).isEmpty())
+        assertTrue(ReadingHistoryStore.items(context).none { it.file in books })
+        assertEquals(5 to -32, ReaderProgressStore.readPositionAndOffset(context, legacyComic))
+        assertEquals(legacyProgress, EbookProgressStore.load(context, legacyEbook))
+
+        val backup = File(temporaryFolder.root, "configuration.json")
+        backup.writeText(ComicLabConfigurationJson.encode(ComicLabConfigurationStore.export(context)))
+        val decoded = ComicLabConfigurationJson.decode(backup.readText())
+        assertEquals(0, decoded.skippedEntries)
+        assertEquals(
+            setOf(mangaProgress, legacyMangaProgress) to setOf(
+                ComicLabEbookProgress(ebook.absolutePath, 3, 0.4f),
+                ComicLabEbookProgress(legacyEbook.absolutePath, 6, 0.8f, coordinateVersion = 1)
+            ),
+            decoded.configuration.mangaReadingProgress.toSet() to decoded.configuration.ebookReadingProgress.toSet()
+        )
+
+        val progressPreferences = listOf("reader_prefs", "ebook_progress_prefs")
+        progressPreferences.forEach { assertTrue(context.getSharedPreferences(it, 0).edit().clear().commit()) }
+        assertNull(ReaderProgressStore.savedReadingProgress(context, comic))
+        assertNull(EbookProgressStore.load(context, ebook))
+        val imported = ComicLabConfigurationStore.importAndMerge(context, decoded.configuration, applyAppSettings = false)
+
+        assertEquals(0, imported.skippedEntries)
+        assertEquals(decoded.configuration.readingHistory.size + 4, imported.restoredEntries)
+        assertEquals(mangaProgress, ReaderProgressStore.savedReadingProgress(context, comic))
+        assertEquals(legacyMangaProgress, ReaderProgressStore.savedReadingProgress(context, legacyComic))
+        assertEquals(ebookProgress, EbookProgressStore.load(context, ebook))
+        assertEquals(legacyProgress, EbookProgressStore.load(context, legacyEbook))
+        assertTrue(ReadingHistoryStore.items(context).none { it.file in books })
+    }
+
+    private fun saveLegacyEbookProgress(file: File, progress: EbookProgress) {
+        val identity = "${file.canonicalPath}|${file.length()}|${file.lastModified()}"
+        val key = MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        assertTrue(context.getSharedPreferences("ebook_progress_prefs", 0).edit()
+            .putInt("ebook_progress_${key}_chapter", progress.chapterIndex)
+            .putFloat("ebook_progress_${key}_fraction", progress.scrollFraction)
+            .commit())
+    }
 
     @Test fun truncatedCollectionsReportOnlyRetainedEntries() {
         val files = (0..101).map { file("$it.cbz") }

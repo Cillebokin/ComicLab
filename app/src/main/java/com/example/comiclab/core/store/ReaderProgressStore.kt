@@ -2,6 +2,7 @@ package com.example.comiclab.core.store
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.example.comiclab.core.archive.ArchiveFormatDetector
 import com.example.comiclab.core.settings.ComicLabMangaProgress
 import java.io.File
 import java.util.WeakHashMap
@@ -201,6 +202,31 @@ object ReaderProgressStore {
             offset = prefs.getInt(offsetKey, 0),
             coveredPosition = prefs.getInt(coveredPositionKey(archiveKey), -1).takeIf { it >= 0 }
         )
+    }
+
+    internal fun exportSavedProgress(context: Context): List<ComicLabMangaProgress> {
+        val snapshot = preferences(context).all
+        return snapshot.keys.asSequence()
+            .mapNotNull(::archiveKeyOf)
+            .distinct()
+            .mapNotNull { key ->
+                val position = snapshot[positionKey(key)] as? Int ?: return@mapNotNull null
+                val offset = snapshot[offsetKey(key)] as? Int ?: return@mapNotNull null
+                val archive = parseArchiveKey(key) ?: return@mapNotNull null
+                val file = File(archive.path)
+                if (!ArchiveFormatDetector.isSupportedArchive(file) || readerArchiveKey(file) != key) {
+                    return@mapNotNull null
+                }
+
+                ComicLabMangaProgress(
+                    path = file.absolutePath,
+                    position = position.coerceAtLeast(0),
+                    offset = offset,
+                    coveredPosition = (snapshot[coveredPositionKey(key)] as? Int)?.takeIf { it >= 0 }
+                )
+            }
+            .sortedBy { it.path }
+            .toList()
     }
 
     fun restoreReadingProgress(context: Context, file: File, progress: ComicLabMangaProgress) {
