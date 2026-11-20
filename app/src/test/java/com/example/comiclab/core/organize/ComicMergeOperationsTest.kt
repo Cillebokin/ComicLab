@@ -119,6 +119,8 @@ class ComicMergeOperationsTest {
         assertEquals(0, result.totalImageCount)
         assertEquals(0, result.copiedCount)
         assertEquals(0, result.failedCount)
+        assertTrue(result.unreadableArchives.isEmpty())
+        assertEquals(listOf("text-only.cbz"), result.archivesWithoutImages)
         assertFalse(root.listFiles().orEmpty().any { it.name.startsWith("ComicLab_merged_") })
         assertEquals(
             listOf(
@@ -128,6 +130,24 @@ class ComicMergeOperationsTest {
             ),
             progress
         )
+    }
+
+    @Test
+    fun archiveThatDisappearsAfterScanningIsReportedAsUnreadable() {
+        val root = temporaryFolder.newFolder("disappearing-archive")
+        val comic = createArchive(root, "disappeared.zip", "page.png" to "page")
+
+        val completed = ComicMergeOperations.merge(root) { progress ->
+            if (progress.stage == ComicArchiveMergeProgress.Stage.READING_ARCHIVES && progress.completed == 0) {
+                assertTrue(comic.delete())
+            }
+        }.completed()
+
+        assertNull(completed.outputDirectory)
+        assertEquals(1, completed.archiveCount)
+        assertEquals(0, completed.failedCount)
+        assertEquals(listOf(comic.name), completed.unreadableArchives)
+        assertTrue(completed.archivesWithoutImages.isEmpty())
     }
 
     @Test

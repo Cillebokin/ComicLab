@@ -1,6 +1,7 @@
 package com.example.comiclab.core.archive
 
 import java.io.File
+import java.io.IOException
 import java.util.Locale
 import java.util.zip.ZipFile
 import com.example.comiclab.core.archive.ArchiveFormatDetector.zipArchiveExtensions
@@ -20,14 +21,28 @@ internal object ArchiveEntryLister {
         }
 
         return runCatching {
-            when (file.extension.lowercase(Locale.ROOT)) {
-                in zipArchiveExtensions -> zipImageEntries(file)
-                in sevenZipArchiveExtensions -> sevenZipImages(file)
-                in pdfExtensions -> pdfImages(file)
-                else -> emptyList()
+            if (file.extension.lowercase(Locale.ROOT) in pdfExtensions) {
+                pdfImages(file)
+            } else {
+                listArchiveImages(file, sevenZipImages)
             }
         }.getOrDefault(emptyList())
     }
+
+    fun readArchiveImageEntries(file: File, sevenZipImages: (File) -> List<String>): Result<List<String>> =
+        runCatching {
+            if (!ArchiveReplacementRecovery.recover(file) || !file.isFile) {
+                throw IOException("Archive is unavailable")
+            }
+            listArchiveImages(file, sevenZipImages)
+        }
+
+    private fun listArchiveImages(file: File, sevenZipImages: (File) -> List<String>): List<String> =
+        when (file.extension.lowercase(Locale.ROOT)) {
+            in zipArchiveExtensions -> zipImageEntries(file)
+            in sevenZipArchiveExtensions -> sevenZipImages(file)
+            else -> throw IOException("Unsupported comic archive")
+        }
 
     fun firstImageEntryIfFirstFileIsImage(file: File, sevenZipFiles: (File) -> List<String>, pdfImages: (File) -> List<String>, isPdfPage: (String) -> Boolean): String? {
         ArchiveReplacementRecovery.recover(file)

@@ -515,24 +515,46 @@ internal class ComicOrganizeController(
 
             is ComicMergeResult.Completed -> {
                 val outputDirectory = result.outputDirectory
-                if (result.archiveCount <= 0) {
-                    showMessage(MESSAGE_MERGE_COMICS_NO_ARCHIVES)
-                } else if (result.totalImageCount <= 0 || outputDirectory == null) {
-                    showMessage(MESSAGE_MERGE_COMICS_NO_IMAGES)
-                } else {
-                    showMessage(
-                        getString(
-                            R.string.language_comics_merge_result,
-                            result.copiedCount,
-                            result.totalImageCount,
-                            result.failedCount,
-                            outputDirectory.name
-                        )
+                val summary = when {
+                    result.archiveCount <= 0 -> getString(MESSAGE_MERGE_COMICS_NO_ARCHIVES)
+                    outputDirectory != null -> getString(
+                        R.string.language_comics_merge_result,
+                        result.copiedCount,
+                        result.totalImageCount,
+                        result.failedCount,
+                        outputDirectory.name
                     )
+                    else -> getString(R.string.language_comics_merge_no_output)
+                }
+                if (result.unreadableArchives.isEmpty() && result.archivesWithoutImages.isEmpty()) {
+                    showMessage(summary)
+                } else {
+                    showComicMergeDetails(summary, result)
                 }
                 true
             }
         }
+    }
+
+    private fun showComicMergeDetails(summary: String, result: ComicMergeResult.Completed) {
+        val details = buildString {
+            append(summary)
+            if (result.unreadableArchives.isNotEmpty()) {
+                append("\n\n")
+                appendLine(getString(R.string.language_comics_merge_unreadable, result.unreadableArchives.size))
+                append(result.unreadableArchives.joinToString("\n"))
+            }
+            if (result.archivesWithoutImages.isNotEmpty()) {
+                append("\n\n")
+                appendLine(getString(R.string.language_comics_merge_empty_archives, result.archivesWithoutImages.size))
+                append(result.archivesWithoutImages.joinToString("\n"))
+            }
+        }
+        AlertDialog.Builder(activity)
+            .setTitle(R.string.language_comics_merge_result_title)
+            .setMessage(details)
+            .setPositiveButton(android.R.string.ok, null)
+            .showRounded()
     }
 
     private fun updateImageFileMergeProgress(
@@ -672,7 +694,6 @@ internal class ComicOrganizeController(
         private val MESSAGE_DIRECTORY_SIMILARITY_REPORT_FAILED = R.string.language_similarity_report_failed
         private val MESSAGE_MERGE_COMICS_FAILED = R.string.language_merge_comics_failed
         private val MESSAGE_MERGE_COMICS_NO_ARCHIVES = R.string.language_merge_comics_no_archives
-        private val MESSAGE_MERGE_COMICS_NO_IMAGES = R.string.language_merge_comics_no_images
         private val MESSAGE_MERGE_FILES_FAILED = R.string.language_merge_files_failed
         private val MESSAGE_MERGE_FILES_NO_FOLDERS = R.string.language_merge_files_no_folders
         private val MESSAGE_MERGE_FILES_NO_IMAGES = R.string.language_merge_files_no_images

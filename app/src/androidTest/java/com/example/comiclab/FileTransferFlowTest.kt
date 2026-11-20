@@ -449,6 +449,67 @@ class FileTransferFlowTest {
     }
 
     @Test
+    fun comicMergeListsUnreadableArchivesAndEmptyArchivesAlongsideSuccessfulOutput() {
+        val root = File(sandbox, SOURCE_DIRECTORY_NAME)
+        createComicFile(SOURCE_DIRECTORY_NAME, "good.cbz", "merged page bytes")
+        val badZip = File(root, "broken-cbz.cbz").apply { writeText("broken zip") }
+        val badSevenZip = File(root, "broken-7z.7z").apply { writeText("broken seven zip") }
+        val empty = File(root, "empty.zip").apply { ZipOutputStream(outputStream()).close() }
+
+        openDirectory(SOURCE_DIRECTORY_NAME)
+        startComicMergeFromBrowser()
+        awaitComicMergeReport(badZip.name, badSevenZip.name, empty.name)
+
+        val output = root.listFiles().orEmpty().single { it.isDirectory && it.name.startsWith("ComicLab_merged_") }
+        assertEquals(listOf("0001.jpg"), output.listFiles().orEmpty().map { it.name })
+        assertEquals("merged page bytes", File(output, "0001.jpg").readText())
+        val summary = context.getString(R.string.language_comics_merge_result, 1, 1, 0, output.name)
+        val unreadable = context.getString(R.string.language_comics_merge_unreadable, 2)
+        val imageFree = context.getString(R.string.language_comics_merge_empty_archives, 1)
+        onView(withId(android.R.id.message)).inRoot(isDialog()).check(matches(withText(
+            "$summary\n\n$unreadable\n${badSevenZip.name}\n${badZip.name}\n\n$imageFree\n${empty.name}"
+        )))
+    }
+
+    @Test
+    fun comicMergeReportsUnreadableAndImageFreeInputsWhenNothingCanBeMerged() {
+        val root = File(sandbox, SOURCE_DIRECTORY_NAME)
+        val broken = File(root, "damaged.cbz").apply { writeText("invalid archive") }
+        val imageFree = File(root, "notes-only.cbz").apply {
+            ZipOutputStream(outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("note.txt"))
+                zip.write("no images in this archive".toByteArray())
+                zip.closeEntry()
+            }
+        }
+
+        openDirectory(SOURCE_DIRECTORY_NAME)
+        startComicMergeFromBrowser()
+        awaitComicMergeReport(broken.name, imageFree.name)
+
+        val summary = context.getString(R.string.language_comics_merge_no_output)
+        val unreadableHeader = context.getString(R.string.language_comics_merge_unreadable, 1)
+        val imageFreeHeader = context.getString(R.string.language_comics_merge_empty_archives, 1)
+        onView(withId(android.R.id.message)).inRoot(isDialog()).check(matches(withText(
+            "$summary\n\n$unreadableHeader\n${broken.name}\n\n$imageFreeHeader\n${imageFree.name}"
+        )))
+        assertFalse(root.listFiles().orEmpty().any { it.name.startsWith("ComicLab_merged_") })
+    }
+
+    private fun startComicMergeFromBrowser() {
+        onView(withId(R.id.btnClassify)).perform(click())
+        onView(withText(R.string.language_menu_merge_comics)).inRoot(isPlatformPopup()).perform(click())
+    }
+
+    private fun awaitComicMergeReport(vararg names: String) {
+        awaitCondition("comic merge should report the skipped input names together") {
+            instrumentation.uiAutomation.rootInActiveWindow
+                ?.findAccessibilityNodeInfosByText(names.first())
+                ?.any { node -> names.all { node.text?.contains(it) == true } } == true
+        }
+    }
+
+    @Test
     fun deletingDirectoryFreesOnlyItsBookAndDirectoryFavoriteSlots() {
         val parent = File(sandbox, SOURCE_DIRECTORY_NAME)
         val root = File(parent, "library")

@@ -483,12 +483,15 @@
     <string name="language_similarity_report_failed">生成命名接近路径报告失败</string>
     <string name="language_merge_comics_failed">漫画整合失败</string>
     <string name="language_merge_comics_no_archives">当前路径下没有找到漫画压缩包</string>
-    <string name="language_merge_comics_no_images">漫画压缩包中没有找到可整合的图片</string>
     <string name="language_merge_files_failed">文件整合失败</string>
     <string name="language_merge_files_no_folders">当前路径下没有找到可整合的文件夹</string>
     <string name="language_merge_files_no_images">文件夹中没有找到可整合的图片</string>
     <string name="language_report_created">已生成报告：%1$s，相似组合 %2$d 组</string>
-    <string name="language_comics_merge_result">整合完成：已复制 %1$d / %2$d，失败 %3$d，输出：%4$s</string>
+    <string name="language_comics_merge_result">整合结束。已复制图片 %1$d / %2$d，图片复制失败 %3$d，输出目录为 %4$s。</string>
+    <string name="language_comics_merge_result_title">漫画整合结果</string>
+    <string name="language_comics_merge_no_output">未生成输出目录。</string>
+    <string name="language_comics_merge_unreadable">读取失败（%1$d 个归档）</string>
+    <string name="language_comics_merge_empty_archives">无可整合图片（%1$d 个归档）</string>
     <string name="language_files_merge_result">文件整合完成：已复制 %1$d / %2$d，失败 %3$d，输出：%4$s</string>
     <string name="language_merging_source">正在整合：%1$s</string>
     <string name="language_report_title">ComicLab 命名接近的文件夹路径报告</string>

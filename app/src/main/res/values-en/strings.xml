@@ -485,12 +485,15 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="language_similarity_report_failed">Could not create the similar-folder report</string>
     <string name="language_merge_comics_failed">Comic merge failed</string>
     <string name="language_merge_comics_no_archives">No comic archives found in the current path</string>
-    <string name="language_merge_comics_no_images">No mergeable images found in the comic archives</string>
     <string name="language_merge_files_failed">File merge failed</string>
     <string name="language_merge_files_no_folders">No folders to merge found in the current path</string>
     <string name="language_merge_files_no_images">No mergeable images found in the folders</string>
     <string name="language_report_created">Report created: %1$s, similar pairs: %2$d</string>
-    <string name="language_comics_merge_result">Merge complete: copied %1$d / %2$d, failed %3$d. Output: %4$s</string>
+    <string name="language_comics_merge_result">Merge finished. Copied %1$d / %2$d images. %3$d images failed to copy. Output folder is %4$s.</string>
+    <string name="language_comics_merge_result_title">Comic merge results</string>
+    <string name="language_comics_merge_no_output">No output folder was created.</string>
+    <string name="language_comics_merge_unreadable">Unreadable archives (%1$d)</string>
+    <string name="language_comics_merge_empty_archives">Archives with no mergeable images (%1$d)</string>
     <string name="language_files_merge_result">File merge complete: copied %1$d / %2$d, failed %3$d. Output: %4$s</string>
     <string name="language_merging_source">Merging: %1$s</string>
     <string name="language_report_title">ComicLab similar folder names report</string>

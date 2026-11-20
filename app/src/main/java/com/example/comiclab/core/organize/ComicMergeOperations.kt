@@ -30,6 +30,8 @@ internal object ComicMergeOperations {
         }
 
         val sources = mutableListOf<ComicMergeSource>()
+        val unreadableArchives = mutableListOf<String>()
+        val archivesWithoutImages = mutableListOf<String>()
         archives.forEachIndexed { index, archive ->
             onProgress(
                 ComicArchiveMergeProgress(
@@ -38,9 +40,11 @@ internal object ComicMergeOperations {
                     total = archives.size
                 )
             )
-            val entries = ComicArchive.imageEntries(archive)
-            if (entries.isNotEmpty()) {
-                sources.add(ComicMergeSource(archive, entries))
+            val entries = ComicArchive.readArchiveImageEntries(archive).getOrNull()
+            when {
+                entries == null -> unreadableArchives.add(archive.name)
+                entries.isEmpty() -> archivesWithoutImages.add(archive.name)
+                else -> sources.add(ComicMergeSource(archive, entries))
             }
         }
         onProgress(
@@ -58,7 +62,9 @@ internal object ComicMergeOperations {
                 archiveCount = archives.size,
                 totalImageCount = 0,
                 copiedCount = 0,
-                failedCount = 0
+                failedCount = 0,
+                unreadableArchives = unreadableArchives,
+                archivesWithoutImages = archivesWithoutImages
             )
         }
 
@@ -116,7 +122,9 @@ internal object ComicMergeOperations {
             archiveCount = archives.size,
             totalImageCount = totalImageCount,
             copiedCount = copiedCount,
-            failedCount = failedCount
+            failedCount = failedCount,
+            unreadableArchives = unreadableArchives,
+            archivesWithoutImages = archivesWithoutImages
         )
     }
 
@@ -187,7 +195,9 @@ internal sealed interface ComicMergeResult {
         val archiveCount: Int,
         val totalImageCount: Int,
         val copiedCount: Int,
-        val failedCount: Int
+        val failedCount: Int,
+        val unreadableArchives: List<String> = emptyList(),
+        val archivesWithoutImages: List<String> = emptyList()
     ) : ComicMergeResult
 
     data class Failed(val failure: Failure) : ComicMergeResult

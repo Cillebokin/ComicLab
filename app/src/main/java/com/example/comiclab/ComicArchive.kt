@@ -127,6 +127,9 @@ object ComicArchive {
     fun imageEntries(file: File): List<String> =
         ArchiveEntryLister.imageEntries(file, ::sevenZipImageEntries, PdfPageRenderer::imageEntries)
 
+    internal fun readArchiveImageEntries(file: File): Result<List<String>> =
+        ArchiveEntryLister.readArchiveImageEntries(file, ::sevenZipImageEntries)
+
     fun firstImageEntryIfFirstFileIsImage(file: File): String? =
         ArchiveEntryLister.firstImageEntryIfFirstFileIsImage(
             file, ::sevenZipFileEntries, PdfPageRenderer::imageEntries
