@@ -329,7 +329,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
     }
 
     @Test
-    fun rapidExitCoalescesFinalWriteAndReopenedReaderUsesItAfterCommit() {
+    fun rapidExitRestoresLatestPositionBeforeAndAfterCommit() {
         val application = RuntimeEnvironment.getApplication()
         val (archive, preparedCache) = createPreparedReaderFixture("rapid-exit.cbz", "rapid-exit-cache")
         MangaReaderActivity.restoreReadingProgress(
@@ -370,7 +370,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
             controller.pause().stop().destroy()
 
             assertEquals(1, writer.pendingTaskCount)
-            assertEquals(1 to 7, reopenAndReadAnchor())
+            assertEquals(4 to 27, reopenAndReadAnchor())
             writer.runNextOnWorker()
             assertTrue(writer.isTerminated)
             assertEquals(4 to 27, reopenAndReadAnchor())

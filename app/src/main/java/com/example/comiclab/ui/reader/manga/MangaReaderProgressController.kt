@@ -40,10 +40,7 @@ internal class MangaReaderProgressController(
             ReaderProgressStore.enqueueSave(context, archiveKey, position, offset) { write ->
                 executor.execute {
                     val saved = try {
-                        if (forceCommit) write.commit() else {
-                            write.apply()
-                            true
-                        }
+                        if (forceCommit) write.commit() else write.apply()
                     } catch (exception: RuntimeException) {
                         Log.w("ComicLabReader", "reader progress write failed", exception)
                         false

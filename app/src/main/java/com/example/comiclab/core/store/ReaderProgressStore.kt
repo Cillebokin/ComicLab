@@ -18,6 +18,11 @@ object ReaderProgressStore {
 
     private val writeLock = Any()
     private val pendingWrites = WeakHashMap<PreparedWrite, Unit>()
+    private var nextEnqueueOrder = 0L
+
+    // Readers use this snapshot without acquiring the lock held by commit().
+    @Volatile
+    private var pendingResumeProgress = emptyMap<String, PendingResumeProgress>()
 
     internal class PreparedWrite(
         private val preferences: SharedPreferences,
@@ -25,11 +30,11 @@ object ReaderProgressStore {
         internal val position: Int,
         internal val offset: Int
     ) {
-        private var mergeWithExisting = false
+        internal var enqueueOrder = 0L
+        internal var mergeWithExisting = false
+            private set
 
-        fun apply() {
-            finish(commit = false)
-        }
+        fun apply(): Boolean = finish(commit = false)
 
         fun commit(): Boolean = finish(commit = true)
 
@@ -43,7 +48,22 @@ object ReaderProgressStore {
         }
 
         private fun finish(commit: Boolean): Boolean = synchronized(writeLock) {
-            pendingWrites.remove(this)
+            if (pendingWrites.remove(this) == null) return@synchronized false
+            try {
+                val saved = persist(commit)
+                if (saved && enqueueOrder > 0 && !mergeWithExisting) {
+                    // A newly opened reader can finish its write before the previous reader drains.
+                    pendingWrites.keys.removeAll {
+                        it.archiveKey == archiveKey && it.enqueueOrder in 1 until enqueueOrder
+                    }
+                }
+                saved
+            } finally {
+                if (enqueueOrder > 0) publishPendingResumeProgress()
+            }
+        }
+
+        private fun persist(commit: Boolean): Boolean {
             val savedPositionKey = positionKey(archiveKey)
             val savedOffsetKey = offsetKey(archiveKey)
             var existingPosition = 0
@@ -57,7 +77,7 @@ object ReaderProgressStore {
                 true
             }
             if (!shouldWrite) {
-                return@synchronized if (commit) {
+                return if (commit) {
                     preferences.edit()
                         .putInt(savedPositionKey, existingPosition)
                         .putInt(savedOffsetKey, existingOffset)
@@ -70,7 +90,7 @@ object ReaderProgressStore {
             val editor = preferences.edit()
                 .putInt(savedPositionKey, position)
                 .putInt(savedOffsetKey, offset)
-            if (commit) editor.commit() else {
+            return if (commit) editor.commit() else {
                 editor.apply()
                 true
             }
@@ -105,6 +125,7 @@ object ReaderProgressStore {
         val prefs = preferences(context)
         synchronized(writeLock) {
             val write = registerWrite(prefs, archiveKey, position, offset)
+            write.enqueueOrder = ++nextEnqueueOrder
             try {
                 enqueue(write)
             } catch (exception: RuntimeException) {
@@ -112,7 +133,20 @@ object ReaderProgressStore {
                 pendingWrites.remove(write)
                 throw exception
             }
+            publishPendingResumeProgress()
         }
+    }
+
+    private fun publishPendingResumeProgress() {
+        val snapshot = mutableMapOf<String, PendingResumeProgress>()
+        pendingWrites.keys.filter { it.enqueueOrder > 0 }.sortedBy { it.enqueueOrder }.forEach { write ->
+            val previous = snapshot[write.archiveKey]
+            val value = write.progressValue()
+            if (!write.mergeWithExisting || previous == null || value.isFurtherThan(previous.value)) {
+                snapshot[write.archiveKey] = PendingResumeProgress(value, write.mergeWithExisting)
+            }
+        }
+        pendingResumeProgress = snapshot
     }
 
     private fun registerWrite(
@@ -124,9 +158,18 @@ object ReaderProgressStore {
         .also { pendingWrites[it] = Unit }
 
     fun readPositionAndOffset(context: Context, file: File): Pair<Int, Int> {
-        val prefs = preferences(context)
         val archiveKey = readerArchiveKey(file)
-        return prefs.getInt(positionKey(archiveKey), 0) to prefs.getInt(offsetKey(archiveKey), 0)
+        val pending = pendingResumeProgress[archiveKey]
+        if (pending != null && !pending.mergeWithSaved) return pending.value.toPair()
+
+        val prefs = preferences(context)
+        val positionKey = positionKey(archiveKey)
+        val offsetKey = offsetKey(archiveKey)
+        val saved = prefs.getInt(positionKey, 0) to prefs.getInt(offsetKey, 0)
+        if (pending == null) return saved
+        return if ((!prefs.contains(positionKey) && !prefs.contains(offsetKey)) ||
+            isFurtherProgress(pending.value.position, pending.value.offset, saved.first, saved.second)
+        ) pending.value.toPair() else saved
     }
 
     fun savedReadingProgress(context: Context, file: File): ComicLabMangaProgress? {
@@ -280,6 +323,8 @@ object ReaderProgressStore {
                     editor.remove(offsetKey(archiveKey))
                 }
             }
+            // A preference listener may read progress as soon as apply updates memory.
+            publishPendingResumeProgress()
             editor.apply()
         }
     }
@@ -291,9 +336,13 @@ object ReaderProgressStore {
     )
 
     private data class ProgressValue(val position: Int, val offset: Int) {
+        fun toPair(): Pair<Int, Int> = position to offset
+
         fun isFurtherThan(other: ProgressValue): Boolean =
             isFurtherProgress(position, offset, other.position, other.offset)
     }
+
+    private data class PendingResumeProgress(val value: ProgressValue, val mergeWithSaved: Boolean)
 
     private fun isFurtherProgress(
         position: Int,

@@ -7,6 +7,8 @@ import com.example.comiclab.core.settings.ComicLabMangaProgress
 import com.example.comiclab.core.store.ReaderProgressStore
 import java.io.File
 import java.util.concurrent.AbstractExecutorService
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.FutureTask
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
@@ -28,6 +30,61 @@ class MangaReaderProgressControllerTest {
 
     @get:Rule
     val temporaryFolder = TemporaryFolder()
+
+    @Test
+    fun latestQueuedPositionIsReadableDuringCommitAndOlderWriterCannotOverwriteIt() {
+        val application = RuntimeEnvironment.getApplication()
+        val archive = temporaryFolder.newFile("reopen.cbz")
+        val olderExecutor = QueuedExecutorService()
+        val newerExecutor = QueuedExecutorService()
+        val commitStarted = CountDownLatch(1)
+        val finishCommit = CountDownLatch(1)
+        val original = application.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+        val preferences = object : SharedPreferences by original {
+            override fun edit(): SharedPreferences.Editor {
+                val editor = original.edit()
+                return object : SharedPreferences.Editor by editor {
+                    override fun putInt(key: String, value: Int): SharedPreferences.Editor {
+                        editor.putInt(key, value)
+                        return this
+                    }
+
+                    override fun commit(): Boolean {
+                        commitStarted.countDown()
+                        check(finishCommit.await(5, TimeUnit.SECONDS))
+                        return editor.commit()
+                    }
+                }
+            }
+        }
+        val context = object : ContextWrapper(application) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
+                if (name == "reader_prefs") preferences else super.getSharedPreferences(name, mode)
+        }
+        val older = MangaReaderProgressController(application) { olderExecutor }
+        val newer = MangaReaderProgressController(context) { newerExecutor }
+        older.save(archive, 6, -12, forceCommit = true)
+        newer.save(archive, 2, -35, forceCommit = true)
+        val writer = FutureTask { newerExecutor.runNext() }
+        Thread(writer).apply { isDaemon = true }.start()
+        try {
+            assertTrue(commitStarted.await(3, TimeUnit.SECONDS))
+            val read = FutureTask {
+                Triple(
+                    newer.readPositionAndOffset(archive),
+                    ReaderProgressStore.hasSavedReadingProgress(application, archive),
+                    ReaderProgressStore.savedReadingPageCount(application, archive, 10)
+                )
+            }
+            Thread(read).apply { isDaemon = true }.start()
+            assertEquals(Triple(2 to -35, true, 3), read.get(2, TimeUnit.SECONDS))
+        } finally {
+            finishCommit.countDown()
+            writer.get(5, TimeUnit.SECONDS)
+            olderExecutor.runNext()
+        }
+        assertEquals(2 to -35, newer.readPositionAndOffset(archive))
+    }
 
     @Test
     fun repeatedSavesCoalesceButExitUpgradesCheckpointAndBacktrackingSaves() {
@@ -138,6 +195,25 @@ class MangaReaderProgressControllerTest {
     }
 
     @Test
+    fun migratedProgressWinsOverAnOlderPendingPositionAtTheDestination() {
+        val application = RuntimeEnvironment.getApplication()
+        val source = temporaryFolder.newFile("migration-source.cbz")
+        val destination = temporaryFolder.newFile("migration-destination.cbz")
+        val executor = QueuedExecutorService()
+        val controller = MangaReaderProgressController(application) { executor }
+        ReaderProgressStore.restoreReadingProgress(
+            application, source, ComicLabMangaProgress(source.absolutePath, position = 8, offset = -50)
+        )
+        controller.save(destination, 3, -21, forceCommit = true)
+
+        assertEquals(3 to -21, controller.readPositionAndOffset(destination))
+        ReaderProgressStore.moveFile(application, source, destination)
+        assertEquals(8 to -50, controller.readPositionAndOffset(destination))
+        executor.runNext()
+        assertEquals(8 to -50, controller.readPositionAndOffset(destination))
+    }
+
+    @Test
     fun unexpectedEnqueueFailureIsLoggedAndRetryStillMigratesPendingProgress() {
         val application = RuntimeEnvironment.getApplication()
         val archive = temporaryFolder.newFile("unexpected-before-move.cbz")
@@ -148,6 +224,7 @@ class MangaReaderProgressControllerTest {
 
         controller.save(archive, 6, 21, forceCommit = true)
         assertEquals(0, executor.pendingTaskCount)
+        assertEquals(0 to 0, controller.readPositionAndOffset(archive))
         assertTrue(ShadowLog.getLogsForTag("ComicLabReader").any {
             it.msg == "reader progress enqueue failed" && it.throwable === failure
         })
@@ -160,6 +237,8 @@ class MangaReaderProgressControllerTest {
         assertEquals(1, executor.pendingTaskCount)
         assertTrue(archive.renameTo(moved))
         ReaderProgressStore.moveFile(application, archive, moved)
+        assertEquals(6 to 21, controller.readPositionAndOffset(moved))
+        assertEquals(0 to 0, controller.readPositionAndOffset(archive))
         executor.runNext()
         assertEquals(6 to 21, controller.readPositionAndOffset(moved))
         assertNull(ReaderProgressStore.savedReadingProgress(application, archive))
