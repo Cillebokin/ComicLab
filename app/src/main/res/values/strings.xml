@@ -97,6 +97,7 @@
     <string name="nas_test_success">连接成功，账号可以访问此共享</string>
     <string name="nas_test_failure">连接失败，请检查地址、共享名、网络和账号密码</string>
     <string name="nas_test_password_required">请先填写密码，再测试连接</string>
+    <string name="nas_changed_credentials_password_required">主机或账号已更改，请填写对应的密码后再保存</string>
     <string name="nas_host_required">请输入IP地址</string>
     <string name="nas_host_invalid">请填写不含共享路径的IP地址</string>
     <string name="nas_share_required">请输入共享文件夹名</string>

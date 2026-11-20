@@ -3,6 +3,7 @@ package com.example.comiclab
 import com.example.comiclab.core.settings.ComicLabConfigurationStore
 import com.example.comiclab.core.settings.ComicLabConfigurationJson
 import com.example.comiclab.core.nas.NasShareConnectionTester
+import com.example.comiclab.core.nas.NasSharePasswordRequiredException
 import com.example.comiclab.core.nas.NasFailureClassifier
 import com.example.comiclab.core.nas.NasFailureDetails
 import com.example.comiclab.core.nas.NasShareProfile
@@ -62,6 +63,7 @@ import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.core.os.LocaleListCompat
+import androidx.core.widget.doAfterTextChanged
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import java.io.File
@@ -725,10 +727,19 @@ class SettingsActivity : AppCompatActivity() {
             shareInput.setText(profile.shareName)
             usernameInput.setText(profile.username)
             rememberPassword.isChecked = profile.rememberPassword
-            if (profile.rememberPassword && profile.encryptedPassword != null) {
-                passwordInput.hint = getString(R.string.nas_password_keep_hint)
-            }
         }
+
+        fun updatePasswordHint() {
+            val canReuse = rememberPassword.isChecked && existing?.canReuseRememberedPassword(
+                hostInput.text.toString().trim(),
+                usernameInput.text.toString().trim()
+            ) == true
+            passwordInput.setHint(if (canReuse) R.string.nas_password_keep_hint else R.string.nas_password_hint)
+        }
+        updatePasswordHint()
+        hostInput.doAfterTextChanged { updatePasswordHint() }
+        usernameInput.doAfterTextChanged { updatePasswordHint() }
+        rememberPassword.setOnCheckedChangeListener { _, _ -> updatePasswordHint() }
 
         val dialog = AlertDialog.Builder(this)
             .setTitle(R.string.nas_add_share_title)
@@ -750,13 +761,13 @@ class SettingsActivity : AppCompatActivity() {
                 passwordInput,
                 status
             ) ?: return@setOnClickListener
-            val useRememberedPassword = values.password.isEmpty() &&
-                rememberPassword.isChecked &&
-                existing?.rememberPassword == true &&
-                existing.encryptedPassword != null
+            val rememberedProfile = existing?.takeIf {
+                values.password.isEmpty() && rememberPassword.isChecked &&
+                    it.canReuseRememberedPassword(values.profile.host, values.profile.username)
+            }
             if (values.profile.username.isNotEmpty() &&
                 values.password.isEmpty() &&
-                !useRememberedPassword
+                rememberedProfile == null
             ) {
                 status.setText(R.string.nas_test_password_required)
                 return@setOnClickListener
@@ -764,7 +775,7 @@ class SettingsActivity : AppCompatActivity() {
             startNasConnectionTest(
                 values.profile,
                 values.password,
-                useRememberedPassword,
+                rememberedProfile,
                 status,
                 testButton,
                 saveButton,
@@ -790,6 +801,8 @@ class SettingsActivity : AppCompatActivity() {
                 dialog.dismiss()
                 renderNasShareSettings()
                 showMessage(getString(R.string.nas_share_saved))
+            } catch (_: NasSharePasswordRequiredException) {
+                status.setText(R.string.nas_changed_credentials_password_required)
             } catch (_: Exception) {
                 status.setText(R.string.nas_share_save_failed)
             }
@@ -837,8 +850,7 @@ class SettingsActivity : AppCompatActivity() {
             host = host,
             shareName = shareName,
             username = username,
-            rememberPassword = existing?.rememberPassword ?: false,
-            encryptedPassword = existing?.encryptedPassword
+            rememberPassword = false
         )
         return NasShareFormValues(profile, password)
     }
@@ -848,16 +860,15 @@ class SettingsActivity : AppCompatActivity() {
         status: TextView,
         button: View
     ) {
-        if (profile.username.isNotEmpty() &&
-            (!profile.rememberPassword || profile.encryptedPassword == null)
-        ) {
+        val rememberedProfile = profile.takeIf { it.canReuseRememberedPassword(profile.host, profile.username) }
+        if (profile.username.isNotEmpty() && rememberedProfile == null) {
             status.setText(R.string.nas_test_password_required)
             return
         }
         startNasConnectionTest(
             profile,
             enteredPassword = "",
-            useRememberedPassword = profile.username.isNotEmpty(),
+            rememberedProfile = rememberedProfile,
             status = status,
             actionButton = button,
             saveButton = null,
@@ -868,7 +879,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun startNasConnectionTest(
         profile: NasShareProfile,
         enteredPassword: String,
-        useRememberedPassword: Boolean,
+        rememberedProfile: NasShareProfile?,
         status: TextView,
         actionButton: View,
         saveButton: Button?,
@@ -879,17 +890,18 @@ class SettingsActivity : AppCompatActivity() {
         saveButton?.isEnabled = false
         nasConnectionExecutor.execute {
             val result: NasConnectionTestOutcome = try {
-                val password = if (useRememberedPassword) {
-                    try {
-                        NasShareStore.rememberedPassword(profile)
-                            ?: throw NasPasswordUnavailableException()
-                    } catch (exception: NasPasswordUnavailableException) {
-                        throw exception
-                    } catch (_: Exception) {
+                val password = if (rememberedProfile == null) {
+                    enteredPassword
+                } else {
+                    if (!rememberedProfile.canReuseRememberedPassword(profile.host, profile.username)) {
                         throw NasPasswordUnavailableException()
                     }
-                } else {
-                    enteredPassword
+                    val savedPassword = try {
+                        NasShareStore.rememberedPassword(rememberedProfile)
+                    } catch (_: Exception) {
+                        null
+                    }
+                    savedPassword ?: throw NasPasswordUnavailableException()
                 }
                 if (profile.username.isNotEmpty() && password.isEmpty()) {
                     throw NasPasswordUnavailableException()

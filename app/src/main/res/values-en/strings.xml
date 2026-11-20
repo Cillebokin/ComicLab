@@ -98,6 +98,7 @@
     <string name="nas_test_success">Connected; this account can access the share</string>
     <string name="nas_test_failure">Could not connect. Check the address, share, network, and credentials</string>
     <string name="nas_test_password_required">Enter the password before testing this connection</string>
+    <string name="nas_changed_credentials_password_required">The host or account has changed. Enter its password before saving</string>
     <string name="nas_host_required">Enter an IP address</string>
     <string name="nas_host_invalid">Enter an IP address without a share path</string>
     <string name="nas_share_required">Enter the shared folder name</string>

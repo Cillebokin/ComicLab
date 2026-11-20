@@ -22,7 +22,17 @@ internal data class NasShareProfile(
     val username: String,
     val rememberPassword: Boolean,
     internal val encryptedPassword: String? = null
-)
+) {
+    fun matchesCredentialIdentity(host: String, username: String): Boolean =
+        this.host == host && this.username == username
+
+    fun canReuseRememberedPassword(host: String, username: String): Boolean =
+        username.isNotBlank() && rememberPassword && encryptedPassword != null &&
+            matchesCredentialIdentity(host, username)
+}
+
+internal class NasSharePasswordRequiredException :
+    IllegalArgumentException("Enter a password for the changed NAS host or account")
 
 internal object NasShareStore {
     private const val PREFERENCES_NAME = "nas_share_settings"
@@ -111,10 +121,17 @@ internal object NasShareStore {
     ) = synchronized(lock) {
         val current = load(context)
         val previous = current.firstOrNull { it.id == profile.id }
+        if (previous != null && profile.username.isNotBlank() && password.isEmpty() &&
+            !previous.matchesCredentialIdentity(profile.host, profile.username)
+        ) {
+            throw NasSharePasswordRequiredException()
+        }
         val encryptedPassword = when {
             !rememberPassword || profile.username.isBlank() -> null
             password.isNotEmpty() -> NasPasswordCipher.encrypt(password)
-            else -> previous?.encryptedPassword
+            else -> previous?.takeIf {
+                it.canReuseRememberedPassword(profile.host, profile.username)
+            }?.encryptedPassword
         }
         val updated = profile.copy(
             rememberPassword = rememberPassword,
