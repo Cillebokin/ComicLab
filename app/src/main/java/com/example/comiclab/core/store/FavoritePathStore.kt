@@ -20,6 +20,7 @@ object FavoritePathStore {
         STORAGE_ERROR
     }
 
+    @Synchronized
     fun record(context: Context, directory: File): RecordResult {
         if (!directory.isDirectory) {
             return RecordResult.INVALID
@@ -42,15 +43,9 @@ object FavoritePathStore {
         return RecordResult.ADDED
     }
 
-    /** 返回本次导入中最终保留的唯一路径数，不计重复项与容量淘汰项。 */
+    /** 返回备份中与本地相符或本次新增的唯一路径数，保留原有收藏。 */
     fun merge(context: Context, items: Collection<Item>): Int {
-        val storedItems = checkNotNull(readStoredItems(context)) { context.getString(com.example.comiclab.R.string.favorite_paths_read_failed) }
-        val mergedItems = LinkedHashMap<String, StoredItem>()
-        storedItems.forEach { item ->
-            mergedItems[item.path] = item
-        }
-
-        val importedPaths = mutableSetOf<String>()
+        val importedItems = LinkedHashMap<String, StoredItem>()
         items.forEach { item ->
             val directory = item.directory
             if (!directory.isDirectory) {
@@ -58,20 +53,28 @@ object FavoritePathStore {
             }
 
             val path = directory.absolutePath
-            mergedItems[path] = StoredItem(
+            importedItems[path] = StoredItem(
                 path = path,
                 addedAt = item.addedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
             )
-            importedPaths.add(path)
         }
 
-        val retainedItems = mergedItems.values.sortedBy { it.addedAt }.take(MAX_FAVORITE_PATH_COUNT)
-        if (retainedItems.isEmpty()) {
-            clear(context)
-        } else {
-            saveStoredItems(context, retainedItems)
+        val sortedImports = importedItems.values.sortedBy { it.addedAt }
+        return synchronized(this) {
+            val storedItems = checkNotNull(readStoredItems(context)) {
+                context.getString(com.example.comiclab.R.string.favorite_paths_read_failed)
+            }
+            val storedPaths = storedItems.mapTo(HashSet()) { it.path }
+            val availableSlots = (MAX_FAVORITE_PATH_COUNT - storedItems.size).coerceAtLeast(0)
+            val additions = sortedImports.asSequence()
+                .filterNot { it.path in storedPaths }
+                .take(availableSlots)
+                .toList()
+            if (additions.isNotEmpty()) {
+                saveStoredItems(context, (storedItems + additions).sortedBy { it.addedAt })
+            }
+            additions.size + storedPaths.count { it in importedItems }
         }
-        return retainedItems.count { it.path in importedPaths }
     }
 
     internal fun validateReadable(context: Context) {
@@ -108,12 +111,14 @@ object FavoritePathStore {
             .toSet()
     }
 
+    @Synchronized
     fun clear(context: Context) {
         prefs(context).edit()
             .remove(KEY_FAVORITE_PATHS)
             .apply()
     }
 
+    @Synchronized
     fun remove(context: Context, directory: File) {
         val path = directory.absolutePath
         val updatedItems = (readStoredItems(context) ?: return)
@@ -126,6 +131,7 @@ object FavoritePathStore {
         }
     }
 
+    @Synchronized
     fun moveDirectory(context: Context, oldDirectory: File, newDirectory: File) {
         val storedItems = readStoredItems(context) ?: return
         val oldPath = oldDirectory.absolutePath

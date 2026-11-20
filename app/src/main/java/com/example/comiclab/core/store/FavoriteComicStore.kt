@@ -23,6 +23,7 @@ object FavoriteComicStore {
         STORAGE_ERROR
     }
 
+    @Synchronized
     fun record(context: Context, file: File): RecordResult {
         if (!file.isFile || !ReaderFileDetector.isSupported(file)) {
             return RecordResult.INVALID
@@ -52,15 +53,9 @@ object FavoriteComicStore {
         return RecordResult.ADDED
     }
 
-    /** 返回本次导入中最终保留的唯一路径数，不计重复项与容量淘汰项。 */
+    /** 返回备份中与本地相符或本次新增的唯一路径数，保留原有收藏。 */
     fun merge(context: Context, items: Collection<Item>): Int {
-        val storedItems = checkNotNull(readStoredItems(context)) { context.getString(com.example.comiclab.R.string.favorite_comics_read_failed) }
-        val mergedItems = LinkedHashMap<String, StoredItem>()
-        storedItems.forEach { item ->
-            mergedItems[item.path] = item
-        }
-
-        val importedPaths = mutableSetOf<String>()
+        val importedItems = LinkedHashMap<String, StoredItem>()
         items.forEach { item ->
             val file = item.file
             if (!file.isFile || !ReaderFileDetector.isSupported(file)) {
@@ -68,22 +63,30 @@ object FavoriteComicStore {
             }
 
             val path = file.absolutePath
-            mergedItems[path] = StoredItem(
+            importedItems[path] = StoredItem(
                 path = path,
                 addedAt = item.addedAt.takeIf { it > 0L } ?: System.currentTimeMillis(),
                 fileSize = item.fileSize.takeIf { it > 0L } ?: file.length(),
                 modifiedAt = item.modifiedAt.takeIf { it > 0L } ?: file.lastModified()
             )
-            importedPaths.add(path)
         }
 
-        val retainedItems = mergedItems.values.sortedBy { it.addedAt }.take(MAX_FAVORITE_COMIC_COUNT)
-        if (retainedItems.isEmpty()) {
-            clear(context)
-        } else {
-            saveStoredItems(context, retainedItems)
+        val sortedImports = importedItems.values.sortedBy { it.addedAt }
+        return synchronized(this) {
+            val storedItems = checkNotNull(readStoredItems(context)) {
+                context.getString(com.example.comiclab.R.string.favorite_comics_read_failed)
+            }
+            val storedPaths = storedItems.mapTo(HashSet()) { it.path }
+            val availableSlots = (MAX_FAVORITE_COMIC_COUNT - storedItems.size).coerceAtLeast(0)
+            val additions = sortedImports.asSequence()
+                .filterNot { it.path in storedPaths }
+                .take(availableSlots)
+                .toList()
+            if (additions.isNotEmpty()) {
+                saveStoredItems(context, (storedItems + additions).sortedBy { it.addedAt })
+            }
+            additions.size + storedPaths.count { it in importedItems }
         }
-        return retainedItems.count { it.path in importedPaths }
     }
 
     internal fun validateReadable(context: Context) {
@@ -126,12 +129,14 @@ object FavoriteComicStore {
             .toSet()
     }
 
+    @Synchronized
     fun clear(context: Context) {
         prefs(context).edit()
             .remove(KEY_FAVORITE_COMICS)
             .apply()
     }
 
+    @Synchronized
     fun remove(context: Context, file: File) {
         val path = file.absolutePath
         val updatedItems = (readStoredItems(context) ?: return)
@@ -144,6 +149,7 @@ object FavoriteComicStore {
         }
     }
 
+    @Synchronized
     fun moveDirectory(context: Context, oldDirectory: File, newDirectory: File) {
         val storedItems = readStoredItems(context) ?: return
         val movedItems = LinkedHashMap<String, StoredItem>()

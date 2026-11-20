@@ -201,6 +201,89 @@ class ComicLabConfigurationStoreRobolectricTest {
     }
 
     @Test
+    fun fullLocalFavoritesAreNotEvictedByOlderBackupEntries() {
+        val root = tempDirectory("comiclab-full-local-favorites")
+        try {
+            val comics = List(100) { index ->
+                val file = File(root, "local-$index.cbz").apply { writeText("comic") }
+                FavoriteComicStore.Item(file, 1000L + index, 5L, 10L)
+            }
+            val paths = List(20) { index ->
+                val directory = File(root, "local-shelf-$index").apply { mkdir() }
+                FavoritePathStore.Item(directory, 1000L + index)
+            }
+            assertEquals(100, FavoriteComicStore.merge(context, comics))
+            assertEquals(20, FavoritePathStore.merge(context, paths))
+            val oldComic = File(root, "old.cbz").apply { writeText("comic") }
+            val oldPath = File(root, "old-shelf").apply { mkdir() }
+
+            val result = ComicLabConfigurationStore.importAndMerge(context, ComicLabConfiguration(
+                favoriteComics = listOf(ComicLabFavoriteComic(oldComic.absolutePath, 1L, 5L, 1L)),
+                favoritePaths = listOf(ComicLabFavoritePath(oldPath.absolutePath, 1L))
+            ), applyAppSettings = false)
+
+            assertEquals(comics, FavoriteComicStore.items(context))
+            assertEquals(paths, FavoritePathStore.items(context))
+            assertEquals(0, result.restoredEntries)
+            assertEquals(2, result.skippedEntries)
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test
+    fun importUsesOnlyAvailableSlotsAndPreservesLocalFavoritesOnRepeat() {
+        val root = tempDirectory("comiclab-local-favorite-capacity")
+        try {
+            val comics = List(99) { index ->
+                val file = File(root, "local-$index.cbz").apply { writeText("comic") }
+                FavoriteComicStore.Item(file, 1000L + index, 5L, 10L)
+            }
+            val paths = List(19) { index ->
+                val directory = File(root, "local-shelf-$index").apply { mkdir() }
+                FavoritePathStore.Item(directory, 1000L + index)
+            }
+            FavoriteComicStore.merge(context, comics)
+            FavoritePathStore.merge(context, paths)
+            val offlineComic = comics.last().file
+            val offlinePath = paths.last().directory
+            assertTrue(offlineComic.delete())
+            assertTrue(offlinePath.delete())
+            val olderComic = File(root, "older.cbz").apply { writeText("comic") }
+            val newerComic = File(root, "newer.cbz").apply { writeText("comic") }
+            val olderPath = File(root, "older-shelf").apply { mkdir() }
+            val newerPath = File(root, "newer-shelf").apply { mkdir() }
+            val backup = ComicLabConfiguration(
+                favoriteComics = listOf(
+                    ComicLabFavoriteComic(newerComic.absolutePath, 20L, 5L, 20L),
+                    ComicLabFavoriteComic(comics.first().file.absolutePath, 1L, 2L, 1L),
+                    ComicLabFavoriteComic(olderComic.absolutePath, 5L, 5L, 1L),
+                    ComicLabFavoriteComic(olderComic.absolutePath, 10L, 5L, 10L)
+                ),
+                favoritePaths = listOf(
+                    ComicLabFavoritePath(newerPath.absolutePath, 20L),
+                    ComicLabFavoritePath(paths.first().directory.absolutePath, 1L),
+                    ComicLabFavoritePath(olderPath.absolutePath, 5L),
+                    ComicLabFavoritePath(olderPath.absolutePath, 10L)
+                )
+            )
+
+            val first = ComicLabConfigurationStore.importAndMerge(context, backup, applyAppSettings = false)
+            assertEquals(4, first.restoredEntries)
+            assertEquals(4, first.skippedEntries)
+            val second = ComicLabConfigurationStore.importAndMerge(context, backup, applyAppSettings = false)
+            assertEquals(4, second.restoredEntries)
+            assertEquals(4, second.skippedEntries)
+
+            offlineComic.writeText("comic")
+            assertTrue(offlinePath.mkdir())
+            assertEquals(
+                listOf(FavoriteComicStore.Item(olderComic, 10L, 5L, 10L)) + comics,
+                FavoriteComicStore.items(context)
+            )
+            assertEquals(listOf(FavoritePathStore.Item(olderPath, 10L)) + paths, FavoritePathStore.items(context))
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test
     fun duplicatePathsCountOncePerCategoryAndKeepExistingMergeRules() {
         val root = tempDirectory("comiclab-count-duplicates")
         try {

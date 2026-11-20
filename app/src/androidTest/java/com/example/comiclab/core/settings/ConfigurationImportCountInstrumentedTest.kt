@@ -70,6 +70,36 @@ class ConfigurationImportCountInstrumentedTest {
             FavoritePathStore.items(context).size + ReadingHistoryStore.items(context).size)
     }
 
+    @Test fun fullLocalFavoritesPreserveExistingEntriesAndSkipOverflow() {
+        val localComics = List(100) { index -> comic(file("local-$index.cbz"), 1000L + index) }
+        val localDirectories = List(20) { index ->
+            val directory = File(temporaryFolder.root, "local-shelf-$index").apply { mkdir() }
+            ComicLabFavoritePath(directory.absolutePath, 1000L + index)
+        }
+        val seeded = ComicLabConfigurationStore.importAndMerge(context, ComicLabConfiguration(
+            favoriteComics = localComics,
+            favoritePaths = localDirectories
+        ), applyAppSettings = false)
+        assertEquals(120, seeded.restoredEntries)
+        val localComicItems = FavoriteComicStore.items(context)
+        val localPathItems = FavoritePathStore.items(context)
+        val earlierComic = file("earlier.cbz")
+        val earlierDirectory = File(temporaryFolder.root, "earlier-shelf").apply { mkdir() }
+        val backup = ComicLabConfiguration(
+            favoriteComics = listOf(comic(earlierComic, 1L), localComics.last().copy(addedAt = 2L)),
+            favoritePaths = listOf(
+                ComicLabFavoritePath(earlierDirectory.absolutePath, 1L),
+                localDirectories.last().copy(addedAt = 2L)
+            )
+        )
+
+        val result = ComicLabConfigurationStore.importAndMerge(context, backup, applyAppSettings = false)
+        assertEquals(2, result.restoredEntries)
+        assertEquals(2, result.skippedEntries)
+        assertEquals(localComicItems, FavoriteComicStore.items(context))
+        assertEquals(localPathItems, FavoritePathStore.items(context))
+    }
+
     @Test fun duplicatesCountOncePerCategoryIncludingReadingProgress() {
         val comic = file("comic.cbz")
         val ebook = file("novel.epub")
