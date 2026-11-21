@@ -213,12 +213,10 @@
             android:paddingEnd="@dimen/space_md"
             android:paddingBottom="@dimen/space_md">
 
-            <GridLayout
+            <FrameLayout
                 android:id="@+id/gridPreview"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:columnCount="3"
-                android:useDefaultMargins="false" />
+                android:layout_height="0dp" />
 
             <Button
                 android:id="@+id/btnTogglePreview"

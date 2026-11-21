@@ -19,7 +19,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewConfiguration
-import android.widget.GridLayout
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.SeekBar
@@ -534,7 +534,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         awaitDecodedPreview(preview)
         awaitCondition("the second real page should have a preview") {
             onMain {
-                val page = preview.findViewById<GridLayout>(R.id.gridPreview).getChildAt(1) as? ImageView
+                val page = preview.findViewById<FrameLayout>(R.id.gridPreview).findViewWithTag<ImageView>(1)
                 page?.drawable != null
             }
         }
@@ -562,7 +562,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         val oldThumbnail = onMain {
             assertEquals(1, preview.findViewById<ProgressBar>(R.id.progressReading).progress)
             assertTrue(preview.findViewById<View>(R.id.btnFullRead).isEnabled)
-            preview.findViewById<GridLayout>(R.id.gridPreview).getChildAt(0)
+            preview.findViewById<FrameLayout>(R.id.gridPreview).findViewWithTag<ImageView>(0)
         }
 
         deletePageFromPreview(preview, page = 0)
@@ -607,7 +607,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         assertEquals(1 to 0, ReaderProgressStore.readPositionAndOffset(context, archive))
         onMain {
             assertNotNull(preview.findViewById<ImageView>(R.id.imgCover).drawable)
-            assertEquals(2, preview.findViewById<GridLayout>(R.id.gridPreview).childCount)
+            assertEquals(2, preview.findViewById<FrameLayout>(R.id.gridPreview).childCount)
             assertEquals(2, preview.findViewById<ProgressBar>(R.id.progressReading).progress)
             val read = preview.findViewById<View>(R.id.btnFullRead)
             assertTrue(read.isShown && read.isEnabled)
@@ -620,7 +620,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
     private fun awaitDecodedPreview(preview: MangaPreviewActivity) {
         awaitCondition("preview should display its cover and first thumbnail") {
             onMain {
-                val first = preview.findViewById<GridLayout>(R.id.gridPreview).getChildAt(0) as? ImageView
+                val first = preview.findViewById<FrameLayout>(R.id.gridPreview).findViewWithTag<ImageView>(0)
                 preview.findViewById<ImageView>(R.id.imgCover).drawable != null && first?.drawable != null
             }
         }
@@ -637,7 +637,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
 
     private fun assertEmptyPreview(preview: MangaPreviewActivity) {
         onMain {
-            val grid = preview.findViewById<GridLayout>(R.id.gridPreview)
+            val grid = preview.findViewById<FrameLayout>(R.id.gridPreview)
             assertNull(preview.findViewById<ImageView>(R.id.imgCover).drawable)
             assertEquals(0, grid.childCount)
             val progress = preview.findViewById<ProgressBar>(R.id.progressReading)
@@ -667,7 +667,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         awaitCondition("preview should load the requested archive") {
             onMain {
                 preview = resumedPreview()
-                preview?.findViewById<GridLayout>(R.id.gridPreview)?.childCount == pageCount
+                preview?.findViewById<ProgressBar>(R.id.progressReading)?.max == pageCount
             }
         }
         return checkNotNull(preview).also { trackedActivities += it }
@@ -679,7 +679,11 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         .firstOrNull { !it.isFinishing && !it.isDestroyed }
 
     private fun deletePageFromPreview(preview: MangaPreviewActivity, page: Int) {
-        onMain { check(preview.findViewById<GridLayout>(R.id.gridPreview).getChildAt(page).performClick()) }
+        val grid = preview.findViewById<FrameLayout>(R.id.gridPreview)
+        awaitCondition("thumbnail for source page $page was not mounted") {
+            onMain { grid.findViewWithTag<ImageView>(page) != null }
+        }
+        onMain { check(grid.findViewWithTag<ImageView>(page).performClick()) }
         onView(withText(R.string.delete)).inRoot(isPlatformPopup()).perform(click())
         onView(withText(R.string.yes)).inRoot(isDialog()).perform(click())
     }
