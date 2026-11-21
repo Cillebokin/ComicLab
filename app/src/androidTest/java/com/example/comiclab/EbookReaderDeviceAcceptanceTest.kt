@@ -178,6 +178,52 @@ class EbookReaderDeviceAcceptanceTest {
     }
 
     @Test
+    fun oneScreenBookReportsAndRestoresCompletedProgress() {
+        val shortBook = File(testRoot, "one-screen.txt").apply { writeText("A short story.") }
+        EbookProgressStore.save(context, shortBook, EbookProgress(0, 0f, coordinateVersion = 1))
+        val launchOutput = ParcelFileDescriptor.AutoCloseInputStream(
+            instrumentation.uiAutomation.executeShellCommand(
+                "am start -W -n ${context.packageName}/com.example.comiclab.MainActivity"
+            )
+        ).bufferedReader().use { it.readText() }
+        check("Status: ok" in launchOutput) { launchOutput }
+        browserActivity = awaitBrowser()
+        onMain {
+            browserActivity!!.startActivity(
+                Intent(context, EbookReaderActivity::class.java)
+                    .putExtra(EbookReaderActivity.EXTRA_BOOK_PATH, shortBook.absolutePath)
+            )
+        }
+
+        val before = awaitReader(null, false)
+        assertOneScreenBookCompleted(before)
+        assertEquals(EbookProgress(0, 1f), EbookProgressStore.load(context, shortBook))
+
+        onMain { before.recreate() }
+        awaitCondition("one-screen reader was not recreated") { onMain { resumedEbookActivity()?.let { it !== before } == true } }
+        val after = awaitReader(null, false)
+        assertOneScreenBookCompleted(after)
+        assertEquals(EbookProgress(0, 1f), EbookProgressStore.load(context, shortBook))
+    }
+
+    private fun assertOneScreenBookCompleted(activity: EbookReaderActivity) {
+        assertEquals(
+            "true",
+            evaluate(activity, """
+                document.querySelectorAll('[data-chapter-index]').length === 1 &&
+                    document.documentElement.scrollHeight <= window.innerHeight && window.scrollY === 0
+            """.trimIndent())
+        )
+        onMain {
+            assertEquals(EbookProgress(0, 1f), activity.progressForTest)
+            val slider = activity.findViewById<android.widget.SeekBar>(R.id.sliderEbookReaderProgress)
+            assertEquals(slider.max, slider.progress)
+            val label = activity.findViewById<android.widget.TextView>(R.id.tvEbookReaderProgress)
+            assertEquals(activity.getString(R.string.ebook_reader_progress_value, 100f, 1, 1), label.text.toString())
+        }
+    }
+
+    @Test
     fun rotatingEbookReaderRestoresSavedChapterAndScrollProgress() {
         val expected = EbookProgress(chapterIndex = 1, scrollFraction = 0.62f)
         EbookProgressStore.save(context, bookFile, expected)

@@ -32,18 +32,24 @@
     function position() {
         const list = sections();
         if (!list.length) return null;
+        const scrollLimit = maxScroll();
+        const lastChapter = indexOf(list[list.length - 1]);
+        // A bounded window may fit even when the rest of the book has yet to be loaded.
+        if (scrollLimit === 0 && list.length === count) {
+            return { index: lastChapter, fraction: 1 };
+        }
         if (pinnedTarget && Math.abs(window.scrollY - pinnedTarget.y) < 0.5) {
             return { index: pinnedTarget.index, fraction: pinnedTarget.fraction };
         }
         pinnedTarget = null;
         let i = 0;
         for (let n = 0; n < list.length; n++) if (top(list[n]) <= window.scrollY + 0.5) i = n;
-        if (maxScroll() === 0) {
+        if (scrollLimit === 0) {
             const selected = list.findIndex(section => indexOf(section) === focused);
             if (selected >= 0) i = selected;
         }
-        const atBookEnd = indexOf(list[list.length - 1]) === count - 1 &&
-            maxScroll() > 0 && window.scrollY >= maxScroll() - 0.5;
+        const atBookEnd = lastChapter === count - 1 &&
+            scrollLimit > 0 && window.scrollY >= scrollLimit - 0.5;
         if (atBookEnd) i = list.length - 1;
         return { index: indexOf(list[i]), fraction: atBookEnd ? 1 :
             Math.max(0, Math.min(1, (window.scrollY - top(list[i])) / span(list, i, 2))) };

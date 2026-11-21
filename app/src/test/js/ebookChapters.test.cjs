@@ -282,3 +282,29 @@ test('touching during a slow short-chapter fill preserves user scrolling and eve
   assert.equal(page.progress.index, 1);
   assert.equal(page.progress.fraction, 0.1);
 });
+
+test('one-screen single and multi-chapter books report completion while partial windows do not', async () => {
+  const single = reader(1, { height: 200 });
+  await single.window.restoreComicLabProgress(0, 0, 1);
+  assert.deepEqual(single.chapters, [0]);
+  assert.equal(single.progress.index, 0);
+  assert.equal(single.progress.fraction, 1);
+
+  const multi = reader(3, { height: 200 });
+  await multi.window.restoreComicLabProgress(0, 0, 2);
+  assert.deepEqual(multi.chapters, [0, 1, 2]);
+  assert.equal(multi.progress.index, 2);
+  assert.equal(multi.progress.fraction, 1);
+  await multi.window.jumpToComicLabChapter(0);
+  assert.equal(multi.progress.index, 2);
+  assert.equal(multi.progress.fraction, 1);
+  await multi.scroll(0);
+  assert.equal(multi.progress.index, 2);
+  assert.equal(multi.progress.fraction, 1);
+
+  const bounded = reader(10, { height: 100, charBudget: 30 });
+  await bounded.window.restoreComicLabProgress(5, 0, 2);
+  assert.deepEqual(bounded.chapters, [4, 5, 6]);
+  assert.equal(bounded.progress.index, 5);
+  assert.equal(bounded.progress.fraction, 0);
+});
