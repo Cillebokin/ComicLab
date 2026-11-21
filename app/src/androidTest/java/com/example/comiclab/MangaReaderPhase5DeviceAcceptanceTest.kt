@@ -3,6 +3,7 @@ package com.example.comiclab
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
@@ -49,7 +50,9 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.charset.Charset
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
+import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -207,6 +210,55 @@ class MangaReaderPhase5DeviceAcceptanceTest {
             "double-page reader progress writer should drain on exit",
             checkNotNull(progressExecutor(activity)).awaitTermination(10, TimeUnit.SECONDS)
         )
+    }
+
+    @Test
+    fun mainThreadCanRegisterNewReaderPositionsWhileAnOlderCommitWaits() {
+        val archive = createArchive("progress-during-commit.cbz", pageCount = 6)
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_LEFT_TO_RIGHT)
+        AppSettings.setDoublePageReadingEnabled(context, false)
+        val reader = launchReader(archive, startFromBeginning = false)
+        val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+        val commitStarted = CountDownLatch(1)
+        val releaseCommit = CountDownLatch(1)
+        val blockedPrefs = object : SharedPreferences by prefs {
+            override fun edit(): SharedPreferences.Editor {
+                val editor = prefs.edit()
+                return object : SharedPreferences.Editor by editor {
+                    override fun putInt(key: String, value: Int): SharedPreferences.Editor {
+                        editor.putInt(key, value)
+                        return this
+                    }
+
+                    override fun commit(): Boolean {
+                        commitStarted.countDown()
+                        check(releaseCommit.await(10, TimeUnit.SECONDS))
+                        return editor.commit()
+                    }
+                }
+            }
+        }
+        val oldWrite = ReaderProgressStore.prepareSave(blockedPrefs, archive, 1, 0)
+        val writer = FutureTask { oldWrite.commit() }
+        Thread(writer, "blocked-reader-checkpoint-test").apply { isDaemon = true }.start()
+        try {
+            assertTrue("background commit did not reach its blocking point", commitStarted.await(3, TimeUnit.SECONDS))
+            val mainRegistration = FutureTask {
+                reader.setPendingReaderProgressForTest(4, 0)
+                reader.saveReaderPositionForTest(forceCommit = false)
+                reader.setPendingReaderProgressForTest(2, 0)
+                reader.saveReaderPositionForTest(forceCommit = true)
+                ReaderProgressStore.readPositionAndOffset(context, archive)
+            }
+            reader.runOnUiThread(mainRegistration)
+            assertEquals(2 to 0, mainRegistration.get(3, TimeUnit.SECONDS))
+        } finally {
+            releaseCommit.countDown()
+            writer.get(5, TimeUnit.SECONDS)
+        }
+        checkNotNull(progressExecutor(reader)).submit {}.get(5, TimeUnit.SECONDS)
+        assertEquals(2, ReaderProgressStore.savedReadingProgress(context, archive)?.position)
+        finishReader(reader)
     }
 
     @Test

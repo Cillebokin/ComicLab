@@ -17,8 +17,8 @@ object ReaderProgressStore {
         preferences(context).unregisterOnSharedPreferenceChangeListener(listener)
     }
 
+    // Serializes persistence and progress migration. A slow commit must not block registration.
     private val writeLock = Any()
-    // Clear can invalidate requests while the writer is blocked in commit().
     private val stateLock = Any()
     private val pendingWrites = WeakHashMap<PreparedWrite, Unit>()
     private var activeWrite: PreparedWrite? = null
@@ -112,11 +112,14 @@ object ReaderProgressStore {
         position: Int,
         offset: Int,
         coveredPosition: Int? = null
-    ): PreparedWrite = synchronized(writeLock) {
+    ): PreparedWrite {
         val archiveKey = readerArchiveKey(file)
-        synchronized(stateLock) { registerWrite(preferences, archiveKey, position, offset, coveredPosition) }
+        return synchronized(stateLock) {
+            registerWrite(preferences, archiveKey, position, offset, coveredPosition)
+        }
     }
 
+    // enqueue only hands the write off to the background executor.
     internal fun enqueueSave(
         context: Context,
         archiveKey: String,
@@ -126,20 +129,18 @@ object ReaderProgressStore {
         enqueue: (PreparedWrite) -> Unit
     ) {
         val prefs = preferences(context)
-        synchronized(writeLock) {
-            val write = synchronized(stateLock) { registerWrite(prefs, archiveKey, position, offset, coveredPosition) }
+        synchronized(stateLock) {
+            val write = registerWrite(prefs, archiveKey, position, offset, coveredPosition)
             try {
                 enqueue(write)
             } catch (exception: RuntimeException) {
                 // A concurrent move must never observe a request the executor rejected.
-                synchronized(stateLock) { pendingWrites.remove(write) }
+                pendingWrites.remove(write)
                 throw exception
             }
-            synchronized(stateLock) {
-                if (write in pendingWrites) {
-                    write.enqueueOrder = ++nextEnqueueOrder
-                    publishPendingResumeProgress()
-                }
+            if (write in pendingWrites) {
+                write.enqueueOrder = ++nextEnqueueOrder
+                publishPendingResumeProgress()
             }
         }
     }

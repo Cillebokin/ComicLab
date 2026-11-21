@@ -87,6 +87,63 @@ class MangaReaderProgressControllerTest {
     }
 
     @Test
+    fun newSavesReturnAndPublishTheLatestPositionWhileAnOlderCommitIsBlocked() {
+        val application = RuntimeEnvironment.getApplication()
+        val archive = temporaryFolder.newFile("blocked-progress.cbz")
+        val commitStarted = CountDownLatch(1)
+        val releaseCommit = CountDownLatch(1)
+        val preferences = application.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+        val blockedPreferences = object : SharedPreferences by preferences {
+            override fun edit(): SharedPreferences.Editor {
+                val editor = preferences.edit()
+                return object : SharedPreferences.Editor by editor {
+                    override fun putInt(key: String, value: Int): SharedPreferences.Editor {
+                        editor.putInt(key, value)
+                        return this
+                    }
+
+                    override fun commit(): Boolean {
+                        commitStarted.countDown()
+                        check(releaseCommit.await(5, TimeUnit.SECONDS))
+                        return editor.commit()
+                    }
+                }
+            }
+        }
+
+        val oldWrite = ReaderProgressStore.prepareSave(blockedPreferences, archive, 1, -8)
+        val writer = FutureTask { oldWrite.commit() }
+        Thread(writer).apply { isDaemon = true }.start()
+        val queue = QueuedExecutorService()
+        val reader = MangaReaderProgressController(application) { queue }
+        val nextSaves = FutureTask {
+            reader.save(archive, 5, -12, forceCommit = false)
+            reader.save(archive, 3, -28, forceCommit = true, coveredPosition = 4)
+            MangaReaderProgressController(application) { QueuedExecutorService() }
+                .readPositionAndOffset(archive)
+        }
+        try {
+            assertTrue("the background writer must be inside commit", commitStarted.await(3, TimeUnit.SECONDS))
+            Thread(nextSaves).apply { isDaemon = true }.start()
+
+            assertEquals("registration and immediate reopen must finish before commit", 3 to -28,
+                nextSaves.get(2, TimeUnit.SECONDS))
+            assertEquals(5, ReaderProgressStore.savedReadingPageCount(application, archive, 10))
+            assertNull("the blocked commit must not already be persisted", ReaderProgressStore.savedReadingProgress(application, archive))
+        } finally {
+            releaseCommit.countDown()
+            writer.get(5, TimeUnit.SECONDS)
+            nextSaves.get(5, TimeUnit.SECONDS)
+            repeat(queue.pendingTaskCount) { queue.runNext() }
+        }
+
+        assertEquals(
+            ComicLabMangaProgress(archive.absolutePath, position = 3, offset = -28, coveredPosition = 4),
+            ReaderProgressStore.savedReadingProgress(application, archive)
+        )
+    }
+
+    @Test
     fun repeatedSavesCoalesceButExitUpgradesCheckpointAndBacktrackingSaves() {
         val application = RuntimeEnvironment.getApplication()
         val archive = temporaryFolder.newFile("coalesced.cbz")
