@@ -6,7 +6,14 @@ data class EbookBook(
     val chapters: List<EbookChapter>,
     val resources: List<EbookResource>,
     val coverResourceId: String? = null,
-    val stylesheet: String? = null
+    val stylesheet: String? = null,
+    val contents: List<EbookContentsEntry> = emptyList()
+)
+
+data class EbookContentsEntry(
+    val title: String,
+    val chapterIndex: Int,
+    val fragment: String? = null
 )
 
 data class EbookChapter(

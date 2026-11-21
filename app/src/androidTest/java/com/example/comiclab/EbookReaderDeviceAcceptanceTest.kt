@@ -9,6 +9,10 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.View
 import android.webkit.WebView
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.matcher.RootMatchers.isDialog
+import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -97,6 +101,80 @@ class EbookReaderDeviceAcceptanceTest {
             check(testRoot.canonicalFile.toPath().startsWith(cacheRoot))
             check(testRoot.deleteRecursively())
         }
+    }
+
+    @Test
+    fun nativeContentsJumpsToBothEpub3AnchorsInTheSameChapter() {
+        verifyContentsAnchors("nav.xhtml", """
+            <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+              <body>
+                <nav epub:type="landmarks"><ol><li><a href="chapter-one.xhtml">Landmark</a></li></ol></nav>
+                <nav epub:type="toc"><ol>
+                  <li><a href="chapter-one.xhtml#first-stop">Early stop</a></li>
+                  <li><a href="chapter-one.xhtml#%E7%AC%AC%E4%BA%8C">Later stop</a></li>
+                  <li><a href="chapter-two.xhtml#missing">Chapter fallback</a></li>
+                </ol></nav>
+              </body>
+            </html>
+        """.trimIndent())
+    }
+
+    @Test
+    fun nativeContentsJumpsToBothNestedNcxAnchorsInTheSameChapter() {
+        verifyContentsAnchors("toc.ncx", """
+            <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+              <navMap>
+                <navPoint id="first"><navLabel><text>Early stop</text></navLabel>
+                  <content src="chapter-one.xhtml#first-stop"/>
+                  <navPoint id="second"><navLabel><text>Later stop</text></navLabel>
+                    <content src="chapter-one.xhtml#%E7%AC%AC%E4%BA%8C"/>
+                  </navPoint>
+                </navPoint>
+                <navPoint id="third"><navLabel><text>Chapter fallback</text></navLabel>
+                  <content src="chapter-two.xhtml#missing"/>
+                </navPoint>
+              </navMap>
+            </ncx>
+        """.trimIndent())
+    }
+
+    private fun verifyContentsAnchors(navigationFile: String, navigation: String) {
+        writeEpubFixture(bookFile, navigationFile, navigation)
+        val launchOutput = ParcelFileDescriptor.AutoCloseInputStream(
+            instrumentation.uiAutomation.executeShellCommand(
+                "am start -W -n ${context.packageName}/com.example.comiclab.MainActivity"
+            )
+        ).bufferedReader().use { it.readText() }
+        check("Status: ok" in launchOutput) { launchOutput }
+        browserActivity = awaitBrowser()
+        val intent = Intent(context, EbookReaderActivity::class.java)
+            .putExtra(EbookReaderActivity.EXTRA_BOOK_PATH, bookFile.absolutePath)
+        onMain { browserActivity!!.startActivity(intent) }
+        val activity = awaitReader(expectedOrientation = null, requireRestoredScroll = false)
+        trackedActivities += activity
+        awaitCondition("EPUB chapter did not render before opening contents") {
+            evaluate(activity, "!!document.querySelector('#chapter-0 h3')") == "true"
+        }
+
+        listOf(
+            Triple("1. Early stop", "first-stop", 0),
+            Triple("2. Later stop", "第二", 0),
+            Triple("3. Chapter fallback", null, 1)
+        ).forEach { (label, anchor, chapter) ->
+            onMain { activity.findViewById<View>(R.id.btnEbookContents).performClick() }
+            onView(withText(label)).inRoot(isDialog()).perform(click())
+            val id = if (anchor == null) "chapter-$chapter" else {
+                "chapter-$chapter-a-" + anchor.toByteArray(Charsets.UTF_8).joinToString("") {
+                    "%02x".format(it.toInt() and 255)
+                }
+            }
+            awaitCondition("Selecting $label did not scroll to $id") {
+                evaluate(activity,
+                    "Math.abs(document.getElementById('$id')?.getBoundingClientRect().top) < 3") == "true" &&
+                    onMain { activity.hasWindowFocus() && activity.progressForTest?.chapterIndex == chapter }
+            }
+        }
+        assertEquals("1", evaluate(activity, "document.querySelectorAll('#chapter-0').length"))
     }
 
     @Test
@@ -273,7 +351,14 @@ class EbookReaderDeviceAcceptanceTest {
         assertTrue(message, condition())
     }
 
-    private fun writeEpubFixture(file: File) {
+    private fun writeEpubFixture(file: File, navigationFile: String? = null, navigation: String = "") {
+        val isNcx = navigationFile?.endsWith(".ncx") == true
+        val navItem = when {
+            isNcx -> """<item id="navigation" href="$navigationFile" media-type="application/x-dtbncx+xml"/>"""
+            navigationFile != null -> """<item id="navigation" href="$navigationFile" media-type="application/xhtml+xml" properties="nav"/>"""
+            else -> ""
+        }
+        val spineAttributes = if (isNcx) """ toc="navigation"""" else ""
         ZipOutputStream(FileOutputStream(file)).use { output ->
             output.putEntry("mimetype", "application/epub+zip")
             output.putEntry(
@@ -294,20 +379,24 @@ class EbookReaderDeviceAcceptanceTest {
                       <manifest>
                         <item id="chapter-one" href="chapter-one.xhtml" media-type="application/xhtml+xml"/>
                         <item id="chapter-two" href="chapter-two.xhtml" media-type="application/xhtml+xml"/>
+                        $navItem
                       </manifest>
-                      <spine><itemref idref="chapter-one"/><itemref idref="chapter-two"/></spine>
+                      <spine$spineAttributes><itemref idref="chapter-one"/><itemref idref="chapter-two"/></spine>
                     </package>""".trimIndent()
             )
-            output.putEntry("OEBPS/chapter-one.xhtml", chapterXhtml("Chapter one"))
+            if (navigationFile != null) output.putEntry("OEBPS/$navigationFile", navigation)
+            output.putEntry("OEBPS/chapter-one.xhtml", chapterXhtml("Chapter one", navigationFile != null))
             output.putEntry("OEBPS/chapter-two.xhtml", chapterXhtml("Chapter two"))
         }
     }
 
-    private fun chapterXhtml(title: String): String = buildString {
+    private fun chapterXhtml(title: String, withAnchors: Boolean = false): String = buildString {
         append("<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><h1>")
         append(title)
         append("</h1>")
         repeat(PARAGRAPH_COUNT) { index ->
+            if (withAnchors && index == 6) append("""<h3 id="first-stop">Early target</h3>""")
+            if (withAnchors && index == 18) append("""<h3 id="第二">Later target</h3>""")
             append("<p>Paragraph ${index + 1}: ")
             append("This fixture exists only in app cache and provides scrollable reader content. ".repeat(5))
             append("</p>")

@@ -4,6 +4,7 @@ import android.net.Uri
 import java.io.Writer
 import com.example.comiclab.ebook.EbookBook
 import com.example.comiclab.ebook.EbookChapter
+import com.example.comiclab.ebook.EbookContentsEntry
 import com.example.comiclab.ebook.EbookResource
 import com.example.comiclab.ebook.epub.EpubPath
 import com.example.comiclab.ebook.checkEbookCancellation
@@ -34,14 +35,13 @@ class EbookHtmlRenderer {
     internal fun writeChapterDocuments(book: EbookBook, style: EbookStyle, shell: Appendable,
         svgSource: ((EbookResource) -> String?)?,
         windowCharBudget: Long, windowTagBudget: Long,
-        chapterWriter: (EbookChapter, (Appendable) -> Unit) -> Unit) {
+        chapterWriter: (EbookChapter, (Appendable) -> Unit) -> Unit): Map<EbookContentsEntry, String> =
         writeDocuments(book, style, shell, svgSource, chapterWriter, windowCharBudget, windowTagBudget)
-    }
 
     private fun writeDocuments(book: EbookBook, style: EbookStyle, output: Appendable,
         svgSource: ((EbookResource) -> String?)?,
         chapterWriter: ((EbookChapter, (Appendable) -> Unit) -> Unit)?,
-        windowCharBudget: Long = 0, windowTagBudget: Long = 0) {
+        windowCharBudget: Long = 0, windowTagBudget: Long = 0): Map<EbookContentsEntry, String> {
         checkEbookCancellation()
         val safeStyle = style.normalized()
         var svgIndex = -1
@@ -108,7 +108,12 @@ class EbookHtmlRenderer {
                 .append("<button id=\"chapter-previous\" aria-label=\"").append(escapeHtmlAttribute(style.previousChapterLabel)).append("\">‹</button>")
                 .append("<button id=\"chapter-next\" aria-label=\"").append(escapeHtmlAttribute(style.nextChapterLabel)).append("\">›</button></nav>")
                 .append("<script src=\"/ebook-chapters.js\"></script></body></html>")
-            return
+            return buildMap {
+                for (entry in book.contents) {
+                    val fragment = entry.fragment ?: continue
+                    anchors[entry.chapterIndex]?.get(fragment)?.let { put(entry, it) }
+                }
+            }
         }
 
         output.append(
@@ -180,6 +185,7 @@ class EbookHtmlRenderer {
             </script></body></html>
             """.trimIndent()
         )
+        return emptyMap()
     }
 
     private fun appendChapter(output: Appendable, book: EbookBook, chapter: EbookChapter, anchors: Map<Int, Map<String, String>>, loadSvg: ((EbookResource) -> Pair<Int, String>?)?) {

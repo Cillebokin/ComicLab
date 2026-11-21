@@ -28,6 +28,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.example.comiclab.core.store.ReadingHistoryStore
+import com.example.comiclab.ebook.EbookContentsEntry
 import com.example.comiclab.ebook.EbookProgress
 import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.ebook.EbookReaderProgressMapper
@@ -575,20 +576,26 @@ class EbookReaderActivity : AppCompatActivity() {
     }
 
     private fun showContents() {
-        val book = session?.book ?: return
-        val titles = book.chapters.mapIndexed { index, chapter ->
-            "${index + 1}. ${chapter.title}"
-        }.toTypedArray()
+        val prepared = preparedDocument ?: return
+        if (!pageReady) return
+        val book = prepared.session.book
+        val listedChapters = book.contents.mapTo(mutableSetOf(), EbookContentsEntry::chapterIndex)
+        val entries = book.contents + book.chapters.mapNotNull { chapter ->
+            if (chapter.index in listedChapters) null else EbookContentsEntry(chapter.title, chapter.index)
+        }
+        val titles = entries.mapIndexed { index, entry -> "${index + 1}. ${entry.title}" }.toTypedArray()
         val dialog = AlertDialog.Builder(this)
             .setTitle(R.string.ebook_contents)
             .setItems(titles) { _, which ->
-                currentProgress = EbookProgress(which, 0f)
-                updateProgressControls(currentProgress)
-                saveCurrentProgress(force = true)
-                if (pageReady) {
-                    navigateReader(
-                        "javascript:window.jumpToComicLabChapter($which);",
-                    )
+                val entry = entries[which]
+                val anchor = prepared.contentsAnchors[entry]
+                if (anchor != null) {
+                    navigateReader("window.jumpToComicLabAnchor(${org.json.JSONObject.quote(anchor)});")
+                } else {
+                    currentProgress = EbookProgress(entry.chapterIndex, 0f)
+                    updateProgressControls(currentProgress)
+                    saveCurrentProgress(force = true)
+                    navigateReader("window.jumpToComicLabChapter(${entry.chapterIndex});")
                 }
             }
             .setNegativeButton(R.string.cancel, null)

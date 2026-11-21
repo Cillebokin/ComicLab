@@ -1,11 +1,13 @@
 package com.example.comiclab.ebook.epub
 
+import android.net.Uri
 import android.util.Xml
 import com.example.comiclab.ebook.EbookBook
 import com.example.comiclab.ebook.EbookContentLimits
 import com.example.comiclab.ebook.EbookContentLimitException
 import com.example.comiclab.ebook.limitEbookInput
 import com.example.comiclab.ebook.EbookChapter
+import com.example.comiclab.ebook.EbookContentsEntry
 import com.example.comiclab.ebook.EbookResource
 import com.example.comiclab.ebook.EbookResourceRecord
 import com.example.comiclab.ebook.checkEbookCancellation
@@ -105,7 +107,8 @@ class EpubParser(private val limits: EbookContentLimits = EbookContentLimits.for
         }
 
         val manifestById = resolvedManifest.associateBy { it.id }
-        val navigationTitles = parseNavigationTitles(zipFile, packageData, manifestById)
+        val navigation = parseNavigation(zipFile, packageData, manifestById)
+        val navigationTitles = navigation.asReversed().associate { it.path to it.title }
         val chapters = parseChapters(
             zipFile,
             packageData,
@@ -117,6 +120,11 @@ class EpubParser(private val limits: EbookContentLimits = EbookContentLimits.for
             throw EpubParseException(EpubParseError.EMPTY_BOOK, "EPUB does not contain readable chapters")
         }
 
+        val chaptersByPath = chapters.asReversed().associateBy(EbookChapter::sourcePath)
+        val contents = navigation.mapNotNull { entry ->
+            val chapter = chaptersByPath[entry.path] ?: return@mapNotNull null
+            EbookContentsEntry(entry.title, chapter.index, entry.fragment)
+        }
         val resources = mutableListOf<EbookResource>()
         val resourceRecords = linkedMapOf<String, EbookResourceRecord>()
         var coverResourceId: String? = null
@@ -168,7 +176,8 @@ class EpubParser(private val limits: EbookContentLimits = EbookContentLimits.for
                 chapters = chapters,
                 resources = resources,
                 coverResourceId = coverResourceId,
-                stylesheet = css.toString().takeIf(String::isNotBlank)
+                stylesheet = css.toString().takeIf(String::isNotBlank),
+                contents = contents
             ),
             resourceRecords = resourceRecords,
             sourceFile = file
@@ -319,23 +328,23 @@ class EpubParser(private val limits: EbookContentLimits = EbookContentLimits.for
         }
     }
 
-    private fun parseNavigationTitles(
+    private fun parseNavigation(
         zipFile: ZipFile,
         packageData: PackageData,
         manifestById: Map<String, ManifestItem>
-    ): Map<String, String> {
+    ): List<NavigationEntry> {
         val navItem = manifestById.values
             .firstOrNull { it.properties.split(Regex("\\s+")).contains(NAV_PROPERTY) }
             ?: packageData.spineTocId?.let(manifestById::get)
             ?: manifestById.values.firstOrNull { it.mediaType == NCX_MIME_TYPE }
-            ?: return emptyMap()
-        val navPath = navItem.path.ifBlank { return emptyMap() }
-        val source = readZipEntry(zipFile, navPath, limits.maxMetadataBytes) ?: return emptyMap()
+            ?: return emptyList()
+        val navPath = navItem.path
+        val source = readZipEntry(zipFile, navPath, limits.maxMetadataBytes) ?: return emptyList()
 
         return if (navItem.mediaType == NCX_MIME_TYPE) {
-            parseNcxTitles(source, navPath)
+            parseNcx(source, navPath)
         } else {
-            parseNavDocumentTitles(source, navPath)
+            parseNavDocument(source, navPath)
         }
     }
 
@@ -377,8 +386,8 @@ class EpubParser(private val limits: EbookContentLimits = EbookContentLimits.for
         }.mapIndexed { index, chapter -> chapter.copy(index = index) }
     }
 
-    private fun parseNcxTitles(source: String, navPath: String): Map<String, String> {
-        val result = linkedMapOf<String, String>()
+    private fun parseNcx(source: String, navPath: String): List<NavigationEntry> {
+        val result = mutableListOf<NcxPoint>()
         val parser = Xml.newPullParser().apply {
             setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
             setInput(StringReader(source))
@@ -388,7 +397,11 @@ class EpubParser(private val limits: EbookContentLimits = EbookContentLimits.for
                 checkEbookCancellation()
             when (parser.eventType) {
                 XmlPullParser.START_TAG -> when (parser.name.substringAfterLast(':')) {
-                    "navPoint" -> points.addLast(NcxPoint())
+                    "navPoint" -> {
+                        val point = NcxPoint()
+                        points.addLast(point)
+                        result.add(point)
+                    }
                     "text" -> if (points.isNotEmpty()) {
                         points.last().title = parser.nextText().trim()
                     }
@@ -397,24 +410,40 @@ class EpubParser(private val limits: EbookContentLimits = EbookContentLimits.for
                     }
                 }
                 XmlPullParser.END_TAG -> if (parser.name.substringAfterLast(':') == "navPoint" && points.isNotEmpty()) {
-                    val point = points.removeLast()
-                    val path = point.href?.let { EpubPath.resolve(navPath, it) }
-                    if (path != null && !point.title.isNullOrBlank()) {
-                        result[path] = stripMarkup(point.title.orEmpty()).trim()
-                    }
+                    points.removeLast()
                 }
             }
         }
-        return result
+        return result.mapNotNull { point ->
+            navigationEntry(navPath, point.href.orEmpty(), point.title.orEmpty())
+        }
     }
 
-    private fun parseNavDocumentTitles(source: String, navPath: String): Map<String, String> {
-        return NAV_ANCHOR_REGEX.findAll(source).mapNotNull { match ->
+    private fun parseNavDocument(source: String, navPath: String): List<NavigationEntry> {
+        val sections = NAV_SECTION_REGEX.findAll(source).toList()
+        val toc = sections.firstOrNull { section ->
+            val attributes = section.groupValues[1]
+            attribute(attributes, "epub:type")?.split(WHITESPACE_REGEX)?.contains("toc") == true ||
+                attribute(attributes, "role")?.split(WHITESPACE_REGEX)?.contains("doc-toc") == true
+        } ?: sections.firstOrNull { section ->
+            attribute(section.groupValues[1], "epub:type") == null &&
+                attribute(section.groupValues[1], "role") == null
+        }
+        val links = toc?.groupValues?.get(2) ?: if (sections.isEmpty()) source else return emptyList()
+        return NAV_ANCHOR_REGEX.findAll(links).mapNotNull { match ->
             val href = attribute(match.groupValues[1], "href") ?: return@mapNotNull null
-            val title = stripMarkup(match.groupValues[2]).trim()
-            val path = EpubPath.resolve(navPath, href) ?: return@mapNotNull null
-            path to title
-        }.filter { it.second.isNotBlank() }.toMap()
+            navigationEntry(navPath, href, match.groupValues[2])
+        }.toList()
+    }
+
+    private fun navigationEntry(navPath: String, href: String, label: String): NavigationEntry? {
+        checkEbookCancellation()
+        val reference = href.trim()
+        val title = stripMarkup(label).trim()
+        if (title.isEmpty() || reference.isEmpty()) return null
+        val path = if (reference.startsWith('#')) navPath else EpubPath.resolve(navPath, reference) ?: return null
+        val fragment = Uri.decode(reference.substringAfter('#', "")).takeIf(String::isNotEmpty)
+        return NavigationEntry(title, path, fragment)
     }
 
     private fun readZipEntry(zipFile: ZipFile, path: String, maxBytes: Long = limits.maxEntryBytes): String? {
@@ -538,11 +567,14 @@ class EpubParser(private val limits: EbookContentLimits = EbookContentLimits.for
         val TITLE_REGEX = Regex("(?is)<title\\b[^>]*>(.*?)</title\\s*>")
         val TAG_REGEX = Regex("(?is)<[^>]+>")
         val WHITESPACE_REGEX = Regex("\\s+")
+        val NAV_SECTION_REGEX = Regex("(?is)<nav\\b([^>]*)>(.*?)</nav\\s*>")
         val NAV_ANCHOR_REGEX = Regex("(?is)<a\\b([^>]*)>(.*?)</a\\s*>")
         fun ATTRIBUTE_REGEX(name: String): Regex {
             return Regex("(?is)(?:^|\\s)$name\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))")
         }
     }
+
+    private data class NavigationEntry(val title: String, val path: String, val fragment: String?)
 
     private data class NcxPoint(
         var title: String? = null,

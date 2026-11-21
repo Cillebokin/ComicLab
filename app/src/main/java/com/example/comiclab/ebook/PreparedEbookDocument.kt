@@ -12,7 +12,8 @@ internal class PreparedEbookDocument private constructor(
     val session: EbookSession,
     val htmlFile: File,
     val htmlChars: Long,
-    private val chapterFiles: Map<Int, File>
+    private val chapterFiles: Map<Int, File>,
+    val contentsAnchors: Map<EbookContentsEntry, String>
 ) : AutoCloseable {
     private val lock = Any()
     private var closed = false
@@ -79,7 +80,7 @@ internal class PreparedEbookDocument private constructor(
                 file = createFile(cacheDir)
                 var chars = 0L
                 var tags = 0L
-                EbookLimitWriter(file.bufferedWriter(Charsets.UTF_8), limits).use { writer ->
+                val contentsAnchors = EbookLimitWriter(file.bufferedWriter(Charsets.UTF_8), limits).use { writer ->
                     val svgSource: (EbookResource) -> String? = { resource ->
                         try {
                             session.openResource(resource.id)?.use { input ->
@@ -90,7 +91,7 @@ internal class PreparedEbookDocument private constructor(
                             null
                         }
                     }
-                    EbookHtmlRenderer().writeChapterDocuments(session.book, style, writer, svgSource,
+                    val anchors = EbookHtmlRenderer().writeChapterDocuments(session.book, style, writer, svgSource,
                         minOf(limits.maxHtmlChars, limits.maxChapterHtmlChars.coerceAtMost(Long.MAX_VALUE / 3) * 3),
                         minOf(limits.maxHtmlTags, limits.maxChapterHtmlTags.coerceAtMost(Long.MAX_VALUE / 3) * 3)) { chapter, write ->
                         val chapterFile = synchronized(activeFiles) {
@@ -111,10 +112,11 @@ internal class PreparedEbookDocument private constructor(
                     }
                     chars += writer.charsWritten
                     if (chars > limits.maxHtmlChars || tags + writer.tagsWritten > limits.maxHtmlTags) throw EbookContentLimitException()
+                    anchors
                 }
                 checkEbookCancellation()
                 session.releaseChapterContent()
-                return PreparedEbookDocument(session, file, chars, chapters)
+                return PreparedEbookDocument(session, file, chars, chapters, contentsAnchors)
             } catch (error: Throwable) {
                 chapters.values.forEach(::discard)
                 file?.let(::discard)
