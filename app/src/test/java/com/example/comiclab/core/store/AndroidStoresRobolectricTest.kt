@@ -577,5 +577,81 @@ class AndroidStoresRobolectricTest {
         }
     }
 
+    @Test
+    fun removeDirectoryClearsOnlySubtreeHistoryAndProgress() {
+        val root = tempDirectory("store-remove-directory")
+        try {
+            val library = File(root, "library")
+            val nested = File(library, "series").apply { mkdirs() }
+            val other = File(root, "library-other").apply { mkdirs() }
+            val deletedComic = comicFile(nested, "deleted.cbz")
+            val deletedEbook = File(nested, "deleted.epub").apply { writeText("epub") }
+            val legacyDeletedEbook = File(nested, "legacy.txt").apply { writeText("legacy txt") }
+            val legacyLength = legacyDeletedEbook.length()
+            val legacyModified = legacyDeletedEbook.lastModified()
+            val keptComic = comicFile(other, "kept.cbz")
+            val keptEbook = File(other, "kept.epub").apply { writeText("kept epub") }
+
+            ReadingHistoryStore.record(context, deletedComic)
+            ReadingHistoryStore.record(context, deletedEbook)
+            ReadingHistoryStore.record(context, legacyDeletedEbook)
+            ReadingHistoryStore.record(context, keptComic)
+            ReadingHistoryStore.record(context, keptEbook)
+
+            ReaderProgressStore.restoreReadingProgress(
+                context,
+                deletedComic,
+                com.example.comiclab.core.settings.ComicLabMangaProgress(deletedComic.absolutePath, 3, -20)
+            )
+            ReaderProgressStore.restoreReadingProgress(
+                context,
+                keptComic,
+                com.example.comiclab.core.settings.ComicLabMangaProgress(keptComic.absolutePath, 5, -10)
+            )
+            EbookProgressStore.save(context, deletedEbook, EbookProgress(2, 0.5f))
+            EbookProgressStore.save(context, keptEbook, EbookProgress(4, 0.8f))
+
+            // Simulate an older untagged ebook progress entry without a stored _path key.
+            val legacyHash = progressKey(legacyDeletedEbook)
+            context.getSharedPreferences("ebook_progress_prefs", 0).edit()
+                .remove("ebook_progress_${legacyHash}_path")
+                .commit()
+            EbookProgressStore.save(context, legacyDeletedEbook, EbookProgress(1, 0.25f))
+            context.getSharedPreferences("ebook_progress_prefs", 0).edit()
+                .remove("ebook_progress_${legacyHash}_path")
+                .commit()
+
+            lateinit var queuedDeleted: ReaderProgressStore.PreparedWrite
+            ReaderProgressStore.enqueueSave(
+                context,
+                ReaderProgressStore.readerArchiveKey(deletedComic),
+                4,
+                -30
+            ) { queuedDeleted = it }
+
+            assertTrue(library.deleteRecursively())
+            ReadingHistoryStore.removeDirectory(context, library)
+            ReaderProgressStore.removeDirectory(context, library)
+            EbookProgressStore.removeDirectory(context, library)
+
+            assertFalse(queuedDeleted.commit())
+            assertEquals(listOf(keptEbook, keptComic), ReadingHistoryStore.items(context).map { it.file })
+            assertEquals(5 to -10, ReaderProgressStore.readPositionAndOffset(context, keptComic))
+            assertEquals(EbookProgress(4, 0.8f), EbookProgressStore.load(context, keptEbook))
+
+            val ebookPrefs = context.getSharedPreferences("ebook_progress_prefs", 0)
+            assertFalse(ebookPrefs.contains("ebook_progress_${legacyHash}_chapter"))
+            assertEquals(
+                listOf(keptEbook.absolutePath),
+                EbookProgressStore.exportSavedProgress(context, emptyList()).map { it.path }
+            )
+            val readerPrefs = context.getSharedPreferences("reader_prefs", 0)
+            assertFalse(readerPrefs.all.keys.any { it.startsWith("reader:${deletedComic.absolutePath}:") })
+            assertEquals(listOf(keptComic.absolutePath), ReaderProgressStore.exportSavedProgress(context).map { it.path })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun tempDirectory(prefix: String): File = Files.createTempDirectory(prefix).toFile()
 }

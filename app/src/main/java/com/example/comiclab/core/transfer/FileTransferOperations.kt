@@ -1,7 +1,6 @@
 package com.example.comiclab.core.transfer
 
 import java.io.File
-import java.io.FileOutputStream
 import java.nio.file.Files
 
 internal object FileTransferOperations {
@@ -105,31 +104,21 @@ internal object FileTransferOperations {
                 destinationDirectory
             )
             temporaryFile = tempFile
-            sourceFile.inputStream().use { input ->
-                FileOutputStream(tempFile).use { output ->
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    while (true) {
-                        if (Thread.currentThread().isInterrupted) {
-                            throw InterruptedException("File transfer interrupted")
-                        }
-                        val count = input.read(buffer)
-                        if (count < 0) {
-                            break
-                        }
-                        output.write(buffer, 0, count)
-                        copiedBytes += count
-                        onProgress(
-                            FileOperationProgress(
-                                phase = FileOperationProgress.Phase.COPYING,
-                                completedBytes = copiedBytes,
-                                totalBytes = totalBytes,
-                                totalItems = 1,
-                                currentItemName = sourceFile.name
-                            )
-                        )
-                    }
-                    output.flush()
-                }
+            val copiedSnapshot = TransferFileMove.copyFileWithDigest(
+                sourceFile = sourceFile,
+                targetFile = tempFile,
+                interruptionMessage = "File transfer interrupted"
+            ) { chunkBytes ->
+                copiedBytes += chunkBytes
+                onProgress(
+                    FileOperationProgress(
+                        phase = FileOperationProgress.Phase.COPYING,
+                        completedBytes = copiedBytes,
+                        totalBytes = totalBytes,
+                        totalItems = 1,
+                        currentItemName = sourceFile.name
+                    )
+                )
             }
 
             onProgress(
@@ -144,16 +133,25 @@ internal object FileTransferOperations {
             )
 
             if (Thread.currentThread().isInterrupted) return Result.FAILED
-            // 复制完成也不能证明此刻的源路径仍指向相同内容，回退时保留原件。
             val publication = TransferFileMove.publish(tempFile, targetFile, move.takeIf { moveSource }) {
                 onProgress(FileOperationProgress(FileOperationProgress.Phase.PUBLISHING))
             }
             when (publication) {
                 TransferFileMove.Publication.MOVED -> {
                     temporaryFile = null
-                    if (moveSource) Result.COPIED_SOURCE_RETAINED else Result.SUCCESS
+                    if (!moveSource || deleteVerifiedSource(copiedSnapshot, onProgress)) {
+                        Result.SUCCESS
+                    } else {
+                        Result.COPIED_SOURCE_RETAINED
+                    }
                 }
-                TransferFileMove.Publication.COPIED -> Result.COPIED_SOURCE_RETAINED
+                TransferFileMove.Publication.COPIED -> {
+                    if (!moveSource || deleteVerifiedSource(copiedSnapshot, onProgress)) {
+                        Result.SUCCESS
+                    } else {
+                        Result.COPIED_SOURCE_RETAINED
+                    }
+                }
                 TransferFileMove.Publication.TARGET_EXISTS -> Result.TARGET_EXISTS
                 TransferFileMove.Publication.INCOMPLETE -> Result.COPY_INCOMPLETE
                 TransferFileMove.Publication.FAILED -> Result.FAILED
@@ -165,6 +163,32 @@ internal object FileTransferOperations {
         } finally {
             temporaryFile?.delete()
         }
+    }
+
+    private fun deleteVerifiedSource(
+        snapshot: TransferFileMove.CopiedFileSnapshot,
+        onProgress: (FileOperationProgress) -> Unit
+    ): Boolean {
+        if (Thread.currentThread().isInterrupted) return false
+        onProgress(
+            FileOperationProgress(
+                phase = FileOperationProgress.Phase.DELETING,
+                totalItems = 1,
+                currentItemName = snapshot.file.name
+            )
+        )
+        if (!TransferFileMove.matchesMetadataAndContent(snapshot)) return false
+        if (Thread.currentThread().isInterrupted || !TransferFileMove.matchesMetadata(snapshot)) return false
+        if (!snapshot.file.delete()) return false
+        onProgress(
+            FileOperationProgress(
+                phase = FileOperationProgress.Phase.DELETING,
+                completedItems = 1,
+                totalItems = 1,
+                currentItemName = snapshot.file.name
+            )
+        )
+        return true
     }
 
     private val INVALID_FILE_NAME_CHARS = setOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')

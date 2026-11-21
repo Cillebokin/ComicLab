@@ -314,7 +314,7 @@
     <string name="folder_copy_success">已复制文件夹</string>
     <string name="folder_cut_success">已剪切文件夹</string>
     <string name="file_transfer_failed">文件或文件夹操作失败</string>
-    <string name="file_transfer_copied_source_retained">当前存储不支持安全移动，已复制到目标，原内容已保留</string>
+    <string name="file_transfer_copied_source_retained">已复制到目标；原内容发生变化或无法安全清理，已保留原内容</string>
     <string name="file_transfer_copy_incomplete">复制未完成，原内容已保留，请检查目标中的副本</string>
     <string name="file_transfer_source_missing">源文件或文件夹不存在，无法粘贴</string>
     <string name="file_transfer_source_in_use">当前路径包含待操作的文件或文件夹，暂不能修改</string>

@@ -36,6 +36,40 @@ object EbookProgressStore {
     }
 
     @Synchronized
+    internal fun removeForFileIdentity(context: Context, file: File, fileSize: Long, modifiedAt: Long) {
+        val prefs = PrefsGateway.open(context, PREFS_NAME)
+        val key = progressKey(fileIdentity(file, fileSize, modifiedAt))
+        if (prefs.hasProgress(key) || prefs.contains(keyForPath(key))) {
+            prefs.edit().removeProgress(key).apply()
+        }
+    }
+
+    @Synchronized
+    internal fun removeDirectory(context: Context, directory: File) {
+        val prefs = PrefsGateway.open(context, PREFS_NAME)
+        val snapshot = prefs.all
+        if (snapshot.isEmpty()) return
+
+        val rawPath = directory.absolutePath
+        val canonicalPath = canonicalFile(directory).absolutePath
+        val matchingKeys = snapshot.entries.mapNotNull { (storageKey, value) ->
+            if (!isPathKey(storageKey) || value !is String) return@mapNotNull null
+            if (BookcaseFolderPaths.isPathInDirectory(value, rawPath) ||
+                BookcaseFolderPaths.isPathInDirectory(value, canonicalPath)
+            ) {
+                storageKey.removePrefix(KEY_PREFIX).removeSuffix(PATH_SUFFIX)
+            } else {
+                null
+            }
+        }
+        if (matchingKeys.isEmpty()) return
+
+        val editor = prefs.edit()
+        matchingKeys.forEach { editor.removeProgress(it) }
+        editor.apply()
+    }
+
+    @Synchronized
     internal fun rememberLegacyPath(context: Context, file: File, fileSize: Long, modifiedAt: Long) {
         val prefs = PrefsGateway.open(context, PREFS_NAME)
         val currentKey = if (ReaderFileDetector.isEbook(file)) {

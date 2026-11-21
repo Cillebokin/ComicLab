@@ -2754,6 +2754,9 @@ class MainActivity : AppCompatActivity() {
             if (deleted) {
                 FavoritePathStore.removeDirectory(applicationContext, directory)
                 FavoriteComicStore.removeDirectory(applicationContext, directory)
+                ReadingHistoryStore.removeDirectory(applicationContext, directory)
+                ReaderProgressStore.removeDirectory(applicationContext, directory)
+                EbookProgressStore.removeDirectory(applicationContext, directory)
             }
             runOnUiThread {
                 dismissFileOperationProgress(progressViews)

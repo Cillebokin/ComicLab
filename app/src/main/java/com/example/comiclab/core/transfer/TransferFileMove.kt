@@ -1,10 +1,11 @@
 package com.example.comiclab.core.transfer
 
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
-import java.nio.file.StandardOpenOption
+import java.security.MessageDigest
 
 internal object TransferFileMove {
     enum class Result {
@@ -21,6 +22,13 @@ internal object TransferFileMove {
         INCOMPLETE,
         FAILED
     }
+
+    internal data class CopiedFileSnapshot(
+        val file: File,
+        val length: Long,
+        val lastModified: Long,
+        val sha256: ByteArray
+    )
 
     private val nativeAvailable = try {
         System.loadLibrary("comiclab_filetransfer")
@@ -46,30 +54,97 @@ internal object TransferFileMove {
         onPublishingCopy: () -> Unit
     ): Publication {
         if (move == null) {
-            // 普通复制保留现有暂存发布流程。
-            return try {
-                Files.move(staging.toPath(), target.toPath())
-                Publication.MOVED
-            } catch (_: FileAlreadyExistsException) {
-                Publication.TARGET_EXISTS
-            }
+            return publishMoved(staging, target)
         }
         return when (move(staging, target)) {
             Result.MOVED -> Publication.MOVED
             Result.TARGET_EXISTS -> Publication.TARGET_EXISTS
             Result.UNAVAILABLE -> {
                 onPublishingCopy()
-                publishByCopying(staging, target)
+                publishFallback(staging, target)
             }
             Result.FAILED -> Publication.FAILED
         }
     }
 
-    private fun publishByCopying(staging: File, target: File): Publication {
+    internal fun copyFileWithDigest(
+        sourceFile: File,
+        targetFile: File,
+        interruptionMessage: String,
+        onBytesCopied: (Long) -> Unit = {}
+    ): CopiedFileSnapshot {
+        val lastModifiedBefore = sourceFile.lastModified()
+        val digest = MessageDigest.getInstance("SHA-256")
+        var copiedBytes = 0L
+        sourceFile.inputStream().use { input ->
+            FileOutputStream(targetFile).use { output ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    if (Thread.currentThread().isInterrupted) {
+                        throw InterruptedException(interruptionMessage)
+                    }
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    output.write(buffer, 0, count)
+                    digest.update(buffer, 0, count)
+                    copiedBytes += count
+                    onBytesCopied(count.toLong())
+                }
+                output.flush()
+            }
+        }
+        return CopiedFileSnapshot(
+            file = sourceFile,
+            length = copiedBytes,
+            lastModified = lastModifiedBefore,
+            sha256 = digest.digest()
+        )
+    }
+
+    internal fun matchesMetadataAndContent(snapshot: CopiedFileSnapshot): Boolean {
+        if (!matchesMetadata(snapshot)) return false
+        val digest = MessageDigest.getInstance("SHA-256")
+        val actual = runCatching {
+            snapshot.file.inputStream().use { input ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    if (Thread.currentThread().isInterrupted) return false
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    digest.update(buffer, 0, count)
+                }
+            }
+            digest.digest()
+        }.getOrNull() ?: return false
+        return actual.contentEquals(snapshot.sha256)
+    }
+
+    internal fun matchesMetadata(snapshot: CopiedFileSnapshot): Boolean {
+        val file = snapshot.file
+        return !Files.isSymbolicLink(file.toPath()) &&
+            file.isFile &&
+            file.length() == snapshot.length &&
+            file.lastModified() == snapshot.lastModified
+    }
+
+    private fun publishFallback(staging: File, target: File): Publication {
+        if (Thread.currentThread().isInterrupted) return Publication.FAILED
+        if (Files.isSymbolicLink(staging.toPath())) return Publication.FAILED
+        if (!staging.isDirectory) {
+            return publishMoved(staging, target)
+        }
         var createdTarget = false
         return try {
-            copyToNewPath(staging, target) { createdTarget = true }
-            Publication.COPIED
+            // Atomically reserve the target directory, then move staged children without re-copying bytes.
+            Files.createDirectory(target.toPath())
+            createdTarget = true
+            val children = staging.listFiles() ?: throw IOException("Could not read transfer staging")
+            for (child in children) {
+                checkNotInterrupted()
+                Files.move(child.toPath(), File(target, child.name).toPath())
+            }
+            Files.deleteIfExists(staging.toPath())
+            Publication.MOVED
         } catch (_: FileAlreadyExistsException) {
             if (createdTarget) Publication.INCOMPLETE else Publication.TARGET_EXISTS
         } catch (_: IOException) {
@@ -79,33 +154,13 @@ internal object TransferFileMove {
         }
     }
 
-    private fun copyToNewPath(source: File, target: File, onCreated: () -> Unit = {}) {
-        checkNotInterrupted()
-        if (Files.isSymbolicLink(source.toPath())) {
-            throw IOException("Unexpected symbolic link in transfer staging")
-        }
-        if (source.isDirectory) {
-            Files.createDirectory(target.toPath())
-            onCreated()
-            val children = source.listFiles() ?: throw IOException("Could not read transfer staging")
-            for (child in children) {
-                copyToNewPath(child, File(target, child.name))
-            }
-        } else {
-            Files.newOutputStream(target.toPath(), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
-                .use { output ->
-                    onCreated()
-                    source.inputStream().use { input ->
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        while (true) {
-                            checkNotInterrupted()
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            output.write(buffer, 0, count)
-                        }
-                    }
-                }
-        }
+    private fun publishMoved(staging: File, target: File): Publication = try {
+        Files.move(staging.toPath(), target.toPath())
+        Publication.MOVED
+    } catch (_: FileAlreadyExistsException) {
+        Publication.TARGET_EXISTS
+    } catch (_: IOException) {
+        Publication.FAILED
     }
 
     // JNI 的字符串接口使用 modified UTF-8。这里按文件系统字节传递路径，以支持补充字符。

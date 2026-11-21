@@ -149,24 +149,26 @@ class FileTransferOperationsTest {
     }
 
     @Test
-    fun unavailableSourceMovePublishesCopyAndNeverTriesToDeleteSource() {
+    fun unavailableSourceMovePublishesWithoutSecondCopyAndDeletesVerifiedSource() {
         val source = File(temporaryFolder.root, "source.cbz").apply { writeText("source data") }
         val destination = temporaryFolder.newFolder("destination")
         val target = File(destination, "copy.cbz")
+        val phases = mutableListOf<FileOperationProgress.Phase>()
 
-        val result = FileTransferOperations.transfer(source, target, moveSource = true, move = { from, to ->
-            if (from == source) {
-                TransferFileMove.Result.UNAVAILABLE
-            } else {
-                Files.move(from.toPath(), to.toPath())
-                TransferFileMove.Result.MOVED
-            }
-        })
+        val result = FileTransferOperations.transfer(
+            source,
+            target,
+            moveSource = true,
+            move = { _, _ -> TransferFileMove.Result.UNAVAILABLE },
+            onProgress = { phases += it.phase }
+        )
 
-        assertEquals(FileTransferOperations.Result.COPIED_SOURCE_RETAINED, result)
-        assertEquals("source data", source.readText())
+        assertEquals(FileTransferOperations.Result.SUCCESS, result)
+        assertFalse(source.exists())
         assertEquals("source data", target.readText())
         assertEquals(listOf(target.name), destination.list()?.toList())
+        assertTrue(FileOperationProgress.Phase.PUBLISHING in phases)
+        assertTrue(FileOperationProgress.Phase.DELETING in phases)
     }
 
     @Test
@@ -203,9 +205,9 @@ class FileTransferOperationsTest {
             }
         })
 
-        assertEquals(FileTransferOperations.Result.COPIED_SOURCE_RETAINED, result)
+        assertEquals(FileTransferOperations.Result.SUCCESS, result)
         assertEquals("new content", checkNotNull(recreated).readText())
-        assertEquals("source data", source.readText())
+        assertFalse(source.exists())
         assertEquals("source data", target.readText())
     }
 

@@ -183,8 +183,12 @@ object ReaderProgressStore {
         return readCurrentProgress(archiveKey) { preferences(context).readProgress(archiveKey) }
     }
 
-    private inline fun readCurrentProgress(archiveKey: String, readSaved: () -> ProgressValue?): ProgressValue? {
-        val pending = pendingResumeProgress[archiveKey]
+    private inline fun readCurrentProgress(
+        archiveKey: String,
+        pendingSnapshot: Map<String, PendingResumeProgress> = pendingResumeProgress,
+        readSaved: () -> ProgressValue?
+    ): ProgressValue? {
+        val pending = pendingSnapshot[archiveKey]
         if (pending != null && !pending.mergeWithSaved) return pending.value
 
         val saved = readSaved()
@@ -210,13 +214,25 @@ object ReaderProgressStore {
     }
 
     internal fun exportSavedProgress(context: Context): List<ComicLabMangaProgress> {
-        val snapshot = preferences(context).all
-        return snapshot.keys.asSequence()
-            .mapNotNull(::archiveKeyOf)
-            .distinct()
+        val prefs = preferences(context)
+        val (snapshot, pendingSnapshot) = synchronized(stateLock) {
+            prefs.all to pendingResumeProgress
+        }
+        val archiveKeys = linkedSetOf<String>()
+        snapshot.keys.mapNotNullTo(archiveKeys, ::archiveKeyOf)
+        archiveKeys.addAll(pendingSnapshot.keys)
+        return archiveKeys.asSequence()
             .mapNotNull { key ->
-                val position = snapshot[positionKey(key)] as? Int ?: return@mapNotNull null
-                val offset = snapshot[offsetKey(key)] as? Int ?: return@mapNotNull null
+                val resolved = readCurrentProgress(key, pendingSnapshot) {
+                    val position = snapshot[positionKey(key)] as? Int ?: return@readCurrentProgress null
+                    val offset = snapshot[offsetKey(key)] as? Int ?: return@readCurrentProgress null
+                    ProgressValue(
+                        position = position,
+                        offset = offset,
+                        coveredPosition = (snapshot[coveredPositionKey(key)] as? Int)?.takeIf { it >= 0 }
+                    )
+                } ?: return@mapNotNull null
+
                 val archive = parseArchiveKey(key) ?: return@mapNotNull null
                 val file = File(archive.path)
                 if (!ArchiveFormatDetector.isSupportedArchive(file) || readerArchiveKey(file) != key) {
@@ -225,9 +241,9 @@ object ReaderProgressStore {
 
                 ComicLabMangaProgress(
                     path = file.absolutePath,
-                    position = position.coerceAtLeast(0),
-                    offset = offset,
-                    coveredPosition = (snapshot[coveredPositionKey(key)] as? Int)?.takeIf { it >= 0 }
+                    position = resolved.position.coerceAtLeast(0),
+                    offset = resolved.offset,
+                    coveredPosition = resolved.coveredPosition
                 )
             }
             .sortedBy { it.path }
@@ -287,6 +303,30 @@ object ReaderProgressStore {
                 removeStoredProgress(prefs, archiveKey)
             } finally {
                 publishPendingResumeProgress()
+            }
+        }
+    }
+
+    internal fun removeDirectory(context: Context, directory: File) {
+        val rawPath = directory.absolutePath
+        val canonicalPath = runCatching { directory.canonicalPath }.getOrElse { rawPath }
+        val matches: (String) -> Boolean = { archiveKey ->
+            parseArchiveKey(archiveKey)?.let { archive ->
+                BookcaseFolderPaths.isPathInDirectory(archive.path, rawPath) ||
+                    BookcaseFolderPaths.isPathInDirectory(archive.path, canonicalPath)
+            } == true
+        }
+        val prefs = preferences(context)
+        synchronized(writeLock) {
+            synchronized(stateLock) {
+                val keysToRemove = prefs.all.keys.mapNotNull(::archiveKeyOf).distinct().filter(matches)
+                val pendingRemoved = pendingWrites.keys.removeAll { matches(it.archiveKey) }
+                if (pendingRemoved) publishPendingResumeProgress()
+                if (keysToRemove.isNotEmpty()) {
+                    val editor = prefs.edit()
+                    keysToRemove.forEach { editor.removeProgress(it) }
+                    editor.apply()
+                }
             }
         }
     }

@@ -64,7 +64,7 @@ class FileTransferPlatformTest {
     }
 
     @Test
-    fun crossVolumeCutsCopyFileAndDirectoryAndKeepSource() {
+    fun crossVolumeCutsVerifyCopyAndRemoveUnchangedSource() {
         val source = temporaryFolder.newFolder("source")
         val directory = File(source, "folder").apply { check(mkdir()) }
         val file = File(source, "source.cbz").apply { writeText("source") }
@@ -73,16 +73,16 @@ class FileTransferPlatformTest {
         val destination = Files.createTempDirectory(external.toPath(), "cl001-test-").toFile()
         try {
             assertEquals(
-                FileTransferOperations.Result.COPIED_SOURCE_RETAINED,
+                FileTransferOperations.Result.SUCCESS,
                 FileTransferOperations.transfer(file, File(destination, file.name), moveSource = true)
             )
             assertEquals(
-                DirectoryTransferOperations.Result.COPIED_SOURCE_RETAINED,
+                DirectoryTransferOperations.Result.SUCCESS,
                 DirectoryTransferOperations.transfer(directory, destination, directory.name, moveSource = true)
             )
-            assertEquals("source", file.readText())
+            assertFalse(file.exists())
             assertEquals("source", File(destination, file.name).readText())
-            assertEquals("chapter", File(directory, "chapter.cbz").readText())
+            assertFalse(directory.exists())
             assertEquals("chapter", File(destination, "folder/chapter.cbz").readText())
         } finally {
             check(destination.canonicalFile.parentFile == external && destination.name.startsWith("cl001-test-"))

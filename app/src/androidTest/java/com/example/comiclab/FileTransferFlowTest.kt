@@ -45,7 +45,6 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
-import com.example.comiclab.core.transfer.TransferFileMove
 import java.nio.file.Files
 import java.util.UUID
 import java.util.zip.ZipEntry
@@ -209,10 +208,9 @@ class FileTransferFlowTest {
     }
 
     @Test
-    fun cutFileTransfersExactBytesAndKeepsSourceWhenMoveIsUnavailable() {
+    fun cutFileTransfersExactBytesAndRemovesSource() {
         val source = createComicFile(SOURCE_DIRECTORY_NAME, "sample.cbz", "cut bytes")
         val expectedBytes = source.readBytes()
-        val supportsMove = supportsDirectMove(source)
 
         openDirectory(SOURCE_DIRECTORY_NAME)
         chooseFileAction(source.name, R.id.btnCutFile)
@@ -220,8 +218,7 @@ class FileTransferFlowTest {
         onView(withId(R.id.btnPasteFile)).perform(click())
         awaitTransferModeEnded()
 
-        assertEquals(!supportsMove, source.exists())
-        if (!supportsMove) assertArrayEquals(expectedBytes, source.readBytes())
+        assertFalse(source.exists())
         assertArrayEquals(expectedBytes, File(destinationDirectory(), source.name).readBytes())
     }
 
@@ -245,10 +242,9 @@ class FileTransferFlowTest {
     }
 
     @Test
-    fun cutFolderTransfersFullTreeAndKeepsSourceWhenMoveIsUnavailable() {
+    fun cutFolderTransfersFullTreeAndRemovesSource() {
         val source = createComicFolder("cut-folder")
         val expectedBytes = File(source, "nested/chapter.cbz").readBytes()
-        val supportsMove = supportsDirectMove(source)
 
         openDirectory(SOURCE_DIRECTORY_NAME)
         chooseDirectoryAction(source.name, R.id.btnCutDirectory)
@@ -256,8 +252,7 @@ class FileTransferFlowTest {
         onView(withId(R.id.btnPasteFile)).perform(click())
         awaitTransferModeEnded()
 
-        assertEquals(!supportsMove, source.exists())
-        if (!supportsMove) assertArrayEquals(expectedBytes, File(source, "nested/chapter.cbz").readBytes())
+        assertFalse(source.exists())
         val moved = File(destinationDirectory(), source.name)
         assertArrayEquals(expectedBytes, File(moved, "nested/chapter.cbz").readBytes())
         assertTrue(File(moved, "empty").isDirectory)
@@ -412,9 +407,8 @@ class FileTransferFlowTest {
     }
 
     @Test
-    fun cutDirectoryMovesMetadataOnlyWhenSourceIsMoved() {
+    fun cutDirectoryMovesFilesAndMetadataToDestination() {
         val sourceDirectory = createComicFolder("cut-metadata")
-        val supportsMove = supportsDirectMove(sourceDirectory)
         val sourceArchive = File(sourceDirectory, "nested/chapter.cbz")
         val expectedBytes = sourceArchive.readBytes()
         val lastReadAt = System.currentTimeMillis() - 1_000L
@@ -450,22 +444,19 @@ class FileTransferFlowTest {
 
         val targetDirectory = File(destinationDirectory(), sourceDirectory.name)
         val targetArchive = File(targetDirectory, "nested/chapter.cbz")
-        assertEquals(!supportsMove, sourceDirectory.exists())
+        assertFalse(sourceDirectory.exists())
         assertArrayEquals(expectedBytes, targetArchive.readBytes())
 
-        val metadataDirectory = if (supportsMove) targetDirectory else sourceDirectory
-        val metadataArchive = if (supportsMove) targetArchive else sourceArchive
-        val otherArchive = if (supportsMove) sourceArchive else targetArchive
-        assertEquals(setOf(metadataDirectory.absolutePath), FavoritePathStore.favoriteDirectoryPaths(context))
-        assertEquals(setOf(metadataArchive.absolutePath), FavoriteComicStore.favoriteFilePaths(context))
+        assertEquals(setOf(targetDirectory.absolutePath), FavoritePathStore.favoriteDirectoryPaths(context))
+        assertEquals(setOf(targetArchive.absolutePath), FavoriteComicStore.favoriteFilePaths(context))
         val history = ReadingHistoryStore.items(context)
-        assertEquals(listOf(metadataArchive.absolutePath), history.map { it.file.absolutePath })
+        assertEquals(listOf(targetArchive.absolutePath), history.map { it.file.absolutePath })
         assertEquals(lastReadAt, history.single().lastReadAt)
-        assertEquals(4 to -91, ReaderProgressStore.readPositionAndOffset(context, metadataArchive))
-        assertEquals(setOf(metadataDirectory.absolutePath), AppSettings.bookcaseDirectoryPaths(context))
+        assertEquals(4 to -91, ReaderProgressStore.readPositionAndOffset(context, targetArchive))
+        assertEquals(setOf(targetDirectory.absolutePath), AppSettings.bookcaseDirectoryPaths(context))
         assertFalse(
             context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-                .all.keys.any { it.startsWith("reader:${otherArchive.absolutePath}:") }
+                .all.keys.any { it.startsWith("reader:${sourceArchive.absolutePath}:") }
         )
     }
 
@@ -619,6 +610,20 @@ class FileTransferFlowTest {
         assertEquals(100, FavoriteComicStore.merge(context, (deletedBooks + otherBooks).mapIndexed { index, file ->
             FavoriteComicStore.Item(file, index + 1L, file.length(), file.lastModified())
         }))
+        val keptComic = otherBooks.last()
+        (deletedBooks + listOf(keptComic, offlineBook)).forEach { ReadingHistoryStore.record(context, it) }
+        ReaderProgressStore.restoreReadingProgress(
+            context,
+            deletedBooks.first(),
+            ComicLabMangaProgress(deletedBooks.first().absolutePath, 2, -12)
+        )
+        ReaderProgressStore.restoreReadingProgress(
+            context,
+            keptComic,
+            ComicLabMangaProgress(keptComic.absolutePath, 5, -24)
+        )
+        EbookProgressStore.save(context, deletedBooks[1], EbookProgress(1, 0.4f))
+        EbookProgressStore.save(context, offlineBook, EbookProgress(3, 0.7f))
         check(offline.renameTo(parked))
         assertFalse(FavoritePathStore.isFavorite(context, offline))
         assertFalse(FavoriteComicStore.isFavorite(context, offlineBook))
@@ -636,6 +641,16 @@ class FileTransferFlowTest {
         assertFalse(root.exists())
         assertEquals(otherPaths.map { it.absolutePath }.toSet(), storedPaths("favorite_path_prefs", "favorite_paths"))
         assertEquals(otherBooks.map { it.absolutePath }.toSet(), storedPaths("favorite_comic_prefs", "favorite_comics"))
+        assertEquals(
+            setOf(keptComic.absolutePath, offlineBook.absolutePath),
+            storedPaths("reading_history_prefs", "reading_history")
+        )
+        assertFalse(
+            context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+                .all.keys.any { it.startsWith("reader:${deletedBooks.first().absolutePath}:") }
+        )
+        assertEquals(5 to -24, ReaderProgressStore.readPositionAndOffset(context, keptComic))
+        assertTrue(EbookProgressStore.exportSavedProgress(context, emptyList()).none { it.path.startsWith(root.absolutePath) })
         newPaths.take(3).forEach { assertEquals(FavoritePathStore.RecordResult.ADDED, FavoritePathStore.record(context, it)) }
         newBooks.take(3).forEach { assertEquals(FavoriteComicStore.RecordResult.ADDED, FavoriteComicStore.record(context, it)) }
         assertEquals(FavoritePathStore.RecordResult.LIMIT_REACHED, FavoritePathStore.record(context, newPaths.last()))
@@ -644,6 +659,8 @@ class FileTransferFlowTest {
         check(parked.renameTo(offline))
         assertTrue(FavoritePathStore.isFavorite(context, offline))
         assertTrue(FavoriteComicStore.isFavorite(context, offlineBook))
+        assertEquals(EbookProgress(3, 0.7f), EbookProgressStore.load(context, offlineBook))
+        assertEquals(listOf(offlineBook.absolutePath, keptComic.absolutePath).toSet(), ReadingHistoryStore.items(context).map { it.file.absolutePath }.toSet())
     }
 
     @Test
@@ -951,11 +968,10 @@ class FileTransferFlowTest {
     }
 
     @Test
-    fun cuttingEbookOnSharedStorageMovesProgressOnlyWhenSourceMoves() {
+    fun cuttingEbookOnSharedStorageMovesFileAndProgress() {
         val source = createEbookFixture(File(sandbox, SOURCE_DIRECTORY_NAME), "novel.txt")
         val progress = EbookProgress(0, 0.71f)
         EbookProgressStore.save(context, source, progress)
-        val supportsMove = supportsDirectMove(source)
 
         openDirectory(SOURCE_DIRECTORY_NAME)
         chooseFileAction(source.name, R.id.btnCutFile)
@@ -964,9 +980,9 @@ class FileTransferFlowTest {
         awaitTransferModeEnded()
         val target = File(destinationDirectory(), source.name)
         assertTrue(target.isFile)
-        assertEquals(!supportsMove, source.isFile)
-        assertEquals(progress, EbookProgressStore.load(context, if (supportsMove) target else source))
-        if (!supportsMove) assertNull(EbookProgressStore.load(context, target))
+        assertFalse(source.exists())
+        assertEquals(progress, EbookProgressStore.load(context, target))
+        assertNull(EbookProgressStore.load(context, source))
     }
 
     private fun pastePrivateCut(source: File, destination: File) {
@@ -1267,22 +1283,6 @@ class FileTransferFlowTest {
             SystemClock.sleep(POLL_INTERVAL_MS)
         }
         assertTrue(description, condition())
-    }
-
-    private fun supportsDirectMove(source: File): Boolean {
-        val probe = File(source.parentFile, ".cut-probe-${UUID.randomUUID()}")
-        val target = File(destinationDirectory(), probe.name)
-        if (source.isDirectory) check(probe.mkdir()) else check(probe.createNewFile())
-        return try {
-            when (TransferFileMove.move(probe, target)) {
-                TransferFileMove.Result.MOVED -> true
-                TransferFileMove.Result.UNAVAILABLE -> false
-                else -> error("Could not probe atomic move support with a temporary fixture")
-            }
-        } finally {
-            probe.delete()
-            target.delete()
-        }
     }
 
     private fun destinationDirectory(): File =

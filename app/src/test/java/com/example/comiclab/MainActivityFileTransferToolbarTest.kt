@@ -18,6 +18,7 @@ import androidx.core.content.ContextCompat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -160,7 +161,7 @@ class MainActivityFileTransferToolbarTest {
     }
 
     @Test
-    fun cutFallbackReportsRetainedSourceAndFinishesPaste() {
+    fun cutFallbackCompletesCleanMoveAndFinishesPaste() {
         val storageRoot = temporaryFolder.newFolder("cut-fallback-storage")
         val destination = File(storageRoot, "destination").apply { mkdir() }
         val source = File(storageRoot, "source.cbz").apply { writeText("comic bytes") }
@@ -173,8 +174,44 @@ class MainActivityFileTransferToolbarTest {
             startFilePaste(activity, source, FileTransferMode.CUT, destination)
             awaitFileTransfer(activity)
 
-            assertEquals("comic bytes", source.readText())
+            assertFalse(source.exists())
             assertEquals("comic bytes", File(destination, source.name).readText())
+            assertEquals(
+                activity.getString(R.string.file_cut_success),
+                ShadowToast.getTextOfLatestToast()
+            )
+            assertEquals(View.GONE, activity.findViewById<View>(R.id.btnPasteFile).visibility)
+        } finally {
+            controller.pause().stop().destroy()
+        }
+    }
+
+    @Test
+    fun retainedSourceDirectoryCallbackShowsMessageAndFinishesPaste() {
+        val storageRoot = temporaryFolder.newFolder("retained-directory-transfer-storage")
+        val destination = File(storageRoot, "destination").apply { mkdir() }
+        val sourceDirectory = File(storageRoot, "source").apply { mkdir() }
+        ShadowEnvironment.setExternalStorageDirectory(storageRoot.toPath())
+        prepareBrowserPreferences(destination)
+
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        try {
+            beginFileTransfer(activity, sourceDirectory, FileTransferMode.CUT)
+            val transferController = activity.fileTransferControllerForTest
+            val transfer = checkNotNull(transferController.pendingTransfer)
+            assertTrue(transferController.startPaste(transfer))
+            activity.updateFileTransferToolbarForTest()
+            activity.showFileOperationProgressForTest()
+
+            activity.handleDirectoryTransferFailureForTest(
+                transfer,
+                DirectoryTransferOperations.Result.COPIED_SOURCE_RETAINED,
+                destination
+            )
+
+            assertNull(transferController.pendingTransfer)
+            assertFalse(transferController.isTransferInProgress)
             assertEquals(
                 activity.getString(R.string.file_transfer_copied_source_retained),
                 ShadowToast.getTextOfLatestToast()

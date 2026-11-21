@@ -260,7 +260,7 @@ class DirectoryTransferOperationsTest {
     }
 
     @Test
-    fun cutFallbackPreservesFullSourceTreeAndCopiesItWithoutOverwriting() {
+    fun cutFallbackVerifiesCopyAndRemovesUnchangedSourceTreeWithoutOverwriting() {
         val source = temporaryFolder.newFolder("source").apply {
             File(this, "nested/empty").mkdirs()
             File(this, "nested/chapter.cbz").writeText("chapter data")
@@ -268,12 +268,17 @@ class DirectoryTransferOperationsTest {
         val destination = temporaryFolder.newFolder("destination")
         val target = File(destination, "Manga")
 
-        val result = DirectoryTransferOperations.transfer(source, destination, target.name, moveSource = true)
+        val result = DirectoryTransferOperations.transfer(
+            source,
+            destination,
+            target.name,
+            moveSource = true,
+            move = { _, _ -> TransferFileMove.Result.UNAVAILABLE }
+        )
 
-        assertEquals(DirectoryTransferOperations.Result.COPIED_SOURCE_RETAINED, result)
-        assertEquals("chapter data", File(source, "nested/chapter.cbz").readText())
+        assertEquals(DirectoryTransferOperations.Result.SUCCESS, result)
+        assertFalse(source.exists())
         assertEquals("chapter data", File(target, "nested/chapter.cbz").readText())
-        assertTrue(File(source, "nested/empty").isDirectory)
         assertTrue(File(target, "nested/empty").isDirectory)
         assertEquals(listOf(target.name), destination.list()?.toList())
     }
@@ -319,9 +324,9 @@ class DirectoryTransferOperationsTest {
             }
         )
 
-        assertEquals(DirectoryTransferOperations.Result.COPIED_SOURCE_RETAINED, result)
+        assertEquals(DirectoryTransferOperations.Result.SUCCESS, result)
         assertEquals("new content", checkNotNull(recreated).readText())
-        assertEquals("source data", File(source, "chapter.cbz").readText())
+        assertFalse(source.exists())
         assertEquals("source data", File(target, "chapter.cbz").readText())
     }
 
@@ -409,9 +414,39 @@ class DirectoryTransferOperationsTest {
         assertTrue(inserted)
         assertTrue("the new chapter must still exist", added.isFile)
         assertEquals("new chapter", added.readText())
+        assertEquals("chapter data", File(nested, "chapter.cbz").readText())
         assertEquals("chapter data", File(target, "nested/chapter.cbz").readText())
         assertFalse(File(target, "nested/added-by-sync.cbz").exists())
         assertEquals(DirectoryTransferOperations.Result.COPIED_SOURCE_RETAINED, result)
+    }
+
+    @Test
+    fun cutPreservesWholeSourceDirectoryWhenOneFileIsEditedInPlace() {
+        val source = temporaryFolder.newFolder("source")
+        val nested = File(source, "nested").apply { mkdir() }
+        val intact = File(nested, "a-intact.cbz").apply { writeText("intact") }
+        val edited = File(nested, "b-edited.cbz").apply { writeText("before") }
+        val destination = temporaryFolder.newFolder("destination")
+        val target = File(destination, "Manga")
+        var tampered = false
+
+        val result = DirectoryTransferOperations.transfer(source, destination, target.name, moveSource = true) {
+            if (!tampered && it.phase == FileOperationProgress.Phase.COPYING &&
+                it.currentItemName == source.name && it.completedItems == it.totalItems
+            ) {
+                val oldTime = edited.lastModified()
+                edited.writeText("update")
+                assertTrue(edited.setLastModified(oldTime))
+                tampered = true
+            }
+        }
+
+        assertTrue(tampered)
+        assertEquals(DirectoryTransferOperations.Result.COPIED_SOURCE_RETAINED, result)
+        assertEquals("intact", intact.readText())
+        assertEquals("update", edited.readText())
+        assertEquals("intact", File(target, "nested/a-intact.cbz").readText())
+        assertEquals("before", File(target, "nested/b-edited.cbz").readText())
     }
 
 }

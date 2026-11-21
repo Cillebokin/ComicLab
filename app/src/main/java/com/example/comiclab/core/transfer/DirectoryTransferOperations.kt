@@ -1,7 +1,6 @@
 package com.example.comiclab.core.transfer
 
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.Files
 
@@ -156,21 +155,31 @@ internal object DirectoryTransferOperations {
             ).toFile()
             stagingDirectory = staging
             val copyState = CopyState(summary, onProgress)
-            copyDirectoryContents(sourceDirectory, staging, copyState, isRoot = true)
+            val copiedSnapshot = CopiedTreeSnapshot()
+            copyDirectoryContents(sourceDirectory, staging, copyState, copiedSnapshot, isRoot = true)
             if (Thread.currentThread().isInterrupted) {
                 throw InterruptedException("Directory transfer interrupted")
             }
 
-            // 回退时不再遍历和删除实时源目录，第三方可能已经写入新内容。
             val publication = TransferFileMove.publish(staging, targetDirectory, move.takeIf { moveSource }) {
                 onProgress(FileOperationProgress(FileOperationProgress.Phase.PUBLISHING))
             }
             when (publication) {
                 TransferFileMove.Publication.MOVED -> {
                     stagingDirectory = null
-                    if (moveSource) Result.COPIED_SOURCE_RETAINED else Result.SUCCESS
+                    if (!moveSource || deleteVerifiedSources(sourceDirectory, copiedSnapshot, onProgress)) {
+                        Result.SUCCESS
+                    } else {
+                        Result.COPIED_SOURCE_RETAINED
+                    }
                 }
-                TransferFileMove.Publication.COPIED -> Result.COPIED_SOURCE_RETAINED
+                TransferFileMove.Publication.COPIED -> {
+                    if (!moveSource || deleteVerifiedSources(sourceDirectory, copiedSnapshot, onProgress)) {
+                        Result.SUCCESS
+                    } else {
+                        Result.COPIED_SOURCE_RETAINED
+                    }
+                }
                 TransferFileMove.Publication.TARGET_EXISTS -> Result.TARGET_EXISTS
                 TransferFileMove.Publication.INCOMPLETE -> Result.COPY_INCOMPLETE
                 TransferFileMove.Publication.FAILED -> Result.FAILED
@@ -195,11 +204,13 @@ internal object DirectoryTransferOperations {
         sourceDirectory: File,
         targetDirectory: File,
         state: CopyState,
+        snapshot: CopiedTreeSnapshot,
         isRoot: Boolean
     ) {
         val entries = sourceDirectory.listFiles()
             ?: throw IOException("Could not read source directory")
 
+        val recordedChildNames = HashSet<String>(entries.size)
         entries.forEach { sourceEntry ->
             if (Thread.currentThread().isInterrupted) {
                 throw InterruptedException("Directory transfer interrupted")
@@ -208,50 +219,105 @@ internal object DirectoryTransferOperations {
                 throw IOException("Symbolic links are not supported")
             }
 
+            recordedChildNames.add(sourceEntry.name)
             val targetEntry = File(targetDirectory, sourceEntry.name)
             when {
                 sourceEntry.isDirectory -> {
                     if (!targetEntry.mkdir()) {
                         throw IOException("Could not create target directory")
                     }
-                    copyDirectoryContents(sourceEntry, targetEntry, state, isRoot = false)
+                    copyDirectoryContents(sourceEntry, targetEntry, state, snapshot, isRoot = false)
                     state.recordItem(sourceEntry.name)
                 }
 
                 sourceEntry.isFile -> {
-                    copyFile(sourceEntry, targetEntry) { bytesCopied ->
+                    val fileSnapshot = TransferFileMove.copyFileWithDigest(
+                        sourceFile = sourceEntry,
+                        targetFile = targetEntry,
+                        interruptionMessage = "Directory transfer interrupted"
+                    ) { bytesCopied ->
                         state.recordBytes(bytesCopied, sourceEntry.name)
                     }
+                    snapshot.files.add(fileSnapshot)
                     state.recordItem(sourceEntry.name)
                 }
                 else -> throw IOException("Unsupported source entry")
             }
         }
 
+        // Post-order keeps nested directories before parents for non-recursive rmdir cleanup.
+        snapshot.directories.add(CopiedDirectorySnapshot(sourceDirectory, recordedChildNames))
         if (isRoot) {
             state.recordItem(sourceDirectory.name)
         }
     }
 
-    private fun copyFile(sourceFile: File, targetFile: File, onBytesCopied: (Long) -> Unit) {
-        sourceFile.inputStream().use { input ->
-            FileOutputStream(targetFile).use { output ->
-                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                while (true) {
-                    if (Thread.currentThread().isInterrupted) {
-                        throw InterruptedException("Directory transfer interrupted")
-                    }
-                    val count = input.read(buffer)
-                    if (count < 0) {
-                        break
-                    }
-                    output.write(buffer, 0, count)
-                    onBytesCopied(count.toLong())
-                }
-                output.flush()
-            }
+    private fun deleteVerifiedSources(
+        sourceDirectory: File,
+        snapshot: CopiedTreeSnapshot,
+        onProgress: (FileOperationProgress) -> Unit
+    ): Boolean {
+        if (Thread.currentThread().isInterrupted) return false
+        for (dirSnapshot in snapshot.directories) {
+            if (Thread.currentThread().isInterrupted) return false
+            val dir = dirSnapshot.directory
+            if (Files.isSymbolicLink(dir.toPath()) || !dir.isDirectory) return false
+            val currentNames = dir.listFiles()?.mapTo(HashSet()) { it.name } ?: return false
+            if (currentNames != dirSnapshot.childNames) return false
         }
+        for (fileSnapshot in snapshot.files) {
+            if (Thread.currentThread().isInterrupted) return false
+            if (!TransferFileMove.matchesMetadataAndContent(fileSnapshot)) return false
+        }
+
+        val totalItems = snapshot.files.size + snapshot.directories.size
+        var completedItems = 0
+        onProgress(
+            FileOperationProgress(
+                phase = FileOperationProgress.Phase.DELETING,
+                totalItems = totalItems,
+                currentItemName = sourceDirectory.name
+            )
+        )
+        for (fileSnapshot in snapshot.files) {
+            if (Thread.currentThread().isInterrupted || !TransferFileMove.matchesMetadata(fileSnapshot)) return false
+            if (!fileSnapshot.file.delete()) return false
+            completedItems++
+            onProgress(
+                FileOperationProgress(
+                    phase = FileOperationProgress.Phase.DELETING,
+                    completedItems = completedItems,
+                    totalItems = totalItems,
+                    currentItemName = fileSnapshot.file.name
+                )
+            )
+        }
+        for (dirSnapshot in snapshot.directories) {
+            if (Thread.currentThread().isInterrupted || Files.isSymbolicLink(dirSnapshot.directory.toPath())) return false
+            // File.delete on a directory uses rmdir and refuses if new files appeared concurrently.
+            if (!dirSnapshot.directory.delete()) return false
+            completedItems++
+            onProgress(
+                FileOperationProgress(
+                    phase = FileOperationProgress.Phase.DELETING,
+                    completedItems = completedItems,
+                    totalItems = totalItems,
+                    currentItemName = dirSnapshot.directory.name
+                )
+            )
+        }
+        return !sourceDirectory.exists()
     }
+
+    private class CopiedTreeSnapshot(
+        val files: MutableList<TransferFileMove.CopiedFileSnapshot> = mutableListOf(),
+        val directories: MutableList<CopiedDirectorySnapshot> = mutableListOf()
+    )
+
+    private data class CopiedDirectorySnapshot(
+        val directory: File,
+        val childNames: Set<String>
+    )
 
     private class CopyState(
         private val summary: DirectoryFileTree.Summary,

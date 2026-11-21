@@ -107,6 +107,23 @@ object ReadingHistoryStore {
         saveStoredItems(context, updatedItems, storedItems)
     }
 
+    internal fun removeDirectory(context: Context, directory: File) {
+        val storedItems = readStoredItems(context) ?: return
+        val path = directory.absolutePath
+        val removedItems = mutableListOf<StoredItem>()
+        val updatedItems = storedItems.filter { item ->
+            val inDirectory = BookcaseFolderPaths.isPathInDirectory(item.path, path)
+            if (inDirectory) removedItems += item
+            !inDirectory
+        }
+        if (removedItems.isNotEmpty()) {
+            saveStoredItems(context, updatedItems)
+            removedItems.forEach { item ->
+                EbookProgressStore.removeForFileIdentity(context, File(item.path), item.fileSize, item.modifiedAt)
+            }
+        }
+    }
+
     /**
      * 重命名单个文件后迁移历史记录。路径完全匹配时 remapPath 返回新路径，
      * 冲突时保留阅读时间较新的记录（决策 D3）。

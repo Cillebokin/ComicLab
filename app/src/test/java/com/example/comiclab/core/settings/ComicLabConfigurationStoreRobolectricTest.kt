@@ -618,5 +618,64 @@ class ComicLabConfigurationStoreRobolectricTest {
         } finally { root.deleteRecursively() }
     }
 
+    @Test
+    fun exportIncludesPendingQueuedProgressAndHidesClearedProgress() {
+        val root = tempDirectory("comiclab-config-export-pending")
+        try {
+            val queuedBook = File(root, "queued.cbz").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+            val clearedBook = File(root, "cleared.cbz").apply { writeBytes(byteArrayOf(4, 5, 6)) }
+            lateinit var queuedWrite: ReaderProgressStore.PreparedWrite
+            ReaderProgressStore.enqueueSave(
+                context,
+                ReaderProgressStore.readerArchiveKey(queuedBook),
+                position = 6,
+                offset = -32,
+                coveredPosition = 7
+            ) { queuedWrite = it }
+
+            lateinit var blockedWrite: ReaderProgressStore.PreparedWrite
+            val original = context.getSharedPreferences("reader_prefs", 0)
+            val commitStarted = java.util.concurrent.CountDownLatch(1)
+            val finishCommit = java.util.concurrent.CountDownLatch(1)
+            val blockingPrefs = object : android.content.SharedPreferences by original {
+                override fun edit(): android.content.SharedPreferences.Editor {
+                    val editor = original.edit()
+                    return object : android.content.SharedPreferences.Editor by editor {
+                        override fun putInt(key: String, value: Int): android.content.SharedPreferences.Editor {
+                            editor.putInt(key, value)
+                            return this
+                        }
+
+                        override fun commit(): Boolean {
+                            commitStarted.countDown()
+                            check(finishCommit.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                            return editor.commit()
+                        }
+                    }
+                }
+            }
+            blockedWrite = ReaderProgressStore.prepareSave(blockingPrefs, clearedBook, position = 4, offset = -12)
+            val writer = java.util.concurrent.FutureTask { blockedWrite.commit() }
+            Thread(writer).apply { isDaemon = true }.start()
+            try {
+                assertTrue(commitStarted.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                ReaderProgressStore.clearSavedReadingProgress(context, clearedBook)
+
+                val exported = ComicLabConfigurationStore.export(context)
+
+                assertEquals(
+                    listOf(ComicLabMangaProgress(queuedBook.absolutePath, 6, -32, coveredPosition = 7)),
+                    exported.mangaReadingProgress
+                )
+            } finally {
+                finishCommit.countDown()
+                assertFalse(writer.get(5, java.util.concurrent.TimeUnit.SECONDS))
+            }
+            assertTrue(queuedWrite.commit())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun tempDirectory(prefix: String): File = Files.createTempDirectory(prefix).toFile()
 }
