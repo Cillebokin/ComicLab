@@ -6,10 +6,13 @@ import android.graphics.Bitmap
 import android.graphics.Rect
 import android.graphics.drawable.BitmapDrawable
 import android.os.Looper
+import android.view.View
 import android.view.ViewGroup
+import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.AppSettings
 import com.example.comiclab.ComicArchive
+import com.example.comiclab.R
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.PriorityBlockingQueue
@@ -777,6 +780,51 @@ class MangaPageAdapterTest {
         } finally {
             closeAndAwait(adapter, session)
             decodedBitmaps.forEach { bitmap -> bitmap.takeUnless(Bitmap::isRecycled)?.recycle() }
+        }
+    }
+
+    @Test
+    fun unusablePdfPageReplacesItsBoundPlaceholderWithoutHidingTheNextPreview() {
+        val context = RuntimeEnvironment.getApplication()
+        val session = FakeReaderSession(
+            pdfSource = true,
+            boundsReader = { ComicArchive.ImageBounds(640, 960) },
+            previewDecoder = { name ->
+                if (name == "good.pdf") Bitmap.createBitmap(64, 96, Bitmap.Config.ARGB_8888) else null
+            }
+        )
+        val recyclerView = object : RecyclerView(context) {
+            var holder: MangaPageAdapter.PageViewHolder? = null
+            override fun findViewHolderForAdapterPosition(position: Int): ViewHolder? =
+                holder?.takeIf { it.boundPosition == position }
+        }
+        val adapter = newAdapter(session, listOf("bad.pdf", "good.pdf"), recyclerView = recyclerView)
+        val holder = createHolder(adapter, recyclerView)
+        recyclerView.holder = holder
+        val failureText = context.getString(R.string.reader_page_load_failed)
+
+        fun showsFailure(): Boolean = (0 until holder.container.childCount)
+            .mapNotNull { holder.container.getChildAt(it) as? TextView }
+            .any { it.visibility == View.VISIBLE && it.text.toString() == failureText }
+
+        try {
+            bind(adapter, holder, 0)
+            adapter.preloadAround(0, 1, isIdle = true, isDiscreteJump = true)
+            assertTrue("both visible decode paths should be tried", awaitCondition {
+                session.previewWidths.any { it.first == "bad.pdf" } && "bad.pdf" in session.fullReads
+            })
+            assertTrue("the already bound bad page should show an error", awaitCondition(::showsFailure))
+
+            recycle(adapter, holder)
+            bind(adapter, holder, 1)
+            adapter.preloadAround(1, 1, isIdle = true, isDiscreteJump = true)
+            assertFalse("the bad page's message must clear when its holder is reused", showsFailure())
+            assertTrue("a readable preview must survive a failed full decode", awaitCondition {
+                "good.pdf" in session.fullReads && holder.imageView.drawable != null
+            })
+            assertFalse(showsFailure())
+        } finally {
+            closeAndAwait(adapter, session)
         }
     }
 

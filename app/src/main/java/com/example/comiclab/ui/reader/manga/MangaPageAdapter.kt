@@ -16,6 +16,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import androidx.appcompat.widget.AppCompatImageView
 import com.example.comiclab.AppSettings
@@ -276,9 +277,24 @@ internal class MangaPageAdapter(
             visibility = View.GONE
             clipChildren = true
         }
+        val statusText = TextView(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                if (isHorizontalReading()) Gravity.CENTER else Gravity.TOP
+            )
+            setText(R.string.reader_page_load_failed)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            val padding = (12 * resources.displayMetrics.density).roundToInt()
+            setPadding(padding, padding, padding, padding)
+            textSize = 14f
+            visibility = View.GONE
+        }
         container.addView(imageView)
         container.addView(tileContainer)
-        return PageViewHolder(container, imageView, tileContainer).also { holder ->
+        container.addView(statusText)
+        return PageViewHolder(container, imageView, tileContainer, statusText).also { holder ->
             holderForDraw = holder
             holder.container.onTap = onPageTap
             holder.container.onZoomThresholdChanged = { isActive ->
@@ -376,6 +392,7 @@ internal class MangaPageAdapter(
         holder.container.resetZoom()
         holder.imageView.setImageDrawable(null)
         holder.tileContainer.removeAllViews()
+        holder.statusText.visibility = View.GONE
         super.onViewRecycled(holder)
     }
 
@@ -824,6 +841,7 @@ internal class MangaPageAdapter(
         sourcePosition: Int,
         adapterPosition: Int
     ) {
+        holder.statusText.visibility = View.GONE
         val bounds = pageBounds[sourcePosition]
         val isTiled = sourcePosition in tiledPages && bounds != null
         if (isTiled) {
@@ -848,7 +866,12 @@ internal class MangaPageAdapter(
             return
         }
 
-        startPdfPlaceholder(holder, sourcePosition)
+        if (pageDecodeFailed(sourcePosition)) {
+            finishPdfPlaceholder(holder, sourcePosition, "abandoned", "decode_failed")
+            holder.statusText.visibility = View.VISIBLE
+        } else {
+            startPdfPlaceholder(holder, sourcePosition)
+        }
         bindPlaceholder(holder, adapterPosition, bounds)
     }
 
@@ -909,6 +932,7 @@ internal class MangaPageAdapter(
 
     private fun bindBlankPage(holder: PageViewHolder) {
         finishPdfPlaceholder(holder, outcome = "abandoned", source = "blank_slot")
+        holder.statusText.visibility = View.GONE
         holder.tileContainer.visibility = View.GONE
         holder.tileContainer.removeAllViews()
         holder.imageView.visibility = View.VISIBLE
@@ -1371,8 +1395,8 @@ internal class MangaPageAdapter(
 
                 if (skippedStalePreview) return@submitTask
                 if (bitmap == null) {
-                    if (isPdfSource || !isPreload) {
-                        failedPreviewPages.add(position)
+                    if ((isPdfSource || !isPreload) && failedPreviewPages.add(position)) {
+                        refreshFailedPage(position)
                     }
                     return@submitTask
                 }
@@ -1520,12 +1544,7 @@ internal class MangaPageAdapter(
                         ?.also { pageBounds[position] = it }
 
                 if (bounds == null) {
-                    if (isPdfSource || !isPreload) {
-                        failedFullPages.add(position)
-                    }
-                    if (isPdfSource && !isPreload) {
-                        pdfFullFailureRetryUsedPages.add(position)
-                    }
+                    markFullPageFailed(position, isPreload)
                     return@submitTask
                 }
 
@@ -1632,12 +1651,7 @@ internal class MangaPageAdapter(
                 }
 
                 if (bitmap == null) {
-                    if (isPdfSource || !isPreload) {
-                        failedFullPages.add(position)
-                    }
-                    if (isPdfSource && !isPreload) {
-                        pdfFullFailureRetryUsedPages.add(position)
-                    }
+                    markFullPageFailed(position, isPreload)
                     return@submitTask
                 }
 
@@ -1939,6 +1953,22 @@ internal class MangaPageAdapter(
             } finally {
                 loadingTiles.remove(key)
             }
+        }
+    }
+
+    private fun pageDecodeFailed(position: Int): Boolean =
+        position in failedPreviewPages && position in failedFullPages
+
+    private fun refreshFailedPage(position: Int) {
+        if (pageDecodeFailed(position)) requestItemRefresh(position, immediate = true)
+    }
+
+    private fun markFullPageFailed(position: Int, isPreload: Boolean) {
+        if (isPdfSource && !isPreload) {
+            pdfFullFailureRetryUsedPages.add(position)
+        }
+        if ((isPdfSource || !isPreload) && failedFullPages.add(position)) {
+            refreshFailedPage(position)
         }
     }
 
@@ -2865,7 +2895,8 @@ internal class MangaPageAdapter(
     internal class PageViewHolder(
         val container: ReaderPageZoomLayout,
         val imageView: ImageView,
-        val tileContainer: FrameLayout
+        val tileContainer: FrameLayout,
+        val statusText: TextView
     ) : RecyclerView.ViewHolder(container) {
         var boundPosition: Int = RecyclerView.NO_POSITION
         var pdfPlaceholderPosition: Int = RecyclerView.NO_POSITION

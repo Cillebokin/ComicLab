@@ -395,6 +395,48 @@ class MangaReaderPhase5DeviceAcceptanceTest {
     }
 
     @Test
+    fun directlyReadArchiveShowsBadPageAndCanContinueToTheNextPage() {
+        val archive = File(temporaryFolder.root, "partly-damaged.cbz")
+        ZipOutputStream(archive.outputStream()).use { zip ->
+            for (index in 0..2) {
+                zip.putNextEntry(ZipEntry("page_${index + 1}.png"))
+                zip.write(if (index == 1) byteArrayOf(1, 2, 3) else createPagePng(index))
+                zip.closeEntry()
+            }
+        }
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_LEFT_TO_RIGHT)
+        AppSettings.setDoublePageReadingEnabled(context, false)
+        val reader = launchReader(archive)
+        assertEquals(3, onMain { reader.imageEntriesForTest.size })
+
+        onMain { reader.jumpReaderToPageForTest(1) }
+        awaitCondition("the unreadable source page should show a failure message") {
+            onMain {
+                val holder = reader.listReaderPagesForTest.findViewHolderForAdapterPosition(1)
+                    as? com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder
+                holder?.let {
+                    (0 until it.container.childCount).any { index ->
+                        val text = it.container.getChildAt(index) as? TextView
+                        text != null && text.isShown &&
+                            text.text.toString() == context.getString(R.string.reader_page_load_failed)
+                    }
+                } == true
+            }
+        }
+
+        onMain { reader.jumpReaderToPageForTest(2) }
+        awaitCondition("the next healthy page should still render") {
+            onMain {
+                val holder = reader.listReaderPagesForTest.findViewHolderForAdapterPosition(2)
+                    as? com.example.comiclab.ui.reader.manga.MangaPageAdapter.PageViewHolder
+                holder?.imageView?.drawable != null && reader.currentReaderPositionForTest == 2
+            }
+        }
+        assertReaderProgress(reader, page = 3, total = 3)
+        finishReader(reader)
+    }
+
+    @Test
     fun previewAndPreparedReaderOpenGbkAndUtf8EntryNames() {
         val entries = listOf("漫画/第2页.png", "漫画/第10页.png")
         AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_LEFT_TO_RIGHT)
