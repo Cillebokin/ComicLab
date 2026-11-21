@@ -102,6 +102,32 @@ class ArchiveEntryListerTest {
         }
     }
 
+    @Test fun gbkFallbackTriggersWhenUtf8DecoderReplacesMalformedBytesWithoutThrowing() {
+        val gbkArchive = zip("漫画/第10页.png", "漫画/第2页.png", charset = Charset.forName("GBK"))
+        val replacementStandIn = zip(
+            "\uFFFD\uFFFD/\uFFFD2\uFFFD.png",
+            "\uFFFD\uFFFD/\uFFFD10\uFFFD.png",
+            charset = Charsets.UTF_8
+        )
+        var replacementClosed = false
+        val opened = openComicZip(gbkArchive) {
+            object : java.util.zip.ZipFile(replacementStandIn, Charsets.UTF_8) {
+                override fun close() {
+                    replacementClosed = true
+                    super.close()
+                }
+            }
+        }
+        opened.use { zipFile ->
+            assertTrue("UTF-8 ZipFile with replacement chars should be closed before fallback", replacementClosed)
+            assertEquals(
+                listOf("漫画/第2页.png", "漫画/第10页.png"),
+                ArchiveEntryLister.imageEntryNames(zipFile.entries().asSequence().map { it.name })
+            )
+            assertNotNull(zipFile.getEntry("漫画/第2页.png"))
+        }
+    }
+
     @Test fun firstNaturallySortedFileMustBeImage() {
         assertNull(ComicArchive.firstImageEntryIfFirstFileIsImage(zip("0.txt", "1.jpg", "000/")))
         assertEquals("2.jpg", ComicArchive.firstImageEntryIfFirstFileIsImage(zip("10.txt", "2.jpg", "1/")))

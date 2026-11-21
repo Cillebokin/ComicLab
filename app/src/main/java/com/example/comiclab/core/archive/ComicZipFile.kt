@@ -6,30 +6,43 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipException
 import java.util.zip.ZipFile
 
-internal fun openComicZip(file: File): ZipFile {
-    val utf8Failure = try {
-        val zip = ZipFile(file, Charsets.UTF_8)
-        zip.readDirectoryOrClose {
-            // Some Android versions defer decoding names until entries are enumerated.
+private const val UNICODE_REPLACEMENT_CHAR = '\uFFFD'
+
+internal fun openComicZip(
+    file: File,
+    openUtf8: (File) -> ZipFile = { ZipFile(it, Charsets.UTF_8) }
+): ZipFile {
+    var utf8Failure: Throwable? = null
+    try {
+        val zip = openUtf8(file)
+        val hasReplacementName = zip.readDirectoryOrClose {
+            // Some Android versions defer decoding names until entries are enumerated,
+            // and Android 15 replaces invalid UTF-8 bytes with U+FFFD instead of throwing.
             val entries = zip.entries()
+            var hasReplacement = false
             while (entries.hasMoreElements()) {
-                entries.nextElement()
+                if (UNICODE_REPLACEMENT_CHAR in entries.nextElement().name) {
+                    hasReplacement = true
+                    break
+                }
             }
+            hasReplacement
         }
-        return zip
+        if (!hasReplacementName) return zip
+        runCatching { zip.close() }
     } catch (failure: ZipException) {
         if (failure.message?.contains("bad entry name", ignoreCase = true) != true) {
             throw failure
         }
-        failure
+        utf8Failure = failure
     } catch (failure: IllegalArgumentException) {
-        failure
+        utf8Failure = failure
     }
 
     try {
         return GbkComicZipFile(file)
     } catch (failure: Exception) {
-        failure.addSuppressed(utf8Failure)
+        utf8Failure?.let(failure::addSuppressed)
         throw failure
     }
 }
