@@ -243,8 +243,8 @@ object ComicArchive {
     fun preparedImageFile(directory: File, index: Int, entryName: String): File =
         PreparedArchiveExtractor.preparedImageFile(directory, index, entryName)
 
-    fun imageFileBounds(file: File): ImageBounds? =
-        PreparedArchiveExtractor.imageFileBounds(file)?.let { ImageBounds(it.width, it.height) }
+    internal fun preparedImageDisplayBounds(file: File): ImageBounds? =
+        PreparedArchiveExtractor.preparedImageDisplayBounds(file)?.let { ImageBounds(it.width, it.height) }
 
     fun validatePreparedImageFile(file: File): Boolean =
         PreparedArchiveExtractor.validatePreparedImageFile(file)

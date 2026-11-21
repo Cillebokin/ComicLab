@@ -10,6 +10,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
+import android.media.ExifInterface
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.InputDevice
@@ -43,6 +44,7 @@ import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.ui.reader.manga.ReaderDoublePageSnapHelper
 import com.example.comiclab.ui.reader.manga.ReaderPageZoomLayout
 import com.example.comiclab.ui.reader.manga.ReaderSubsamplingImageView
+import com.example.comiclab.ui.reader.manga.SubsamplingMangaPageAdapter
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -53,6 +55,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlin.math.roundToInt
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -1042,6 +1045,142 @@ class MangaReaderPhase5DeviceAcceptanceTest {
     }
 
     @Test
+    fun verticalPreparedReaderFitsRotatedPagesBeforeAndAfterLazyExtraction() {
+        val archive = createExifReaderArchive("vertical-exif.cbz")
+        val cache = temporaryFolder.newFolder("vertical-exif-cache")
+        val entries = ComicArchive.imageEntries(archive)
+        ComicArchive.writePreparedReaderManifest(cache, entries)
+        assertEquals(
+            1,
+            ComicArchive.extractPreparedImagesToDirectory(
+                archive,
+                listOf(ComicArchive.PreparedImageEntry(0, entries[0])),
+                cache,
+                onProgress = { _, _ -> }
+            ).size
+        )
+        val lazyPage = ComicArchive.preparedImageFile(cache, 2, entries[2])
+        assertFalse(lazyPage.exists())
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_TOP_TO_BOTTOM)
+        AppSettings.setDoublePageReadingEnabled(context, false)
+
+        val previous = launchReader(archive, preparedCacheDirectory = cache)
+        val reader = if (onMain { previous.resources.configuration.orientation } == Configuration.ORIENTATION_PORTRAIT) {
+            previous
+        } else {
+            onMain { previous.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
+            awaitReadyReader(previous)
+        }
+        assertEquals(RecyclerView.VERTICAL, onMain { reader.readerLayoutManagerForTest.orientation })
+
+        assertExifPageGeometry(reader, sourcePosition = 0, rotation = 90, vertical = true)
+        onMain { reader.jumpReaderToPageForTest(1) }
+        assertExifPageGeometry(reader, sourcePosition = 1, rotation = 0, vertical = true)
+        onMain { reader.jumpReaderToPageForTest(2) }
+        assertExifPageGeometry(reader, sourcePosition = 2, rotation = 270, vertical = true)
+        assertTrue(lazyPage.isFile)
+        finishReader(reader)
+    }
+
+    @Test
+    fun landscapePreparedReaderFitsExifPagesAndKeepsAdjacentSpreads() {
+        val archive = createExifReaderArchive("landscape-exif.cbz")
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_LEFT_TO_RIGHT)
+        AppSettings.setDoublePageReadingEnabled(context, true)
+        AppSettings.setDoublePageCoverSingleEnabled(context, false)
+
+        val preview = launchPreviewWithPageCount(archive, pageCount = 4)
+        onMain { check(preview.findViewById<View>(R.id.btnFullRead).performClick()) }
+        val previous = awaitReadyReader()
+        val reader = if (onMain { previous.resources.configuration.orientation } == Configuration.ORIENTATION_LANDSCAPE) {
+            previous
+        } else {
+            onMain { previous.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+            awaitReadyReader(previous)
+        }
+        assertTrue(onMain { reader.listReaderPagesForTest.onFlingListener is ReaderDoublePageSnapHelper })
+
+        assertExifPageGeometry(reader, sourcePosition = 0, rotation = 90, vertical = false)
+        assertExifPageGeometry(reader, sourcePosition = 1, rotation = 0, vertical = false)
+        assertEquals(listOf(0, 1), visibleSourcePositions(reader))
+        awaitCondition("reader toolbar did not hide") {
+            onMain { !reader.findViewById<View>(R.id.layoutReaderToolbar).isShown }
+        }
+        onView(withId(R.id.listReaderPages)).perform(
+            GeneralSwipeAction(
+                Swipe.FAST,
+                GeneralLocation.translate(GeneralLocation.CENTER, 0.37f, -0.33f),
+                GeneralLocation.translate(GeneralLocation.CENTER, -0.37f, -0.33f),
+                Press.FINGER
+            )
+        )
+        try {
+            awaitCondition("the reader did not snap to the adjacent spread") {
+                onMain { reader.listReaderPagesForTest.scrollState == RecyclerView.SCROLL_STATE_IDLE } &&
+                    visibleSourcePositions(reader) == listOf(2, 3)
+            }
+        } catch (failure: AssertionError) {
+            throw AssertionError("After horizontal swipe: ${readerPositionSnapshot(reader)}; " +
+                "visible=${visibleSourcePositions(reader)}", failure)
+        }
+        assertExifPageGeometry(reader, sourcePosition = 2, rotation = 270, vertical = false)
+        assertExifPageGeometry(reader, sourcePosition = 3, rotation = 180, vertical = false)
+        assertEquals(listOf(2, 3), visibleSourcePositions(reader))
+        finishReader(reader)
+    }
+
+    private data class ExifPageGeometry(
+        val containerWidth: Int,
+        val containerHeight: Int,
+        val imageWidth: Int,
+        val imageHeight: Int,
+        val rotation: Int,
+        val scale: Float
+    )
+
+    private fun assertExifPageGeometry(
+        reader: MangaReaderActivity,
+        sourcePosition: Int,
+        rotation: Int,
+        vertical: Boolean
+    ) {
+        var geometry: ExifPageGeometry? = null
+        awaitCondition("source page $sourcePosition did not become visible and decode") {
+            if (sourcePosition !in visibleSourcePositions(reader)) return@awaitCondition false
+            geometry = onMain {
+                val adapterPosition = reader.readerPagePositionMapperForTest(reader.imageEntriesForTest.size)
+                    .adapterPositionForSourcePosition(sourcePosition)
+                val holder = reader.listReaderPagesForTest.findViewHolderForAdapterPosition(adapterPosition)
+                    as? SubsamplingMangaPageAdapter.PageViewHolder ?: return@onMain null
+                val image = holder.imageView
+                if (!image.hasLoadedReaderImage() || holder.container.isLayoutRequested ||
+                    image.isLayoutRequested || image.scale <= 0f
+                ) return@onMain null
+                ExifPageGeometry(
+                    holder.container.width, holder.container.height,
+                    image.width, image.height, image.appliedOrientation, image.scale
+                )
+            }
+            geometry != null
+        }
+        val page = checkNotNull(geometry)
+        val swapAxes = rotation == 90 || rotation == 270
+        val uprightWidth = if (swapAxes) 300f else 600f
+        val uprightHeight = if (swapAxes) 600f else 300f
+        val scale = if (vertical) {
+            page.containerWidth / uprightWidth
+        } else {
+            minOf(page.containerWidth / uprightWidth, page.containerHeight / uprightHeight)
+        }
+        val label = "source page ${sourcePosition + 1} ($rotation degrees)"
+        assertEquals("$label renderer rotation", rotation, page.rotation)
+        if (vertical) assertEquals("$label vertical page height", (uprightHeight * scale).roundToInt(), page.containerHeight)
+        assertEquals("$label image width", (uprightWidth * scale).roundToInt(), page.imageWidth)
+        assertEquals("$label image height", (uprightHeight * scale).roundToInt(), page.imageHeight)
+        assertEquals("$label fit scale", scale, page.scale, 0.01f)
+    }
+
+    @Test
     fun preparedImagePathKeepsCacheAcrossRotationAndDeletesItAfterExit() {
         val archive = createArchive("prepared-reader.cbz", pageCount = 12)
         val cacheDirectory = File(temporaryFolder.root, "prepared-reader-cache").apply { mkdirs() }
@@ -1232,6 +1371,36 @@ class MangaReaderPhase5DeviceAcceptanceTest {
 
     private fun awaitExecutor(executor: ExecutorService) {
         assertTrue("previous Activity progress writer did not drain", executor.awaitTermination(10, TimeUnit.SECONDS))
+    }
+
+    private fun createExifReaderArchive(name: String): File {
+        val jpeg = File(temporaryFolder.root, "exif-page.jpg")
+        val archive = File(temporaryFolder.root, name)
+        val orientations = listOf(
+            ExifInterface.ORIENTATION_ROTATE_90,
+            ExifInterface.ORIENTATION_NORMAL,
+            ExifInterface.ORIENTATION_ROTATE_270,
+            ExifInterface.ORIENTATION_ROTATE_180
+        )
+        val bitmap = Bitmap.createBitmap(600, 300, Bitmap.Config.ARGB_8888)
+        try {
+            ZipOutputStream(archive.outputStream()).use { zip ->
+                orientations.forEachIndexed { index, orientation ->
+                    bitmap.eraseColor(Color.rgb(30 + index * 40, 80, 160))
+                    jpeg.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.JPEG, 100, it)) }
+                    ExifInterface(jpeg.absolutePath).apply {
+                        setAttribute(ExifInterface.TAG_ORIENTATION, orientation.toString())
+                        saveAttributes()
+                    }
+                    zip.putNextEntry(ZipEntry("page_${index + 1}.jpg"))
+                    jpeg.inputStream().use { it.copyTo(zip) }
+                    zip.closeEntry()
+                }
+            }
+        } finally {
+            bitmap.recycle()
+        }
+        return archive
     }
 
     private fun createArchive(name: String, pageCount: Int, metadataEntries: List<String> = emptyList()): File {

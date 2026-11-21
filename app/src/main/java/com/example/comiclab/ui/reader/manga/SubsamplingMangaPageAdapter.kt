@@ -626,10 +626,10 @@ internal class SubsamplingMangaPageAdapter(
             }
 
             if (extractedFile != null && extractedFile.isFile && extractedFile.length() > 0L) {
-                readyPositions.add(position)
-                ComicArchive.imageFileBounds(extractedFile)?.let { bounds ->
+                ComicArchive.preparedImageDisplayBounds(extractedFile)?.let { bounds ->
                     pageBounds[position] = bounds
                 }
+                readyPositions.add(position)
                 notifyPageFileChanged(position, ready = true)
             } else {
                 markPageFailed(position)

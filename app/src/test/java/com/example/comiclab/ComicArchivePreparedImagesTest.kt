@@ -300,7 +300,7 @@ class ComicArchivePreparedImagesTest {
             assertEquals(ComicArchive.ImageBounds(30, 60), session.readBounds(files[1].name))
             assertEquals(null, session.readBounds("same.png"))
         }
-        assertEquals(ComicArchive.ImageBounds(30, 60), ComicArchive.imageFileBounds(files[1]))
+        assertEquals(ComicArchive.ImageBounds(30, 60), ComicArchive.preparedImageDisplayBounds(files[1]))
     }
 
     @Test

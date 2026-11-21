@@ -818,7 +818,7 @@ class MangaReaderActivity : AppCompatActivity() {
             val hasPreparedPage = intactPreparedFiles.any { it }
             val boundsByPosition = pageFiles.mapIndexedNotNull { index, imageFile ->
                 if (intactPreparedFiles[index]) {
-                    ComicArchive.imageFileBounds(imageFile)?.let { index to it }
+                    ComicArchive.preparedImageDisplayBounds(imageFile)?.let { index to it }
                 } else {
                     null
                 }

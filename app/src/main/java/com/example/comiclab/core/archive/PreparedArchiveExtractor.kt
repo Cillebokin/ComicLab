@@ -2,6 +2,7 @@ package com.example.comiclab.core.archive
 
 import android.graphics.Bitmap
 import android.graphics.Rect
+import androidx.exifinterface.media.ExifInterface
 import com.example.comiclab.core.archive.ArchiveImageDecoder.decodeFileBitmap
 import com.example.comiclab.core.archive.ArchiveImageDecoder.decodeRegionForWidth
 import com.example.comiclab.core.archive.ArchiveImageDecoder.calculateInSampleSizeForWidth
@@ -109,8 +110,24 @@ internal object PreparedArchiveExtractor {
         return File(directory, preparedImageFileName(index, entryName))
     }
 
-    fun imageFileBounds(file: File): ArchiveReaderSessionBounds? {
-        return decodeFileBounds(file)
+    fun preparedImageDisplayBounds(file: File): ArchiveReaderSessionBounds? {
+        val bounds = decodeFileBounds(file) ?: return null
+        if (bounds.width == bounds.height) return bounds
+
+        // Match SubsamplingScaleImageView's file orientation support for prepared pages.
+        val orientation = try {
+            ExifInterface(file.absolutePath).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL
+            )
+        } catch (_: Exception) {
+            ExifInterface.ORIENTATION_NORMAL
+        }
+        return when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90, ExifInterface.ORIENTATION_ROTATE_270 ->
+                ArchiveReaderSessionBounds(bounds.height, bounds.width)
+            else -> bounds
+        }
     }
 
     fun validatePreparedImageFile(file: File): Boolean {
