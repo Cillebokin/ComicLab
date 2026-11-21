@@ -53,7 +53,7 @@ class ReaderProgressStoreRobolectricTest {
 
         assertTrue(ComicArchive.deleteImagePage(context, file, "page-1.png"))
         assertEquals(
-            ComicLabMangaProgress(file.absolutePath, 1, -37, coveredPosition = 2),
+            ComicLabMangaProgress(file.absolutePath, 1, -37, coveredPosition = 2, totalCount = 4),
             ReaderProgressStore.savedReadingProgress(context, file)
         )
         assertFalse(queued.commit())
@@ -64,10 +64,31 @@ class ReaderProgressStoreRobolectricTest {
         assertTrue(ComicArchive.deleteImagePage(context, file, "page-3.png"))
         assertEquals(expectedEntry, ComicArchive.imageEntries(file)[1])
         assertEquals(
-            ComicLabMangaProgress(file.absolutePath, 1, -37, coveredPosition = 1),
+            ComicLabMangaProgress(file.absolutePath, 1, -37, coveredPosition = 1, totalCount = 3),
             ReaderProgressStore.savedReadingProgress(context, file)
         )
         assertEquals(2, ReaderProgressStore.savedReadingPageCount(context, file, 3))
+        assertEquals(3, ReaderProgressStore.savedTotalPageCount(context, file))
+    }
+
+    @Test
+    fun totalPageCountPersistsPreservesOnPartialSaveAndSurvivesMove() {
+        val file = archiveWithPages("total-count.cbz", 12)
+        val moved = File(temporaryFolder.root, "renamed-total-count.cbz")
+        ReaderProgressStore.prepareSave(context, file, 3, -10, coveredPosition = 4, totalCount = 12).commit()
+        assertEquals(12, ReaderProgressStore.savedTotalPageCount(context, file))
+
+        // Saving without totalCount preserves the known total for the same archive identity.
+        ReaderProgressStore.prepareSave(context, file, 5, 0).commit()
+        assertEquals(12, ReaderProgressStore.savedTotalPageCount(context, file))
+
+        assertTrue(file.renameTo(moved))
+        ReaderProgressStore.moveFile(context, file, moved)
+        assertEquals(12, ReaderProgressStore.savedTotalPageCount(context, moved))
+        assertEquals(
+            ComicLabMangaProgress(moved.absolutePath, 5, 0, totalCount = 12),
+            ReaderProgressStore.savedReadingProgress(context, moved)
+        )
     }
 
     @Test

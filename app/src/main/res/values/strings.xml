@@ -430,6 +430,7 @@
     <string name="double_page_requires_landscape">双页模式仅支持设备横屏使用</string>
     <string name="double_page_cover_single">双页模式封面单页</string>
     <string name="file_browser">文件浏览</string>
+    <string name="show_file_reading_progress">显示文件阅读进度条</string>
     <string name="start_marker_error_tags">特征标记错误标识</string>
     <string name="start_marker_error_tags_empty_hint">允许为空</string>
     <string name="reader_controls">阅读控制</string>

@@ -4,12 +4,27 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.example.comiclab.core.settings.ComicLabEbookProgress
 import com.example.comiclab.ebook.EbookProgress
+import com.example.comiclab.ebook.EbookReaderProgressMapper
 import com.example.comiclab.ebook.ReaderFileDetector
 import java.io.File
 import java.nio.file.Files
 import java.security.MessageDigest
 
 object EbookProgressStore {
+
+    internal fun registerChangeListener(
+        context: Context,
+        listener: SharedPreferences.OnSharedPreferenceChangeListener
+    ) {
+        PrefsGateway.open(context, PREFS_NAME).registerOnSharedPreferenceChangeListener(listener)
+    }
+
+    internal fun unregisterChangeListener(
+        context: Context,
+        listener: SharedPreferences.OnSharedPreferenceChangeListener
+    ) {
+        PrefsGateway.open(context, PREFS_NAME).unregisterOnSharedPreferenceChangeListener(listener)
+    }
 
     fun load(context: Context, file: File): EbookProgress? {
         val prefs = PrefsGateway.open(context, PREFS_NAME)
@@ -23,10 +38,25 @@ object EbookProgressStore {
         ).normalized()
     }
 
+    fun savedSliderProgress(context: Context, file: File): Int {
+        val prefs = PrefsGateway.open(context, PREFS_NAME)
+        val key = progressKey(file)
+        if (!prefs.hasProgress(key)) return 0
+        val chapterCount = prefs.getInt(keyForChapterCount(key), 0)
+        if (chapterCount <= 0) return 0
+
+        val progress = EbookProgress(
+            chapterIndex = prefs.getInt(keyForChapter(key), 0),
+            scrollFraction = prefs.getFloat(keyForFraction(key), 0f),
+            coordinateVersion = prefs.getInt(keyForVersion(key), 1)
+        ).normalized()
+        return EbookReaderProgressMapper.toSlider(progress, chapterCount)
+    }
+
     @Synchronized
-    fun save(context: Context, file: File, progress: EbookProgress) {
+    fun save(context: Context, file: File, progress: EbookProgress, chapterCount: Int? = null) {
         PrefsGateway.open(context, PREFS_NAME).edit()
-            .putProgress(progressKey(file), file, progress.normalized())
+            .putProgress(progressKey(file), file, progress.normalized(), chapterCount)
             .apply()
     }
 
@@ -136,8 +166,15 @@ object EbookProgressStore {
 
             val key = progressKey(file)
             val existing = snapshot.readProgress(key)
+            val sourceChapterCount = snapshot.readChapterCount(entry.sourceKey)
+            val existingChapterCount = snapshot.readChapterCount(key)
             val winner = if (existing == null || progress.isFurtherThan(existing)) progress else existing
-            editor.putProgress(key, file, winner)
+            val winnerChapterCount = if (winner === progress) {
+                sourceChapterCount ?: existingChapterCount
+            } else {
+                existingChapterCount ?: sourceChapterCount
+            }
+            editor.putProgress(key, file, winner, winnerChapterCount)
             if (key != entry.sourceKey) editor.removeProgress(entry.sourceKey)
         }
         editor.apply()
@@ -176,7 +213,8 @@ object EbookProgressStore {
                 path = file.absolutePath,
                 chapterIndex = progress.chapterIndex,
                 scrollFraction = progress.scrollFraction,
-                coordinateVersion = progress.coordinateVersion
+                coordinateVersion = progress.coordinateVersion,
+                chapterCount = snapshot.readChapterCount(key)
             )
         }.sortedBy { it.path }
     }
@@ -187,17 +225,28 @@ object EbookProgressStore {
         return EbookProgress(chapter, fraction, this[keyForVersion(key)] as? Int ?: 1).normalized()
     }
 
+    private fun Map<String, *>.readChapterCount(key: String): Int? =
+        (this[keyForChapterCount(key)] as? Int)?.takeIf { it > 0 }
+
     private fun SharedPreferences.Editor.putProgress(
         key: String,
         file: File,
-        progress: EbookProgress
+        progress: EbookProgress,
+        chapterCount: Int? = null
     ): SharedPreferences.Editor = putInt(keyForChapter(key), progress.chapterIndex)
         .putFloat(keyForFraction(key), progress.scrollFraction)
         .putInt(keyForVersion(key), progress.coordinateVersion)
         .putString(keyForPath(key), file.absolutePath)
+        .apply {
+            chapterCount?.takeIf { it > 0 }?.let { putInt(keyForChapterCount(key), it) }
+        }
 
     private fun SharedPreferences.Editor.removeProgress(key: String): SharedPreferences.Editor =
-        remove(keyForChapter(key)).remove(keyForFraction(key)).remove(keyForVersion(key)).remove(keyForPath(key))
+        remove(keyForChapter(key))
+            .remove(keyForFraction(key))
+            .remove(keyForVersion(key))
+            .remove(keyForPath(key))
+            .remove(keyForChapterCount(key))
 
     fun fileIdentity(file: File): String = fileIdentity(file, file.length(), file.lastModified())
 
@@ -225,6 +274,8 @@ object EbookProgressStore {
     private fun keyForVersion(key: String): String = "${KEY_PREFIX}${key}_coordinate_version"
 
     private fun keyForPath(key: String) = "$KEY_PREFIX$key$PATH_SUFFIX"
+
+    private fun keyForChapterCount(key: String) = "${KEY_PREFIX}${key}_chapter_count"
 
     private fun isPathKey(key: String): Boolean = key.startsWith(KEY_PREFIX) && key.endsWith(PATH_SUFFIX)
 

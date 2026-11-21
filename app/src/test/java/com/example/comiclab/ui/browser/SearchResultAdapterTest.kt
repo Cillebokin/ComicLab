@@ -3,9 +3,14 @@ package com.example.comiclab.ui.browser
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.AppSettings
+import com.example.comiclab.core.store.EbookProgressStore
+import com.example.comiclab.core.store.ReaderProgressStore
+import com.example.comiclab.ebook.EbookProgress
+import com.example.comiclab.ebook.EbookReaderProgressMapper
 import com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverRecyclerView
 import com.example.comiclab.R
 import java.io.File
@@ -113,6 +118,47 @@ class SearchResultAdapterTest {
             assertTrue(staleActions.isEmpty())
         } finally {
             adapter.close()
+        }
+    }
+
+    @Test
+    fun searchResultsShowReadingProgressBarsOnlyWhenEnabledForSupportedFiles() = fixture { root ->
+        val directory = File(root, "folder").apply { mkdir() }
+        val unsupported = File(root, "notes.bin").apply { writeText("fixture") }
+        val comic = File(root, "comic.cbz").apply { writeBytes(byteArrayOf(1, 2)) }
+        val ebook = File(root, "book.epub").apply { writeText("epub") }
+        val unread = File(root, "unread.cbz").apply { writeBytes(byteArrayOf(3, 4)) }
+        ReaderProgressStore.prepareSave(context, comic, 4, 0, totalCount = 20).commit()
+        EbookProgressStore.save(context, ebook, EbookProgress(2, 0.0f), chapterCount = 4)
+        AppSettings.setShowFileReadingProgressEnabled(context, false)
+
+        val adapter = SearchResultAdapter(context, listOf(directory, unsupported, comic, ebook, unread))
+        try {
+            val parent = FrameLayout(context)
+            assertEquals(View.GONE, adapter.getView(2, null, parent).findViewById<ProgressBar>(R.id.progressFileReading).visibility)
+
+            AppSettings.setShowFileReadingProgressEnabled(context, true)
+            val comicBar = adapter.getView(2, null, parent).findViewById<ProgressBar>(R.id.progressFileReading)
+            assertEquals(View.VISIBLE, comicBar.visibility)
+            assertEquals(20, comicBar.max)
+            assertEquals(5, comicBar.progress)
+
+            val ebookBar = adapter.getView(3, null, parent).findViewById<ProgressBar>(R.id.progressFileReading)
+            assertEquals(View.VISIBLE, ebookBar.visibility)
+            assertEquals(EbookReaderProgressMapper.SLIDER_MAX, ebookBar.max)
+            assertEquals(500, ebookBar.progress)
+
+            val unreadBar = adapter.getView(4, null, parent).findViewById<ProgressBar>(R.id.progressFileReading)
+            assertEquals(View.VISIBLE, unreadBar.visibility)
+            assertEquals(0, unreadBar.progress)
+
+            assertEquals(View.GONE, adapter.getView(0, null, parent).findViewById<ProgressBar>(R.id.progressFileReading).visibility)
+            assertEquals(View.GONE, adapter.getView(1, null, parent).findViewById<ProgressBar>(R.id.progressFileReading).visibility)
+        } finally {
+            adapter.close()
+            AppSettings.setShowFileReadingProgressEnabled(context, false)
+            ReaderProgressStore.clearSavedReadingProgress(context, comic)
+            EbookProgressStore.clear(context, ebook)
         }
     }
 

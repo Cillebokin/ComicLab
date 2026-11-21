@@ -1,9 +1,12 @@
 package com.example.comiclab.ui.browser.panels
 
 import android.widget.ProgressBar
+import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.core.store.FavoriteComicStore
 import com.example.comiclab.core.store.ReadingHistoryStore
 import com.example.comiclab.core.store.ReaderProgressStore
+import com.example.comiclab.ebook.EbookProgress
+import com.example.comiclab.ebook.EbookReaderProgressMapper
 import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -126,6 +129,55 @@ class PanelComicProgressRobolectricTest {
             ReadingHistoryStore.clear(context)
             file.delete()
             bad.delete()
+        }
+    }
+
+    @Test fun favoriteAndHistoryShowPersistedMangaAndEbookProgressImmediately() {
+        val context = RuntimeEnvironment.getApplication()
+        val comic = File.createTempFile("panel-persisted-total", ".cbz", context.cacheDir).apply { writeBytes(byteArrayOf(1, 2)) }
+        val epub = File.createTempFile("panel-ebook", ".epub", context.cacheDir).apply { writeText("epub") }
+        ReaderProgressStore.prepareSave(context, comic, 2, 0, totalCount = 10).commit()
+        EbookProgressStore.save(context, epub, EbookProgress(1, 0.5f), chapterCount = 4)
+        FavoriteComicStore.clear(context)
+        ReadingHistoryStore.clear(context)
+        FavoriteComicStore.record(context, comic)
+        FavoriteComicStore.record(context, epub)
+        ReadingHistoryStore.record(context, comic)
+        ReadingHistoryStore.record(context, epub)
+        val favorite = FavoriteComicAdapter(context, FavoriteComicStore.items(context).toMutableList(), {}, {}, {})
+        val history = ReadingHistoryAdapter(context, ReadingHistoryStore.items(context).toMutableList(), {}, {}, {})
+        try {
+            val id = context.resources.getIdentifier("progressPanelReading", "id", context.packageName)
+            withVisibleRecyclerViewHolder(favorite, 0) {
+                val bar = it.itemView.findViewById<ProgressBar>(id)
+                assertEquals(10, bar.max)
+                assertEquals(3, bar.progress)
+            }
+            withVisibleRecyclerViewHolder(favorite, 1) {
+                val bar = it.itemView.findViewById<ProgressBar>(id)
+                assertEquals(EbookReaderProgressMapper.SLIDER_MAX, bar.max)
+                assertEquals(375, bar.progress)
+            }
+            withVisibleRecyclerViewHolder(history, 1) {
+                val bar = it.itemView.findViewById<ProgressBar>(id)
+                assertEquals(EbookReaderProgressMapper.SLIDER_MAX, bar.max)
+                assertEquals(375, bar.progress)
+            }
+            EbookProgressStore.save(context, epub, EbookProgress(3, 0.0f), chapterCount = 4)
+            shadowOf(android.os.Looper.getMainLooper()).idle()
+            withVisibleRecyclerViewHolder(favorite, 1) {
+                val bar = it.itemView.findViewById<ProgressBar>(id)
+                assertEquals(750, bar.progress)
+            }
+        } finally {
+            favorite.close()
+            history.close()
+            ReaderProgressStore.clearSavedReadingProgress(context, comic)
+            EbookProgressStore.clear(context, epub)
+            FavoriteComicStore.clear(context)
+            ReadingHistoryStore.clear(context)
+            comic.delete()
+            epub.delete()
         }
     }
 }

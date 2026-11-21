@@ -19,27 +19,36 @@ internal class MangaReaderProgressController(
         val position: Int,
         val offset: Int,
         val forceCommit: Boolean,
-        val coveredPosition: Int?
+        val coveredPosition: Int?,
+        val totalCount: Int?
     ) {
         fun covers(request: SaveRequest): Boolean =
             archiveKey == request.archiveKey && position == request.position && offset == request.offset &&
-                coveredPosition == request.coveredPosition && (forceCommit || !request.forceCommit)
+                coveredPosition == request.coveredPosition && totalCount == request.totalCount &&
+                (forceCommit || !request.forceCommit)
     }
 
     // Only the latest accepted request can absorb duplicates. Its identity also scopes failures.
     private val latestSave = AtomicReference<SaveRequest?>()
 
-    fun save(file: File, position: Int, offset: Int, forceCommit: Boolean, coveredPosition: Int? = null) {
+    fun save(
+        file: File,
+        position: Int,
+        offset: Int,
+        forceCommit: Boolean,
+        coveredPosition: Int? = null,
+        totalCount: Int? = null
+    ) {
         val executor = executorProvider()
         if (executor.isShutdown) return
 
         val archiveKey = ReaderProgressStore.readerArchiveKey(file)
-        val request = SaveRequest(archiveKey, position, offset, forceCommit, coveredPosition)
+        val request = SaveRequest(archiveKey, position, offset, forceCommit, coveredPosition, totalCount)
         if (latestSave.get()?.covers(request) == true) return
 
         latestSave.set(request)
         try {
-            ReaderProgressStore.enqueueSave(context, archiveKey, position, offset, coveredPosition) { write ->
+            ReaderProgressStore.enqueueSave(context, archiveKey, position, offset, coveredPosition, totalCount) { write ->
                 executor.execute {
                     val saved = try {
                         if (forceCommit) write.commit() else write.apply()

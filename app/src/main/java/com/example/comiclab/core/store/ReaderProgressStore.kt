@@ -33,7 +33,8 @@ object ReaderProgressStore {
         internal var archiveKey: String,
         internal val position: Int,
         internal val offset: Int,
-        internal val coveredPosition: Int?
+        internal val coveredPosition: Int?,
+        internal val totalCount: Int? = null
     ) {
         internal var enqueueOrder = 0L
         internal var mergeWithExisting = false
@@ -86,9 +87,16 @@ object ReaderProgressStore {
             val progress = progressValue()
             val existing = if (mergeWithExisting) preferences.readProgress(archiveKey) else null
             val keepExisting = existing?.takeUnless { progress.isFurtherThan(it) }
-            if (keepExisting != null && !commit) return true
+            val resolved = (keepExisting ?: progress).let { winner ->
+                if (winner.totalCount == null && existing?.totalCount != null) {
+                    winner.copy(totalCount = existing.totalCount)
+                } else {
+                    winner
+                }
+            }
+            if (keepExisting != null && resolved.totalCount == existing.totalCount && !commit) return true
 
-            val editor = preferences.edit().putProgress(archiveKey, keepExisting ?: progress)
+            val editor = preferences.edit().putProgress(archiveKey, resolved)
             return if (commit) editor.commit() else {
                 editor.apply()
                 true
@@ -101,9 +109,10 @@ object ReaderProgressStore {
         file: File,
         position: Int,
         offset: Int,
-        coveredPosition: Int? = null
+        coveredPosition: Int? = null,
+        totalCount: Int? = null
     ): PreparedWrite {
-        return prepareSave(preferences(context), file, position, offset, coveredPosition)
+        return prepareSave(preferences(context), file, position, offset, coveredPosition, totalCount)
     }
 
     internal fun prepareSave(
@@ -111,11 +120,12 @@ object ReaderProgressStore {
         file: File,
         position: Int,
         offset: Int,
-        coveredPosition: Int? = null
+        coveredPosition: Int? = null,
+        totalCount: Int? = null
     ): PreparedWrite {
         val archiveKey = readerArchiveKey(file)
         return synchronized(stateLock) {
-            registerWrite(preferences, archiveKey, position, offset, coveredPosition)
+            registerWrite(preferences, archiveKey, position, offset, coveredPosition, totalCount)
         }
     }
 
@@ -126,11 +136,12 @@ object ReaderProgressStore {
         position: Int,
         offset: Int,
         coveredPosition: Int? = null,
+        totalCount: Int? = null,
         enqueue: (PreparedWrite) -> Unit
     ) {
         val prefs = preferences(context)
         synchronized(stateLock) {
-            val write = registerWrite(prefs, archiveKey, position, offset, coveredPosition)
+            val write = registerWrite(prefs, archiveKey, position, offset, coveredPosition, totalCount)
             try {
                 enqueue(write)
             } catch (exception: RuntimeException) {
@@ -151,7 +162,17 @@ object ReaderProgressStore {
             val previous = snapshot[write.archiveKey]?.value
             val value = write.progressValue()
             if (!write.mergeWithExisting || previous == null || value.isFurtherThan(previous)) {
-                snapshot[write.archiveKey] = PendingResumeProgress(value, write.mergeWithExisting)
+                val resolved = if (value.totalCount == null && previous?.totalCount != null) {
+                    value.copy(totalCount = previous.totalCount)
+                } else {
+                    value
+                }
+                snapshot[write.archiveKey] = PendingResumeProgress(resolved, write.mergeWithExisting)
+            } else if (previous.totalCount == null && value.totalCount != null) {
+                snapshot[write.archiveKey] = PendingResumeProgress(
+                    previous.copy(totalCount = value.totalCount),
+                    write.mergeWithExisting
+                )
             }
         }
         activeWrite?.takeIf { it !in pendingWrites }?.let {
@@ -166,9 +187,15 @@ object ReaderProgressStore {
         archiveKey: String,
         position: Int,
         offset: Int,
-        coveredPosition: Int?
+        coveredPosition: Int?,
+        totalCount: Int? = null
     ): PreparedWrite = PreparedWrite(
-        preferences, archiveKey, position, offset, coveredPosition?.takeIf { it >= position && it >= 0 }
+        preferences,
+        archiveKey,
+        position,
+        offset,
+        coveredPosition?.takeIf { it >= position && it >= 0 },
+        totalCount?.takeIf { it > 0 }
     )
         .also { pendingWrites[it] = Unit }
 
@@ -189,11 +216,18 @@ object ReaderProgressStore {
         readSaved: () -> ProgressValue?
     ): ProgressValue? {
         val pending = pendingSnapshot[archiveKey]
-        if (pending != null && !pending.mergeWithSaved) return pending.value
+        if (pending != null && !pending.mergeWithSaved) {
+            val pendingValue = pending.value ?: return null
+            if (pendingValue.totalCount != null) return pendingValue
+            val savedTotalCount = readSaved()?.totalCount
+            return if (savedTotalCount != null) pendingValue.copy(totalCount = savedTotalCount) else pendingValue
+        }
 
         val saved = readSaved()
         val pendingValue = pending?.value ?: return saved
-        return if (saved == null || pendingValue.isFurtherThan(saved)) pendingValue else saved
+        val winner = if (saved == null || pendingValue.isFurtherThan(saved)) pendingValue else saved
+        val totalCount = winner.totalCount ?: saved?.totalCount ?: pendingValue.totalCount
+        return if (winner.totalCount == totalCount) winner else winner.copy(totalCount = totalCount)
     }
 
     fun savedReadingProgress(context: Context, file: File): ComicLabMangaProgress? {
@@ -209,7 +243,8 @@ object ReaderProgressStore {
             path = file.absolutePath,
             position = prefs.getInt(positionKey, 0).coerceAtLeast(0),
             offset = prefs.getInt(offsetKey, 0),
-            coveredPosition = prefs.getInt(coveredPositionKey(archiveKey), -1).takeIf { it >= 0 }
+            coveredPosition = prefs.getInt(coveredPositionKey(archiveKey), -1).takeIf { it >= 0 },
+            totalCount = prefs.getInt(totalCountKey(archiveKey), 0).takeIf { it > 0 }
         )
     }
 
@@ -229,7 +264,8 @@ object ReaderProgressStore {
                     ProgressValue(
                         position = position,
                         offset = offset,
-                        coveredPosition = (snapshot[coveredPositionKey(key)] as? Int)?.takeIf { it >= 0 }
+                        coveredPosition = (snapshot[coveredPositionKey(key)] as? Int)?.takeIf { it >= 0 },
+                        totalCount = (snapshot[totalCountKey(key)] as? Int)?.takeIf { it > 0 }
                     )
                 } ?: return@mapNotNull null
 
@@ -243,7 +279,8 @@ object ReaderProgressStore {
                     path = file.absolutePath,
                     position = resolved.position.coerceAtLeast(0),
                     offset = resolved.offset,
-                    coveredPosition = resolved.coveredPosition
+                    coveredPosition = resolved.coveredPosition,
+                    totalCount = resolved.totalCount
                 )
             }
             .sortedBy { it.path }
@@ -256,7 +293,8 @@ object ReaderProgressStore {
             file = file,
             position = progress.position.coerceAtLeast(0),
             offset = progress.offset,
-            coveredPosition = progress.coveredPosition
+            coveredPosition = progress.coveredPosition,
+            totalCount = progress.totalCount
         ).apply()
     }
 
@@ -273,7 +311,14 @@ object ReaderProgressStore {
             ) {
                 null
             } else {
-                registerWrite(prefs, key, progress.position.coerceAtLeast(0), progress.offset, progress.coveredPosition)
+                registerWrite(
+                    prefs,
+                    key,
+                    progress.position.coerceAtLeast(0),
+                    progress.offset,
+                    progress.coveredPosition,
+                    progress.totalCount
+                )
             }
         }
         write?.apply() == true
@@ -281,6 +326,10 @@ object ReaderProgressStore {
 
     fun hasSavedReadingProgress(context: Context, file: File): Boolean {
         return readCurrentProgress(context, file)?.hasReadPages() == true
+    }
+
+    fun savedTotalPageCount(context: Context, file: File): Int? {
+        return readCurrentProgress(context, file)?.totalCount
     }
 
     fun savedReadingPageCount(context: Context, file: File, totalCount: Int): Int {
@@ -444,8 +493,14 @@ object ReaderProgressStore {
         migrations.values.forEach { migration ->
             var best = snapshot.readProgress(migration.targetArchiveKey)
             migration.candidates.forEach { candidate ->
-                if (best == null || candidate.isFurtherThan(best!!)) {
-                    best = candidate
+                best = when {
+                    best == null -> candidate
+                    candidate.isFurtherThan(best!!) -> candidate.copy(
+                        totalCount = candidate.totalCount ?: best!!.totalCount
+                    )
+                    best!!.totalCount == null && candidate.totalCount != null ->
+                        best!!.copy(totalCount = candidate.totalCount)
+                    else -> best
                 }
             }
             best?.let { progress ->
@@ -466,7 +521,12 @@ object ReaderProgressStore {
         val candidates: MutableList<ProgressValue> = mutableListOf()
     )
 
-    private data class ProgressValue(val position: Int, val offset: Int, val coveredPosition: Int?) {
+    private data class ProgressValue(
+        val position: Int,
+        val offset: Int,
+        val coveredPosition: Int?,
+        val totalCount: Int? = null
+    ) {
         fun hasReadPages(): Boolean = coveredPosition != null || position > 0 || offset != 0
 
         fun afterPageDeletion(remainingPositions: List<Int>): ProgressValue {
@@ -482,7 +542,12 @@ object ReaderProgressStore {
                 remainingPositions.indexOfLast { it <= covered }.coerceAtLeast(newPosition)
             } ?: newPosition.takeIf { hasReadPages() }
 
-            return ProgressValue(newPosition, newOffset, newCoveredPosition)
+            return ProgressValue(
+                newPosition,
+                newOffset,
+                newCoveredPosition,
+                remainingPositions.size.takeIf { it > 0 }
+            )
         }
 
         fun isFurtherThan(other: ProgressValue): Boolean = position > other.position ||
@@ -493,14 +558,16 @@ object ReaderProgressStore {
 
     private data class PendingResumeProgress(val value: ProgressValue?, val mergeWithSaved: Boolean)
 
-    private fun PreparedWrite.progressValue(): ProgressValue = ProgressValue(position, offset, coveredPosition)
+    private fun PreparedWrite.progressValue(): ProgressValue =
+        ProgressValue(position, offset, coveredPosition, totalCount)
 
     private fun SharedPreferences.readProgress(key: String): ProgressValue? {
         if (!contains(positionKey(key)) && !contains(offsetKey(key))) return null
         return ProgressValue(
             getInt(positionKey(key), 0),
             getInt(offsetKey(key), 0),
-            getInt(coveredPositionKey(key), -1).takeIf { it >= 0 }
+            getInt(coveredPositionKey(key), -1).takeIf { it >= 0 },
+            getInt(totalCountKey(key), 0).takeIf { it > 0 }
         )
     }
 
@@ -508,7 +575,12 @@ object ReaderProgressStore {
         val position = this[positionKey(key)] as? Int
         val offset = this[offsetKey(key)] as? Int
         if (position == null && offset == null) return null
-        return ProgressValue(position ?: 0, offset ?: 0, this[coveredPositionKey(key)] as? Int)
+        return ProgressValue(
+            position ?: 0,
+            offset ?: 0,
+            this[coveredPositionKey(key)] as? Int,
+            (this[totalCountKey(key)] as? Int)?.takeIf { it > 0 }
+        )
     }
 
     private fun SharedPreferences.Editor.putProgress(key: String, progress: ProgressValue): SharedPreferences.Editor {
@@ -517,11 +589,15 @@ object ReaderProgressStore {
         val coveredPosition = progress.coveredPosition
         if (coveredPosition == null) remove(coveredPositionKey(key))
         else putInt(coveredPositionKey(key), coveredPosition)
+        progress.totalCount?.takeIf { it > 0 }?.let { putInt(totalCountKey(key), it) }
         return this
     }
 
     private fun SharedPreferences.Editor.removeProgress(key: String): SharedPreferences.Editor =
-        remove(positionKey(key)).remove(offsetKey(key)).remove(coveredPositionKey(key))
+        remove(positionKey(key))
+            .remove(offsetKey(key))
+            .remove(coveredPositionKey(key))
+            .remove(totalCountKey(key))
 
     private data class ArchiveKeyParts(val path: String, val length: Long)
 
@@ -555,6 +631,8 @@ object ReaderProgressStore {
     private fun offsetKey(archiveKey: String): String = "$archiveKey:offset"
 
     private fun coveredPositionKey(archiveKey: String): String = "$archiveKey:coveredPosition"
+
+    private fun totalCountKey(archiveKey: String): String = "$archiveKey:totalCount"
 
     private const val ARCHIVE_KEY_PREFIX = "reader:"
     private const val PREFS_NAME = "reader_prefs"

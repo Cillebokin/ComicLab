@@ -1,7 +1,10 @@
 package com.example.comiclab.ui.browser
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
 import android.util.LruCache
 import android.view.LayoutInflater
 import android.view.View
@@ -10,6 +13,7 @@ import android.widget.AbsListView
 import android.widget.ArrayAdapter
 import android.widget.ImageView
 import android.widget.ListView
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.ui.browser.bookcase.AbsListViewScrollStateTracker
@@ -18,6 +22,9 @@ import com.example.comiclab.ui.browser.bookcase.BookcaseRowViewTypes
 import com.example.comiclab.core.concurrent.BoundedKeyedTaskQueue
 import com.example.comiclab.ComicArchive
 import com.example.comiclab.CommonFunc
+import com.example.comiclab.core.settings.AppSettingsStore
+import com.example.comiclab.core.store.EbookProgressStore
+import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverAdapter
 import com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverClickHandler
 import com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverLoadTracker
@@ -40,10 +47,25 @@ class SearchResultAdapter(
 ) : ArrayAdapter<File>(context, 0, items) {
 
     private val coverCache = object : LruCache<String, Bitmap>(SEARCH_COVER_CACHE_SIZE) {}
+    private val archivePageCounts = object : LruCache<String, Int>(SEARCH_COVER_CACHE_SIZE) {}
     private val collectionSourceCache = object : LruCache<String, List<MangaCollectionCoverSource>>(SEARCH_COVER_CACHE_SIZE) {}
     private val collectionScrollState = MangaCollectionCoverScrollState()
     private val collectionCoverLoadTracker = MangaCollectionCoverLoadTracker<ImageView>()
     private val listScrollState = AbsListViewScrollStateTracker()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val refreshProgress = Runnable { if (!closed) notifyDataSetChanged() }
+    private val progressListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        if (!closed && AppSettings.isShowFileReadingProgressEnabled(context)) {
+            mainHandler.removeCallbacks(refreshProgress)
+            mainHandler.post(refreshProgress)
+        }
+    }
+    private val settingsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (!closed && (key == null || key == AppSettingsStore.KEY_SHOW_FILE_READING_PROGRESS)) {
+            mainHandler.removeCallbacks(refreshProgress)
+            mainHandler.post(refreshProgress)
+        }
+    }
     private val loadingCovers = Collections.synchronizedSet(mutableSetOf<String>())
     private val failedCovers = Collections.synchronizedSet(mutableSetOf<String>())
     private val collectionSourceRequestIds = ConcurrentHashMap<String, Long>()
@@ -56,6 +78,12 @@ class SearchResultAdapter(
     private val coverTasks = BoundedKeyedTaskQueue(SEARCH_COVER_THREAD_COUNT)
     @Volatile
     private var closed = false
+
+    init {
+        ReaderProgressStore.registerChangeListener(context, progressListener)
+        EbookProgressStore.registerChangeListener(context, progressListener)
+        AppSettingsStore.registerChangeListener(context, settingsListener)
+    }
 
     override fun getViewTypeCount(): Int = BookcaseRowViewTypes.COUNT
 
@@ -86,6 +114,7 @@ class SearchResultAdapter(
         val collectionCoverList = view.findViewById<RecyclerView>(R.id.collectionCoverList)
         val infoContainer = view.findViewById<ViewGroup>(R.id.itemInfoContainer)
         val imgFavoriteMarker = view.findViewById<ImageView>(R.id.imgFavoriteMarker)
+        val progressFileReading = view.findViewById<ProgressBar>(R.id.progressFileReading)
         val tvName = view.findViewById<TextView>(R.id.tvName)
         val tvInfo = view.findViewById<TextView>(R.id.tvInfo)
         val tvTypeMarker = view.findViewById<TextView>(R.id.tvTypeMarker)
@@ -93,8 +122,10 @@ class SearchResultAdapter(
 
         imgFavoriteMarker.setImageDrawable(null)
         imgFavoriteMarker.visibility = View.GONE
+        hideFileReadingProgressBar(progressFileReading)
 
-        bindIcon(file, view, iconContainer, infoContainer, imgIcon, collectionCoverList)
+        bindIcon(file, view, iconContainer, infoContainer, imgIcon, collectionCoverList, progressFileReading)
+        bindFileReadingProgress(file, progressFileReading)
 
         tvName.text = file.name
         tvInfo.text = file.parent.orEmpty()
@@ -106,6 +137,10 @@ class SearchResultAdapter(
 
     fun close() {
         closed = true
+        ReaderProgressStore.unregisterChangeListener(context, progressListener)
+        EbookProgressStore.unregisterChangeListener(context, progressListener)
+        AppSettingsStore.unregisterChangeListener(context, settingsListener)
+        mainHandler.removeCallbacks(refreshProgress)
         coverTasks.close()
         loadingCovers.clear()
         collectionCoverLoadTracker.clear()
@@ -149,19 +184,36 @@ class SearchResultAdapter(
         collectionCoverList.isLongClickable = false
     }
 
+    private fun bindFileReadingProgress(file: File, progressBar: ProgressBar?) {
+        if (progressBar == null ||
+            !AppSettings.isShowFileReadingProgressEnabled(context) ||
+            !file.isFile ||
+            !ReaderFileDetector.isSupported(file)
+        ) {
+            hideFileReadingProgressBar(progressBar)
+            return
+        }
+
+        val cacheKey = archiveCoverCacheKey(file)
+        progressBar.tag = cacheKey
+        progressBar.visibility = View.VISIBLE
+        bindReadingProgressBar(context, file, progressBar, archivePageCounts.get(cacheKey) ?: 0)
+    }
+
     private fun bindIcon(
         file: File,
         row: View,
         iconContainer: ViewGroup,
         infoContainer: ViewGroup,
         imgIcon: ImageView,
-        collectionCoverList: RecyclerView
+        collectionCoverList: RecyclerView,
+        progressFileReading: ProgressBar?
     ) {
         when {
             file.isDirectory ->
                 bindDirectoryIcon(file, row, iconContainer, infoContainer, imgIcon, collectionCoverList)
             ComicArchive.isArchive(file) || ReaderFileDetector.isEbook(file) ->
-                bindArchiveIcon(file, iconContainer, infoContainer, imgIcon, collectionCoverList)
+                bindArchiveIcon(file, iconContainer, infoContainer, imgIcon, collectionCoverList, progressFileReading)
             else -> {
                 imgIcon.tag = null
                 resetCollectionCoverContainer(iconContainer, infoContainer, imgIcon, collectionCoverList)
@@ -341,7 +393,8 @@ class SearchResultAdapter(
         iconContainer: ViewGroup,
         infoContainer: ViewGroup,
         imgIcon: ImageView,
-        collectionCoverList: RecyclerView
+        collectionCoverList: RecyclerView,
+        progressFileReading: ProgressBar?
     ) {
         resetCollectionCoverContainer(iconContainer, infoContainer, imgIcon, collectionCoverList)
         setArchivePlaceholderLayout(imgIcon)
@@ -386,12 +439,29 @@ class SearchResultAdapter(
             taskKey = "archive-cover:$cacheKey",
             onRejected = { loadingCovers.remove(cacheKey) }
         ) {
-            val cover = runCatching {
-                val firstImageEntry = ComicArchive.imageEntries(file).firstOrNull()
-                firstImageEntry?.let {
+            val entries = runCatching { ComicArchive.imageEntries(file) }.getOrDefault(emptyList())
+            val cover = entries.firstOrNull()?.let {
+                runCatching {
                     ComicArchive.decodeImage(file, it, SEARCH_COVER_MAX_SIZE, context.cacheDir)
+                }.getOrNull()
+            }
+            if (!closed) {
+                archivePageCounts.put(cacheKey, entries.size)
+                if (entries.isNotEmpty() &&
+                    AppSettings.isShowFileReadingProgressEnabled(context) &&
+                    ReaderProgressStore.savedTotalPageCount(context, file) == null &&
+                    ReaderProgressStore.hasSavedReadingProgress(context, file)
+                ) {
+                    mainHandler.post {
+                        if (closed || !AppSettings.isShowFileReadingProgressEnabled(context)) return@post
+                        if (progressFileReading != null && progressFileReading.tag == cacheKey) {
+                            bindReadingProgressBar(context, file, progressFileReading, entries.size)
+                        } else {
+                            refreshProgress.run()
+                        }
+                    }
                 }
-            }.getOrNull()
+            }
             handleCoverResult(cacheKey, cover, imgIcon)
         }
     }

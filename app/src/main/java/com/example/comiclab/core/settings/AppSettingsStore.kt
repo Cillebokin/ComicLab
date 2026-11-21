@@ -32,7 +32,34 @@ internal object AppSettingsStore {
     private const val KEY_CUSTOM_READER_BRIGHTNESS_ZERO_MIN_MIGRATED =
         "custom_reader_brightness_zero_min_migrated"
     private const val KEY_DARK_MODE_ENABLED = "dark_mode_enabled"
+    internal const val KEY_SHOW_FILE_READING_PROGRESS = "show_file_reading_progress"
     private val bookcaseDirectoriesLock = Any()
+
+    internal fun registerChangeListener(
+        context: Context,
+        listener: SharedPreferences.OnSharedPreferenceChangeListener
+    ) {
+        PrefsGateway.open(context, PREFS_NAME).registerOnSharedPreferenceChangeListener(listener)
+    }
+
+    internal fun unregisterChangeListener(
+        context: Context,
+        listener: SharedPreferences.OnSharedPreferenceChangeListener
+    ) {
+        PrefsGateway.open(context, PREFS_NAME).unregisterOnSharedPreferenceChangeListener(listener)
+    }
+
+    fun isShowFileReadingProgressEnabled(context: Context): Boolean {
+        return PrefsGateway.open(context, PREFS_NAME)
+            .getBoolean(KEY_SHOW_FILE_READING_PROGRESS, false)
+    }
+
+    fun setShowFileReadingProgressEnabled(context: Context, enabled: Boolean) {
+        PrefsGateway.open(context, PREFS_NAME)
+            .edit()
+            .putBoolean(KEY_SHOW_FILE_READING_PROGRESS, enabled)
+            .apply()
+    }
 
     fun isDarkModeEnabled(context: Context): Boolean {
         return PrefsGateway.open(context, PREFS_NAME)

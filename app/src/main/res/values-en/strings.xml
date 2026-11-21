@@ -431,6 +431,7 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="double_page_requires_landscape">Double-page mode is only available in landscape orientation</string>
     <string name="double_page_cover_single">Show cover as a single page in two-page mode</string>
     <string name="file_browser">File browser</string>
+    <string name="show_file_reading_progress">Show reading progress bar on files</string>
     <string name="start_marker_error_tags">Feature marker error tags</string>
     <string name="start_marker_error_tags_empty_hint">Optional</string>
     <string name="reader_controls">Reader controls</string>

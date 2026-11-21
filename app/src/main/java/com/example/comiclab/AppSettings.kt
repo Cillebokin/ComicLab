@@ -78,6 +78,12 @@ object AppSettings {
     fun setAutoHideSystemBarsEnabled(context: Context, enabled: Boolean) =
         AppSettingsStore.setAutoHideSystemBarsEnabled(context, enabled)
 
+    fun isShowFileReadingProgressEnabled(context: Context): Boolean =
+        AppSettingsStore.isShowFileReadingProgressEnabled(context)
+
+    fun setShowFileReadingProgressEnabled(context: Context, enabled: Boolean) =
+        AppSettingsStore.setShowFileReadingProgressEnabled(context, enabled)
+
     fun isBookcaseDirectory(context: Context, directory: File): Boolean =
         AppSettingsStore.isBookcaseDirectory(context, directory)
 
@@ -106,7 +112,8 @@ object AppSettings {
             startMarkerErrorTags = getStartMarkerErrorTags(context),
             customReaderBrightnessEnabled = isCustomReaderBrightnessEnabled(context),
             enhancementScale = getEnhancementScale(context),
-            customReaderBrightness = getCustomReaderBrightness(context)
+            customReaderBrightness = getCustomReaderBrightness(context),
+            showFileReadingProgress = isShowFileReadingProgressEnabled(context)
         )
     }
 
@@ -158,6 +165,10 @@ object AppSettings {
         }
         settings.enhancementScale?.let {
             setEnhancementScale(context, it)
+            appliedCount++
+        }
+        settings.showFileReadingProgress?.let {
+            setShowFileReadingProgressEnabled(context, it)
             appliedCount++
         }
         return appliedCount

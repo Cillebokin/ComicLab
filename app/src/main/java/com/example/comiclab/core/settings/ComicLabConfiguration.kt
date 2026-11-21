@@ -26,14 +26,16 @@ data class ComicLabMangaProgress(
     val path: String,
     val position: Int,
     val offset: Int,
-    val coveredPosition: Int? = null
+    val coveredPosition: Int? = null,
+    val totalCount: Int? = null
 )
 
 data class ComicLabEbookProgress(
     val path: String,
     val chapterIndex: Int,
     val scrollFraction: Float,
-    val coordinateVersion: Int = 2
+    val coordinateVersion: Int = 2,
+    val chapterCount: Int? = null
 )
 
 data class ComicLabAppSettings(
@@ -48,7 +50,8 @@ data class ComicLabAppSettings(
     val startMarkerErrorTags: String? = null,
     val customReaderBrightnessEnabled: Boolean? = null,
     val enhancementScale: Int? = null,
-    val customReaderBrightness: Int? = null
+    val customReaderBrightness: Int? = null,
+    val showFileReadingProgress: Boolean? = null
 )
 
 data class ComicLabConfiguration(
@@ -117,6 +120,7 @@ object ComicLabConfigurationJson {
                             .put("position", item.position)
                             .put("offset", item.offset)
                             .put("coveredPosition", item.coveredPosition)
+                            .put("totalCount", item.totalCount)
                     )
                 }
             })
@@ -128,6 +132,7 @@ object ComicLabConfigurationJson {
                             .put("chapterIndex", item.chapterIndex)
                             .put("scrollFraction", item.scrollFraction.toDouble())
                             .put("coordinateVersion", item.coordinateVersion)
+                            .put("chapterCount", item.chapterCount)
                     )
                 }
             })
@@ -164,6 +169,9 @@ object ComicLabConfigurationJson {
         }
         configuration.appSettings.customReaderBrightness?.let {
             settings.put("customReaderBrightness", it)
+        }
+        configuration.appSettings.showFileReadingProgress?.let {
+            settings.put("showFileReadingProgress", it)
         }
         root.put("appSettings", settings)
         return root.toString()
@@ -237,7 +245,8 @@ object ComicLabConfigurationJson {
                 skippedEntries++
             } else {
                 val coveredPosition = obj.requiredInt("coveredPosition")?.takeIf { it >= position && it >= 0 }
-                mangaReadingProgress += ComicLabMangaProgress(path, position, offset, coveredPosition)
+                val totalCount = obj.requiredInt("totalCount")?.takeIf { it > 0 }
+                mangaReadingProgress += ComicLabMangaProgress(path, position, offset, coveredPosition, totalCount)
             }
         }.also { skippedEntries += it }
 
@@ -248,8 +257,9 @@ object ComicLabConfigurationJson {
             if (path == null || chapterIndex == null || scrollFraction == null) {
                 skippedEntries++
             } else {
+                val chapterCount = obj.requiredInt("chapterCount")?.takeIf { it > 0 }
                 ebookReadingProgress += ComicLabEbookProgress(
-                    path, chapterIndex, scrollFraction, obj.optInt("coordinateVersion", 1).coerceIn(1, 2)
+                    path, chapterIndex, scrollFraction, obj.optInt("coordinateVersion", 1).coerceIn(1, 2), chapterCount
                 )
             }
         }.also { skippedEntries += it }
@@ -311,6 +321,10 @@ object ComicLabConfigurationJson {
                 customReaderBrightness = settingsObject.optionalInt("customReaderBrightness")
                     .also {
                         if (settingsObject.has("customReaderBrightness") && it == null) skippedEntries++
+                    },
+                showFileReadingProgress = settingsObject.optionalBoolean("showFileReadingProgress")
+                    .also {
+                        if (settingsObject.has("showFileReadingProgress") && it == null) skippedEntries++
                     }
             )
         }
@@ -473,7 +487,9 @@ object ComicLabConfigurationMerger {
             customReaderBrightnessEnabled = imported.customReaderBrightnessEnabled
                 ?: current.customReaderBrightnessEnabled,
             customReaderBrightness = imported.customReaderBrightness
-                ?: current.customReaderBrightness
+                ?: current.customReaderBrightness,
+            showFileReadingProgress = imported.showFileReadingProgress
+                ?: current.showFileReadingProgress
         )
     }
 

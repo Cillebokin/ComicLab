@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.ImageView
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.CommonFunc
@@ -30,6 +31,7 @@ internal class NasFileListAdapter(
         val icon = view.findViewById<ImageView>(R.id.imgIcon)
         val collectionCoverList = view.findViewById<RecyclerView>(R.id.collectionCoverList)
         val favoriteMarker = view.findViewById<ImageView>(R.id.imgFavoriteMarker)
+        val readingProgress = view.findViewById<ProgressBar>(R.id.progressFileReading)
         val name = view.findViewById<TextView>(R.id.tvName)
         val info = view.findViewById<TextView>(R.id.tvInfo)
         val type = view.findViewById<TextView>(R.id.tvTypeMarker)
@@ -37,6 +39,7 @@ internal class NasFileListAdapter(
 
         collectionCoverList.visibility = View.GONE
         favoriteMarker.visibility = View.GONE
+        hideFileReadingProgressBar(readingProgress)
         icon.visibility = View.VISIBLE
         icon.scaleType = ImageView.ScaleType.CENTER_INSIDE
         icon.setColorFilter(context.getColor(R.color.comiclab_icon))

@@ -561,7 +561,8 @@ class EbookReaderActivity : AppCompatActivity() {
         }
         progressSaveHandler.removeCallbacks(savePendingProgress)
         lastProgressSavedAt = now
-        EbookProgressStore.save(this, file, progress)
+        val chapterCount = session?.book?.chapters?.size?.takeIf { it > 0 }
+        EbookProgressStore.save(this, file, progress, chapterCount)
     }
 
     // 测试接口：仅供 Robolectric 测试读取、注入阅读进度并触发强制保存，不参与运行时逻辑。

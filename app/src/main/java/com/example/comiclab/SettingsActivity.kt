@@ -101,6 +101,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var switchDarkMode: SwitchCompat
     private lateinit var radioReadingDirection: RadioGroup
     private lateinit var switchDoublePageCoverSingle: SwitchCompat
+    private lateinit var switchShowFileReadingProgress: SwitchCompat
     private lateinit var inputStartMarkerErrorTags: EditText
     private lateinit var switchVolumeKeyPageTurn: SwitchCompat
     private lateinit var switchNextManga: SwitchCompat
@@ -225,6 +226,7 @@ class SettingsActivity : AppCompatActivity() {
         switchDarkMode = findViewById(R.id.switchDarkMode)
         radioReadingDirection = findViewById(R.id.radioReadingDirection)
         switchDoublePageCoverSingle = findViewById(R.id.switchDoublePageCoverSingle)
+        switchShowFileReadingProgress = findViewById(R.id.switchShowFileReadingProgress)
         inputStartMarkerErrorTags = findViewById(R.id.inputStartMarkerErrorTags)
         switchVolumeKeyPageTurn = findViewById(R.id.switchVolumeKeyPageTurn)
         switchNextManga = findViewById(R.id.switchNextManga)
@@ -248,6 +250,10 @@ class SettingsActivity : AppCompatActivity() {
         bindReadingDirection()
         bindEnhancementScale()
         bindDoublePageCoverSingle()
+        switchShowFileReadingProgress.isChecked = AppSettings.isShowFileReadingProgressEnabled(this)
+        switchShowFileReadingProgress.setOnCheckedChangeListener { _, enabled ->
+            AppSettings.setShowFileReadingProgressEnabled(this, enabled)
+        }
         bindStartMarkerErrorTags()
         bindVolumeKeyPageTurn()
         switchNextManga.isChecked = AppSettings.isNextMangaEnabled(this)
@@ -1485,6 +1491,7 @@ class SettingsActivity : AppCompatActivity() {
         bindReadingDirection()
         bindEnhancementScale()
         switchDoublePageCoverSingle.isChecked = AppSettings.isDoublePageCoverSingleEnabled(this)
+        switchShowFileReadingProgress.isChecked = AppSettings.isShowFileReadingProgressEnabled(this)
         inputStartMarkerErrorTags.setText(AppSettings.getStartMarkerErrorTags(this))
         switchVolumeKeyPageTurn.isChecked = AppSettings.isVolumeKeyPageTurnEnabled(this)
         switchNextManga.isChecked = AppSettings.isNextMangaEnabled(this)

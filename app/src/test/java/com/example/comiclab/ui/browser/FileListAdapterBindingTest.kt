@@ -7,11 +7,16 @@ import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.ListView
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.AppSettings
 import com.example.comiclab.CommonFunc
+import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.core.store.FavoritePathStore
+import com.example.comiclab.core.store.ReaderProgressStore
+import com.example.comiclab.ebook.EbookProgress
+import com.example.comiclab.ebook.EbookReaderProgressMapper
 import com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverAdapter
 import com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverLoadTracker
 import com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverSource
@@ -191,6 +196,96 @@ class FileListAdapterBindingTest {
         adapter.close()
         shadowOf(Looper.getMainLooper()).idle()
         assertSame(placeholder, holder.imageView.drawable)
+    }
+
+    @Test
+    fun fileReadingProgressBarRespectsSettingShowsUnreadTrackAndSupportsMangaAndEbook() = fixture { root ->
+        val folder = File(root, "folder").apply { mkdir() }
+        val unsupported = File(root, "notes.bin").apply { writeText("abc") }
+        val unreadComic = File(root, "unread.cbz").apply { writeBytes(byteArrayOf(1, 2)) }
+        val readComic = File(root, "read.cbz").apply { writeBytes(byteArrayOf(3, 4)) }
+        val readEbook = File(root, "novel.epub").apply { writeText("epub") }
+        val readTxt = File(root, "story.txt").apply { writeText("hello") }
+        ReaderProgressStore.prepareSave(context, readComic, 3, 0, totalCount = 10).commit()
+        EbookProgressStore.save(context, readEbook, EbookProgress(1, 0.5f), chapterCount = 4)
+        EbookProgressStore.save(context, readTxt, EbookProgress(0, 0.4f), chapterCount = 1)
+        AppSettings.setShowFileReadingProgressEnabled(context, false)
+
+        val items = mutableListOf(
+            FileItem(folder, childCount = 0),
+            FileItem(unsupported),
+            FileItem(unreadComic),
+            FileItem(readComic),
+            FileItem(readEbook),
+            FileItem(readTxt),
+            FileItem(isParent = true)
+        )
+        val adapter = FileListAdapter(context, items)
+        var changes = 0
+        adapter.registerDataSetObserver(object : android.database.DataSetObserver() {
+            override fun onChanged() { changes++ }
+        })
+        try {
+            val parent = FrameLayout(context)
+            // Off by default: hidden even for readable files with progress.
+            val rowOff = adapter.getView(3, null, parent)
+            assertEquals(View.GONE, rowOff.findViewById<ProgressBar>(R.id.progressFileReading).visibility)
+
+            // Turning setting on triggers refresh and shows progress bars for all readable files (Plan B).
+            AppSettings.setShowFileReadingProgressEnabled(context, true)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(changes > 0)
+
+            val unreadRow = adapter.getView(2, rowOff, parent)
+            val unreadBar = unreadRow.findViewById<ProgressBar>(R.id.progressFileReading)
+            assertEquals(View.VISIBLE, unreadBar.visibility)
+            assertEquals(0, unreadBar.progress)
+
+            val readComicRow = adapter.getView(3, unreadRow, parent)
+            val readComicBar = readComicRow.findViewById<ProgressBar>(R.id.progressFileReading)
+            assertEquals(View.VISIBLE, readComicBar.visibility)
+            assertEquals(10, readComicBar.max)
+            assertEquals(4, readComicBar.progress)
+
+            val ebookRow = adapter.getView(4, readComicRow, parent)
+            val ebookBar = ebookRow.findViewById<ProgressBar>(R.id.progressFileReading)
+            assertEquals(View.VISIBLE, ebookBar.visibility)
+            assertEquals(EbookReaderProgressMapper.SLIDER_MAX, ebookBar.max)
+            assertEquals(375, ebookBar.progress)
+
+            val txtRow = adapter.getView(5, ebookRow, parent)
+            val txtBar = txtRow.findViewById<ProgressBar>(R.id.progressFileReading)
+            assertEquals(View.VISIBLE, txtBar.visibility)
+            assertEquals(EbookReaderProgressMapper.SLIDER_MAX, txtBar.max)
+            assertEquals(400, txtBar.progress)
+
+            // Reusing the row for directory, unsupported file, and parent hides and resets the bar.
+            listOf(0, 1, 6).forEach { idx ->
+                val hiddenBar = adapter.getView(idx, txtRow, parent).findViewById<ProgressBar>(R.id.progressFileReading)
+                assertEquals(View.GONE, hiddenBar.visibility)
+                assertEquals(0, hiddenBar.progress)
+            }
+
+            // Live progress updates refresh while open, and stop after close().
+            val beforeUpdate = changes
+            ReaderProgressStore.prepareSave(context, readComic, 7, 0, totalCount = 10).commit()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(changes > beforeUpdate)
+
+            adapter.close()
+            val afterClose = changes
+            ReaderProgressStore.prepareSave(context, readComic, 8, 0, totalCount = 10).commit()
+            EbookProgressStore.save(context, readEbook, EbookProgress(2, 0.5f), chapterCount = 4)
+            AppSettings.setShowFileReadingProgressEnabled(context, false)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(afterClose, changes)
+        } finally {
+            adapter.close()
+            AppSettings.setShowFileReadingProgressEnabled(context, false)
+            ReaderProgressStore.clearSavedReadingProgress(context, readComic)
+            EbookProgressStore.clear(context, readEbook)
+            EbookProgressStore.clear(context, readTxt)
+        }
     }
 
     private fun coverFixture(block: (FileListAdapter, MangaCollectionCoverAdapter, MangaCollectionCoverAdapter.CoverViewHolder, MangaCollectionCoverLoadTracker<ImageView>) -> Unit) = fixture { root ->

@@ -184,7 +184,8 @@ object ComicLabConfigurationStore {
                     chapterIndex = item.chapterIndex,
                     scrollFraction = item.scrollFraction,
                     coordinateVersion = item.coordinateVersion
-                )
+                ),
+                chapterCount = item.chapterCount
             )
             if (ebookIdentities.add(identity)) restoredEntries++ else skippedEntries++
         }

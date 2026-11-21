@@ -677,5 +677,54 @@ class ComicLabConfigurationStoreRobolectricTest {
         }
     }
 
+    @Test
+    fun exportAndImportPreserveProgressTotalsAndFileReadingProgressToggle() {
+        val root = tempDirectory("comiclab-config-progress-totals")
+        try {
+            val cbz = File(root, "comic.cbz").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+            val epub = File(root, "novel.epub").apply { writeText("epub") }
+            val movedEpub = File(root, "moved.epub")
+            ReaderProgressStore.prepareSave(context, cbz, 3, -10, coveredPosition = 4, totalCount = 16).commit()
+            com.example.comiclab.core.store.EbookProgressStore.save(
+                context,
+                epub,
+                com.example.comiclab.ebook.EbookProgress(1, 0.5f),
+                chapterCount = 4
+            )
+            // Saving without chapterCount keeps existing chapterCount intact.
+            com.example.comiclab.core.store.EbookProgressStore.save(
+                context,
+                epub,
+                com.example.comiclab.ebook.EbookProgress(2, 0.0f)
+            )
+            assertEquals(500, com.example.comiclab.core.store.EbookProgressStore.savedSliderProgress(context, epub))
+            AppSettings.setShowFileReadingProgressEnabled(context, true)
+
+            val exported = ComicLabConfigurationStore.export(context)
+            assertEquals(
+                listOf(ComicLabMangaProgress(cbz.absolutePath, 3, -10, coveredPosition = 4, totalCount = 16)),
+                exported.mangaReadingProgress
+            )
+            assertEquals(
+                listOf(ComicLabEbookProgress(epub.absolutePath, 2, 0.0f, chapterCount = 4)),
+                exported.ebookReadingProgress
+            )
+            assertTrue(exported.appSettings.showFileReadingProgress == true)
+
+            clearPreferences()
+            ComicLabConfigurationStore.importAndMerge(context, exported)
+            assertEquals(16, ReaderProgressStore.savedTotalPageCount(context, cbz))
+            assertEquals(500, com.example.comiclab.core.store.EbookProgressStore.savedSliderProgress(context, epub))
+            assertTrue(AppSettings.isShowFileReadingProgressEnabled(context))
+
+            val completeMove = com.example.comiclab.core.store.EbookProgressStore.prepareMove(context, epub)
+            assertTrue(epub.renameTo(movedEpub))
+            completeMove?.invoke(movedEpub)
+            assertEquals(500, com.example.comiclab.core.store.EbookProgressStore.savedSliderProgress(context, movedEpub))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun tempDirectory(prefix: String): File = Files.createTempDirectory(prefix).toFile()
 }

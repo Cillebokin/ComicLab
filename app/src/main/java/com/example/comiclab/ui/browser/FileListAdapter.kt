@@ -1,7 +1,10 @@
 package com.example.comiclab.ui.browser
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
 import android.util.LruCache
 import android.view.LayoutInflater
 import android.view.View
@@ -10,6 +13,7 @@ import android.widget.AbsListView
 import android.widget.ArrayAdapter
 import android.widget.ImageView
 import android.widget.ListView
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.ui.browser.bookcase.AbsListViewScrollStateTracker
@@ -19,8 +23,11 @@ import com.example.comiclab.core.concurrent.BoundedKeyedTaskQueue
 import com.example.comiclab.ComicArchive
 import com.example.comiclab.core.diagnostics.ComicLabPerformance
 import com.example.comiclab.CommonFunc
+import com.example.comiclab.core.settings.AppSettingsStore
+import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.core.store.FavoriteComicStore
 import com.example.comiclab.core.store.FavoritePathStore
+import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverAdapter
 import com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverClickHandler
 import com.example.comiclab.ui.browser.bookcase.MangaCollectionCoverLoadTracker
@@ -46,10 +53,34 @@ class FileListAdapter(
 ) : ArrayAdapter<FileItem>(context, 0, items) {
 
     private val archiveCoverCache = object : LruCache<String, Bitmap>(ARCHIVE_COVER_CACHE_SIZE) {}
+    private val archivePageCounts = object : LruCache<String, Int>(ARCHIVE_COVER_CACHE_SIZE) {}
     private val collectionSourceCache = object : LruCache<String, List<MangaCollectionCoverSource>>(ARCHIVE_COVER_CACHE_SIZE) {}
     private val collectionScrollState = MangaCollectionCoverScrollState()
     private val collectionCoverLoadTracker = MangaCollectionCoverLoadTracker<ImageView>()
     private val listScrollState = AbsListViewScrollStateTracker()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var attachedListView: AbsListView? = null
+    private val refreshProgress = Runnable {
+        if (closed) return@Runnable
+        val listView = attachedListView
+        if (listView != null && listView.isAttachedToWindow) {
+            notifyDataSetChangedWhenIdle(listView)
+        } else {
+            notifyDataSetChanged()
+        }
+    }
+    private val progressListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        if (!closed && AppSettings.isShowFileReadingProgressEnabled(context)) {
+            mainHandler.removeCallbacks(refreshProgress)
+            mainHandler.post(refreshProgress)
+        }
+    }
+    private val settingsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (!closed && (key == null || key == AppSettingsStore.KEY_SHOW_FILE_READING_PROGRESS)) {
+            mainHandler.removeCallbacks(refreshProgress)
+            mainHandler.post(refreshProgress)
+        }
+    }
     private val loadingArchiveCovers = Collections.synchronizedSet(mutableSetOf<String>())
     private val failedArchiveCovers = Collections.synchronizedSet(mutableSetOf<String>())
     private val collectionSourceRequestIds = ConcurrentHashMap<String, Long>()
@@ -65,6 +96,12 @@ class FileListAdapter(
     private var favoriteDirectoryPaths = FavoritePathStore.favoriteDirectoryPaths(context)
     @Volatile
     private var closed = false
+
+    init {
+        ReaderProgressStore.registerChangeListener(context, progressListener)
+        EbookProgressStore.registerChangeListener(context, progressListener)
+        AppSettingsStore.registerChangeListener(context, settingsListener)
+    }
 
     override fun getViewTypeCount(): Int = BookcaseRowViewTypes.COUNT
 
@@ -90,7 +127,10 @@ class FileListAdapter(
     }
 
     override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-        (parent as? AbsListView)?.let(listScrollState::attach)
+        (parent as? AbsListView)?.let {
+            attachedListView = it
+            listScrollState.attach(it)
+        }
         val item = items[position]
         val file = item.file
         val layoutResId = getItemLayoutResId(file)
@@ -113,12 +153,14 @@ class FileListAdapter(
         val collectionCoverList = view.findViewById<RecyclerView>(R.id.collectionCoverList)
         val infoContainer = view.findViewById<ViewGroup>(R.id.itemInfoContainer)
         val imgFavoriteMarker = view.findViewById<ImageView>(R.id.imgFavoriteMarker)
+        val progressFileReading = view.findViewById<ProgressBar>(R.id.progressFileReading)
         val tvName = view.findViewById<TextView>(R.id.tvName)
         val tvInfo = view.findViewById<TextView>(R.id.tvInfo)
         val tvTypeMarker = view.findViewById<TextView>(R.id.tvTypeMarker)
         val tvDate = view.findViewById<TextView>(R.id.tvDate)
 
         hideFavoriteMarker(imgFavoriteMarker)
+        hideFileReadingProgressBar(progressFileReading)
 
         if (item.isParent) {
             imgIcon.tag = null
@@ -164,7 +206,7 @@ class FileListAdapter(
         }
 
         if (ComicArchive.isArchive(file) || ReaderFileDetector.isEbook(file)) {
-            bindArchiveIcon(file, iconContainer, infoContainer, imgIcon, collectionCoverList)
+            bindArchiveIcon(file, iconContainer, infoContainer, imgIcon, collectionCoverList, progressFileReading)
         } else {
             imgIcon.tag = null
             resetCollectionCoverContainer(iconContainer, infoContainer, imgIcon, collectionCoverList)
@@ -172,6 +214,7 @@ class FileListAdapter(
             imgIcon.scaleType = ImageView.ScaleType.CENTER_INSIDE
             imgIcon.setImageResource(R.drawable.ic_lucide_file)
         }
+        bindFileReadingProgress(file, progressFileReading)
         tvInfo.text = CommonFunc.formatFileSize(file.length())
 
         return view
@@ -230,6 +273,22 @@ class FileListAdapter(
     private fun hideFavoriteMarker(marker: ImageView) {
         marker.setImageDrawable(null)
         marker.visibility = View.GONE
+    }
+
+    private fun bindFileReadingProgress(file: File, progressBar: ProgressBar?) {
+        if (progressBar == null ||
+            !AppSettings.isShowFileReadingProgressEnabled(context) ||
+            !file.isFile ||
+            !ReaderFileDetector.isSupported(file)
+        ) {
+            hideFileReadingProgressBar(progressBar)
+            return
+        }
+
+        val cacheKey = archiveCoverCacheKey(file)
+        progressBar.tag = cacheKey
+        progressBar.visibility = View.VISIBLE
+        bindReadingProgressBar(context, file, progressBar, archivePageCounts.get(cacheKey) ?: 0)
     }
 
     private fun bindDirectoryClick(
@@ -514,7 +573,8 @@ class FileListAdapter(
         iconContainer: ViewGroup,
         infoContainer: ViewGroup,
         imgIcon: ImageView,
-        collectionCoverList: RecyclerView
+        collectionCoverList: RecyclerView,
+        progressFileReading: ProgressBar?
     ) {
         resetCollectionCoverContainer(iconContainer, infoContainer, imgIcon, collectionCoverList)
         setArchivePlaceholderLayout(imgIcon)
@@ -559,16 +619,32 @@ class FileListAdapter(
             taskKey = "archive-cover:$cacheKey",
             onRejected = { loadingArchiveCovers.remove(cacheKey) }
         ) {
-            val cover = runCatching {
-                val firstImageEntry = ComicArchive.imageEntries(file).firstOrNull()
-                firstImageEntry?.let {
+            val entries = runCatching { ComicArchive.imageEntries(file) }.getOrDefault(emptyList())
+            val cover = entries.firstOrNull()?.let {
+                runCatching {
                     ComicArchive.decodeImage(file, it, ARCHIVE_COVER_MAX_SIZE, context.cacheDir)
-                }
-            }.getOrNull()
+                }.getOrNull()
+            }
 
             loadingArchiveCovers.remove(cacheKey)
             if (closed) {
                 return@executeCoverTask
+            }
+
+            archivePageCounts.put(cacheKey, entries.size)
+            if (entries.isNotEmpty() &&
+                AppSettings.isShowFileReadingProgressEnabled(context) &&
+                ReaderProgressStore.savedTotalPageCount(context, file) == null &&
+                ReaderProgressStore.hasSavedReadingProgress(context, file)
+            ) {
+                mainHandler.post {
+                    if (closed || !AppSettings.isShowFileReadingProgressEnabled(context)) return@post
+                    if (progressFileReading != null && progressFileReading.tag == cacheKey) {
+                        bindReadingProgressBar(context, file, progressFileReading, entries.size)
+                    } else {
+                        refreshProgress.run()
+                    }
+                }
             }
 
             if (cover == null) {
@@ -608,6 +684,11 @@ class FileListAdapter(
 
     fun close() {
         closed = true
+        ReaderProgressStore.unregisterChangeListener(context, progressListener)
+        EbookProgressStore.unregisterChangeListener(context, progressListener)
+        AppSettingsStore.unregisterChangeListener(context, settingsListener)
+        mainHandler.removeCallbacks(refreshProgress)
+        attachedListView = null
         archiveCoverTasks.close()
         loadingArchiveCovers.clear()
         collectionCoverLoadTracker.clear()

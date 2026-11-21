@@ -43,6 +43,36 @@ class AppSettingsRobolectricTest {
         } finally { controller.pause().stop().destroy() }
     }
 
+    @Test fun fileReadingProgressSettingDefaultsToDisabledAndSurvivesExportAndSwitchToggle() {
+        assertFalse(AppSettings.isShowFileReadingProgressEnabled(context))
+        val controller = org.robolectric.Robolectric.buildActivity(SettingsActivity::class.java).setup()
+        try {
+            val toggle = controller.get()
+                .findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchShowFileReadingProgress)
+            assertFalse(toggle.isChecked)
+            toggle.isChecked = true
+            assertTrue(AppSettings.isShowFileReadingProgressEnabled(context))
+            controller.recreate()
+            assertTrue(
+                controller.get()
+                    .findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchShowFileReadingProgress)
+                    .isChecked
+            )
+        } finally {
+            controller.pause().stop().destroy()
+        }
+
+        val json = com.example.comiclab.core.settings.ComicLabConfigurationJson
+        val exported = json.encode(
+            com.example.comiclab.core.settings.ComicLabConfiguration(
+                appSettings = AppSettings.snapshot(context)
+            )
+        )
+        AppSettings.setShowFileReadingProgressEnabled(context, false)
+        AppSettings.applySnapshot(context, json.decode(exported).configuration.appSettings)
+        assertTrue(AppSettings.isShowFileReadingProgressEnabled(context))
+    }
+
     @Test fun enhancementScalePersistsAndSurvivesConfigurationExport() {
         assertEquals(2, AppSettings.getEnhancementScale(context))
         AppSettings.setEnhancementScale(context, 3)

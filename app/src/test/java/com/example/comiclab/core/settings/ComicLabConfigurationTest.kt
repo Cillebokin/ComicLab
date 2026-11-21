@@ -133,11 +133,11 @@ class ComicLabConfigurationTest {
             ),
             bookcasePaths = listOf("/bookcase"),
             mangaReadingProgress = listOf(
-                ComicLabMangaProgress("/comic.cbz", 8, 9),
+                ComicLabMangaProgress("/comic.cbz", 8, 9, totalCount = 24),
                 ComicLabMangaProgress("/spread.cbz", 2, 0, coveredPosition = 3)
             ),
             ebookReadingProgress = listOf(
-                ComicLabEbookProgress("/book.epub", 2, 0.5f)
+                ComicLabEbookProgress("/book.epub", 2, 0.5f, chapterCount = 10)
             ),
             appSettings = ComicLabAppSettings(
                 darkModeEnabled = true,
@@ -148,6 +148,7 @@ class ComicLabConfigurationTest {
                 volumeKeyPageTurn = true,
                 autoHideSystemBars = false,
                 startMarkerErrorTags = "中;汉",
+                showFileReadingProgress = true,
                 customReaderBrightnessEnabled = true,
                 customReaderBrightness = 180
             )

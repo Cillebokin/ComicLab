@@ -256,7 +256,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
             saveReaderPosition(originalActivity)
             awaitReaderProgressWrite(originalActivity)
             assertEquals(
-                ComicLabMangaProgress(archive.absolutePath, position = 3, offset = 29),
+                ComicLabMangaProgress(archive.absolutePath, position = 3, offset = 29, totalCount = 6),
                 MangaReaderActivity.savedReadingProgress(application, archive)
             )
 
@@ -266,7 +266,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
             assertTrue("the recreated Activity must finish loading its prepared entries", awaitReaderEntries(recreatedActivity))
             assertEquals("the start command must not clear progress again", 3, currentReaderPosition(recreatedActivity))
             assertEquals(
-                ComicLabMangaProgress(archive.absolutePath, position = 3, offset = 29),
+                ComicLabMangaProgress(archive.absolutePath, position = 3, offset = 29, totalCount = 6),
                 MangaReaderActivity.savedReadingProgress(application, archive)
             )
         } finally {
@@ -417,7 +417,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
 
             progressExecutor.runNextOnWorker()
             assertEquals(
-                ComicLabMangaProgress(archive.absolutePath, position = 2, offset = 13),
+                ComicLabMangaProgress(archive.absolutePath, position = 2, offset = 13, totalCount = 6),
                 MangaReaderActivity.savedReadingProgress(application, archive)
             )
             assertEquals(
@@ -429,7 +429,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
 
             progressExecutor.runNextOnWorker()
             assertEquals(
-                ComicLabMangaProgress(archive.absolutePath, position = 4, offset = 27),
+                ComicLabMangaProgress(archive.absolutePath, position = 4, offset = 27, totalCount = 6),
                 MangaReaderActivity.savedReadingProgress(application, archive)
             )
             assertTrue(
@@ -444,7 +444,7 @@ class MangaReaderCacheLifecycleRobolectricTest {
                 progressExecutor.runNextOnWorker()
             }
             assertEquals(
-                ComicLabMangaProgress(archive.absolutePath, position = 4, offset = 27),
+                ComicLabMangaProgress(archive.absolutePath, position = 4, offset = 27, totalCount = 6),
                 MangaReaderActivity.savedReadingProgress(application, archive)
             )
             assertTrue(progressExecutor.isTerminated)

@@ -1660,7 +1660,8 @@ class MangaReaderActivity : AppCompatActivity() {
             position = positionToSave,
             offset = offsetToSave,
             forceCommit = forceCommit,
-            coveredPosition = coveredPosition
+            coveredPosition = coveredPosition,
+            totalCount = imageEntries.size
         )
     }
 

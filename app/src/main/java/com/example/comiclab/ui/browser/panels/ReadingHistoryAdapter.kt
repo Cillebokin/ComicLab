@@ -19,8 +19,10 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.comiclab.core.concurrent.BoundedKeyedTaskQueue
 import com.example.comiclab.ComicArchive
 import com.example.comiclab.R
+import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
 import com.example.comiclab.core.store.ReaderProgressStore
+import com.example.comiclab.ui.browser.bindReadingProgressBar
 import com.example.comiclab.ui.common.RoundedPopupMenu
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -54,6 +56,7 @@ class ReadingHistoryAdapter(
     init {
         setHasStableIds(true)
         ReaderProgressStore.registerChangeListener(context, progressListener)
+        EbookProgressStore.registerChangeListener(context, progressListener)
     }
 
     override fun getItemViewType(position: Int): Int {
@@ -113,6 +116,7 @@ class ReadingHistoryAdapter(
     fun close() {
         closed = true
         ReaderProgressStore.unregisterChangeListener(context, progressListener)
+        EbookProgressStore.unregisterChangeListener(context, progressListener)
         mainHandler.removeCallbacks(refreshProgress)
         coverTasks.close()
         loadingCovers.clear()
@@ -129,9 +133,7 @@ class ReadingHistoryAdapter(
         holder.tvName.text = file.name
         holder.tvPath.text = file.parentFile?.absolutePath.orEmpty()
         val cacheKey = "${file.absolutePath}:${file.lastModified()}:${file.length()}"
-        val total = pageCounts.get(cacheKey) ?: 0
-        holder.progress.max = total.coerceAtLeast(1)
-        holder.progress.progress = runCatching { ReaderProgressStore.savedReadingPageCount(context, file, total) }.getOrDefault(0)
+        bindReadingProgressBar(context, file, holder.progress, pageCounts.get(cacheKey) ?: 0)
         holder.content.setOnClickListener {
             historyItemAt(holder.bindingAdapterPosition)?.let(onItemClick)
         }
