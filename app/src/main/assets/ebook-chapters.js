@@ -115,26 +115,40 @@
                 section.ebookSize = { chars: html.length, tags };
                 return section;
             };
-            const loaded = await Promise.all(desired.map(readSection));
-            if (request !== generation) return false;
+            const readOptionalSection = async n => {
+                try {
+                    return await readSection(n);
+                } catch (failure) {
+                    if (request !== generation || signal.aborted) throw failure;
+                    return null;
+                }
+            };
+            const results = await Promise.all(
+                desired.map(n => (n === index ? readSection(n) : readOptionalSection(n)))
+            );
+            if (request !== generation || signal.aborted) return false;
+            const targetSection = results[desired.indexOf(index)];
+            let forwardFailed = desired.some((n, i) => n > index && results[i] === null);
+            let backwardFailed = desired.some((n, i) => n < index && results[i] === null);
+            const loaded = results.filter(Boolean);
             let chars = loaded.reduce((sum, section) => sum + section.ebookSize.chars, 0);
             let tags = loaded.reduce((sum, section) => sum + section.ebookSize.tags, 0);
             if (chars > charBudget || tags > tagBudget) throw new Error('Chapter window exceeds its budget');
             if (target && target.anchor && target.anchor !== 'chapter-' + index &&
-                !loaded.find(section => indexOf(section) === index).querySelector('#' + target.anchor)) {
+                !targetSection.querySelector('#' + target.anchor)) {
                 busy = false;
                 return false;
             }
             // Capture just before committing: the user may have scrolled while IO was pending.
             const before = position();
-            if (!target && before && !desired.includes(before.index)) {
+            if (!target && before && !loaded.some(section => indexOf(section) === before.index)) {
                 return loadAround(before.index, null);
             }
             const reference = before && old.find(section => indexOf(section) === before.index);
             const offset = reference ? top(reference) - window.scrollY : 0;
-            old.filter(section => !desired.includes(indexOf(section))).forEach(section => section.remove());
+            old.filter(section => !loaded.includes(section)).forEach(section => section.remove());
             loaded.forEach(section => article.appendChild(section));
-            header.hidden = desired[0] !== 0;
+            header.hidden = indexOf(loaded[0]) !== 0;
             focused = index;
             ready = true;
             if (target) {
@@ -144,7 +158,7 @@
                     return false;
                 }
                 pendingTarget = target;
-            } else if (reference && desired.includes(indexOf(reference))) {
+            } else if (reference && loaded.includes(reference)) {
                 window.scrollTo(0, top(reference) - offset);
             }
             // A short trailing chapter need not reach the top of the viewport before more content is needed.
@@ -152,11 +166,16 @@
             while (loaded.length < chapterLimit) {
                 const first = indexOf(loaded[0]);
                 const last = indexOf(loaded[loaded.length - 1]);
-                const forward = last < count - 1 && maxScroll() - window.scrollY < window.innerHeight;
-                const backward = first > 0 && window.scrollY < window.innerHeight;
+                const forward = !forwardFailed && last < count - 1 && maxScroll() - window.scrollY < window.innerHeight;
+                const backward = !backwardFailed && first > 0 && window.scrollY < window.innerHeight;
                 if (!forward && !backward) break;
-                const section = await readSection(forward ? last + 1 : first - 1);
-                if (request !== generation) return false;
+                const section = await readOptionalSection(forward ? last + 1 : first - 1);
+                if (request !== generation || signal.aborted) return false;
+                if (!section) {
+                    if (forward) forwardFailed = true;
+                    else backwardFailed = true;
+                    continue;
+                }
                 if (chars + section.ebookSize.chars > charBudget || tags + section.ebookSize.tags > tagBudget) {
                     boundaryBlocked = index;
                     break;
@@ -195,7 +214,7 @@
             } else report();
             return true;
         } catch (failure) {
-            if (request !== generation) return false;
+            if (request !== generation || signal.aborted) return false;
             controller.abort();
             busy = false;
             error();

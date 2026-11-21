@@ -206,6 +206,71 @@ class EbookReaderDeviceAcceptanceTest {
         assertEquals(EbookProgress(0, 1f), EbookProgressStore.load(context, shortBook))
     }
 
+    @Test
+    fun optionalNeighborFailureKeepsProgressReportingAndLoadsAfterRecovery() {
+        val threeChapterBook = File(testRoot, "optional-neighbor.epub")
+        writeEpubFixture(threeChapterBook, includeThirdChapter = true)
+        val launchOutput = ParcelFileDescriptor.AutoCloseInputStream(
+            instrumentation.uiAutomation.executeShellCommand(
+                "am start -W -n ${context.packageName}/com.example.comiclab.MainActivity"
+            )
+        ).bufferedReader().use { it.readText() }
+        check("Status: ok" in launchOutput) { launchOutput }
+        browserActivity = awaitBrowser()
+        onMain {
+            browserActivity!!.startActivity(
+                Intent(context, EbookReaderActivity::class.java)
+                    .putExtra(EbookReaderActivity.EXTRA_BOOK_PATH, threeChapterBook.absolutePath)
+            )
+        }
+
+        val activity = awaitReader(expectedOrientation = null, requireRestoredScroll = false)
+        val documentsDir = File(context.cacheDir, "ebook-documents")
+        val chapterTwoFile = checkNotNull(
+            documentsDir.listFiles()?.singleOrNull { it.name.endsWith("-chapter-2.html") }
+        ) { "Prepared chapter 2 file was not found in $documentsDir" }
+        val blockedFile = File(chapterTwoFile.parentFile, "${chapterTwoFile.name}.blocked")
+        check(chapterTwoFile.renameTo(blockedFile)) { "Could not block $chapterTwoFile" }
+        try {
+            evaluate(
+                activity,
+                """
+                    window.scrollTo(0, document.getElementById('chapter-1').getBoundingClientRect().top + window.scrollY +
+                        document.getElementById('chapter-1').offsetHeight - window.innerHeight * 0.5);
+                    window.dispatchEvent(new Event('scroll'));
+                    true;
+                """.trimIndent()
+            )
+            awaitCondition("Current chapter progress was blocked by missing optional neighbor") {
+                onMain {
+                    activity.findViewById<View>(R.id.tvEbookReaderStatus).visibility == View.GONE &&
+                        activity.progressForTest?.let { it.chapterIndex == 1 && it.scrollFraction > 0.1f } == true
+                } && EbookProgressStore.load(context, threeChapterBook)?.let {
+                    it.chapterIndex == 1 && it.scrollFraction > 0.1f
+                } == true
+            }
+            assertEquals("false", evaluate(activity, "!!document.querySelector('#chapter-2')"))
+
+            check(blockedFile.renameTo(chapterTwoFile)) { "Could not restore $chapterTwoFile" }
+            evaluate(activity, "window.scrollBy(0, -12); window.dispatchEvent(new Event('scroll')); true;")
+            awaitCondition("Recovered optional neighbor chapter 2 did not load") {
+                evaluate(activity, "!!document.querySelector('#chapter-2')") == "true"
+            }
+            evaluate(
+                activity,
+                "window.scrollTo(0, document.getElementById('chapter-2').getBoundingClientRect().top + window.scrollY); window.dispatchEvent(new Event('scroll')); true;"
+            )
+            awaitCondition("Recovered chapter 2 progress was not saved") {
+                onMain { activity.progressForTest?.chapterIndex == 2 } &&
+                    EbookProgressStore.load(context, threeChapterBook)?.chapterIndex == 2
+            }
+        } finally {
+            if (blockedFile.exists() && !chapterTwoFile.exists()) {
+                blockedFile.renameTo(chapterTwoFile)
+            }
+        }
+    }
+
     private fun assertOneScreenBookCompleted(activity: EbookReaderActivity) {
         assertEquals(
             "true",
@@ -397,13 +462,22 @@ class EbookReaderDeviceAcceptanceTest {
         assertTrue(message, condition())
     }
 
-    private fun writeEpubFixture(file: File, navigationFile: String? = null, navigation: String = "") {
+    private fun writeEpubFixture(
+        file: File,
+        navigationFile: String? = null,
+        navigation: String = "",
+        includeThirdChapter: Boolean = false
+    ) {
         val isNcx = navigationFile?.endsWith(".ncx") == true
         val navItem = when {
             isNcx -> """<item id="navigation" href="$navigationFile" media-type="application/x-dtbncx+xml"/>"""
             navigationFile != null -> """<item id="navigation" href="$navigationFile" media-type="application/xhtml+xml" properties="nav"/>"""
             else -> ""
         }
+        val thirdManifest = if (includeThirdChapter) {
+            """<item id="chapter-three" href="chapter-three.xhtml" media-type="application/xhtml+xml"/>"""
+        } else ""
+        val thirdSpine = if (includeThirdChapter) """<itemref idref="chapter-three"/>""" else ""
         val spineAttributes = if (isNcx) """ toc="navigation"""" else ""
         ZipOutputStream(FileOutputStream(file)).use { output ->
             output.putEntry("mimetype", "application/epub+zip")
@@ -425,14 +499,16 @@ class EbookReaderDeviceAcceptanceTest {
                       <manifest>
                         <item id="chapter-one" href="chapter-one.xhtml" media-type="application/xhtml+xml"/>
                         <item id="chapter-two" href="chapter-two.xhtml" media-type="application/xhtml+xml"/>
+                        $thirdManifest
                         $navItem
                       </manifest>
-                      <spine$spineAttributes><itemref idref="chapter-one"/><itemref idref="chapter-two"/></spine>
+                      <spine$spineAttributes><itemref idref="chapter-one"/><itemref idref="chapter-two"/>$thirdSpine</spine>
                     </package>""".trimIndent()
             )
             if (navigationFile != null) output.putEntry("OEBPS/$navigationFile", navigation)
             output.putEntry("OEBPS/chapter-one.xhtml", chapterXhtml("Chapter one", navigationFile != null))
             output.putEntry("OEBPS/chapter-two.xhtml", chapterXhtml("Chapter two"))
+            if (includeThirdChapter) output.putEntry("OEBPS/chapter-three.xhtml", chapterXhtml("Chapter three"))
         }
     }
 

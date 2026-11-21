@@ -308,3 +308,57 @@ test('one-screen single and multi-chapter books report completion while partial 
   assert.equal(bounded.progress.index, 5);
   assert.equal(bounded.progress.fraction, 0);
 });
+
+test('failing optional neighbours keep target chapter progress alive and recover on later scroll', async () => {
+  const fail = [49, 51];
+  const page = reader(100, { fail });
+  assert.equal(await page.window.restoreComicLabProgress(50, 0.4, 2), true);
+  assert.equal(page.errors, 0);
+  assert.deepEqual(page.chapters, [50]);
+  assert.equal(page.progress.index, 50);
+  assert.equal(page.progress.fraction, 0.4);
+
+  await page.scroll(1800);
+  assert.equal(page.errors, 0);
+  assert.equal(page.progress.index, 50);
+  assert.ok(Math.abs(page.progress.fraction - 0.6) < 1e-10);
+
+  fail.length = 0;
+  await page.scroll(1850);
+  assert.equal(page.errors, 0);
+  assert.deepEqual(page.chapters, [49, 50, 51]);
+  assert.equal(page.progress.index, 50);
+
+  const shortFail = [3];
+  const shortPage = reader(6, { height: 100, fail: shortFail });
+  shortPage.heights.set(0, 3000);
+  assert.equal(await shortPage.window.restoreComicLabProgress(1, 0.5, 2), true);
+  assert.equal(shortPage.errors, 0);
+  assert.deepEqual(shortPage.chapters, [0, 1, 2]);
+  assert.equal(shortPage.progress.index, 1);
+  assert.equal(shortPage.progress.fraction, 0.5);
+
+  shortFail.length = 0;
+  await shortPage.scroll(2200);
+  assert.equal(shortPage.errors, 0);
+  assert.deepEqual(shortPage.chapters, [0, 1, 2, 3, 4, 5]);
+});
+
+test('missing first chapter does not mark a partial book complete and abort ignores neighbour failures', async () => {
+  const partial = reader(2, { height: 200, fail: [0] });
+  assert.equal(await partial.window.restoreComicLabProgress(1, 0, 2), true);
+  assert.equal(partial.errors, 0);
+  assert.deepEqual(partial.chapters, [1]);
+  assert.equal(partial.progress.index, 1);
+  assert.equal(partial.progress.fraction, 0);
+
+  const raced = reader(100, { block: [39], fail: [41] });
+  const stale = raced.window.restoreComicLabProgress(40, 0.5, 2);
+  await raced.flush();
+  assert.equal(await raced.window.restoreComicLabProgress(80, 0.2, 2), true);
+  raced.blocked.get(39)();
+  assert.equal(await stale, false);
+  assert.equal(raced.errors, 0);
+  assert.equal(raced.progress.index, 80);
+  assert.equal(raced.progress.fraction, 0.2);
+});
