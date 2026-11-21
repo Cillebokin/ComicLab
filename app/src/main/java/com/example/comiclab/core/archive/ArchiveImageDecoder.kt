@@ -19,14 +19,14 @@ internal object ArchiveImageDecoder {
     data class Bounds(val width: Int, val height: Int)
 
     fun decodeImage(file: File, entryName: String, maxSize: Int): Bitmap? =
-        ZipFile(file).use { zipFile ->
+        openComicZip(file).use { zipFile ->
             decodeZipBitmap(zipFile, entryName, Bitmap.Config.RGB_565) { width, height ->
                 calculateInSampleSize(width, height, maxSize)
             }?.scaleToFitMaxSize(maxSize)
         }
 
     fun decodeImageForWidth(file: File, entryName: String, targetWidth: Int): Bitmap? =
-        ZipFile(file).use { zipFile ->
+        openComicZip(file).use { zipFile ->
             decodeZipBitmap(zipFile, entryName, Bitmap.Config.ARGB_8888) { width, _ ->
                 calculateInSampleSizeForWidth(width, targetWidth)
             }?.scaleToWidthIfLarger(targetWidth)
@@ -50,7 +50,7 @@ internal object ArchiveImageDecoder {
         try {
             val futures = (0 until workerCount).map {
                 executor.submit {
-                    ZipFile(file).use { zipFile ->
+                    openComicZip(file).use { zipFile ->
                         while (keepDecoding.get()) {
                             val entryName = pendingEntries.poll() ?: break
                             val bitmap = runCatching {

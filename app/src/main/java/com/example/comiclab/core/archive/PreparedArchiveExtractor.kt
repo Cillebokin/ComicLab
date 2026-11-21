@@ -28,7 +28,6 @@ import java.security.MessageDigest
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.Locale
-import java.util.zip.ZipFile
 
 /** Prepared archive files, manifest mapping and extraction. */
 internal object PreparedArchiveExtractor {
@@ -221,7 +220,7 @@ internal object PreparedArchiveExtractor {
         }
 
         private val extension = file.extension.lowercase(Locale.ROOT)
-        private val zipFile = if (extension in zipArchiveExtensions) ZipFile(file) else null
+        private val zipFile = if (extension in zipArchiveExtensions) openComicZip(file) else null
         private val randomAccessFile =
             if (extension in sevenZipArchiveExtensions) RandomAccessFile(file, "r") else null
         private val sevenZipArchive =
@@ -349,7 +348,7 @@ internal object PreparedArchiveExtractor {
     }
 
     private fun extractZipEntryToFile(file: File, entryName: String, targetFile: File): Boolean {
-        ZipFile(file).use { zipFile ->
+        openComicZip(file).use { zipFile ->
             val entry = zipFile.getEntry(entryName) ?: return false
             val copied = writeAtomic(targetFile) { output ->
                 zipFile.getInputStream(entry).use { input ->
@@ -371,7 +370,7 @@ internal object PreparedArchiveExtractor {
         onProgress: (completed: Int, total: Int) -> Unit
     ): List<File> {
         val extractedFiles = mutableListOf<File>()
-        ZipFile(file).use { zipFile ->
+        openComicZip(file).use { zipFile ->
             entryNames.forEachIndexed { index, entryName ->
                 if (!shouldContinue()) {
                     return extractedFiles

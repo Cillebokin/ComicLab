@@ -2,6 +2,7 @@ package com.example.comiclab.core.archive
 
 import com.example.comiclab.ComicArchive
 import java.io.File
+import java.nio.charset.Charset
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import org.junit.Assert.*
@@ -12,9 +13,9 @@ import org.junit.rules.TemporaryFolder
 class ArchiveEntryListerTest {
     @get:Rule val temporaryFolder = TemporaryFolder()
 
-    private fun zip(vararg names: String): File {
+    private fun zip(vararg names: String, charset: Charset = Charsets.UTF_8): File {
         val file = File(temporaryFolder.root, "pages-${temporaryFolder.root.listFiles()!!.size}.cbz")
-        ZipOutputStream(file.outputStream()).use { output ->
+        ZipOutputStream(file.outputStream(), charset).use { output ->
             for (name in names) {
                 output.putNextEntry(ZipEntry(name))
                 if (!name.endsWith("/")) output.write(byteArrayOf(1))
@@ -89,6 +90,16 @@ class ArchiveEntryListerTest {
             listOf(".__MACOSX/page1.png", "a2.txt", "a10.jpg", "folder/.hidden.PNG"),
             ArchiveEntryLister.fileEntryNames(names.asSequence())
         )
+    }
+
+    @Test fun gbkAndUtf8EntryNamesUseTheSamePageOrderAndCover() {
+        val first = "漫画/第2页.png"
+        val last = "漫画/第10页.png"
+        for (charset in listOf(Charset.forName("GBK"), Charsets.UTF_8)) {
+            val archive = zip(last, first, "漫画/._第2页.png", charset = charset)
+            assertEquals(charset.name(), listOf(first, last), imageEntries(archive))
+            assertEquals(charset.name(), first, ComicArchive.firstImageEntryIfFirstFileIsImage(archive))
+        }
     }
 
     @Test fun firstNaturallySortedFileMustBeImage() {

@@ -46,6 +46,7 @@ import com.example.comiclab.ui.reader.manga.ReaderSubsamplingImageView
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.charset.Charset
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -388,6 +389,38 @@ class MangaReaderPhase5DeviceAcceptanceTest {
             assertTrue(visibleSourcePositions(reader).containsAll(listOf(expectedPosition, expectedCoveredPosition)))
         }
         finishReader(reader)
+    }
+
+    @Test
+    fun previewAndPreparedReaderOpenGbkAndUtf8EntryNames() {
+        val entries = listOf("漫画/第2页.png", "漫画/第10页.png")
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_LEFT_TO_RIGHT)
+        AppSettings.setDoublePageReadingEnabled(context, false)
+
+        for (charset in listOf(Charset.forName("GBK"), Charsets.UTF_8)) {
+            val archive = File(temporaryFolder.root, "comic-${charset.name()}.cbz")
+            ZipOutputStream(archive.outputStream(), charset).use { output ->
+                entries.asReversed().forEachIndexed { index, name ->
+                    output.putNextEntry(ZipEntry(name))
+                    output.write(createPagePng(index))
+                    output.closeEntry()
+                }
+            }
+
+            val preview = launchPreviewWithPageCount(archive, pageCount = entries.size)
+            awaitDecodedPreview(preview)
+            assertEquals(2, onMain { preview.findViewById<ProgressBar>(R.id.progressReading).max })
+            onMain { check(preview.findViewById<View>(R.id.btnFullRead).performClick()) }
+            val reader = awaitReadyReader()
+            assertEquals(entries, onMain { reader.imageEntriesForTest })
+            onMain { reader.jumpReaderToPageForTest(1) }
+            awaitCondition("the second page should be visible for ${charset.name()}") {
+                1 in visibleSourcePositions(reader)
+            }
+            assertReaderProgress(reader, page = 2, total = 2)
+            finishReader(reader)
+            onMain { preview.finish() }
+        }
     }
 
     @Test

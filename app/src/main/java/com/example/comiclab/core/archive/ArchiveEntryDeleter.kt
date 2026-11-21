@@ -48,8 +48,8 @@ internal object ArchiveEntryDeleter {
 
         val wroteReplacement = runCatching {
             var foundEntry = false
-            ZipFile(file).use { zipFile ->
-                ZipOutputStream(tempFile.outputStream().buffered()).use { zipOutput ->
+            openComicZip(file).use { zipFile ->
+                ZipOutputStream(tempFile.outputStream().buffered(), Charsets.UTF_8).use { zipOutput ->
                     val entries = zipFile.entries()
                     while (entries.hasMoreElements()) {
                         val sourceEntry = entries.nextElement()

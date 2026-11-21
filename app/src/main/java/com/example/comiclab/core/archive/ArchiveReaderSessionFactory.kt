@@ -11,7 +11,6 @@ import java.io.Closeable
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.Locale
-import java.util.zip.ZipFile
 import com.example.comiclab.core.archive.ArchiveImageDecoder.scaleToFitBoundsIfLarger
 import com.example.comiclab.core.archive.ArchiveImageDecoder.scaleToWidthIfLarger
 
@@ -137,7 +136,7 @@ internal object ArchiveReaderSessionFactory {
         private val extractSevenZipEntryToFile: (archive: IInArchive, entryIndex: Int, targetFile: File) -> Boolean
     ) : ArchiveReaderSession {
         private val extension = file.extension.lowercase(Locale.ROOT)
-        private val zipFile = if (extension in ArchiveFormatDetector.zipArchiveExtensions) ZipFile(file) else null
+        private val zipFile = if (extension in ArchiveFormatDetector.zipArchiveExtensions) openComicZip(file) else null
         private val zipLock = Any()
         private val sevenZipLock = Any()
         private val sevenZipEntryCache = if (extension in ArchiveFormatDetector.sevenZipArchiveExtensions) {

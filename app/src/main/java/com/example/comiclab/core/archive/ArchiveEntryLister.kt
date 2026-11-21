@@ -68,10 +68,10 @@ internal object ArchiveEntryLister {
         names.filterNot(::isMacOsMetadataEntry).sortedWith(naturalEntryNameComparator).toList()
 
     private fun zipImageEntries(file: File): List<String> =
-        ZipFile(file).use { imageEntryNames(it.fileNames()) }
+        openComicZip(file).use { imageEntryNames(it.fileNames()) }
 
     private fun zipFileEntries(file: File): List<String> =
-        ZipFile(file).use { fileEntryNames(it.fileNames()) }
+        openComicZip(file).use { fileEntryNames(it.fileNames()) }
 
     private fun ZipFile.fileNames(): Sequence<String> =
         entries().asSequence().filterNot { it.isDirectory }.map { it.name }

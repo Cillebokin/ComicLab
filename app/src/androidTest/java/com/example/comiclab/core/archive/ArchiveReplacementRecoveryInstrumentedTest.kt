@@ -4,7 +4,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.comiclab.ComicArchive
 import java.io.File
+import java.nio.charset.Charset
 import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 import org.junit.Assert.*
 import org.junit.Rule
@@ -17,10 +19,12 @@ import org.junit.runner.RunWith
 class ArchiveReplacementRecoveryInstrumentedTest {
     @get:Rule val temporaryFolder = TemporaryFolder(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir)
     private class Interrupted : Error()
+    private val firstPage = "漫画/第1页.png"
+    private val secondPage = "漫画/第2页.png"
 
     private fun archive() = File(temporaryFolder.root, "comic.cbz").apply {
-        ZipOutputStream(outputStream()).use { output ->
-            for (name in listOf("001.png", "002.png")) {
+        ZipOutputStream(outputStream(), Charset.forName("GBK")).use { output ->
+            for (name in listOf(firstPage, secondPage)) {
                 output.putNextEntry(ZipEntry(name))
                 output.write(name.toByteArray())
                 output.closeEntry()
@@ -30,7 +34,7 @@ class ArchiveReplacementRecoveryInstrumentedTest {
 
     private fun interrupt(file: File, installed: Boolean) {
         assertThrows(Interrupted::class.java) {
-            ArchiveEntryDeleter.deleteEntry(file, "002.png") { source, destination ->
+            ArchiveEntryDeleter.deleteEntry(file, secondPage) { source, destination ->
                 val moved = ArchiveReplacementRecovery.moveWithoutReplacing(source, destination)
                 if (moved && if (installed) source.extension == "tmp" && destination == file
                     else source == file && destination.extension == "bak") throw Interrupted()
@@ -39,31 +43,39 @@ class ArchiveReplacementRecoveryInstrumentedTest {
         }
     }
 
-    private fun backup(file: File) = ComicArchive.deleteBackupDirectory(file).listFiles().orEmpty()
-        .single { it.extension == "cbz" }
+    private fun rollbackFile() = temporaryFolder.root.listFiles().orEmpty()
+        .single { it.name.endsWith(".bak") }
 
-    @Test fun directoryVisitRestoresInterruptedOriginalAndPreservesFullBackup() {
+    private fun assertRecoveryCleaned(file: File) {
+        assertFalse(ArchiveReplacementRecovery.hasPending(file))
+        assertFalse(temporaryFolder.root.listFiles().orEmpty().any { ".delete_" in it.name || ".restore_" in it.name })
+        assertTrue(ComicArchive.deleteBackupDirectory(file).listFiles().orEmpty().isEmpty())
+    }
+
+    @Test fun directoryVisitRestoresInterruptedGbkArchive() {
         val file = archive()
         val bytes = file.readBytes()
         val time = file.lastModified()
         interrupt(file, installed = false)
         assertFalse(file.exists())
+        assertArrayEquals(bytes, rollbackFile().readBytes())
         assertTrue(ArchiveReplacementRecovery.recoverDirectory(temporaryFolder.root))
         assertArrayEquals(bytes, file.readBytes())
         assertEquals(time, file.lastModified())
-        assertEquals(listOf("001.png", "002.png"), ComicArchive.imageEntries(file))
-        assertArrayEquals(bytes, backup(file).readBytes())
-        assertFalse(ArchiveReplacementRecovery.hasPending(file))
+        assertEquals(listOf(firstPage, secondPage), ComicArchive.imageEntries(file))
+        assertRecoveryCleaned(file)
     }
 
     @Test fun reopeningInstalledReplacementKeepsDeletionAndCleansOnlyTemporaryFiles() {
         val file = archive()
         val bytes = file.readBytes()
         interrupt(file, installed = true)
-        assertEquals(listOf("001.png"), ComicArchive.imageEntries(file))
-        assertArrayEquals(bytes, backup(file).readBytes())
-        assertFalse(ArchiveReplacementRecovery.hasPending(file))
-        assertFalse(temporaryFolder.root.listFiles().orEmpty().any { ".delete_" in it.name || ".restore_" in it.name })
+        assertArrayEquals(bytes, rollbackFile().readBytes())
+        assertEquals(listOf(firstPage), ComicArchive.imageEntries(file))
+        ZipFile(file).use { zip ->
+            assertArrayEquals(firstPage.encodeToByteArray(), zip.getInputStream(zip.getEntry(firstPage)).use { it.readBytes() })
+        }
+        assertRecoveryCleaned(file)
     }
 
     @Test fun conflictingFileIsNotOverwrittenAndEvidenceRemains() {
@@ -73,8 +85,8 @@ class ArchiveReplacementRecoveryInstrumentedTest {
         file.writeText("new user content")
         assertFalse(ArchiveReplacementRecovery.recoverDirectory(temporaryFolder.root))
         assertEquals("new user content", file.readText())
-        assertFalse(ComicArchive.deleteEntry(file, "001.png"))
-        assertArrayEquals(original, backup(file).readBytes())
+        assertFalse(ComicArchive.deleteEntry(file, firstPage))
+        assertArrayEquals(original, rollbackFile().readBytes())
         assertTrue(ArchiveReplacementRecovery.hasPending(file))
     }
 }
