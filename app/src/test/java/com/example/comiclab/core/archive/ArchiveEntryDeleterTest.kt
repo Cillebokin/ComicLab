@@ -33,7 +33,13 @@ class ArchiveEntryDeleterTest {
     fun zipAndCbzKeepTheirFormatNameAndRemainReadableAfterDeletion() = withTempDirectory { root ->
         for (extension in listOf("zip", "cbz", "ZIP", "CBZ")) {
             val archive = File(root, "comic.$extension")
-            writeZip(archive, "001.jpg" to "one", "002.jpg" to "two", "notes.txt" to "note")
+            writeZip(
+                archive,
+                "001.jpg" to "one",
+                "002.jpg" to "two",
+                "notes.txt" to "note",
+                "__MACOSX/._001.jpg" to "sidecar bytes"
+            )
             val originalPath = archive.absolutePath
             assertTrue(extension, ComicArchive.canDeleteEntry(archive))
             assertTrue(extension, ComicArchive.deleteEntry(archive, "002.jpg"))
@@ -44,6 +50,8 @@ class ArchiveEntryDeleterTest {
             java.util.zip.ZipFile(archive).use { zip ->
                 assertEquals("one", zip.getInputStream(zip.getEntry("001.jpg")).bufferedReader().use { it.readText() })
                 assertEquals("note", zip.getInputStream(zip.getEntry("notes.txt")).bufferedReader().use { it.readText() })
+                val sidecar = zip.getEntry("__MACOSX/._001.jpg")
+                assertEquals("sidecar bytes", zip.getInputStream(sidecar).bufferedReader().use { it.readText() })
             }
         }
     }

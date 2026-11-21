@@ -43,6 +43,15 @@ class ComicFormatConverterInstrumentedTest {
     }
 
     @Test
+    fun macOsMetadataDoesNotCreatePagesOrBreakPdfConversion() {
+        val source = createComic(
+            pageCount = 2,
+            metadataEntries = listOf("._page1.png", "__MACOSX/._page2.png")
+        )
+        assertSuccessfulConversion(source, File(temporaryFolder.root, "metadata-filtered.pdf"), pageCount = 2)
+    }
+
+    @Test
     fun userCancellationWhileDecoderIsBlockedRemovesTemporaryFiles() {
         val source = createComic()
         val output = File(temporaryFolder.root, "cancelled.pdf")
@@ -165,16 +174,16 @@ class ComicFormatConverterInstrumentedTest {
         }
     }
 
-    private fun assertSuccessfulConversion(source: File, output: File) {
+    private fun assertSuccessfulConversion(source: File, output: File, pageCount: Int = PAGE_COUNT) {
         val progress = mutableListOf<Pair<Int, Int>>()
         ComicFormatConverter.convert(source, output, ComicConversionTarget.PDF, AtomicBoolean()) { page, total ->
             progress += page to total
         }
-        assertEquals((1..PAGE_COUNT).map { it to PAGE_COUNT }, progress)
+        assertEquals((1..pageCount).map { it to pageCount }, progress)
         assertFalse(File(output.parentFile, "extracted-images").exists())
         val descriptor = ParcelFileDescriptor.open(output, ParcelFileDescriptor.MODE_READ_ONLY)
         PdfRenderer(descriptor).use { pdf ->
-            assertEquals(PAGE_COUNT, pdf.pageCount)
+            assertEquals(pageCount, pdf.pageCount)
             for (index in 0 until pdf.pageCount) {
                 pdf.openPage(index).use { page ->
                     assertEquals("unexpected page at index $index", 48 + 6 * (index + 1), page.width)
@@ -183,9 +192,15 @@ class ComicFormatConverterInstrumentedTest {
         }
     }
 
-    private fun createComic(): File = File(temporaryFolder.root, "source.cbz").also { file ->
+    private fun createComic(pageCount: Int = PAGE_COUNT, metadataEntries: List<String> = emptyList()): File {
+        val file = File(temporaryFolder.root, "source.cbz")
         ZipOutputStream(file.outputStream()).use { zip ->
-            for (page in PAGE_COUNT downTo 1) {
+            for (entry in metadataEntries) {
+                zip.putNextEntry(ZipEntry(entry))
+                zip.write(byteArrayOf(0, 5, 22, 7))
+                zip.closeEntry()
+            }
+            for (page in pageCount downTo 1) {
                 zip.putNextEntry(ZipEntry("page$page.png"))
                 val bitmap = Bitmap.createBitmap(200 + 25 * page, 300, Bitmap.Config.ARGB_8888)
                 try {
@@ -197,6 +212,7 @@ class ComicFormatConverterInstrumentedTest {
                 zip.closeEntry()
             }
         }
+        return file
     }
 
     private companion object {

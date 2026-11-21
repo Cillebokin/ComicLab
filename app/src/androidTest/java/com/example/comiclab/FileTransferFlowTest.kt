@@ -559,6 +559,9 @@ class FileTransferFlowTest {
                 zip.putNextEntry(ZipEntry("note.txt"))
                 zip.write("no images in this archive".toByteArray())
                 zip.closeEntry()
+                zip.putNextEntry(ZipEntry("__MACOSX/._note.png"))
+                zip.write(byteArrayOf(0, 5, 22, 7))
+                zip.closeEntry()
             }
         }
 

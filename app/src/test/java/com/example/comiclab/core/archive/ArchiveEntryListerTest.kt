@@ -53,6 +53,44 @@ class ArchiveEntryListerTest {
         assertEquals(".hidden.PNG", ComicArchive.firstImageEntryIfFirstFileIsImage(file))
     }
 
+    @Test fun macOsMetadataDoesNotCountAsPagesOrBlockTheFirstImage() {
+        val file = zip(
+            "page10.png",
+            "page2.png",
+            "__MACOSX/folder/thumbnail.png",
+            "folder/._page2.png",
+            "._page2.png",
+            ".DS_Store"
+        )
+
+        assertEquals(listOf("page2.png", "page10.png"), imageEntries(file))
+        assertEquals("page2.png", ComicArchive.firstImageEntryIfFirstFileIsImage(file))
+        assertEquals("page2.png", ComicArchive.firstImageEntryIfFirstFileIsImage(zip(".DS_Store", "page2.png")))
+        assertNull(ComicArchive.firstImageEntryIfFirstFileIsImage(zip(".DS_Store", "a.txt", "page2.png")))
+    }
+
+    @Test fun sharedNameSortersIgnoreNestedMetadataButKeepOtherHiddenImages() {
+        val names = listOf(
+            "nested\\__MACOSX\\preview.PNG",
+            "nested\\._shadow.png",
+            ".__MACOSX/page1.png",
+            "nested/__macosx/preview.PNG",
+            "folder/.hidden.PNG",
+            "folder/.ds_store",
+            "a2.txt",
+            "a10.jpg"
+        )
+
+        assertEquals(
+            listOf(".__MACOSX/page1.png", "a10.jpg", "folder/.hidden.PNG"),
+            ArchiveEntryLister.imageEntryNames(names.asSequence())
+        )
+        assertEquals(
+            listOf(".__MACOSX/page1.png", "a2.txt", "a10.jpg", "folder/.hidden.PNG"),
+            ArchiveEntryLister.fileEntryNames(names.asSequence())
+        )
+    }
+
     @Test fun firstNaturallySortedFileMustBeImage() {
         assertNull(ComicArchive.firstImageEntryIfFirstFileIsImage(zip("0.txt", "1.jpg", "000/")))
         assertEquals("2.jpg", ComicArchive.firstImageEntryIfFirstFileIsImage(zip("10.txt", "2.jpg", "1/")))

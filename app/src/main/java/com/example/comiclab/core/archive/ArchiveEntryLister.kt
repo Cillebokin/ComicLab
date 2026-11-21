@@ -65,31 +65,28 @@ internal object ArchiveEntryLister {
         names.filter { isImageEntryName(it) }.sortedWith(naturalEntryNameComparator).toList()
 
     fun fileEntryNames(names: Sequence<String>): List<String> =
-        names.sortedWith(naturalEntryNameComparator).toList()
+        names.filterNot(::isMacOsMetadataEntry).sortedWith(naturalEntryNameComparator).toList()
 
-    private fun zipImageEntries(file: File): List<String> {
-        ZipFile(file).use { zipFile ->
-            return zipFile.entries().asSequence()
-                .filter { !it.isDirectory && isImageEntryName(it.name) }
-                .map { it.name }
-                .sortedWith(naturalEntryNameComparator)
-                .toList()
-        }
-    }
+    private fun zipImageEntries(file: File): List<String> =
+        ZipFile(file).use { imageEntryNames(it.fileNames()) }
 
-    private fun zipFileEntries(file: File): List<String> {
-        ZipFile(file).use { zipFile ->
-            return zipFile.entries().asSequence()
-                .filter { !it.isDirectory }
-                .map { it.name }
-                .sortedWith(naturalEntryNameComparator)
-                .toList()
-        }
-    }
+    private fun zipFileEntries(file: File): List<String> =
+        ZipFile(file).use { fileEntryNames(it.fileNames()) }
+
+    private fun ZipFile.fileNames(): Sequence<String> =
+        entries().asSequence().filterNot { it.isDirectory }.map { it.name }
 
     fun isImageEntryName(name: String): Boolean {
         val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
-        return extension in imageExtensions
+        return extension in imageExtensions && !isMacOsMetadataEntry(name)
+    }
+
+    private fun isMacOsMetadataEntry(name: String): Boolean {
+        val pathComponents = name.split('/', '\\')
+        val fileName = pathComponents.last()
+        return fileName.startsWith("._") ||
+            fileName.equals(".DS_Store", ignoreCase = true) ||
+            pathComponents.any { it.equals("__MACOSX", ignoreCase = true) }
     }
 
     private fun compareNaturalEntryNames(left: String, right: String): Int {

@@ -48,7 +48,13 @@ class ComicMergeOperationsTest {
     fun filtersUnsupportedFilesAndPdfWhilePreservingNaturalArchiveAndEntryOrder() {
         val root = temporaryFolder.newFolder("ordered-root")
         createArchive(root, "comic10.cbz", "page10.PNG" to "ten", "page1.png" to "duplicate-10", "page2.JpG" to "two", "notes.txt" to "ignore")
-        createArchive(root, "comic2.zip", "page1.png" to "duplicate-2")
+        createArchive(
+            root,
+            "comic2.zip",
+            "page1.png" to "duplicate-2",
+            "._page1.png" to "AppleDouble",
+            "__MACOSX/metadata.png" to "metadata"
+        )
         File(root, "notes.txt").writeText("not an archive")
         File(root, "document.pdf").writeText("not a comic archive")
         File(root, "directory.cbz").mkdir()

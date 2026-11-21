@@ -353,7 +353,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         AppSettings.setDoublePageReadingEnabled(context, savedCoveredPage != null)
         AppSettings.setDoublePageCoverSingleEnabled(context, false)
 
-        val activity = launchDeletionPreview(archive, originalEntries.size)
+        val activity = launchPreviewWithPageCount(archive, originalEntries.size)
         deletePageFromPreview(activity, page = deletedPage)
 
         awaitCondition("preview should reload with one fewer page") {
@@ -391,10 +391,43 @@ class MangaReaderPhase5DeviceAcceptanceTest {
     }
 
     @Test
+    fun previewAndPreparedReaderSkipMacOsMetadata() {
+        val archive = createArchive(
+            "macos-metadata.cbz",
+            pageCount = 2,
+            metadataEntries = listOf("._page_001.png", "__MACOSX/._page_002.png", ".DS_Store")
+        )
+        AppSettings.setReadingDirection(context, AppSettings.READING_DIRECTION_LEFT_TO_RIGHT)
+        AppSettings.setDoublePageReadingEnabled(context, false)
+
+        val preview = launchPreviewWithPageCount(archive, pageCount = 2)
+        awaitDecodedPreview(preview)
+        awaitCondition("the second real page should have a preview") {
+            onMain {
+                val page = preview.findViewById<GridLayout>(R.id.gridPreview).getChildAt(1) as? ImageView
+                page?.drawable != null
+            }
+        }
+        assertEquals(2, onMain { preview.findViewById<ProgressBar>(R.id.progressReading).max })
+
+        onMain { check(preview.findViewById<View>(R.id.btnFullRead).performClick()) }
+        val reader = awaitReadyReader()
+        assertEquals(listOf("page_001.png", "page_002.png"), onMain { reader.imageEntriesForTest })
+        assertReaderProgress(reader, page = 1, total = 2)
+
+        onMain { reader.jumpReaderToPageForTest(1) }
+        awaitCondition("the second real page should be visible") {
+            1 in visibleSourcePositions(reader)
+        }
+        assertReaderProgress(reader, page = 2, total = 2)
+        finishReader(reader)
+    }
+
+    @Test
     fun deletingTheOnlyPreviewPageClearsItsImagesProgressAndActions() {
         val archive = createArchive("delete-only-preview.cbz", pageCount = 1)
         check(ReaderProgressStore.prepareSave(context, archive, 0, 0, coveredPosition = 0).commit())
-        val preview = launchDeletionPreview(archive, pageCount = 1)
+        val preview = launchPreviewWithPageCount(archive, pageCount = 1)
         awaitDecodedPreview(preview)
         val oldThumbnail = onMain {
             assertEquals(1, preview.findViewById<ProgressBar>(R.id.progressReading).progress)
@@ -421,7 +454,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
     @Test
     fun openingAnAlreadyEmptyZipShowsNoReadingActions() {
         val archive = createArchive("opened-empty-preview.zip", pageCount = 0)
-        val preview = launchDeletionPreview(archive, pageCount = 0)
+        val preview = launchPreviewWithPageCount(archive, pageCount = 0)
 
         awaitEmptyPreview(preview)
         assertEmptyPreview(preview)
@@ -432,7 +465,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         val archive = createArchive("failed-preview-delete.cbz", pageCount = 2)
         check(ReaderProgressStore.prepareSave(context, archive, 1, 0).commit())
         File(archive.parentFile, ".ComicLabBackups").writeText("blocks archive recovery directory")
-        val preview = launchDeletionPreview(archive, pageCount = 2)
+        val preview = launchPreviewWithPageCount(archive, pageCount = 2)
         awaitDecodedPreview(preview)
 
         deletePageFromPreview(preview, page = 0)
@@ -495,7 +528,7 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         }
     }
 
-    private fun launchDeletionPreview(archive: File, pageCount: Int): MangaPreviewActivity {
+    private fun launchPreviewWithPageCount(archive: File, pageCount: Int): MangaPreviewActivity {
         val browser = ensureBrowserForeground()
         val previewIntent = Intent(context, MangaPreviewActivity::class.java)
             .putExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH, archive.absolutePath)
@@ -1168,9 +1201,14 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         assertTrue("previous Activity progress writer did not drain", executor.awaitTermination(10, TimeUnit.SECONDS))
     }
 
-    private fun createArchive(name: String, pageCount: Int): File {
+    private fun createArchive(name: String, pageCount: Int, metadataEntries: List<String> = emptyList()): File {
         val archive = File(temporaryFolder.root, name)
         ZipOutputStream(archive.outputStream()).use { output ->
+            for (entry in metadataEntries) {
+                output.putNextEntry(ZipEntry(entry))
+                output.write(byteArrayOf(0, 5, 22, 7))
+                output.closeEntry()
+            }
             repeat(pageCount) { index ->
                 output.putNextEntry(ZipEntry("page_%03d.png".format(index + 1)))
                 output.write(createPagePng(index))
