@@ -53,6 +53,15 @@ internal class PreparedReaderCacheLeaseRegistry(
             return registry.withWriteLock(this, block)
         }
 
+        /** Evicts a page only while this reader has sole use of the directory. */
+        fun withExclusiveUsage(block: () -> Unit): Boolean {
+            check(kind == LeaseKind.USAGE)
+            val writer = registry.acquireWriterLease(directory) ?: return false
+            return writer.use {
+                it.withWriteLock { registry.withExclusiveUsage(this, block) }
+            }
+        }
+
         override fun close() {
             if (closed.compareAndSet(false, true)) {
                 registry.release(this)
@@ -230,6 +239,20 @@ internal class PreparedReaderCacheLeaseRegistry(
             }
         }
         pathToDelete?.let(::scheduleDeletion)
+    }
+
+    private fun withExclusiveUsage(lease: Lease, block: () -> Unit): Boolean = synchronized(lock) {
+        val state = directories[lease.canonicalPath] ?: return@synchronized false
+        if (lease.isClosed || lease.id !in state.leases ||
+            state.leases.values.count { it.kind == LeaseKind.READER_OWNER } > 1 ||
+            state.leases.any { (id, record) ->
+                id != lease.id && record.kind != LeaseKind.READER_OWNER && record.kind != LeaseKind.WRITER
+            }
+        ) {
+            return@synchronized false
+        }
+        block()
+        true
     }
 
     private fun <T> withWriteLock(lease: Lease, block: () -> T): T {

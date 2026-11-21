@@ -377,6 +377,7 @@
     <string name="loading_preview">正在加载预览...</string>
     <string name="loading_reading">正在加载阅读...</string>
     <string name="reader_page_load_failed">此页无法加载，可继续翻页。</string>
+    <string name="reader_page_retry_extraction">此页无法加载，点按重试。</string>
     <string name="deleting_archive_image">正在删除图片...</string>
     <string name="delete_archive_image_title">删除图片</string>
     <string name="delete_archive_image_message">是否从压缩包中删除该图片？\n压缩包将直接改写，应用不会另存完整副本；删除后无法通过应用恢复。</string>

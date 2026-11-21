@@ -31,6 +31,8 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
     private val closeCallbacks = mutableListOf<(Result<Unit>) -> Unit>()
 
     private var requestedImageSource: ImageSource? = null
+    private var requestedSourceRelease: (() -> Unit)? = null
+    private var installedSourceRelease: (() -> Unit)? = null
     private var appliedImageSource: ImageSource? = null
     private var sourceMayBeInstalled = false
     private var imageTransitionRunning = false
@@ -81,11 +83,14 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
     internal fun hasLoadedReaderImage(): Boolean = hasCurrentImageSource() && isImageLoaded
 
     /** Change the source only after prior Subsampling tasks and their main-thread callbacks drain. */
-    fun setReaderImage(source: ImageSource) {
+    fun setReaderImage(source: ImageSource) = setReaderImage(source, null)
+
+    internal fun setReaderImage(source: ImageSource, releaseSource: (() -> Unit)?) {
         if (permanentlyClosing) {
+            releaseSource?.invoke()
             return
         }
-        requestedImageSource = source
+        replaceRequestedImageSource(source, releaseSource)
         visibility = if (source === appliedImageSource &&
             !imageTransitionRunning &&
             !readerDecodeExecutor.hasPendingTasks()
@@ -110,7 +115,7 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
             return
         }
         transitionCallbacks += onCleared
-        requestedImageSource = null
+        replaceRequestedImageSource(null)
         visibility = INVISIBLE
         requestReaderImageTransition()
     }
@@ -127,13 +132,20 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
             return
         }
         permanentlyClosing = true
-        requestedImageSource = null
+        replaceRequestedImageSource(null)
         onReaderTap = null
         onReaderImageLoaded = null
         onReaderImageLoadFailed = null
         isEnabled = false
         visibility = GONE
         requestReaderImageTransition()
+    }
+
+    private fun replaceRequestedImageSource(source: ImageSource?, releaseSource: (() -> Unit)? = null) {
+        val previousRelease = requestedSourceRelease
+        requestedImageSource = source
+        requestedSourceRelease = releaseSource
+        if (previousRelease !== installedSourceRelease) previousRelease?.invoke()
     }
 
     private fun requestReaderImageTransition() {
@@ -175,6 +187,9 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
 
         sourceMayBeInstalled = false
         appliedImageSource = null
+        val previousRelease = installedSourceRelease
+        installedSourceRelease = null
+        if (previousRelease !== requestedSourceRelease) previousRelease?.invoke()
         if (permanentlyClosing) {
             readerDecodeExecutor.seal()
             imageTransitionRunning = false
@@ -187,6 +202,7 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
         var sourceFailure: Throwable? = null
         if (nextSource != null) {
             sourceMayBeInstalled = true
+            installedSourceRelease = requestedSourceRelease
             runCatching { super.setImage(nextSource) }
                 .onSuccess {
                     appliedImageSource = nextSource
@@ -199,7 +215,7 @@ class ReaderSubsamplingImageView @JvmOverloads constructor(
         }
         imageTransitionRunning = false
         if (sourceFailure != null) {
-            requestedImageSource = null
+            replaceRequestedImageSource(null)
             visibility = INVISIBLE
             onReaderImageLoadFailed?.invoke()
             dispatchTransitionCallbacks(

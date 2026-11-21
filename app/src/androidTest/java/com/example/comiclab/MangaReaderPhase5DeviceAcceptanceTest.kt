@@ -1310,6 +1310,109 @@ class MangaReaderPhase5DeviceAcceptanceTest {
         awaitCondition("prepared cache was not deleted after the last reader owner closed") { !cacheDirectory.exists() }
     }
 
+    @Test
+    fun preparedReaderBoundsPageFilesAndReextractsEvictedPagesAcrossRotation() {
+        val (archive, cacheDirectory, files) = createPreparedReaderFixture("prepared-rolling", 72)
+        var activity = launchReader(archive, preparedCacheDirectory = cacheDirectory)
+        assertTrue(activity.pageAdapterForTest is SubsamplingMangaPageAdapter)
+
+        val extraction = (activity.pageAdapterForTest as SubsamplingMangaPageAdapter).extractExecutorForTest
+        val settledCacheCounts = mutableListOf<Int>()
+        for (position in listOf(8, 16, 24, 32, 40, 48, 56, 64, 71)) {
+            onMain { activity.jumpReaderToPageForTest(position) }
+            awaitPreparedPage(activity, files[position])
+            awaitCondition("prepared cache did not settle at page ${position + 1}") {
+                extraction.activeCount == 0 && extraction.queue.isEmpty()
+            }
+            settledCacheCounts += files.count { it.isFile }
+        }
+        assertTrue("settled page counts: $settledCacheCounts", settledCacheCounts.all { it <= 32 })
+        android.util.Log.i("CL023Acceptance", "Settled cache counts: $settledCacheCounts")
+        awaitCondition("rolling cache kept the first page or exceeded 32 files") {
+            !files[0].exists() && files.count { it.isFile } <= 32
+        }
+        assertFalse(File(cacheDirectory, "${files[0].name}.sha256").exists())
+        assertTrue(onMain { preparedPageHolder(activity, files[71])?.imageView?.hasLoadedReaderImage() == true })
+
+        onMain { activity.jumpReaderToPageForTest(0) }
+        awaitPreparedPage(activity, files[0])
+        assertTrue(ComicArchive.validatePreparedImageFile(files[0]))
+
+        val previous = activity
+        onMain { previous.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+        activity = awaitReadyReader(previous)
+        assertTrue(activity.pageAdapterForTest is SubsamplingMangaPageAdapter)
+        awaitPreparedPage(activity, files[0])
+        finishReader(activity)
+        awaitCondition("prepared cache was retained after the reader closed") { !cacheDirectory.exists() }
+        assertTrue(archive.isFile)
+    }
+
+    @Test
+    fun preparedReaderRetriesFailedWritesInTheSameSession() {
+        val (archive, cacheDirectory, files) = createPreparedReaderFixture("prepared-retry", 50)
+        val blocked = files[39]
+        val blocker = File(cacheDirectory, "${blocked.name}.part")
+        assertTrue(blocker.mkdir())
+        val sentinel = File(blocker, "cl-023-test").apply { writeText("isolated write failure") }
+
+        val activity = launchReader(archive, preparedCacheDirectory = cacheDirectory)
+        assertTrue(activity.pageAdapterForTest is SubsamplingMangaPageAdapter)
+        val failedPosition = 39
+        onMain { activity.jumpReaderToPageForTest(failedPosition) }
+        awaitCondition("failed extraction did not offer retry") {
+            onMain {
+                val holder = activity.listReaderPagesForTest
+                    .findViewHolderForAdapterPosition(failedPosition) as? SubsamplingMangaPageAdapter.PageViewHolder
+                holder?.statusText?.let { it.isShown && it.isClickable } == true
+            }
+        }
+        onMain { activity.jumpReaderToPageForTest(failedPosition + 1) }
+        awaitPreparedPage(activity, files[failedPosition + 1])
+        onMain { activity.jumpReaderToPageForTest(failedPosition) }
+        assertFalse(blocked.exists())
+        assertTrue(sentinel.isFile)
+        assertTrue(sentinel.delete())
+        assertTrue(blocker.delete())
+        onView(withText(R.string.reader_page_retry_extraction)).check(matches(isDisplayed())).perform(click())
+        awaitPreparedPage(activity, blocked)
+        assertTrue(ComicArchive.validatePreparedImageFile(blocked))
+        assertTrue(onMain { resumedReader() === activity })
+    }
+
+    private fun createPreparedReaderFixture(
+        name: String,
+        pageCount: Int
+    ): Triple<File, File, List<File>> {
+        val archive = createArchive("$name.cbz", pageCount)
+        val cacheDirectory = temporaryFolder.newFolder("$name-cache")
+        val entries = (1..pageCount).map { "page_%03d.png".format(it) }
+        ComicArchive.openPreparedImageExtractor(archive, cacheDirectory).use {
+            checkNotNull(it.extract(0, entries.first()))
+        }
+        ComicArchive.writePreparedReaderManifest(cacheDirectory, entries)
+        return Triple(archive, cacheDirectory, entries.mapIndexed { index, entry ->
+            ComicArchive.preparedImageFile(cacheDirectory, index, entry)
+        })
+    }
+
+    private fun awaitPreparedPage(activity: MangaReaderActivity, file: File) {
+        awaitCondition("prepared page ${file.name} did not render") {
+            onMain { preparedPageHolder(activity, file)?.imageView?.hasLoadedReaderImage() == true }
+        }
+    }
+
+    private fun preparedPageHolder(
+        activity: MangaReaderActivity,
+        file: File
+    ): SubsamplingMangaPageAdapter.PageViewHolder? {
+        val list = activity.listReaderPagesForTest
+        return (0 until list.childCount).asSequence()
+            .map { list.getChildViewHolder(list.getChildAt(it)) }
+            .filterIsInstance<SubsamplingMangaPageAdapter.PageViewHolder>()
+            .firstOrNull { it.boundFilePath == file.absolutePath }
+    }
+
     private fun launchReader(
         archive: File,
         preparedCacheDirectory: File? = null,

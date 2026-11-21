@@ -28,8 +28,10 @@ import com.example.comiclab.ui.reader.manga.page.calculateDisplayHeight
 import java.io.File
 import java.util.Collections
 import java.util.concurrent.PriorityBlockingQueue
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 
@@ -64,9 +66,14 @@ internal class SubsamplingMangaPageAdapter(
         PriorityBlockingQueue<Runnable>()
     )
     private val taskSequence = AtomicLong(0L)
-    private val readyPositions = Collections.synchronizedSet(mutableSetOf<Int>())
+    private val cacheLock = Any()
+    private val cachedPositions = linkedSetOf<Int>()
+    private val pinnedPositions = mutableMapOf<Int, Int>()
+    private var visibleCachePositions = IntRange.EMPTY
+    private val cacheTrimQueued = AtomicBoolean(false)
     private val loadingPositions = Collections.synchronizedSet(mutableSetOf<Int>())
     private val failedPositions = Collections.synchronizedSet(mutableSetOf<Int>())
+    private val retryablePositions = Collections.synchronizedSet(mutableSetOf<Int>())
     private val pageBounds = Collections.synchronizedMap(boundsByPosition.toMutableMap())
     private val activeSubsamplingViews = mutableSetOf<ReaderSubsamplingImageView>()
     private val positionMapper = ReaderPagePositionMapper(
@@ -86,7 +93,7 @@ internal class SubsamplingMangaPageAdapter(
         setHasStableIds(true)
         pageFiles.forEachIndexed { index, file ->
             if (file.isFile && file.length() > 0L) {
-                readyPositions.add(index)
+                cachedPositions.add(index)
             }
         }
     }
@@ -129,6 +136,7 @@ internal class SubsamplingMangaPageAdapter(
         }
         container.addView(imageView)
         container.addView(statusText)
+        container.retryLabel = statusText
         val holder = PageViewHolder(container, imageView, statusText)
         imageView.onReaderImageLoaded = {
             reportDecodedPage(holder)
@@ -170,27 +178,43 @@ internal class SubsamplingMangaPageAdapter(
         applyPageLayout(holder.container, bounds)
         applyImageLayout(holder.imageView, bounds, adapterPosition)
 
-        if (sourcePosition in failedPositions || !file.isFile || file.length() <= 0L) {
+        val needsSource = holder.boundFilePath != file.absolutePath
+        val retryable = sourcePosition in retryablePositions
+        val failed = sourcePosition in failedPositions
+        if (retryable || failed || !bindCachedPage(sourcePosition, pin = needsSource)) {
             bindEmptyPage(holder)
-            if (sourcePosition !in failedPositions) submitExtraction(sourcePosition, PRIORITY_VISIBLE)
             holder.statusText.setText(
-                if (sourcePosition in failedPositions) R.string.reader_page_load_failed
-                else R.string.loading_reading
+                when {
+                    retryable -> R.string.reader_page_retry_extraction
+                    failed -> R.string.reader_page_load_failed
+                    else -> R.string.loading_reading
+                }
             )
+            if (retryable) {
+                holder.statusText.setOnClickListener {
+                    if (retryablePositions.remove(sourcePosition)) {
+                        holder.statusText.isClickable = false
+                        holder.statusText.setText(R.string.loading_reading)
+                        submitExtraction(sourcePosition, PRIORITY_VISIBLE)
+                    }
+                }
+            } else if (!failed) {
+                submitExtraction(sourcePosition, PRIORITY_VISIBLE)
+            }
             holder.statusText.visibility = View.VISIBLE
             onPageReady(sourcePosition)
             return
         }
 
-        readyPositions.add(sourcePosition)
-        holder.statusText.text = null
-        holder.statusText.visibility = View.GONE
+        clearPageStatus(holder)
         holder.imageView.visibility = View.VISIBLE
-        if (holder.boundFilePath != file.absolutePath) {
+        if (needsSource) {
             holder.boundFilePath = file.absolutePath
             activeSubsamplingViews += holder.imageView
             runCatching {
-                holder.imageView.setReaderImage(ImageSource.uri(Uri.fromFile(file)))
+                holder.imageView.setReaderImage(ImageSource.uri(Uri.fromFile(file))) {
+                    releaseCachedPage(sourcePosition)
+                }
             }.onFailure {
                 markPageFailed(sourcePosition)
             }
@@ -199,9 +223,15 @@ internal class SubsamplingMangaPageAdapter(
         onPageReady(sourcePosition)
     }
 
-    private fun bindEmptyPage(holder: PageViewHolder) {
+    private fun clearPageStatus(holder: PageViewHolder) {
+        holder.statusText.setOnClickListener(null)
+        holder.statusText.isClickable = false
         holder.statusText.text = null
         holder.statusText.visibility = View.GONE
+    }
+
+    private fun bindEmptyPage(holder: PageViewHolder) {
+        clearPageStatus(holder)
         holder.boundFilePath = null
         holder.imageView.visibility = View.INVISIBLE
         holder.imageView.clearReaderImage { result ->
@@ -218,8 +248,7 @@ internal class SubsamplingMangaPageAdapter(
     }
 
     override fun onViewRecycled(holder: PageViewHolder) {
-        holder.statusText.text = null
-        holder.statusText.visibility = View.GONE
+        clearPageStatus(holder)
         holder.boundFilePath = null
         if (!closed) {
             holder.imageView.clearReaderImage { result ->
@@ -261,8 +290,15 @@ internal class SubsamplingMangaPageAdapter(
         val firstVisible = visiblePositions.first()
         val lastVisible = visiblePositions.last()
         val movingForward = scrollDirection >= 0
+        val visibleRange = firstVisible..lastVisible
+        synchronized(cacheLock) {
+            visibleCachePositions = visibleRange
+            for (position in visibleRange) {
+                if (cachedPositions.remove(position)) cachedPositions.add(position)
+            }
+        }
 
-        (firstVisible..lastVisible).forEach { position ->
+        visibleRange.forEach { position ->
             submitExtraction(position, PRIORITY_VISIBLE)
         }
 
@@ -275,7 +311,7 @@ internal class SubsamplingMangaPageAdapter(
         ).forEach { position ->
             submitExtraction(position, PRIORITY_NEAR)
         }
-
+        scheduleCacheTrim()
     }
 
     override fun applyDebugZoomToVisiblePages(
@@ -338,6 +374,7 @@ internal class SubsamplingMangaPageAdapter(
         extractExecutor.shutdownNow()
         loadingPositions.clear()
         failedPositions.clear()
+        retryablePositions.clear()
         val viewsToClose = activeSubsamplingViews.toList()
         val closeLock = Any()
         var pendingCloseDependencies = viewsToClose.size + 1
@@ -560,12 +597,69 @@ internal class SubsamplingMangaPageAdapter(
         }
     }
 
+    // Pin before binding and release only once the view drains and recycles its decoder.
+    private fun bindCachedPage(position: Int, pin: Boolean): Boolean = synchronized(cacheLock) {
+        if (!cachedPositions.remove(position)) return@synchronized false
+        val file = pageFiles[position]
+        if (!file.isFile || file.length() <= 0L) return@synchronized false
+        cachedPositions.add(position)
+        if (pin) pinnedPositions[position] = (pinnedPositions[position] ?: 0) + 1
+        true
+    }
+
+    private fun releaseCachedPage(position: Int) {
+        synchronized(cacheLock) {
+            val count = checkNotNull(pinnedPositions[position])
+            if (count == 1) pinnedPositions.remove(position)
+            else pinnedPositions[position] = count - 1
+        }
+        scheduleCacheTrim()
+    }
+
+    private fun scheduleCacheTrim() {
+        if (closed || synchronized(cacheLock) { cachedPositions.size <= MAX_CACHED_PAGES } ||
+            !cacheTrimQueued.compareAndSet(false, true)
+        ) return
+
+        try {
+            extractExecutor.execute(ExtractTask(PRIORITY_TRIM, -1, taskSequence.getAndIncrement()) {
+                cacheTrimQueued.set(false)
+                trimPreparedCache()
+            })
+        } catch (_: RejectedExecutionException) {
+            cacheTrimQueued.set(false)
+        }
+    }
+
+    private fun trimPreparedCache() {
+        val candidates = synchronized(cacheLock) {
+            if (closed || cachedPositions.size <= MAX_CACHED_PAGES) return
+            cachedPositions.filterNot { it in visibleCachePositions || it in pinnedPositions }
+        }
+        for (position in candidates) {
+            val exclusive = cacheUseLease.withExclusiveUsage {
+                synchronized(cacheLock) {
+                    if (!closed && cachedPositions.size > MAX_CACHED_PAGES &&
+                        position in cachedPositions && position !in visibleCachePositions &&
+                        position !in pinnedPositions
+                    ) {
+                        val file = pageFiles[position]
+                        ComicArchive.discardPreparedImageFile(file)
+                        if (!file.isFile) cachedPositions.remove(position)
+                    }
+                }
+            }
+            if (!exclusive || synchronized(cacheLock) { closed || cachedPositions.size <= MAX_CACHED_PAGES }) return
+        }
+    }
+
     private fun submitExtraction(position: Int, priority: Int) {
         if (closed ||
             position !in entryNames.indices ||
             position !in pageFiles.indices ||
-            position in readyPositions ||
-            position in failedPositions
+            synchronized(cacheLock) { position in cachedPositions } ||
+            position in failedPositions ||
+            position in retryablePositions
         ) {
             return
         }
@@ -584,8 +678,8 @@ internal class SubsamplingMangaPageAdapter(
         runCatching {
             extractExecutor.execute(task)
         }.onFailure {
-            markPageFailed(position)
             loadingPositions.remove(position)
+            markExtractionFailed(position)
         }
     }
 
@@ -609,17 +703,13 @@ internal class SubsamplingMangaPageAdapter(
     }
 
     private fun extractPage(position: Int) {
+        var extractionFailed = false
         try {
             if (closed || position !in entryNames.indices || position !in pageFiles.indices) {
                 return
             }
 
-            val targetFile = pageFiles[position]
-            val extractedFile = if (targetFile.isFile && targetFile.length() > 0L) {
-                targetFile
-            } else {
-                preparedExtractor()?.extract(position, entryNames[position])
-            }
+            val extractedFile = preparedExtractor()?.extract(position, entryNames[position])
 
             if (closed) {
                 return
@@ -629,13 +719,16 @@ internal class SubsamplingMangaPageAdapter(
                 ComicArchive.preparedImageDisplayBounds(extractedFile)?.let { bounds ->
                     pageBounds[position] = bounds
                 }
-                readyPositions.add(position)
+                synchronized(cacheLock) {
+                    cachedPositions.remove(position)
+                    cachedPositions.add(position)
+                }
                 notifyPageFileChanged(position, ready = true)
             } else {
-                markPageFailed(position)
+                extractionFailed = true
             }
         } catch (throwable: Throwable) {
-            markPageFailed(position)
+            extractionFailed = true
             if (throwable is OutOfMemoryError) {
                 Log.w(READER_ADAPTER_LOG_TAG, "prepared page extraction OOM position=$position")
                 System.gc()
@@ -647,7 +740,17 @@ internal class SubsamplingMangaPageAdapter(
                 )
             }
         } finally {
+            // Record the failure before allowing another normal preload to enqueue the page.
+            val notifyFailure = extractionFailed && !closed && retryablePositions.add(position)
             loadingPositions.remove(position)
+            if (notifyFailure) notifyPageFileChanged(position, ready = false)
+        }
+        trimPreparedCache()
+    }
+
+    private fun markExtractionFailed(position: Int) {
+        if (!closed && retryablePositions.add(position)) {
+            notifyPageFileChanged(position, ready = false)
         }
     }
 
@@ -738,6 +841,8 @@ internal class SubsamplingMangaPageAdapter(
 
     internal class ReaderTapFrameLayout(context: Context) : FrameLayout(context) {
         var onReaderTap: (() -> Unit)? = null
+        var retryLabel: TextView? = null
+        private var tappingRetryLabel = false
 
         private val tapDetector = GestureDetector(
             context,
@@ -754,7 +859,14 @@ internal class SubsamplingMangaPageAdapter(
         )
 
         override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-            tapDetector.onTouchEvent(event)
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                tappingRetryLabel = retryLabel?.let { label ->
+                    label.isShown && label.isClickable &&
+                        event.x >= label.left && event.x < label.right &&
+                        event.y >= label.top && event.y < label.bottom
+                } == true
+            }
+            if (!tappingRetryLabel) tapDetector.onTouchEvent(event)
             return super.dispatchTouchEvent(event)
         }
 
@@ -778,6 +890,8 @@ internal class SubsamplingMangaPageAdapter(
         private const val MIN_READER_PAGE_HEIGHT = 320
         private const val PRIORITY_VISIBLE = 100
         private const val PRIORITY_NEAR = 60
+        private const val PRIORITY_TRIM = 0
+        private const val MAX_CACHED_PAGES = 32
         private const val NORMAL_PREPARE_BEFORE_COUNT = 1
         private const val NORMAL_PREPARE_FORWARD_COUNT = 8
         private const val FAST_PREPARE_FORWARD_COUNT = 14

@@ -44,6 +44,28 @@ class PreparedReaderCacheLeaseRegistryTest {
     }
 
     @Test
+    fun evictionWaitsForOverlappingReaderAndLoadLeases() {
+        val registry = PreparedReaderCacheLeaseRegistry(QueuedExecutor())
+        val directory = temporaryFolder.newFolder("eviction-cache")
+        val page = File(directory, "page.png").apply { writeText("cached page") }
+        val owner = checkNotNull(registry.acquireReaderOwner(directory))
+        val reader = checkNotNull(registry.acquireUsageLease(directory))
+        val replacementOwner = checkNotNull(registry.acquireReaderOwner(directory))
+        val load = checkNotNull(registry.acquireUsageLease(directory))
+
+        assertFalse(reader.withExclusiveUsage { page.delete() })
+        replacementOwner.close()
+        assertFalse(reader.withExclusiveUsage { page.delete() })
+        assertTrue(page.isFile)
+
+        load.close()
+        assertTrue(reader.withExclusiveUsage { assertTrue(page.delete()) })
+        assertFalse(page.exists())
+        reader.close()
+        owner.close()
+    }
+
+    @Test
     fun readerAcquisitionCancelsPendingDeleteAndConsumesHandoff() {
         val deletionExecutor = QueuedExecutor()
         val registry = PreparedReaderCacheLeaseRegistry(deletionExecutor)
