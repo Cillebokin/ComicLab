@@ -7,6 +7,7 @@ import android.graphics.Matrix
 import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import android.graphics.pdf.PdfRenderer
+import android.media.ExifInterface
 import android.os.ParcelFileDescriptor
 import com.example.comiclab.ComicArchive
 import java.io.File
@@ -25,6 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlin.math.roundToInt
 
 internal enum class ComicConversionTarget(
     val extension: String,
@@ -41,7 +43,7 @@ internal object ComicFormatConverter {
     private const val TARGET_DPI = 300L
 
     private sealed interface ArchivePageResult {
-        data class Decoded(val pageIndex: Int, val bitmap: Bitmap) : ArchivePageResult
+        data class Decoded(val pageIndex: Int, val bitmap: Bitmap, val orientation: Int) : ArchivePageResult
         data class Failed(val failure: Throwable) : ArchivePageResult
         data object Complete : ArchivePageResult
     }
@@ -77,7 +79,7 @@ internal object ComicFormatConverter {
         output: File,
         cancelled: AtomicBoolean,
         onPage: (completed: Int, total: Int) -> Unit,
-        appendPage: (PdfDocument, Bitmap, Int) -> Unit = ::appendBitmapPage
+        appendPage: (PdfDocument, Bitmap, Int, Int) -> Unit = ::appendBitmapPage
     ) {
         val entries = ComicArchive.imageEntries(source)
         check(entries.isNotEmpty()) { "No readable comic pages" }
@@ -100,18 +102,14 @@ internal object ComicFormatConverter {
                             if (decoderShouldStop()) return@execute
                             val imageFile = extractor.extract(index, entryName)
                                 ?: throw IOException("Could not extract page ${index + 1}")
-                            val bitmap = try {
+                            val decodedPage = try {
                                 if (decoderShouldStop()) return@execute
-                                decodeBoundedImage(imageFile)
+                                decodeBoundedPage(imageFile, index)
                                     ?: throw IOException("Could not decode page ${index + 1}")
                             } finally {
                                 ComicArchive.discardPreparedImageFile(imageFile)
                             }
-                            offerArchivePage(
-                                decodedPages,
-                                ArchivePageResult.Decoded(index, bitmap),
-                                decoderShouldStop
-                            )
+                            offerArchivePage(decodedPages, decodedPage, decoderShouldStop)
                         }
                     }
                     offerArchivePage(decodedPages, ArchivePageResult.Complete, decoderShouldStop)
@@ -128,7 +126,7 @@ internal object ComicFormatConverter {
                     is ArchivePageResult.Decoded -> {
                         try {
                             checkCancelled(cancelled)
-                            appendPage(document, next.bitmap, next.pageIndex + 1)
+                            appendPage(document, next.bitmap, next.pageIndex + 1, next.orientation)
                         } finally {
                             next.bitmap.recycle()
                         }
@@ -160,23 +158,41 @@ internal object ComicFormatConverter {
         }
     }
 
-    private fun appendBitmapPage(document: PdfDocument, bitmap: Bitmap, pageNumber: Int) {
-        val pageWidth = pixelsToPdfPoints(bitmap.width)
-        val pageHeight = pixelsToPdfPoints(bitmap.height)
-        val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
+    private fun appendBitmapPage(document: PdfDocument, bitmap: Bitmap, pageNumber: Int, orientation: Int) {
+        val imageBounds = RectF(
+            0f, 0f, pixelsToPdfPoints(bitmap.width).toFloat(), pixelsToPdfPoints(bitmap.height).toFloat()
+        )
+        val transform = jpegOrientationTransform(orientation)
+        val pageBounds = RectF()
+        transform.mapRect(pageBounds, imageBounds)
+        transform.postTranslate(-pageBounds.left, -pageBounds.top)
+        val pageInfo = PdfDocument.PageInfo.Builder(
+            pageBounds.width().roundToInt(),
+            pageBounds.height().roundToInt(),
+            pageNumber
+        ).create()
         val page = document.startPage(pageInfo)
         var pageFinished = false
         try {
-            page.canvas.drawBitmap(
-                bitmap,
-                null,
-                RectF(0f, 0f, pageWidth.toFloat(), pageHeight.toFloat()),
-                null
-            )
+            page.canvas.concat(transform)
+            page.canvas.drawBitmap(bitmap, null, imageBounds, null)
             document.finishPage(page)
             pageFinished = true
         } finally {
             if (!pageFinished) runCatching { document.finishPage(page) }
+        }
+    }
+
+    private fun jpegOrientationTransform(orientation: Int): Matrix = Matrix().apply {
+        // Mirrored orientations use a horizontal flip before rotation.
+        when (orientation) {
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL, ExifInterface.ORIENTATION_FLIP_VERTICAL,
+            ExifInterface.ORIENTATION_TRANSPOSE, ExifInterface.ORIENTATION_TRANSVERSE -> setScale(-1f, 1f)
+        }
+        when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90, ExifInterface.ORIENTATION_TRANSVERSE -> postRotate(90f)
+            ExifInterface.ORIENTATION_ROTATE_180, ExifInterface.ORIENTATION_FLIP_VERTICAL -> postRotate(180f)
+            ExifInterface.ORIENTATION_ROTATE_270, ExifInterface.ORIENTATION_TRANSPOSE -> postRotate(270f)
         }
     }
 
@@ -363,7 +379,7 @@ internal object ComicFormatConverter {
         onPage(pending.pageIndex + 1, total)
     }
 
-    private fun decodeBoundedImage(file: File): Bitmap? {
+    private fun decodeBoundedPage(file: File, index: Int): ArchivePageResult.Decoded? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
@@ -373,7 +389,19 @@ internal object ComicFormatConverter {
             inPreferredConfig = Bitmap.Config.ARGB_8888
             inScaled = false
         }
-        return BitmapFactory.decodeFile(file.absolutePath, options)
+        val orientation = if (bounds.outMimeType == "image/jpeg") {
+            try {
+                ExifInterface(file.absolutePath).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL
+                )
+            } catch (_: IOException) {
+                ExifInterface.ORIENTATION_NORMAL
+            }
+        } else {
+            ExifInterface.ORIENTATION_NORMAL
+        }
+        val bitmap = BitmapFactory.decodeFile(file.absolutePath, options) ?: return null
+        return ArchivePageResult.Decoded(index, bitmap, orientation)
     }
 
     private fun sampleSizeForBounds(width: Int, height: Int): Int {

@@ -1,9 +1,12 @@
 package com.example.comiclab.core.archive
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
 import android.graphics.pdf.PdfRenderer
+import android.media.ExifInterface
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -18,6 +21,7 @@ import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlin.math.abs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -49,6 +53,77 @@ class ComicFormatConverterInstrumentedTest {
             metadataEntries = listOf("._page1.png", "__MACOSX/._page2.png")
         )
         assertSuccessfulConversion(source, File(temporaryFolder.root, "metadata-filtered.pdf"), pageCount = 2)
+    }
+
+    @Test
+    fun jpegExifOrientationControlsPdfDimensionsAndRenderedPixelsInNaturalOrder() {
+        val red = Color.RED
+        val green = Color.GREEN
+        val blue = Color.BLUE
+        val yellow = Color.YELLOW
+        val cases = listOf(
+            ExifCase(ExifInterface.ORIENTATION_NORMAL, false, listOf(red, green, blue, yellow)),
+            ExifCase(ExifInterface.ORIENTATION_ROTATE_90, true, listOf(blue, red, yellow, green)),
+            ExifCase(ExifInterface.ORIENTATION_ROTATE_180, false, listOf(yellow, blue, green, red)),
+            ExifCase(ExifInterface.ORIENTATION_ROTATE_270, true, listOf(green, yellow, red, blue)),
+            ExifCase(ExifInterface.ORIENTATION_FLIP_HORIZONTAL, false, listOf(green, red, yellow, blue)),
+            ExifCase(ExifInterface.ORIENTATION_FLIP_VERTICAL, false, listOf(blue, yellow, red, green)),
+            ExifCase(ExifInterface.ORIENTATION_TRANSPOSE, true, listOf(red, blue, green, yellow)),
+            ExifCase(ExifInterface.ORIENTATION_TRANSVERSE, true, listOf(yellow, green, blue, red)),
+            ExifCase(null, false, listOf(red, green, blue, yellow))
+        )
+        val source = File(temporaryFolder.root, "exif.cbz")
+        ZipOutputStream(source.outputStream()).use { zip ->
+            for (index in cases.indices.reversed()) {
+                val name = "page${index + 2}.jpg"
+                val image = createQuadrantJpeg(name, cases[index].orientation)
+                zip.putNextEntry(ZipEntry(name))
+                image.inputStream().use { it.copyTo(zip) }
+                zip.closeEntry()
+            }
+        }
+
+        val output = File(temporaryFolder.root, "exif.pdf")
+        val progress = mutableListOf<Pair<Int, Int>>()
+        ComicFormatConverter.convert(source, output, ComicConversionTarget.PDF, AtomicBoolean()) { page, total ->
+            progress += page to total
+        }
+        assertEquals((1..cases.size).map { it to cases.size }, progress)
+        PdfRenderer(ParcelFileDescriptor.open(output, ParcelFileDescriptor.MODE_READ_ONLY)).use { pdf ->
+            assertEquals(cases.size, pdf.pageCount)
+            cases.forEachIndexed { index, case ->
+                pdf.openPage(index).use { page ->
+                    val label = "page ${index + 1}, EXIF orientation ${case.orientation}"
+                    assertEquals(label, if (case.swapsAxes) 48 else 72, page.width)
+                    assertEquals(label, if (case.swapsAxes) 72 else 48, page.height)
+                    val rendered = Bitmap.createBitmap(page.width, page.height, Bitmap.Config.ARGB_8888)
+                    try {
+                        page.render(rendered, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        val left = page.width / 4
+                        val right = page.width - left
+                        val top = page.height / 4
+                        val bottom = page.height - top
+                        val actual = listOf(
+                            rendered.getPixel(left, top),
+                            rendered.getPixel(right, top),
+                            rendered.getPixel(left, bottom),
+                            rendered.getPixel(right, bottom)
+                        )
+                        case.corners.zip(actual).forEachIndexed { corner, (expected, pixel) ->
+                            assertTrue(
+                                "$label corner $corner should be ${Integer.toHexString(expected)}, " +
+                                    "got ${Integer.toHexString(pixel)}",
+                                abs(Color.red(expected) - Color.red(pixel)) < 24 &&
+                                    abs(Color.green(expected) - Color.green(pixel)) < 24 &&
+                                    abs(Color.blue(expected) - Color.blue(pixel)) < 24
+                            )
+                        }
+                    } finally {
+                        rendered.recycle()
+                    }
+                }
+            }
+        }
     }
 
     @Test
@@ -108,7 +183,7 @@ class ComicFormatConverterInstrumentedTest {
             ComicFormatConverter.convertArchiveToPdf(
                 source, output, cancelled,
                 onPage = { completed, _ -> progress += completed },
-                appendPage = { document, bitmap, page ->
+                appendPage = { document, bitmap, page, _ ->
                     if (page == pageNumber) {
                         awaitFullDecodeQueue()
                         reachedFailure.countDown()
@@ -190,6 +265,33 @@ class ComicFormatConverterInstrumentedTest {
                 }
             }
         }
+    }
+
+    private data class ExifCase(val orientation: Int?, val swapsAxes: Boolean, val corners: List<Int>)
+
+    private fun createQuadrantJpeg(name: String, orientation: Int?): File {
+        val image = File(temporaryFolder.root, name)
+        val bitmap = Bitmap.createBitmap(300, 200, Bitmap.Config.ARGB_8888)
+        try {
+            val canvas = Canvas(bitmap)
+            val paint = Paint()
+            listOf(Color.RED, Color.GREEN, Color.BLUE, Color.YELLOW).forEachIndexed { index, color ->
+                paint.color = color
+                val left = (index % 2) * 150f
+                val top = (index / 2) * 100f
+                canvas.drawRect(left, top, left + 150f, top + 100f, paint)
+            }
+            image.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.JPEG, 100, it)) }
+        } finally {
+            bitmap.recycle()
+        }
+        if (orientation != null) {
+            ExifInterface(image.absolutePath).apply {
+                setAttribute(ExifInterface.TAG_ORIENTATION, orientation.toString())
+                saveAttributes()
+            }
+        }
+        return image
     }
 
     private fun createComic(pageCount: Int = PAGE_COUNT, metadataEntries: List<String> = emptyList()): File {
