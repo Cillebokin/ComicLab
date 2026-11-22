@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root {
+            color-scheme: light dark;
+            --text: #111827;
+            --muted: #4B5563;
+            --accent: #2563EB;
+            --surface: transparent;
+            --soft: #EFF6FF;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --text: #F1F5F9;
+                --muted: #CBD5E1;
+                --accent: #60A5FA;
+                --surface: transparent;
+                --soft: #1E3A5F;
+            }
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: var(--surface);
+        }
+
+        body {
+            color: var(--text);
+            font-family: sans-serif;
+            font-size: 16px;
+            line-height: 1.7;
+            padding: 20px 18px 28px;
+        }
+
+        h1 {
+            color: var(--text);
+            font-size: 24px;
+            margin: 0 0 16px;
+        }
+
+        h2 {
+            color: var(--accent);
+            font-size: 18px;
+            margin: 24px 0 8px;
+        }
+
+        p,
+        ol,
+        ul {
+            color: var(--muted);
+        }
+
+        p {
+            margin: 8px 0;
+        }
+
+        ol,
+        ul {
+            padding-left: 24px;
+        }
+
+        code {
+            background: var(--soft);
+            border-radius: 4px;
+            color: var(--accent);
+            padding: 2px 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>无痕模式</h1>
+    <p>开启后，阅读不会记录历史，也不会改动阅读进度。</p>
+
+    <h2>怎么用</h2>
+    <ul>
+        <li>点击主界面右上角 <code>无痕模式</code> 图标即可开关（蓝底白线为已开启）</li>
+        <li>不会删除原有历史和进度，重启后保持上次状态</li>
+    </ul>
+</body>
+</html>

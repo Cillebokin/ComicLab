@@ -776,7 +776,9 @@ class MangaReaderActivity : AppCompatActivity() {
                     showError(getString(R.string.unsupported_archive_format))
                     return@runOnUiThread
                 }
-                ReadingHistoryStore.record(this, file)
+                if (!AppSettings.isIncognitoModeEnabled(this)) {
+                    ReadingHistoryStore.record(this, file)
+                }
                 tvReaderStatus.visibility = View.GONE
             }
         }
@@ -846,7 +848,9 @@ class MangaReaderActivity : AppCompatActivity() {
                     return@runOnUiThread
                 }
                 imageEntries = entries
-                ReadingHistoryStore.record(this, file)
+                if (!AppSettings.isIncognitoModeEnabled(this)) {
+                    ReadingHistoryStore.record(this, file)
+                }
                 tvReaderStatus.visibility = View.GONE
                 bindPreparedReaderAdapter(
                     entries,
@@ -1096,7 +1100,9 @@ class MangaReaderActivity : AppCompatActivity() {
         }
         if (startFromBeginningPending) {
             val file = archiveFile ?: return
-            readerProgressController.clear(file)
+            if (!AppSettings.isIncognitoModeEnabled(this)) {
+                readerProgressController.clear(file)
+            }
             startFromBeginningPending = false
             decodedStartOverPages.clear()
         }
@@ -1629,7 +1635,8 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun saveReaderPosition(forceCommit: Boolean = false) {
-        if (startFromBeginningPending ||
+        if (AppSettings.isIncognitoModeEnabled(this) ||
+            startFromBeginningPending ||
             (intent.getBooleanExtra(EXTRA_RETURN_TO_CURRENT_PREVIEW, false) && !nextReaderWasReady)
         ) return
         val file = archiveFile ?: return

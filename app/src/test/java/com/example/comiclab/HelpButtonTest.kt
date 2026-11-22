@@ -12,10 +12,13 @@ class HelpButtonTest {
         assertTrue("Main layout should exist", layoutFile.isFile)
 
         val layout = layoutFile.readText()
+        val incognitoIndex = layout.indexOf("android:id=\"@+id/btnIncognitoMode\"")
         val helpIndex = layout.indexOf("android:id=\"@+id/btnHelp\"")
         val settingsIndex = layout.indexOf("android:id=\"@+id/btnOptions\"")
+        assertTrue("Incognito button should exist", incognitoIndex >= 0)
         assertTrue("Help button should exist", helpIndex >= 0)
         assertTrue("Settings button should exist", settingsIndex >= 0)
+        assertTrue("Incognito button should be before help", incognitoIndex < helpIndex)
         assertTrue("Help button should be before settings", helpIndex < settingsIndex)
 
         val helpStart = layout.lastIndexOf("<ImageButton", helpIndex)
@@ -37,6 +40,9 @@ class HelpButtonTest {
         )
         assertTrue(
             File("src/main/res/drawable-nodpi/png_help_question_icon.png").isFile
+        )
+        assertTrue(
+            File("src/main/res/drawable-nodpi/png_incognito_mode_icon.png").isFile
         )
         assertTrue(File("src/main/res/layout/activity_help.xml").isFile)
     }

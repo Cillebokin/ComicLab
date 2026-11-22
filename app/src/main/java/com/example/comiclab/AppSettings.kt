@@ -84,6 +84,12 @@ object AppSettings {
     fun setShowFileReadingProgressEnabled(context: Context, enabled: Boolean) =
         AppSettingsStore.setShowFileReadingProgressEnabled(context, enabled)
 
+    fun isIncognitoModeEnabled(context: Context): Boolean =
+        AppSettingsStore.isIncognitoModeEnabled(context)
+
+    fun setIncognitoModeEnabled(context: Context, enabled: Boolean) =
+        AppSettingsStore.setIncognitoModeEnabled(context, enabled)
+
     fun isBookcaseDirectory(context: Context, directory: File): Boolean =
         AppSettingsStore.isBookcaseDirectory(context, directory)
 

@@ -20,6 +20,7 @@ object HelpArticles {
     const val EXPORT_CONFIGURATION_ID = "export_configuration"
     const val LOAD_CONFIGURATION_ID = "load_configuration"
     const val WINDOWS_SHARE_SETUP_ID = "windows_share_setup"
+    const val INCOGNITO_MODE_ID = "incognito_mode"
 
     val all: List<HelpArticle> = listOf(
         HelpArticle(
@@ -66,6 +67,11 @@ object HelpArticles {
             id = WINDOWS_SHARE_SETUP_ID,
             titleResId = R.string.help_windows_share_setup,
             htmlResId = R.raw.help_windows_share_setup
+        ),
+        HelpArticle(
+            id = INCOGNITO_MODE_ID,
+            titleResId = R.string.help_incognito_mode,
+            htmlResId = R.raw.help_incognito_mode
         )
     )
 

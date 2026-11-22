@@ -33,6 +33,7 @@ internal object AppSettingsStore {
         "custom_reader_brightness_zero_min_migrated"
     private const val KEY_DARK_MODE_ENABLED = "dark_mode_enabled"
     internal const val KEY_SHOW_FILE_READING_PROGRESS = "show_file_reading_progress"
+    private const val KEY_INCOGNITO_MODE_ENABLED = "incognito_mode_enabled"
     private val bookcaseDirectoriesLock = Any()
 
     internal fun registerChangeListener(
@@ -58,6 +59,18 @@ internal object AppSettingsStore {
         PrefsGateway.open(context, PREFS_NAME)
             .edit()
             .putBoolean(KEY_SHOW_FILE_READING_PROGRESS, enabled)
+            .apply()
+    }
+
+    fun isIncognitoModeEnabled(context: Context): Boolean {
+        return PrefsGateway.open(context, PREFS_NAME)
+            .getBoolean(KEY_INCOGNITO_MODE_ENABLED, false)
+    }
+
+    fun setIncognitoModeEnabled(context: Context, enabled: Boolean) {
+        PrefsGateway.open(context, PREFS_NAME)
+            .edit()
+            .putBoolean(KEY_INCOGNITO_MODE_ENABLED, enabled)
             .apply()
     }
 

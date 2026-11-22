@@ -153,6 +153,7 @@
     <string name="help_export_configuration">Export configuration</string>
     <string name="help_load_configuration">Load configuration</string>
     <string name="help_windows_share_setup">Share settings</string>
+    <string name="help_incognito_mode">Incognito mode</string>
     <string name="dark_mode">Dark mode</string>
     <string name="reading_history">Reading history</string>
     <string name="reading_history_empty">No reading history</string>
@@ -432,6 +433,9 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="double_page_cover_single">Show cover as a single page in two-page mode</string>
     <string name="file_browser">File browser</string>
     <string name="show_file_reading_progress">Show reading progress bar on files</string>
+    <string name="incognito_mode">Incognito mode</string>
+    <string name="incognito_mode_enabled">Incognito mode enabled</string>
+    <string name="incognito_mode_disabled">Incognito mode disabled</string>
     <string name="start_marker_error_tags">Feature marker error tags</string>
     <string name="start_marker_error_tags_empty_hint">Optional</string>
     <string name="reader_controls">Reader controls</string>

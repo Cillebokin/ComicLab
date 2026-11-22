@@ -137,6 +137,18 @@ class HelpContentsTest {
     }
 
     @Test
+    fun incognitoModeHelpArticleIsRegisteredWithCurrentGuidance() {
+        assertTrue(HelpArticles.find(HelpArticles.INCOGNITO_MODE_ID) != null)
+        val htmlFile = File("src/main/res/raw/help_incognito_mode.html")
+        assertTrue("Incognito mode HTML should exist", htmlFile.isFile)
+        val html = htmlFile.readText()
+        assertTrue(html.contains("<h1>无痕模式</h1>"))
+        assertTrue(html.contains("不会记录历史"))
+        assertTrue(html.contains("阅读进度"))
+        assertTrue(html.contains("蓝底白线"))
+    }
+
+    @Test
     fun everyHelpArticleHasAnEnglishLocalizedHtmlPage() {
         val englishPagesDirectory = File("src/main/res/raw-en")
         assertTrue("English help pages directory should exist", englishPagesDirectory.isDirectory)

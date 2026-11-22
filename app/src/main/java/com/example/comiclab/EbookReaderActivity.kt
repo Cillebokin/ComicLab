@@ -142,8 +142,20 @@ class EbookReaderActivity : AppCompatActivity() {
         val shouldStartFromBeginning = savedInstanceState == null &&
             intent.getBooleanExtra(EXTRA_START_FROM_BEGINNING, false)
         if (shouldStartFromBeginning) {
-            EbookProgressStore.clear(this, file)
+            if (!AppSettings.isIncognitoModeEnabled(this)) {
+                EbookProgressStore.clear(this, file)
+            }
             currentProgress = null
+        } else if (savedInstanceState?.getBoolean(STATE_HAS_SAVED_PROGRESS) == true) {
+            currentProgress = if (savedInstanceState.getBoolean(STATE_PROGRESS_PRESENT)) {
+                EbookProgress(
+                    chapterIndex = savedInstanceState.getInt(STATE_PROGRESS_CHAPTER, 0),
+                    scrollFraction = savedInstanceState.getFloat(STATE_PROGRESS_FRACTION, 0f),
+                    coordinateVersion = savedInstanceState.getInt(STATE_PROGRESS_COORDINATE_VERSION, 2)
+                ).normalized()
+            } else {
+                null
+            }
         } else {
             currentProgress = EbookProgressStore.load(this, file)
         }
@@ -168,6 +180,20 @@ class EbookReaderActivity : AppCompatActivity() {
         super.onWindowFocusChanged(hasFocus)
         if (::readerControlsController.isInitialized) {
             readerControlsController.onWindowFocusChanged(hasFocus)
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        val progress = currentProgress
+        outState.putBoolean(STATE_HAS_SAVED_PROGRESS, true)
+        if (progress != null) {
+            outState.putBoolean(STATE_PROGRESS_PRESENT, true)
+            outState.putInt(STATE_PROGRESS_CHAPTER, progress.chapterIndex)
+            outState.putFloat(STATE_PROGRESS_FRACTION, progress.scrollFraction)
+            outState.putInt(STATE_PROGRESS_COORDINATE_VERSION, progress.coordinateVersion)
+        } else {
+            outState.putBoolean(STATE_PROGRESS_PRESENT, false)
         }
     }
 
@@ -501,7 +527,9 @@ class EbookReaderActivity : AppCompatActivity() {
                         preparedDocument?.close() ?: session?.close()
                         preparedDocument = preparedBook
                         session = preparedBook.session
-                        ReadingHistoryStore.record(this@EbookReaderActivity, file)
+                        if (!AppSettings.isIncognitoModeEnabled(this@EbookReaderActivity)) {
+                            ReadingHistoryStore.record(this@EbookReaderActivity, file)
+                        }
                         tvTitle.text = preparedBook.session.book.title
                         currentProgress = currentProgress?.let {
                             EbookReaderProgressMapper.clampToBook(
@@ -548,6 +576,7 @@ class EbookReaderActivity : AppCompatActivity() {
     }
 
     private fun saveCurrentProgress(force: Boolean) {
+        if (AppSettings.isIncognitoModeEnabled(this)) return
         val file = bookFile ?: return
         val progress = currentProgress ?: return
         val now = SystemClock.uptimeMillis()
@@ -691,6 +720,11 @@ class EbookReaderActivity : AppCompatActivity() {
         const val EXTRA_BOOK_PATH = "archive_path"
         const val EXTRA_START_FROM_BEGINNING = "start_from_beginning"
 
+        private const val STATE_HAS_SAVED_PROGRESS = "state_has_saved_progress"
+        private const val STATE_PROGRESS_PRESENT = "state_progress_present"
+        private const val STATE_PROGRESS_CHAPTER = "state_progress_chapter"
+        private const val STATE_PROGRESS_FRACTION = "state_progress_fraction"
+        private const val STATE_PROGRESS_COORDINATE_VERSION = "state_progress_coordinate_version"
         private const val RESOURCE_SCHEME = "ebook-resource"
         private const val BASE_URL = EBOOK_BASE_URL
         private const val JS_BRIDGE_NAME = "ComicLabBridge"

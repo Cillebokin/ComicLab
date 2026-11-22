@@ -152,6 +152,7 @@
     <string name="help_export_configuration">导出配置</string>
     <string name="help_load_configuration">加载配置</string>
     <string name="help_windows_share_setup">共享设置</string>
+    <string name="help_incognito_mode">无痕模式</string>
     <string name="dark_mode">深色模式</string>
     <string name="reading_history">阅读历史</string>
     <string name="reading_history_empty">暂无阅读历史</string>
@@ -431,6 +432,9 @@
     <string name="double_page_cover_single">双页模式封面单页</string>
     <string name="file_browser">文件浏览</string>
     <string name="show_file_reading_progress">显示文件阅读进度条</string>
+    <string name="incognito_mode">无痕模式</string>
+    <string name="incognito_mode_enabled">已开启无痕模式</string>
+    <string name="incognito_mode_disabled">已关闭无痕模式</string>
     <string name="start_marker_error_tags">特征标记错误标识</string>
     <string name="start_marker_error_tags_empty_hint">允许为空</string>
     <string name="reader_controls">阅读控制</string>

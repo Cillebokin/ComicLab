@@ -17,6 +17,7 @@ import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
@@ -99,6 +100,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var listView: ListView
     private lateinit var etPath: EditText
     private lateinit var btnBack: ImageButton
+    private lateinit var btnIncognitoMode: ImageButton
     private lateinit var btnHelp: ImageButton
     private lateinit var btnOptions: ImageButton
     private lateinit var btnSort: ImageButton
@@ -315,6 +317,7 @@ class MainActivity : AppCompatActivity() {
         listView = findViewById(R.id.listFiles)
         etPath = findViewById(R.id.etPath)
         btnBack = findViewById(R.id.btnBack)
+        btnIncognitoMode = findViewById(R.id.btnIncognitoMode)
         btnHelp = findViewById(R.id.btnHelp)
         btnOptions = findViewById(R.id.btnOptions)
         btnSort = findViewById(R.id.btnSort)
@@ -427,6 +430,11 @@ class MainActivity : AppCompatActivity() {
                 goParent()
             }
         }
+
+        btnIncognitoMode.setOnClickListener {
+            toggleIncognitoMode()
+        }
+        updateIncognitoModeButton()
 
         btnOptions.setOnClickListener {
             openSettings()
@@ -554,6 +562,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        updateIncognitoModeButton()
         refreshNasFeatureAvailability()
         updateNasCacheSummary()
         clearFileListTouchState()
@@ -662,6 +671,42 @@ class MainActivity : AppCompatActivity() {
         } catch (_: ActivityNotFoundException) {
             startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
         }
+    }
+
+    private fun toggleIncognitoMode() {
+        val enabled = !AppSettings.isIncognitoModeEnabled(this)
+        AppSettings.setIncognitoModeEnabled(this, enabled)
+        updateIncognitoModeButton()
+        Toast.makeText(
+            this,
+            if (enabled) R.string.incognito_mode_enabled else R.string.incognito_mode_disabled,
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun updateIncognitoModeButton() {
+        val enabled = AppSettings.isIncognitoModeEnabled(this)
+        btnIncognitoMode.isSelected = enabled
+        if (enabled) {
+            btnIncognitoMode.setBackgroundResource(R.drawable.bg_incognito_active)
+        } else {
+            val outValue = android.util.TypedValue()
+            if (theme.resolveAttribute(
+                    androidx.appcompat.R.attr.selectableItemBackgroundBorderless,
+                    outValue,
+                    true
+                ) && outValue.resourceId != 0
+            ) {
+                btnIncognitoMode.setBackgroundResource(outValue.resourceId)
+            } else {
+                btnIncognitoMode.background = null
+            }
+        }
+        val paddingPx = ((if (enabled) 5 else 4) * resources.displayMetrics.density).toInt()
+        btnIncognitoMode.setPadding(paddingPx, paddingPx, paddingPx, paddingPx)
+        btnIncognitoMode.imageTintList = ColorStateList.valueOf(
+            getColor(if (enabled) R.color.comiclab_text_on_accent else R.color.comiclab_icon)
+        )
     }
 
     private fun openSettings() {
@@ -1348,8 +1393,10 @@ class MainActivity : AppCompatActivity() {
         sourceLocalButton.isEnabled = !isActive && !nasDownloadInProgress
         sourceSwitchTrack.alpha = if (isActive || nasDownloadInProgress) 0.45f else 1f
 
+        btnIncognitoMode.isEnabled = !isActive && !nasDownloadInProgress
         btnHelp.isEnabled = !isActive && !nasDownloadInProgress
         btnOptions.isEnabled = !isActive && !nasDownloadInProgress
+        btnIncognitoMode.alpha = if (isActive || nasDownloadInProgress) 0.38f else 1f
         btnHelp.alpha = if (isActive || nasDownloadInProgress) 0.38f else 1f
         btnOptions.alpha = if (isActive || nasDownloadInProgress) 0.38f else 1f
 
