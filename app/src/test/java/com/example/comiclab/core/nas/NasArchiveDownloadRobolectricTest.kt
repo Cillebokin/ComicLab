@@ -47,6 +47,27 @@ class NasArchiveDownloadRobolectricTest {
     }
 
     @Test
+    fun versionCheckAfterCopyPreventsReplacingThePreviousFile() {
+        val destination = temp.newFile("book.cbz").apply { writeText("previous") }
+        var bytesWritten = 0L
+        assertThrows(NasShareArchiveDownloader.RemoteVersionChangedException::class.java) {
+            NasShareArchiveDownloader.writeDownload(
+                destination, 6, NasDownloadCancellation(), null, true,
+                onProgress = { bytes, _ -> bytesWritten = bytes }
+            ) { receive ->
+                "sample".byteInputStream().use {
+                    receive(6, it) {
+                        assertEquals(6L, bytesWritten)
+                        throw NasShareArchiveDownloader.RemoteVersionChangedException()
+                    }
+                }
+            }
+        }
+        assertEquals("previous", destination.readText())
+        assertEquals(listOf(destination), temp.root.listFiles()?.toList())
+    }
+
+    @Test
     fun localPublicationKeepsAFileCreatedDuringDownload() {
         val destination = File(temp.root, "book.cbz")
         assertThrows(IOException::class.java) {
@@ -67,7 +88,7 @@ class NasArchiveDownloadRobolectricTest {
     ): File = NasShareArchiveDownloader.writeDownload(
         destination, 6, cancellation, null, replaceExisting, onProgress
     ) { receive ->
-        "sample".byteInputStream().use { receive(6, it) }
+        "sample".byteInputStream().use { receive(6, it) {} }
         afterPublication()
     }
 }

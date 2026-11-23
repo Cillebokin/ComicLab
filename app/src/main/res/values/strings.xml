@@ -20,6 +20,8 @@
     <string name="nas_cache_share_unavailable">原 NAS 共享不可用，请检查 NAS 设置</string>
     <string name="nas_cache_archive_updated">远端漫画已更新</string>
     <string name="nas_cache_archive_updated_message">下载新版并从头开始阅读？</string>
+    <string name="nas_download_version_changed">远端文件在下载前或下载期间发生了变化。请刷新目录后重试。</string>
+    <string name="nas_refresh_directory">刷新目录</string>
     <string name="nas_session_password_required">输入密码后即可访问此共享</string>
     <string name="nas_session_password_prompt">请输入“%1$s”的密码。密码仅在本次应用运行期间使用。</string>
     <string name="nas_failure_title">NAS操作未完成</string>

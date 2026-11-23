@@ -266,6 +266,7 @@ class MainActivity : AppCompatActivity() {
         data class Completed(val file: File, val openForReading: Boolean) : NasDownloadResult
         data class InsufficientSpace(val requiredBytes: Long, val availableBytes: Long) : NasDownloadResult
         data object Cancelled : NasDownloadResult
+        data object RemoteVersionChanged : NasDownloadResult
         data class Failed(
             val exception: Exception,
             val failure: NasFailureDetails
@@ -1966,18 +1967,9 @@ class MainActivity : AppCompatActivity() {
             showNasFailureDialog(NasFailureClassifier.classify(exception))
             return
         }
-        if (!saveToLocal && destination.isFile && destination.length() == entry.sizeBytes) {
-            try {
-                NasCachedArchiveStore.prepareForReading(this, destination, profile, entry, downloaded = false)
-            } catch (exception: Exception) {
-                showNasFailureDialog(NasFailureClassifier.classify(exception))
-                return
-            }
-            openMangaPreview(destination)
-            return
-        }
+        val cached = !saveToLocal && destination.isFile && destination.length() == entry.sizeBytes
         try {
-            NasShareArchiveDownloader.checkAvailableSpace(destinationDirectory, entry.sizeBytes)
+            if (!cached) NasShareArchiveDownloader.checkAvailableSpace(destinationDirectory, entry.sizeBytes)
         } catch (exception: NasShareArchiveDownloader.InsufficientStorageException) {
             showNasDownloadInsufficientSpace(exception.requiredBytes, exception.availableBytes)
             return
@@ -2010,7 +2002,7 @@ class MainActivity : AppCompatActivity() {
                     reportNasDownloadProgress(generation, entry.name, downloadedBytes, totalBytes)
                 }
                 if (!saveToLocal) {
-                    NasCachedArchiveStore.prepareForReading(applicationContext, file, profile, entry, downloaded = true)
+                    NasCachedArchiveStore.prepareForReading(applicationContext, file, profile, entry, downloaded = !cached)
                 }
                 NasDownloadResult.Completed(file, openForReading = !saveToLocal)
             } catch (exception: NasShareArchiveDownloader.InsufficientStorageException) {
@@ -2020,6 +2012,8 @@ class MainActivity : AppCompatActivity() {
                 )
             } catch (_: NasShareArchiveDownloader.DownloadCancelledException) {
                 NasDownloadResult.Cancelled
+            } catch (_: NasShareArchiveDownloader.RemoteVersionChangedException) {
+                NasDownloadResult.RemoteVersionChanged
             } catch (exception: Exception) {
                 val failure = NasFailureClassifier.classify(exception, localDownload = saveToLocal)
                 discardRejectedNasPassword(profile, password, failure)
@@ -2054,6 +2048,17 @@ class MainActivity : AppCompatActivity() {
                     )
 
                     NasDownloadResult.Cancelled -> showMessage(R.string.nas_download_cancelled)
+
+                    NasDownloadResult.RemoteVersionChanged -> {
+                        AlertDialog.Builder(this)
+                            .setTitle(R.string.nas_cache_archive_updated)
+                            .setMessage(R.string.nas_download_version_changed)
+                            .setNegativeButton(R.string.cancel, null)
+                            .setPositiveButton(R.string.nas_refresh_directory) { _, _ ->
+                                if (isNasSourceSelected && selectedNasProfile == profile) loadNasDirectory()
+                            }
+                            .showRounded()
+                    }
 
                     is NasDownloadResult.Failed -> {
                         android.util.Log.e(

@@ -99,6 +99,67 @@ class NasShareCredentialDeviceTest {
     }
 
     @Test
+    fun equalLengthRemoteRewriteRequiresRefreshBeforePublishing() {
+        val mode = InstrumentationRegistry.getArguments().getString("nasVersionRace")
+        org.junit.Assume.assumeTrue(mode in listOf("before-open", "during-read"))
+        val profile = NasShareProfile(UUID.randomUUID().toString(), "Fixture", "127.0.0.1", "BOOKS", "", false)
+        val prefs = app.getSharedPreferences("nas_share_settings", Context.MODE_PRIVATE)
+        check(prefs.all.isEmpty() && NasShareArchiveDownloader.cacheSummary(app.cacheDir).fileCount == 0) {
+            "This test requires an isolated app instance"
+        }
+        val cache = NasShareArchiveDownloader.cacheDirectory(app.cacheDir)
+        fun remote() = NasShareDirectoryBrowser.list(profile, "", "shelf").single { it.name == "sample.cbz" }
+        val original = remote()
+        val oldDestination = NasShareArchiveDownloader.cacheFile(cache, profile, original)
+        try {
+            NasShareStore.save(app, profile, "", false)
+            NasShareStore.setActiveShare(app, profile.id)
+            NasShareStore.setNasEnabled(app, true)
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { it.findViewById<View>(R.id.btnSourceNas).performClick() }
+                awaitFixture("remote folder did not appear") { clickFixtureEntry(scenario, "shelf") }
+                awaitFixture("remote comic did not appear") { clickFixtureEntry(scenario, "sample.cbz") }
+                if (mode == "before-open") {
+                    android.util.Log.i("CL030Fixture", "READY_BEFORE_OPEN")
+                    awaitFixture("fixture did not change the remote version") { remote().modifiedAt != original.modifiedAt }
+                }
+                clickInNasPopup(R.id.btnReadNasArchive, isDialog())
+                val message = androidx.test.espresso.matcher.ViewMatchers.withText(app.getString(R.string.nas_download_version_changed))
+                awaitFixture("download did not show the version-change message", timeoutMs = 20_000) {
+                    check(!oldDestination.exists()) { "Mixed or updated content was published under the stale cache key" }
+                    try {
+                        onView(message).check(androidx.test.espresso.assertion.ViewAssertions.matches(
+                            androidx.test.espresso.matcher.ViewMatchers.isDisplayed()
+                        ))
+                        true
+                    } catch (_: androidx.test.espresso.NoMatchingViewException) {
+                        false
+                    }
+                }
+                val changed = remote()
+                assertEquals(original.sizeBytes, changed.sizeBytes)
+                check(original.modifiedAt != changed.modifiedAt)
+                check(cache.walkTopDown().none { it.isFile })
+                clickInNasPopup(android.R.id.button1, isDialog())
+                awaitFixture("refreshed remote comic did not appear") { clickFixtureEntry(scenario, "sample.cbz") }
+                clickInNasPopup(R.id.btnReadNasArchive, isDialog())
+                val preview = awaitResumed<MangaPreviewActivity>()
+                val updated = NasShareArchiveDownloader.cacheFile(cache, profile, changed)
+                assertEquals(updated.absolutePath, preview.intent.getStringExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH))
+                ZipFile(updated).use { zip ->
+                    assertEquals("new", zip.getInputStream(zip.getEntry("revision.txt")).bufferedReader().use { it.readText() })
+                }
+                assertEquals(listOf(updated), cache.walkTopDown().filter { it.isFile }.toList())
+                InstrumentationRegistry.getInstrumentation().runOnMainSync { preview.finish() }
+            }
+        } finally {
+            NasShareStore.delete(app, profile.id)
+            check(prefs.edit().clear().commit())
+            check(NasShareArchiveDownloader.clearCache(app.cacheDir).completed)
+        }
+    }
+
+    @Test
     fun nasDownloadReportsTheOutcomeOfReadAndCloseFailures() {
         val mode = InstrumentationRegistry.getArguments().getString("nasDownloadFixture")
         org.junit.Assume.assumeTrue(mode in listOf("cancel-read", "broken-read", "close-fail"))
