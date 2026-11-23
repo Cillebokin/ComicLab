@@ -7,6 +7,7 @@ import com.hierynomus.msfscc.fileinformation.FileAllInformation
 import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2CreateOptions
 import com.hierynomus.mssmb2.SMB2ShareAccess
+import java.io.Closeable
 import java.io.EOFException
 import java.io.File
 import java.io.FileOutputStream
@@ -244,11 +245,14 @@ internal object NasShareArchiveDownloader {
         cancellation: NasDownloadCancellation,
         cleanupRoot: File?,
         replaceExisting: Boolean,
+        publicParts: NasPublicDownloadPartJournal? = null,
         onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit
     ): File {
         require(!entry.isDirectory) { "Cannot download a directory" }
         validateRemotePath(entry.relativePath)
-        return writeDownload(destination, entry.sizeBytes, cancellation, cleanupRoot, replaceExisting, onProgress) { receive ->
+        return writeDownload(
+            destination, entry.sizeBytes, cancellation, cleanupRoot, replaceExisting, onProgress, publicParts
+        ) { receive ->
             NasShareDirectoryBrowser.withDiskShare(profile, password, cancellation) { share ->
                 val path = entry.relativePath.replace('/', '\\')
                 share.openFile(
@@ -285,6 +289,7 @@ internal object NasShareArchiveDownloader {
         cleanupRoot: File?,
         replaceExisting: Boolean,
         onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit,
+        publicParts: NasPublicDownloadPartJournal? = null,
         withInput: ((Long, InputStream, () -> Unit) -> Unit) -> Unit
     ): File = cancellation.run {
         val parent = destination.parentFile
@@ -298,6 +303,8 @@ internal object NasShareArchiveDownloader {
         cleanupRoot?.let(::cleanupPartialFiles)
         val temporary = File(parent, ".comiclab-nas-${UUID.randomUUID()}.part")
         var ready = false
+        var staged = false
+        var partLease: Closeable? = null
         try {
             cancellation.checkActive()
             withInput { totalBytes, input, verifyRemoteVersion ->
@@ -310,6 +317,12 @@ internal object NasShareArchiveDownloader {
                 ensureAvailableSpace(parent, totalBytes)
                 onProgress(0L, totalBytes)
                 var downloadedBytes = 0L
+                if (publicParts != null) {
+                    partLease = publicParts.createPart(temporary)
+                } else {
+                    Files.createFile(temporary.toPath())
+                }
+                staged = true
                 FileOutputStream(temporary).use { output ->
                     val buffer = ByteArray(BUFFER_SIZE_BYTES)
                     while (true) {
@@ -345,7 +358,11 @@ internal object NasShareArchiveDownloader {
             if (!ready) throw exception
             Log.w("ComicLabNAS", "SMB cleanup failed after NAS download was published", exception)
         } finally {
-            if (!ready) temporary.delete()
+            try {
+                if (staged && !ready) temporary.delete()
+            } finally {
+                partLease?.close()
+            }
         }
         check(ready)
         destination

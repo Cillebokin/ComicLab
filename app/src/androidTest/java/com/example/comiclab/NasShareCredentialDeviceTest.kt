@@ -99,6 +99,33 @@ class NasShareCredentialDeviceTest {
     }
 
     @Test
+    fun publicDownloadReachesStagingBeforeProcessStop() {
+        val mode = InstrumentationRegistry.getArguments().getString("nasPublicRestartFixture")
+        org.junit.Assume.assumeTrue(mode == "true")
+        val profile = NasShareProfile(UUID.randomUUID().toString(), "Fixture", "127.0.0.1", "BOOKS", "", false)
+        val prefs = app.getSharedPreferences("nas_share_settings", Context.MODE_PRIVATE)
+        check(prefs.all.isEmpty()) { "This test requires an isolated app instance" }
+        val path = "Download/ComicLab-CL031"
+        val directory = File(Environment.getExternalStorageDirectory(), path)
+        NasShareStore.save(app, profile, "", false)
+        NasShareStore.setActiveShare(app, profile.id)
+        NasShareStore.setNasEnabled(app, true)
+        NasShareStore.setDownloadPath(app, path)
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { it.findViewById<View>(R.id.btnSourceNas).performClick() }
+            awaitFixture("remote folder did not appear") { clickFixtureEntry(scenario, "shelf") }
+            awaitFixture("remote comic did not appear") { clickFixtureEntry(scenario, "sample.cbz") }
+            clickInNasPopup(R.id.btnDownloadNasArchiveToLocal, isDialog())
+            awaitFixture("interrupted public download had no staging file") {
+                directory.listFiles()?.any { it.name.startsWith(".comiclab-nas-") && it.extension == "part" } == true
+            }
+            android.util.Log.i("CL031Fixture", "READY_FOR_PROCESS_STOP")
+            SystemClock.sleep(30_000)
+            error("The isolated harness did not stop the process")
+        }
+    }
+
+    @Test
     fun equalLengthRemoteRewriteRequiresRefreshBeforePublishing() {
         val mode = InstrumentationRegistry.getArguments().getString("nasVersionRace")
         org.junit.Assume.assumeTrue(mode in listOf("before-open", "during-read"))

@@ -52,6 +52,7 @@ import com.example.comiclab.core.nas.NasFailureClassifier
 import com.example.comiclab.core.nas.NasFailureDetails
 import com.example.comiclab.core.nas.NasShareArchiveDownloader
 import com.example.comiclab.core.nas.NasDownloadCancellation
+import com.example.comiclab.core.nas.NasPublicDownloadPartJournal
 import com.example.comiclab.core.nas.NasArchiveSource
 import com.example.comiclab.core.nas.NasCachedArchiveStore
 import com.example.comiclab.core.nas.NasShareDirectoryBrowser
@@ -1990,14 +1991,19 @@ class MainActivity : AppCompatActivity() {
         updateFileTransferToolbar()
         nasDownloadExecutor.execute {
             val result = try {
+                val publicParts = if (saveToLocal) {
+                    (NasPublicDownloadPartJournal.openIfWritable(applicationContext)
+                        ?: throw SecurityException("Public storage is unavailable")).also { it.recover() }
+                } else null
                 val file = NasShareArchiveDownloader.download(
                     profile = profile,
                     password = password,
                     entry = entry,
                     destination = destination,
                     cancellation = cancellation,
-                    cleanupRoot = destinationDirectory,
-                    replaceExisting = !saveToLocal
+                    cleanupRoot = if (saveToLocal) null else destinationDirectory,
+                    replaceExisting = !saveToLocal,
+                    publicParts = publicParts
                 ) { downloadedBytes, totalBytes ->
                     reportNasDownloadProgress(generation, entry.name, downloadedBytes, totalBytes)
                 }
