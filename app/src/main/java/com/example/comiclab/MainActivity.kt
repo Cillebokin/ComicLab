@@ -51,6 +51,8 @@ import com.example.comiclab.core.nas.NasDirectoryEntry
 import com.example.comiclab.core.nas.NasFailureClassifier
 import com.example.comiclab.core.nas.NasFailureDetails
 import com.example.comiclab.core.nas.NasShareArchiveDownloader
+import com.example.comiclab.core.nas.NasArchiveSource
+import com.example.comiclab.core.nas.NasCachedArchiveStore
 import com.example.comiclab.core.nas.NasShareDirectoryBrowser
 import com.example.comiclab.core.nas.NasShareProfile
 import com.example.comiclab.core.nas.NasShareStore
@@ -177,8 +179,15 @@ class MainActivity : AppCompatActivity() {
     private val sidePanelController = SidePanelController(
         activity = this,
         scrimProvider = { readingHistoryScrim },
-        onOpenMangaPreview = { file -> openMangaPreview(file) },
-        onJumpToDirectory = { path -> openDirectoryContainingTarget(path) },
+        onOpenMangaPreview = { file ->
+            if (NasCachedArchiveStore.isMissingCacheFile(this, file)) reopenNasArchive(file)
+            else openMangaPreview(file)
+        },
+        onJumpToDirectory = { path ->
+            val file = File(path)
+            if (NasCachedArchiveStore.isCacheFile(this, file)) reopenNasArchive(file, openArchive = false)
+            else openDirectoryContainingTarget(path)
+        },
         onNavigateToDirectory = { path ->
             setCurrentPath(path)
             loadCurrentDirectory()
@@ -228,6 +237,8 @@ class MainActivity : AppCompatActivity() {
     private var currentPath = STORAGE_ROOT_PATH
     private var currentNasRelativePath = ""
     private var selectedNasProfile: NasShareProfile? = null
+    private var pendingNasArchiveReopen: NasArchiveReopen? = null
+    private data class NasArchiveReopen(val file: File, val source: NasArchiveSource, val directory: String)
     private var availableNasProfiles: List<NasShareProfile> = emptyList()
     private var nasDirectoryLoadInProgress = false
     private var nasDownloadInProgress = false
@@ -1432,6 +1443,7 @@ class MainActivity : AppCompatActivity() {
 
         val wasNas = isNasSourceSelected
         if (wasNas && !isNas) {
+            pendingNasArchiveReopen = null
             nasDirectoryLoadGeneration.incrementAndGet()
             nasDirectoryLoadInProgress = false
         }
@@ -1648,6 +1660,7 @@ class MainActivity : AppCompatActivity() {
             showMessage(R.string.nas_share_enable_failed)
             return
         }
+        pendingNasArchiveReopen = null
         val targetChanged = selectedNasProfile?.let {
             it.host != profile.host || it.shareName != profile.shareName
         } ?: true
@@ -1685,9 +1698,68 @@ class MainActivity : AppCompatActivity() {
         updateSourcePathDisplay()
     }
 
+    private fun reopenNasArchive(file: File, openArchive: Boolean = true) {
+        if (nasDownloadInProgress || pendingFileTransfer != null) return
+        val source = NasCachedArchiveStore.source(this, file)
+        if (source == null) {
+            showMessage(R.string.nas_cache_source_unknown)
+            return
+        }
+        val profile = runCatching { NasShareStore.load(this).firstOrNull(source::matches) }.getOrNull()
+        if (profile == null || !NasShareStore.isNasEnabled(this)) {
+            showMessage(R.string.nas_cache_share_unavailable)
+            return
+        }
+        val directory = runCatching {
+            NasShareDirectoryBrowser.parentPath(source.relativePath).also {
+                NasShareStore.setActiveShare(this, profile.id)
+            }
+        }.getOrElse {
+            showMessage(R.string.nas_cache_share_unavailable)
+            return
+        }
+        pendingNasArchiveReopen = if (openArchive) NasArchiveReopen(file, source, directory) else null
+        selectedNasProfile = profile
+        currentNasRelativePath = directory
+        if (isNasSourceSelected) {
+            showNasBrowserContent(availableNasProfiles)
+            loadNasDirectory()
+        } else {
+            selectFileSource(isNas = true)
+        }
+    }
+
+    private fun resumeNasArchive(profile: NasShareProfile, entries: List<NasDirectoryEntry>) {
+        val request = pendingNasArchiveReopen ?: return
+        pendingNasArchiveReopen = null
+        val entry = entries.firstOrNull { !it.isDirectory && it.relativePath == request.source.relativePath }
+        if (entry == null) {
+            showMessage(R.string.nas_failure_remote_path_missing)
+            return
+        }
+        val remoteVersion = NasShareArchiveDownloader.cacheFile(
+            NasShareArchiveDownloader.cacheDirectory(cacheDir), profile, entry
+        )
+        if (remoteVersion.absoluteFile == request.file.absoluteFile) {
+            startNasArchiveDownload(entry)
+        } else {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.nas_cache_archive_updated)
+                .setMessage(R.string.nas_cache_archive_updated_message)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.confirm) { _, _ ->
+                    if (isNasSourceSelected && selectedNasProfile == profile) startNasArchiveDownload(entry)
+                }
+                .showRounded()
+        }
+    }
+
     private fun loadNasDirectory(promptForPassword: Boolean = false) {
         val profile = selectedNasProfile ?: return
         val requestedPath = currentNasRelativePath
+        pendingNasArchiveReopen = pendingNasArchiveReopen?.takeIf {
+            it.source.matches(profile) && it.directory == requestedPath
+        }
         val generation = nasDirectoryLoadGeneration.incrementAndGet()
         nasDirectoryLoadInProgress = true
         nasDirectoryListView.visibility = View.GONE
@@ -1758,6 +1830,7 @@ class MainActivity : AppCompatActivity() {
                             nasDirectoryListView.visibility = View.VISIBLE
                             nasDirectoryListView.setSelection(0)
                         }
+                        resumeNasArchive(profile, result.entries)
                     }
                     NasDirectoryLoadResult.PasswordUnavailable -> {
                         val sessionPasswordNeeded = !profile.rememberPassword
@@ -1894,6 +1967,12 @@ class MainActivity : AppCompatActivity() {
             return
         }
         if (!saveToLocal && destination.isFile && destination.length() == entry.sizeBytes) {
+            try {
+                NasCachedArchiveStore.prepareForReading(this, destination, profile, entry, downloaded = false)
+            } catch (exception: Exception) {
+                showNasFailureDialog(NasFailureClassifier.classify(exception))
+                return
+            }
             openMangaPreview(destination)
             return
         }
@@ -1919,25 +1998,21 @@ class MainActivity : AppCompatActivity() {
         updateFileTransferToolbar()
         nasDownloadExecutor.execute {
             val result = try {
-                NasDownloadResult.Completed(
-                    NasShareArchiveDownloader.download(
-                        profile = profile,
-                        password = password,
-                        entry = entry,
-                        destination = destination,
-                        cancelled = cancelled,
-                        cleanupRoot = destinationDirectory,
-                        replaceExisting = !saveToLocal
-                    ) { downloadedBytes, totalBytes ->
-                        reportNasDownloadProgress(
-                            generation,
-                            entry.name,
-                            downloadedBytes,
-                            totalBytes
-                        )
-                    },
-                    openForReading = !saveToLocal
-                )
+                val file = NasShareArchiveDownloader.download(
+                    profile = profile,
+                    password = password,
+                    entry = entry,
+                    destination = destination,
+                    cancelled = cancelled,
+                    cleanupRoot = destinationDirectory,
+                    replaceExisting = !saveToLocal
+                ) { downloadedBytes, totalBytes ->
+                    reportNasDownloadProgress(generation, entry.name, downloadedBytes, totalBytes)
+                }
+                if (!saveToLocal) {
+                    NasCachedArchiveStore.prepareForReading(applicationContext, file, profile, entry, downloaded = true)
+                }
+                NasDownloadResult.Completed(file, openForReading = !saveToLocal)
             } catch (exception: NasShareArchiveDownloader.InsufficientStorageException) {
                 NasDownloadResult.InsufficientSpace(
                     exception.requiredBytes,

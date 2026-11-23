@@ -15,6 +15,11 @@
     <string name="nas_directory_load_failed">无法读取此目录，请检查网络、账号和共享权限后重试</string>
     <string name="nas_directory_password_required">此共享没有可用的已保存密码，请在NAS设置中重新保存密码</string>
     <string name="nas_enter_password">输入密码</string>
+    <string name="nas_cache_entry_missing">NAS · 缓存已清理</string>
+    <string name="nas_cache_source_unknown">请从原 NAS 目录重新打开这本漫画，以恢复下载入口</string>
+    <string name="nas_cache_share_unavailable">原 NAS 共享不可用，请检查 NAS 设置</string>
+    <string name="nas_cache_archive_updated">远端漫画已更新</string>
+    <string name="nas_cache_archive_updated_message">下载新版并从头开始阅读？</string>
     <string name="nas_session_password_required">输入密码后即可访问此共享</string>
     <string name="nas_session_password_prompt">请输入“%1$s”的密码。密码仅在本次应用运行期间使用。</string>
     <string name="nas_failure_title">NAS操作未完成</string>

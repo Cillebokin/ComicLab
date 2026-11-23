@@ -16,6 +16,11 @@
     <string name="nas_directory_load_failed">Could not read this folder. Check the network, account, and share permissions, then retry</string>
     <string name="nas_directory_password_required">No saved password is available for this share. Save the password again in NAS settings</string>
     <string name="nas_enter_password">Enter password</string>
+    <string name="nas_cache_entry_missing">NAS · Cache cleared</string>
+    <string name="nas_cache_source_unknown">Reopen this comic from its original NAS folder to restore the download shortcut</string>
+    <string name="nas_cache_share_unavailable">The original NAS share is unavailable. Check your NAS settings</string>
+    <string name="nas_cache_archive_updated">Comic updated on NAS</string>
+    <string name="nas_cache_archive_updated_message">Download the new version and start from the beginning?</string>
     <string name="nas_session_password_required">Enter the password to access this share</string>
     <string name="nas_session_password_prompt">Enter the password for “%1$s”. It is kept only while the app is running.</string>
     <string name="nas_failure_title">NAS operation failed</string>
