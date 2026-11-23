@@ -45,6 +45,7 @@
     <string name="nas_download_progress_count">%1$s / %2$s</string>
     <string name="nas_download_cancelling">正在取消下载并清理临时文件…</string>
     <string name="nas_download_cancel">取消下载</string>
+    <string name="nas_download_finishing">正在完成下载…</string>
     <string name="nas_download_cancelled">已取消下载，未完成的临时文件已清理</string>
     <string name="nas_download_failed">下载失败，请检查网络、共享权限和可用存储</string>
     <string name="nas_download_insufficient_space">可用空间不足：需要约%1$s（含预留空间），当前可用%2$s</string>

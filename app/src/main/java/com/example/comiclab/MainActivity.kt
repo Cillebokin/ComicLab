@@ -51,6 +51,7 @@ import com.example.comiclab.core.nas.NasDirectoryEntry
 import com.example.comiclab.core.nas.NasFailureClassifier
 import com.example.comiclab.core.nas.NasFailureDetails
 import com.example.comiclab.core.nas.NasShareArchiveDownloader
+import com.example.comiclab.core.nas.NasDownloadCancellation
 import com.example.comiclab.core.nas.NasArchiveSource
 import com.example.comiclab.core.nas.NasCachedArchiveStore
 import com.example.comiclab.core.nas.NasShareDirectoryBrowser
@@ -88,7 +89,6 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 class MainActivity : AppCompatActivity() {
@@ -243,7 +243,7 @@ class MainActivity : AppCompatActivity() {
     private var nasDirectoryLoadInProgress = false
     private var nasDownloadInProgress = false
     private var nasDownloadGeneration = 0
-    private var nasDownloadCancellation: AtomicBoolean? = null
+    private var nasDownloadCancellation: NasDownloadCancellation? = null
     private var nasDownloadProgressDialog: AlertDialog? = null
     private var nasDownloadProgressStatus: TextView? = null
     private var nasDownloadProgressBar: ProgressBar? = null
@@ -620,7 +620,7 @@ class MainActivity : AppCompatActivity() {
         directoryLoadGeneration.incrementAndGet()
         nasDirectoryLoadGeneration.incrementAndGet()
         nasDownloadGeneration++
-        nasDownloadCancellation?.set(true)
+        nasDownloadCancellation?.cancel()
         dismissNasDownloadProgress()
         nasCacheClearDialog?.dismiss()
         nasCacheClearDialog = null
@@ -1990,11 +1990,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val cancelled = AtomicBoolean(false)
+        val cancellation = NasDownloadCancellation()
         val generation = ++nasDownloadGeneration
-        nasDownloadCancellation = cancelled
+        nasDownloadCancellation = cancellation
         nasDownloadInProgress = true
-        showNasDownloadProgress(entry, cancelled)
+        showNasDownloadProgress(entry, cancellation)
         updateFileTransferToolbar()
         nasDownloadExecutor.execute {
             val result = try {
@@ -2003,7 +2003,7 @@ class MainActivity : AppCompatActivity() {
                     password = password,
                     entry = entry,
                     destination = destination,
-                    cancelled = cancelled,
+                    cancellation = cancellation,
                     cleanupRoot = destinationDirectory,
                     replaceExisting = !saveToLocal
                 ) { downloadedBytes, totalBytes ->
@@ -2068,7 +2068,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showNasDownloadProgress(entry: NasDirectoryEntry, cancelled: AtomicBoolean) {
+    private fun showNasDownloadProgress(entry: NasDirectoryEntry, cancellation: NasDownloadCancellation) {
         val content = layoutInflater.inflate(R.layout.dialog_file_operation_progress, null)
         nasDownloadProgressStatus = content.findViewById(R.id.tvFileOperationProgressStatus)
         nasDownloadProgressBar = content.findViewById(R.id.progressFileOperation)
@@ -2091,9 +2091,11 @@ class MainActivity : AppCompatActivity() {
         nasDownloadLastProgressUpdateAt = 0L
         dialog.show()
         dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setOnClickListener { button ->
-            cancelled.set(true)
+            val accepted = cancellation.cancel()
             button.isEnabled = false
-            nasDownloadProgressStatus?.setText(R.string.nas_download_cancelling)
+            nasDownloadProgressStatus?.setText(
+                if (accepted) R.string.nas_download_cancelling else R.string.nas_download_finishing
+            )
         }
     }
 
@@ -2112,7 +2114,8 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             if (generation != nasDownloadGeneration || isDestroyed || isFinishing ||
                 nasDownloadProgressDialog?.isShowing != true ||
-                nasDownloadCancellation?.get() == true
+                nasDownloadCancellation?.isCancelled == true ||
+                nasDownloadProgressDialog?.getButton(AlertDialog.BUTTON_NEGATIVE)?.isEnabled != true
             ) {
                 return@runOnUiThread
             }

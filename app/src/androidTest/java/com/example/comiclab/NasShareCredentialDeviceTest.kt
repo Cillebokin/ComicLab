@@ -99,6 +99,69 @@ class NasShareCredentialDeviceTest {
     }
 
     @Test
+    fun nasDownloadReportsTheOutcomeOfReadAndCloseFailures() {
+        val mode = InstrumentationRegistry.getArguments().getString("nasDownloadFixture")
+        org.junit.Assume.assumeTrue(mode in listOf("cancel-read", "broken-read", "close-fail"))
+        val profile = NasShareProfile(UUID.randomUUID().toString(), "Fixture", "127.0.0.1", "BOOKS", "", false)
+        val prefs = app.getSharedPreferences("nas_share_settings", Context.MODE_PRIVATE)
+        check(prefs.all.isEmpty() && NasShareArchiveDownloader.cacheSummary(app.cacheDir).fileCount == 0) {
+            "This test requires an isolated app instance"
+        }
+        val cached = NasShareArchiveDownloader.cacheDirectory(app.cacheDir)
+        try {
+            NasShareStore.save(app, profile, "", false)
+            NasShareStore.setActiveShare(app, profile.id)
+            NasShareStore.setNasEnabled(app, true)
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { it.findViewById<View>(R.id.btnSourceNas).performClick() }
+                awaitFixture("remote folder did not appear") { clickFixtureEntry(scenario, "shelf") }
+                awaitFixture("remote comic did not appear") { clickFixtureEntry(scenario, "sample.cbz") }
+                clickInNasPopup(R.id.btnReadNasArchive, isDialog())
+                val failureTitle = androidx.test.espresso.matcher.ViewMatchers.withText(app.getString(R.string.nas_failure_title))
+                when (mode) {
+                    "cancel-read" -> {
+                        awaitFixture("download did not create staging file") {
+                            cached.walkTopDown().any { it.extension == "part" }
+                        }
+                        SystemClock.sleep(250)
+                        clickInNasPopup(android.R.id.button2, isDialog())
+                        awaitFixture("cancellation waited for the SMB read timeout", timeoutMs = 5_000) {
+                            cached.walkTopDown().none { it.isFile }
+                        }
+                        awaitResumed<MainActivity>()
+                        onView(withId(R.id.tvFileOperationProgressStatus))
+                            .check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                        onView(failureTitle).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                    }
+                    "broken-read" -> {
+                        awaitFixture("disconnected SMB read did not show a failure", timeoutMs = 35_000) {
+                            try {
+                                onView(failureTitle).check(androidx.test.espresso.assertion.ViewAssertions.matches(
+                                    androidx.test.espresso.matcher.ViewMatchers.isDisplayed()
+                                ))
+                                true
+                            } catch (_: androidx.test.espresso.NoMatchingViewException) {
+                                false
+                            }
+                        }
+                        check(cached.walkTopDown().none { it.isFile })
+                    }
+                    "close-fail" -> {
+                        val preview = awaitResumed<MangaPreviewActivity>()
+                        check(cached.walkTopDown().count { it.isFile } == 1)
+                        check(cached.walkTopDown().none { it.extension == "part" })
+                        InstrumentationRegistry.getInstrumentation().runOnMainSync { preview.finish() }
+                    }
+                }
+            }
+        } finally {
+            NasShareStore.delete(app, profile.id)
+            check(prefs.edit().clear().commit())
+            check(NasShareArchiveDownloader.clearCache(app.cacheDir).completed)
+        }
+    }
+
+    @Test
     fun recoversEvictedNasComicFromFavoritesAndHistoryAndSeparatesRemoteUpdate() {
         org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("nasCacheRecovery") == "true")
         val fixture = NasShareProfile(UUID.randomUUID().toString(), "Fixture", "127.0.0.1", "BOOKS", "", false)

@@ -46,6 +46,7 @@
     <string name="nas_download_progress_count">%1$s / %2$s</string>
     <string name="nas_download_cancelling">Cancelling and cleaning up the partial file…</string>
     <string name="nas_download_cancel">Cancel download</string>
+    <string name="nas_download_finishing">Finishing download…</string>
     <string name="nas_download_cancelled">Download cancelled; the partial file was removed</string>
     <string name="nas_download_failed">Download failed. Check the network, share access, and available storage</string>
     <string name="nas_download_insufficient_space">Not enough free space: about %1$s is required (including reserve); %2$s is available</string>
