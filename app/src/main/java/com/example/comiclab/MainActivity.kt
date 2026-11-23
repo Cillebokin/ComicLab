@@ -23,6 +23,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.SystemClock
 import android.provider.Settings
+import android.text.InputType
 import android.text.format.Formatter
 import android.view.View
 import android.view.animation.DecelerateInterpolator
@@ -270,7 +271,6 @@ class MainActivity : AppCompatActivity() {
         data class Failed(val exception: Exception) : NasCachedArchiveDeleteOutcome
     }
 
-    private class NasSavedPasswordUnavailableException : Exception()
 
     private val fileTransferController = FileTransferController()
     private val pendingFileTransfer: PendingFileTransfer?
@@ -395,7 +395,7 @@ class MainActivity : AppCompatActivity() {
         }
         btnNasCacheManagement.setOnClickListener { showNasCacheManagementDialog() }
         btnNasCacheManagementEmpty.setOnClickListener { showNasCacheManagementDialog() }
-        btnNasRetry.setOnClickListener { loadNasDirectory() }
+        btnNasRetry.setOnClickListener { loadNasDirectory(promptForPassword = true) }
         updateNasCacheSummary()
         updateSourceSwitchAppearance(isNas = false, animate = false)
         refreshNasFeatureAvailability()
@@ -1685,7 +1685,7 @@ class MainActivity : AppCompatActivity() {
         updateSourcePathDisplay()
     }
 
-    private fun loadNasDirectory() {
+    private fun loadNasDirectory(promptForPassword: Boolean = false) {
         val profile = selectedNasProfile ?: return
         val requestedPath = currentNasRelativePath
         val generation = nasDirectoryLoadGeneration.incrementAndGet()
@@ -1701,27 +1701,17 @@ class MainActivity : AppCompatActivity() {
             if (generation != nasDirectoryLoadGeneration.get() || isDestroyed) {
                 return@execute
             }
-            val result = try {
-                val password = if (profile.username.isBlank()) {
-                    ""
-                } else {
-                    try {
-                        NasShareStore.rememberedPassword(profile)
-                            ?.takeIf(String::isNotEmpty)
-                            ?: throw NasSavedPasswordUnavailableException()
-                    } catch (exception: NasSavedPasswordUnavailableException) {
-                        throw exception
-                    } catch (_: Exception) {
-                        throw NasSavedPasswordUnavailableException()
-                    }
-                }
+            val password = resolveNasAccessPassword(profile)
+            val result = if (password == null) {
+                NasDirectoryLoadResult.PasswordUnavailable
+            } else try {
                 NasDirectoryLoadResult.Loaded(
                     NasShareDirectoryBrowser.list(profile, password, requestedPath)
                 )
-            } catch (_: NasSavedPasswordUnavailableException) {
-                NasDirectoryLoadResult.PasswordUnavailable
             } catch (exception: Exception) {
-                NasDirectoryLoadResult.Failed(NasFailureClassifier.classify(exception))
+                val failure = NasFailureClassifier.classify(exception)
+                discardRejectedNasPassword(profile, password, failure)
+                NasDirectoryLoadResult.Failed(failure)
             }
 
             runOnUiThread {
@@ -1770,10 +1760,18 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                     NasDirectoryLoadResult.PasswordUnavailable -> {
+                        val sessionPasswordNeeded = !profile.rememberPassword
                         showNasDirectoryError(
-                            getString(R.string.nas_directory_password_required),
-                            canRetry = false
+                            getString(
+                                if (sessionPasswordNeeded) R.string.nas_session_password_required
+                                else R.string.nas_directory_password_required
+                            ),
+                            canRetry = sessionPasswordNeeded
                         )
+                        if (sessionPasswordNeeded) {
+                            btnNasRetry.setText(R.string.nas_enter_password)
+                            if (promptForPassword) showNasSessionPasswordDialog(profile) { loadNasDirectory() }
+                        }
                     }
                     is NasDirectoryLoadResult.Failed -> {
                         showNasDirectoryError(
@@ -1783,6 +1781,47 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 updateFileTransferToolbar()
+            }
+        }
+    }
+
+    private fun resolveNasAccessPassword(profile: NasShareProfile): String? = try {
+        NasShareStore.accessPassword(profile)
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun discardRejectedNasPassword(profile: NasShareProfile, password: String, failure: NasFailureDetails) {
+        if (failure.messageResId == R.string.nas_failure_credentials) {
+            NasShareStore.discardRejectedSessionPassword(profile, password)
+        }
+    }
+
+    private fun showNasSessionPasswordDialog(profile: NasShareProfile, retry: () -> Unit) {
+        if (isFinishing || isDestroyed) return
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            isSaveEnabled = false
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+            setSingleLine()
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.nas_enter_password)
+            .setMessage(getString(R.string.nas_session_password_prompt, profile.name))
+            .setView(input)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.confirm, null)
+            .showRounded()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val password = input.text.toString()
+            if (password.isEmpty()) {
+                input.error = getString(R.string.nas_enter_password)
+                return@setOnClickListener
+            }
+            dialog.dismiss()
+            if (isNasSourceSelected && selectedNasProfile == profile) {
+                NasShareStore.setSessionPassword(profile, password)
+                retry()
             }
         }
     }
@@ -1813,17 +1852,14 @@ class MainActivity : AppCompatActivity() {
             showMessage(R.string.nas_directory_password_required)
             return
         }
-        val password = if (profile.username.isBlank()) {
-            ""
-        } else {
-            try {
-                NasShareStore.rememberedPassword(profile)
-                    ?.takeIf(String::isNotEmpty)
-                    ?: throw NasSavedPasswordUnavailableException()
-            } catch (_: Exception) {
+        val password = resolveNasAccessPassword(profile)
+        if (password == null) {
+            if (profile.rememberPassword) {
                 showMessage(R.string.nas_directory_password_required)
-                return
+            } else {
+                showNasSessionPasswordDialog(profile) { startNasArchiveDownload(entry, saveToLocal) }
             }
+            return
         }
         val cacheRoot = NasShareArchiveDownloader.cacheDirectory(cacheDir)
         val destinationDirectory = try {
@@ -1910,12 +1946,11 @@ class MainActivity : AppCompatActivity() {
             } catch (_: NasShareArchiveDownloader.DownloadCancelledException) {
                 NasDownloadResult.Cancelled
             } catch (exception: Exception) {
+                val failure = NasFailureClassifier.classify(exception, localDownload = saveToLocal)
+                discardRejectedNasPassword(profile, password, failure)
                 NasDownloadResult.Failed(
                     exception = exception,
-                    failure = NasFailureClassifier.classify(
-                        exception,
-                        localDownload = saveToLocal
-                    )
+                    failure = failure
                 )
             }
 
@@ -2364,6 +2399,7 @@ class MainActivity : AppCompatActivity() {
         nasDirectoryListView.visibility = View.GONE
         tvNasEmptyHint.visibility = View.GONE
         tvNasBrowserStatus.text = message
+        btnNasRetry.setText(R.string.retry)
         btnNasRetry.visibility = if (canRetry) View.VISIBLE else View.GONE
         nasStatusPanel.visibility = View.VISIBLE
     }

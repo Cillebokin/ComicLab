@@ -14,6 +14,9 @@
     <string name="nas_empty_directory">此目录中没有文件夹或支持的漫画文件</string>
     <string name="nas_directory_load_failed">无法读取此目录，请检查网络、账号和共享权限后重试</string>
     <string name="nas_directory_password_required">此共享没有可用的已保存密码，请在NAS设置中重新保存密码</string>
+    <string name="nas_enter_password">输入密码</string>
+    <string name="nas_session_password_required">输入密码后即可访问此共享</string>
+    <string name="nas_session_password_prompt">请输入“%1$s”的密码。密码仅在本次应用运行期间使用。</string>
     <string name="nas_failure_title">NAS操作未完成</string>
     <string name="nas_failure_with_diagnostic">%1$s\n诊断信息：%2$s</string>
     <string name="nas_failure_unknown_host">找不到这台电脑。请检查IP地址或主机名，并确认手机和电脑连接同一Wi-Fi</string>

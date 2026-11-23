@@ -15,6 +15,9 @@
     <string name="nas_empty_directory">No folders or supported comic files in this folder</string>
     <string name="nas_directory_load_failed">Could not read this folder. Check the network, account, and share permissions, then retry</string>
     <string name="nas_directory_password_required">No saved password is available for this share. Save the password again in NAS settings</string>
+    <string name="nas_enter_password">Enter password</string>
+    <string name="nas_session_password_required">Enter the password to access this share</string>
+    <string name="nas_session_password_prompt">Enter the password for “%1$s”. It is kept only while the app is running.</string>
     <string name="nas_failure_title">NAS operation failed</string>
     <string name="nas_failure_with_diagnostic">%1$s\nDiagnostic: %2$s</string>
     <string name="nas_failure_unknown_host">Could not find this computer. Check the IP address or host name and confirm both devices use the same Wi-Fi</string>
