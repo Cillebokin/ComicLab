@@ -727,6 +727,8 @@ class SettingsActivity : AppCompatActivity() {
         passwordInput.isSaveEnabled = false
         val rememberPassword = content.findViewById<CheckBox>(R.id.checkRememberNasPassword)
         val status = content.findViewById<TextView>(R.id.tvNasFormStatus)
+        var formRevision = 0L
+        var testedForm = false
 
         existing?.let { profile ->
             hostInput.setText(profile.host)
@@ -743,9 +745,25 @@ class SettingsActivity : AppCompatActivity() {
             passwordInput.setHint(if (canReuse) R.string.nas_password_keep_hint else R.string.nas_password_hint)
         }
         updatePasswordHint()
-        hostInput.doAfterTextChanged { updatePasswordHint() }
-        usernameInput.doAfterTextChanged { updatePasswordHint() }
-        rememberPassword.setOnCheckedChangeListener { _, _ -> updatePasswordHint() }
+        fun invalidateTestResult() {
+            formRevision++
+            if (testedForm) status.setText(R.string.nas_test_form_changed)
+            else status.text = ""
+        }
+        hostInput.doAfterTextChanged {
+            updatePasswordHint()
+            invalidateTestResult()
+        }
+        usernameInput.doAfterTextChanged {
+            updatePasswordHint()
+            invalidateTestResult()
+        }
+        shareInput.doAfterTextChanged { invalidateTestResult() }
+        passwordInput.doAfterTextChanged { invalidateTestResult() }
+        rememberPassword.setOnCheckedChangeListener { _, _ ->
+            updatePasswordHint()
+            invalidateTestResult()
+        }
 
         val dialog = AlertDialog.Builder(this)
             .setTitle(R.string.nas_add_share_title)
@@ -778,6 +796,8 @@ class SettingsActivity : AppCompatActivity() {
                 status.setText(R.string.nas_test_password_required)
                 return@setOnClickListener
             }
+            val testedRevision = formRevision
+            testedForm = true
             startNasConnectionTest(
                 values.profile,
                 values.password,
@@ -785,7 +805,8 @@ class SettingsActivity : AppCompatActivity() {
                 status,
                 testButton,
                 saveButton,
-                dialog
+                dialog,
+                isCurrent = { testedRevision == formRevision }
             )
         }
         saveButton.setOnClickListener {
@@ -889,7 +910,8 @@ class SettingsActivity : AppCompatActivity() {
         status: TextView,
         actionButton: View,
         saveButton: Button?,
-        dialog: AlertDialog?
+        dialog: AlertDialog?,
+        isCurrent: () -> Boolean = { true }
     ) {
         status.setText(R.string.nas_test_in_progress)
         actionButton.isEnabled = false
@@ -924,13 +946,15 @@ class SettingsActivity : AppCompatActivity() {
                 if (destroyed || (dialog != null && !dialog.isShowing)) {
                     return@runOnUiThread
                 }
-                when (result) {
-                    NasConnectionTestOutcome.Success -> status.setText(R.string.nas_test_success)
-                    NasConnectionTestOutcome.PasswordUnavailable -> {
-                        status.setText(R.string.nas_password_unavailable)
-                    }
-                    is NasConnectionTestOutcome.Failed -> {
-                        status.text = NasFailureClassifier.format(this@SettingsActivity, result.failure)
+                if (isCurrent()) {
+                    when (result) {
+                        NasConnectionTestOutcome.Success -> status.setText(R.string.nas_test_success)
+                        NasConnectionTestOutcome.PasswordUnavailable -> {
+                            status.setText(R.string.nas_password_unavailable)
+                        }
+                        is NasConnectionTestOutcome.Failed -> {
+                            status.text = NasFailureClassifier.format(this@SettingsActivity, result.failure)
+                        }
                     }
                 }
                 actionButton.isEnabled = true

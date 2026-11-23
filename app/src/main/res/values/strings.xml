@@ -104,8 +104,9 @@
     <string name="nas_share_not_tested">尚未测试</string>
     <string name="nas_add_share_title">添加共享</string>
     <string name="nas_save">保存</string>
-    <string name="nas_test_in_progress">正在验证 SMB连接和共享权限…</string>
-    <string name="nas_test_success">连接成功，账号可以访问此共享</string>
+    <string name="nas_test_in_progress">正在连接 SMB 并读取共享根目录…</string>
+    <string name="nas_test_success">连接成功，可以列出共享根目录</string>
+    <string name="nas_test_form_changed">连接信息已修改，请重新测试</string>
     <string name="nas_test_failure">连接失败，请检查地址、共享名、网络和账号密码</string>
     <string name="nas_test_password_required">请先填写密码，再测试连接</string>
     <string name="nas_changed_credentials_password_required">主机或账号已更改，请填写对应的密码后再保存</string>

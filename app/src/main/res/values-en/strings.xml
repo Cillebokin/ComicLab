@@ -105,8 +105,9 @@
     <string name="nas_share_not_tested">Not tested</string>
     <string name="nas_add_share_title">Add share</string>
     <string name="nas_save">Save</string>
-    <string name="nas_test_in_progress">Checking the SMB connection and share access…</string>
-    <string name="nas_test_success">Connected; this account can access the share</string>
+    <string name="nas_test_in_progress">Connecting to SMB and reading the share root…</string>
+    <string name="nas_test_success">Connected. The share root can be listed.</string>
+    <string name="nas_test_form_changed">Connection settings changed. Test again to verify them.</string>
     <string name="nas_test_failure">Could not connect. Check the address, share, network, and credentials</string>
     <string name="nas_test_password_required">Enter the password before testing this connection</string>
     <string name="nas_changed_credentials_password_required">The host or account has changed. Enter its password before saving</string>

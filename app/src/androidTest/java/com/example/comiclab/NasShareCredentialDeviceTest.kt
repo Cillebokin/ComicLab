@@ -1,6 +1,7 @@
 package com.example.comiclab
 
 import android.app.Activity
+import android.content.Intent
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
@@ -9,6 +10,7 @@ import android.os.SystemClock
 import android.text.InputType
 import android.view.View
 import android.widget.ListView
+import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.UiController
@@ -25,6 +27,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import com.example.comiclab.core.nas.NasDirectoryEntry
+import com.example.comiclab.core.nas.NasFailureClassifier
 import com.example.comiclab.core.nas.NasSharePasswordRequiredException
 import com.example.comiclab.core.nas.NasShareProfile
 import com.example.comiclab.core.nas.NasShareStore
@@ -96,6 +99,104 @@ class NasShareCredentialDeviceTest {
         assertEquals("", anonymous.username)
         assertNull(anonymous.encryptedPassword)
         assertNull(NasShareStore.rememberedPassword(anonymous))
+    }
+
+    @Test
+    fun nasSettingsTestReflectsRootAccessAndCurrentForm() {
+        val mode = InstrumentationRegistry.getArguments().getString("nasConnectionFixture")
+        org.junit.Assume.assumeTrue(mode in listOf("deny-root", "edited", "empty-root"))
+        val profile = NasShareProfile(UUID.randomUUID().toString(), "Fixture", "127.0.0.1", "BOOKS", "fixture", false)
+        val password = "comiclab-fixture-only"
+        val expectedFailure = if (mode == "deny-root") {
+            NasShareDirectoryBrowser.withDiskShare(profile, password) { }
+            val denied = assertThrows(Exception::class.java) {
+                NasShareDirectoryBrowser.list(profile, password, "")
+            }
+            NasFailureClassifier.classify(denied).also {
+                assertEquals(R.string.nas_failure_access_denied, it.messageResId)
+            }
+        } else null
+        if (mode == "empty-root") {
+            assertTrue(NasShareDirectoryBrowser.list(profile, password, "").isEmpty())
+        }
+        val prefs = app.getSharedPreferences("nas_share_settings", Context.MODE_PRIVATE)
+        check(prefs.all.isEmpty()) { "This test requires an isolated app instance" }
+        try {
+            NasShareStore.save(app, profile, password, rememberPassword = expectedFailure != null)
+            NasShareStore.setActiveShare(app, profile.id)
+            NasShareStore.setNasEnabled(app, true)
+            val intent = Intent(app, SettingsActivity::class.java)
+                .putExtra(SettingsActivity.EXTRA_SETTINGS_SECTION, SettingsActivity.SETTINGS_SECTION_NAS)
+            ActivityScenario.launch<SettingsActivity>(intent).use { scenario ->
+                if (expectedFailure != null) {
+                    scenario.onActivity { it.findViewById<View>(R.id.btnNasShareTest).performClick() }
+                    awaitFixture("saved share test did not report missing root permission") {
+                        var status = ""
+                        scenario.onActivity {
+                            status = it.findViewById<TextView>(R.id.tvNasShareTestStatus).text.toString()
+                        }
+                        status == NasFailureClassifier.format(app, expectedFailure)
+                    }
+                }
+                scenario.onActivity { it.findViewById<View>(R.id.btnNasShareEdit).performClick() }
+                onView(withId(R.id.inputNasPassword)).inRoot(isDialog()).perform(replaceText(password))
+                clickInNasPopup(android.R.id.button3, isDialog())
+                if (mode == "edited") {
+                    onView(withId(R.id.inputNasShareFolder)).inRoot(isDialog()).perform(replaceText("CHANGED"))
+                }
+                awaitFixture("test did not finish") {
+                    var enabled = false
+                    onView(withId(android.R.id.button3)).inRoot(isDialog()).check { view, error ->
+                        if (error != null) throw error
+                        enabled = view.isEnabled
+                    }
+                    enabled
+                }
+                onView(withId(R.id.tvNasFormStatus)).inRoot(isDialog()).check { view, error ->
+                    if (error != null) throw error
+                    val status = (view as TextView).text.toString()
+                    when {
+                        expectedFailure != null -> assertEquals(NasFailureClassifier.format(app, expectedFailure), status)
+                        mode == "edited" -> assertEquals(app.getString(R.string.nas_test_form_changed), status)
+                        else -> assertEquals(app.getString(R.string.nas_test_success), status)
+                    }
+                }
+                if (mode == "edited") {
+                    onView(withId(R.id.inputNasShareFolder)).inRoot(isDialog()).perform(replaceText("BOOKS"))
+                    clickInNasPopup(android.R.id.button3, isDialog())
+                    awaitFixture("updated form did not get its own result") {
+                        var status = ""
+                        onView(withId(R.id.tvNasFormStatus)).inRoot(isDialog()).check { view, error ->
+                            if (error != null) throw error
+                            status = (view as TextView).text.toString()
+                        }
+                        status == app.getString(R.string.nas_test_success)
+                    }
+                    onView(withId(R.id.inputNasShareFolder)).inRoot(isDialog()).perform(replaceText("ANOTHER"))
+                    onView(withId(R.id.tvNasFormStatus)).inRoot(isDialog()).check { view, error ->
+                        if (error != null) throw error
+                        assertEquals(app.getString(R.string.nas_test_form_changed), (view as TextView).text.toString())
+                    }
+                }
+            }
+            if (expectedFailure != null) {
+                ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                    scenario.onActivity { it.findViewById<View>(R.id.btnSourceNas).performClick() }
+                    awaitFixture("browser did not report the same root access failure") {
+                        var matched = false
+                        scenario.onActivity {
+                            val status = it.findViewById<TextView>(R.id.tvNasBrowserStatus)
+                            matched = status.isShown && status.text.toString() ==
+                                NasFailureClassifier.format(app, expectedFailure)
+                        }
+                        matched
+                    }
+                }
+            }
+        } finally {
+            NasShareStore.delete(app, profile.id)
+            check(prefs.edit().clear().commit())
+        }
     }
 
     @Test
