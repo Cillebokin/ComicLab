@@ -37,6 +37,7 @@ import com.example.comiclab.core.nas.NasShareDirectoryBrowser
 import com.example.comiclab.core.store.FavoriteComicStore
 import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
+import com.example.comiclab.ui.browser.model.FileItem
 import java.io.File
 import java.util.UUID
 import java.util.zip.ZipFile
@@ -194,6 +195,68 @@ class NasShareCredentialDeviceTest {
 
     private fun withNasList(scenario: ActivityScenario<MainActivity>, check: (ListView) -> Boolean) =
         withNasActivity(scenario) { check(it.findViewById(R.id.listNasFiles)) }
+
+    @Test
+    fun localDownloadRefreshesTheOpenDestinationWithoutLosingItsAnchor() {
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("nasLocalRefreshFixture") == "true")
+        check(Environment.isExternalStorageManager())
+        val fixture = NasShareProfile(UUID.randomUUID().toString(), "Fixture", "127.0.0.1", "BOOKS", "", false)
+        val nasPrefs = app.getSharedPreferences("nas_share_settings", Context.MODE_PRIVATE)
+        val browserPrefs = app.getSharedPreferences("saf_prefs", Context.MODE_PRIVATE)
+        check(nasPrefs.all.isEmpty()) { "This test requires an isolated app instance" }
+        val previousLocalPath = browserPrefs.getString("current_path", null)
+        val destination = "Download/ComicLab-CL034-${fixture.id}"
+        val directory = File(Environment.getExternalStorageDirectory(), destination)
+        val output = File(directory, "sample.cbz")
+        val localFiles = List(65) { File(directory, "z-local-${it.toString().padStart(3, '0')}.txt") }
+        try {
+            check(directory.mkdirs())
+            localFiles.forEach { check(it.createNewFile()) }
+            check(browserPrefs.edit().putString("current_path", directory.absolutePath).commit())
+            NasShareStore.save(app, fixture, "", false)
+            NasShareStore.setActiveShare(app, fixture.id)
+            NasShareStore.setNasEnabled(app, true)
+            NasShareStore.setDownloadPath(app, destination)
+
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                fun withLocalList(check: (ListView) -> Boolean) =
+                    withNasActivity(scenario) { check(it.findViewById(R.id.listFiles)) }
+                fun atAnchor(list: ListView, position: Int): Boolean =
+                    list.firstVisiblePosition == position &&
+                        (list.adapter.getItem(position) as FileItem).file?.name == localFiles[34].name &&
+                        list.getChildAt(0)?.top == -14
+
+                awaitFixture("local destination did not load") { withLocalList { it.count == 66 } }
+                scenario.onActivity { it.findViewById<ListView>(R.id.listFiles).setSelectionFromTop(35, -14) }
+                awaitFixture("local list did not scroll to the fixture row") { withLocalList { atAnchor(it, 35) } }
+                scenario.onActivity { it.findViewById<View>(R.id.btnSourceNas).performClick() }
+                awaitFixture("SMB subdirectory did not appear") { clickFixtureEntry(scenario, "shelf") }
+                awaitFixture("SMB archive did not appear") { clickFixtureEntry(scenario, output.name) }
+                clickInNasPopup(R.id.btnDownloadNasArchiveToLocal, isDialog())
+                awaitFixture("download did not complete", timeoutMs = 35_000) {
+                    output.length() > 0L && withNasActivity(scenario) {
+                        it.findViewById<View>(R.id.btnSourceLocal).isEnabled
+                    }
+                }
+                scenario.onActivity { it.findViewById<View>(R.id.btnSourceLocal).performClick() }
+                awaitFixture("downloaded archive did not appear after switching to Local") {
+                    withLocalList { list ->
+                        list.isShown && list.count == 67 && (list.adapter.getItem(1) as FileItem).file?.name == output.name
+                    }
+                }
+                awaitFixture("local list did not retain the preceding anchor and pixel offset") {
+                    withLocalList { atAnchor(it, 36) }
+                }
+            }
+        } finally {
+            output.delete()
+            localFiles.forEach { it.delete() }
+            directory.delete()
+            NasShareStore.delete(app, fixture.id)
+            check(nasPrefs.edit().clear().commit())
+            check(browserPrefs.edit().putString("current_path", previousLocalPath).commit())
+        }
+    }
 
     private fun withNasActivity(scenario: ActivityScenario<MainActivity>, check: (MainActivity) -> Boolean): Boolean {
         var result = false

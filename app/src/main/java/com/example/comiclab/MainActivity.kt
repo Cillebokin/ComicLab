@@ -240,6 +240,7 @@ class MainActivity : AppCompatActivity() {
     private var pendingCenterTargetPath: String? = null
     private var isNasSourceSelected = false
     private var sourceTransitionGeneration = 0
+    private var pendingLocalDownloadDirectory: File? = null
     private var currentPath = STORAGE_ROOT_PATH
     private var currentNasRelativePath = ""
     private var selectedNasProfile: NasShareProfile? = null
@@ -1450,9 +1451,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         val wasNas = isNasSourceSelected
-        if (wasNas && !isNas) {
+        if (wasNas) {
             pendingNasArchiveReopen = null
             cancelNasDirectoryRequest()
+        } else {
+            captureFileListScrollState()?.let(directoryScrollStateCache::save)
         }
         val generation = ++sourceTransitionGeneration
         listView.animate().cancel()
@@ -1467,7 +1470,15 @@ class MainActivity : AppCompatActivity() {
         isNasSourceSelected = isNas
         updateNasCacheSummary()
         updateSourcePathDisplay()
-        if (isNas) updateNasEmptyState()
+        if (isNas) {
+            updateNasEmptyState()
+        } else {
+            val downloadedDirectory = pendingLocalDownloadDirectory
+            pendingLocalDownloadDirectory = null
+            if (downloadedDirectory != null && downloadedDirectory == canonicalPathWithinStorageRoot(currentPath)) {
+                loadCurrentDirectory(scrollStateToRestore = directoryScrollStateCache.get(currentPath))
+            }
+        }
         updateSourceSwitchAppearance(isNas)
         updateFileTransferToolbar()
 
@@ -2086,6 +2097,9 @@ class MainActivity : AppCompatActivity() {
                         if (result.openForReading && selectedNasProfile?.id == profile.id) {
                             openMangaPreview(result.file)
                         } else if (!result.openForReading) {
+                            val downloadedDirectory = result.file.parentFile
+                            invalidateDirectoryChildCount(downloadedDirectory)
+                            pendingLocalDownloadDirectory = downloadedDirectory
                             showMessage(
                                 getString(R.string.nas_download_to_local_success, result.file.name)
                             )
