@@ -58,6 +58,8 @@
     <string name="translation_overflow">Text does not fit: shorten it or reduce font size</string>
     <string name="translation_memory">Not enough memory; close other heavy tasks and retry</string>
     <string name="translation_storage">Not enough free storage</string>
+    <string name="translation_save_no_space">Could not save the image. Free up device storage and try again</string>
+    <string name="translation_save_prepare_failed">Could not prepare the translated image for saving. Try again</string>
     <string name="translation_limit">This page format, orientation or crop is not supported for translation</string>
     <string name="translation_error_help">Translation processing failed. Try again; if it continues, share the diagnostic log</string>
     <string name="translation_licenses">Translation licenses</string>

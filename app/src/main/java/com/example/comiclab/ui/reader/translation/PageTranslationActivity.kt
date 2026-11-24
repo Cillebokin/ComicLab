@@ -6,6 +6,9 @@ import android.graphics.Color
 import android.media.ExifInterface
 import android.net.Uri
 import android.os.Bundle
+import android.os.StatFs
+import android.system.ErrnoException
+import android.system.OsConstants
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -26,7 +29,6 @@ import com.example.comiclab.ui.common.SystemBars
 import com.example.comiclab.ui.reader.enhance.EnhancementExportActivity
 import com.example.comiclab.ui.reader.manga.ReaderSubsamplingImageView
 import java.io.File
-import java.util.UUID
 
 internal class PageTranslationActivity : AppCompatActivity() {
     private val model by lazy { ViewModelProvider(this)[PageTranslationViewModel::class.java] }
@@ -304,19 +306,29 @@ internal class PageTranslationActivity : AppCompatActivity() {
         model.acquirePreview() // 独立导出暂存复制结束前，不释放任务源文件
         model.retainFile(result)
         EnhancementRuntime.io.execute {
-            var staged: File? = null
-            val ok = runCatching {
-                val root = File(cacheDir, "enhancement-exports").apply { check(mkdirs() || isDirectory) }
-                File(root, "${UUID.randomUUID()}.png").also { staged = it; result.copyTo(it) }
-            }.getOrNull()
+            val staging = runCatching { stageTranslatedPage(result, File(cacheDir, "enhancement-exports")) }
             runOnUiThread {
                 saving = false
                 try {
-                    if (ok != null && !isFinishing && !isDestroyed) {
-                        EnhancementExportActivity.launchImage(this, ok, "${File(intent.getStringExtra("archive")!!).nameWithoutExtension}_${intent.getIntExtra("page", 1)}_translated.png")
-                    } else staged?.delete()
+                    val staged = staging.getOrNull()
+                    when {
+                        isFinishing || isDestroyed -> staged?.delete()
+                        staged != null -> EnhancementExportActivity.launchImage(
+                            this, staged, "${File(intent.getStringExtra("archive")!!).nameWithoutExtension}_${intent.getIntExtra("page", 1)}_translated.png"
+                        )
+                        else -> {
+                            val outOfSpace = generateSequence(staging.exceptionOrNull()) { it.cause }
+                                .any { it is ErrnoException && it.errno == OsConstants.ENOSPC }
+                            val message = if (outOfSpace) R.string.translation_save_no_space
+                                else R.string.translation_save_prepare_failed
+                            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                } finally {
                     if (!isDestroyed) save.isEnabled = model.state.value?.busy != true && model.state.value?.result != null
-                } finally { model.releaseFile(result); model.releasePreview() }
+                    model.releaseFile(result)
+                    model.releasePreview()
+                }
             }
         }
     }
@@ -337,5 +349,27 @@ internal class PageTranslationActivity : AppCompatActivity() {
         fun launch(activity: Activity, archive: File, entry: String, page: Int) {
             activity.startActivity(Intent(activity, PageTranslationActivity::class.java).putExtra("archive", archive.path).putExtra("entry", entry).putExtra("page", page))
         }
+    }
+}
+
+internal fun stageTranslatedPage(
+    source: File,
+    directory: File,
+    copy: (File, File) -> Unit = { from, to ->
+        from.inputStream().use { input -> to.outputStream().use { output -> input.copyTo(output) } }
+    }
+): File {
+    val existingDirectory = if (directory.isDirectory) directory else checkNotNull(directory.parentFile)
+    if (StatFs(existingDirectory.path).availableBytes < source.length()) {
+        throw ErrnoException("stageTranslatedPage", OsConstants.ENOSPC)
+    }
+    check(directory.mkdirs() || directory.isDirectory)
+    val staged = File.createTempFile("translated-", ".png", directory)
+    try {
+        copy(source, staged)
+        return staged
+    } catch (failure: Throwable) {
+        staged.delete()
+        throw failure
     }
 }
