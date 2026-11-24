@@ -15,6 +15,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.FragmentActivity
@@ -25,8 +26,11 @@ import com.example.comiclab.R
 import com.example.comiclab.SettingsActivity
 import com.example.comiclab.core.reader.enhance.EnhancementRuntime
 import com.example.comiclab.core.reader.translation.ArchiveTranslation
+import com.example.comiclab.core.reader.translation.ArchiveTranslationPagesFailedException
+import com.example.comiclab.core.reader.translation.NoReadableTranslationTextException
 import com.example.comiclab.core.reader.translation.TranslationModels
 import com.example.comiclab.core.reader.translation.TranslationPolicy
+import com.example.comiclab.core.reader.translation.TranslationServiceException
 import com.example.comiclab.core.reader.translation.TranslationSettingsStore
 import com.example.comiclab.ui.common.createRounded
 import java.io.File
@@ -41,6 +45,8 @@ internal data class ArchiveTranslationExportState(
     val stage: String = "",
     val translatedPages: Int = 0,
     val keptOriginalPages: Int = 0,
+    val pagesWithoutText: Int = 0,
+    @StringRes val issueMessage: Int? = null,
     val done: Boolean = false,
     val failed: Boolean = false,
     val busy: Boolean = false,
@@ -132,13 +138,21 @@ internal class ArchiveTranslationExportViewModel(application: Application) : And
                     stage = "done",
                     translatedPages = result.translatedPages,
                     keptOriginalPages = result.keptOriginalPages,
+                    pagesWithoutText = result.pagesWithoutText,
+                    issueMessage = result.serviceStopped?.messageRes(),
                     done = true
                 ))
             } catch (_: CancellationException) {
                 state.postValue(ArchiveTranslationExportState(cancelled = true))
             } catch (failure: Exception) {
                 android.util.Log.w("ArchiveTranslation", "Export failed (${failure.javaClass.simpleName})")
-                state.postValue(ArchiveTranslationExportState(failed = true))
+                val message = when (failure) {
+                    is TranslationServiceException -> failure.reason.messageRes()
+                    is NoReadableTranslationTextException -> R.string.archive_translation_no_text
+                    is ArchiveTranslationPagesFailedException -> R.string.archive_translation_no_pages_completed
+                    else -> null
+                }
+                state.postValue(ArchiveTranslationExportState(failed = true, issueMessage = message))
             } catch (failure: LinkageError) {
                 android.util.Log.w("ArchiveTranslation", "Native translation runtime unavailable (${failure.javaClass.simpleName})")
                 state.postValue(ArchiveTranslationExportState(failed = true))
@@ -173,6 +187,13 @@ internal class ArchiveTranslationExportViewModel(application: Application) : And
     }
 }
 
+@StringRes
+private fun TranslationServiceException.Reason.messageRes(): Int = when (this) {
+    TranslationServiceException.Reason.AUTHENTICATION -> R.string.archive_translation_auth_error
+    TranslationServiceException.Reason.MODEL_OR_ENDPOINT -> R.string.archive_translation_model_error
+    TranslationServiceException.Reason.UNAVAILABLE -> R.string.archive_translation_service_unavailable
+}
+
 internal class ArchiveTranslationDialog : DialogFragment() {
     private val model by lazy { ViewModelProvider(this)[ArchiveTranslationExportViewModel::class.java] }
     private val source get() = File(requireArguments().getString("source")!!)
@@ -205,6 +226,10 @@ internal class ArchiveTranslationDialog : DialogFragment() {
             val done = savedInstanceState.getBoolean("done")
             model.state.value = ArchiveTranslationExportState(
                 percent = if (done) 100 else -1,
+                translatedPages = savedInstanceState.getInt("translatedPages"),
+                keptOriginalPages = savedInstanceState.getInt("keptOriginalPages"),
+                pagesWithoutText = savedInstanceState.getInt("pagesWithoutText"),
+                issueMessage = savedInstanceState.getInt("issueMessage").takeIf { it != 0 },
                 done = done,
                 failed = !done
             )
@@ -263,11 +288,16 @@ internal class ArchiveTranslationDialog : DialogFragment() {
             if (started && !finished) alert.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             else alert.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             when {
-                state.done -> status.text = getString(
-                    R.string.archive_translation_done, state.translatedPages, state.keptOriginalPages
-                )
+                state.done -> {
+                    val summary = if (state.keptOriginalPages > 0) getString(
+                        R.string.archive_translation_partial, state.translatedPages, state.pagesWithoutText,
+                        state.keptOriginalPages - state.pagesWithoutText
+                    ) else getString(R.string.archive_translation_done, state.translatedPages)
+                    status.text = state.issueMessage?.let { "$summary\n${getString(it)}" } ?: summary
+                }
                 state.failed -> status.setText(
-                    if (state.busy) R.string.reader_enhance_busy else R.string.archive_translation_failed
+                    if (state.busy) R.string.reader_enhance_busy
+                    else state.issueMessage ?: R.string.archive_translation_failed
                 )
                 state.cancelled -> dismiss()
                 !started -> if (pickerLaunched) status.setText(R.string.archive_translation_waiting_for_picker)
@@ -298,6 +328,7 @@ internal class ArchiveTranslationDialog : DialogFragment() {
         "translate" -> R.string.translation_stage_translate
         "inpaint" -> R.string.translation_stage_inpaint
         "render" -> R.string.translation_stage_render
+        "no_text" -> R.string.archive_translation_page_no_text
         "kept" -> R.string.archive_translation_page_kept
         "write" -> R.string.archive_translation_page_written
         else -> R.string.translation_stage_render
@@ -317,8 +348,13 @@ internal class ArchiveTranslationDialog : DialogFragment() {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("pickerLaunched", pickerLaunched)
         outState.putBoolean("started", model.started)
-        outState.putBoolean("done", model.state.value?.done == true)
-        outState.putBoolean("failed", model.state.value?.failed == true)
+        model.state.value?.let { state ->
+            outState.putBoolean("done", state.done)
+            outState.putInt("translatedPages", state.translatedPages)
+            outState.putInt("keptOriginalPages", state.keptOriginalPages)
+            outState.putInt("pagesWithoutText", state.pagesWithoutText)
+            state.issueMessage?.let { outState.putInt("issueMessage", it) }
+        }
         model.target?.let { outState.putString("target", it.toString()) }
         super.onSaveInstanceState(outState)
     }

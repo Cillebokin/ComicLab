@@ -70,8 +70,15 @@
     <string name="archive_translation_book_progress">Processing page %1$d/%2$d · %3$s\nOverall progress %4$d%%</string>
     <string name="archive_translation_saving">Saving translated comic %1$d%%</string>
     <string name="archive_translation_page_kept">Original page kept</string>
+    <string name="archive_translation_page_no_text">No readable text on this page. Original kept</string>
     <string name="archive_translation_page_written">Page added to translated comic</string>
-    <string name="archive_translation_done">Saved: %1$d translated, %2$d original pages kept</string>
+    <string name="archive_translation_done">Saved %1$d translated pages</string>
+    <string name="archive_translation_partial">Partial translation saved: %1$d pages translated, %2$d without readable text, and %3$d unfinished. Untranslated pages were kept as originals</string>
+    <string name="archive_translation_no_text">No readable text was detected in the comic. No translated copy was saved</string>
+    <string name="archive_translation_no_pages_completed">No page was translated successfully. No translated copy was saved</string>
+    <string name="archive_translation_auth_error">The translation service denied access. Check the API key and account permissions</string>
+    <string name="archive_translation_model_error">The translation service could not find or use the selected model or endpoint. Check the model name and service URL</string>
+    <string name="archive_translation_service_unavailable">The translation service is temporarily unavailable. Check your connection or try again later</string>
     <string name="archive_translation_failed">Whole-comic translation or saving failed. The source comic is unchanged. Confirm that local models are imported and enabled, then check the network, AI settings, available storage and destination</string>
     <string-array name="translation_languages"><item>Simplified Chinese</item><item>Traditional Chinese</item><item>English</item><item>Japanese</item><item>Korean</item></string-array>
     <string-array name="translation_fonts"><item>Sans serif</item><item>Serif</item></string-array>
