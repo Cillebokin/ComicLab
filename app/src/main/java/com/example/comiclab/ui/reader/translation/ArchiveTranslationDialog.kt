@@ -7,7 +7,6 @@ import android.content.DialogInterface
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.provider.DocumentsContract
 import android.view.View
 import android.view.WindowManager
 import android.webkit.MimeTypeMap
@@ -24,6 +23,7 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModelProvider
 import com.example.comiclab.R
 import com.example.comiclab.SettingsActivity
+import com.example.comiclab.core.reader.ExportDocumentJournal
 import com.example.comiclab.core.reader.enhance.EnhancementRuntime
 import com.example.comiclab.core.reader.translation.ArchiveTranslation
 import com.example.comiclab.core.reader.translation.ArchiveTranslationPagesFailedException
@@ -66,8 +66,13 @@ internal class ArchiveTranslationExportViewModel(application: Application) : And
         if (started) return
         started = true
         target = destination
+        val pending = ExportDocumentJournal(app).reserve(destination, "${source.nameWithoutExtension}_translated.cbz")
+        if (pending == null) {
+            state.value = ArchiveTranslationExportState(failed = true, issueMessage = R.string.reader_export_tracking_failed)
+            return
+        }
         if (!EnhancementRuntime.busy.compareAndSet(false, true)) {
-            removeOutput(destination)
+            EnhancementRuntime.io.execute { pending.abandon() }
             state.value = ArchiveTranslationExportState(failed = true, busy = true)
             return
         }
@@ -101,9 +106,7 @@ internal class ArchiveTranslationExportViewModel(application: Application) : And
                     ))
                 }
                 checkCancelled()
-                val output = app.contentResolver.openOutputStream(destination, "wt")
-                    ?: error("Destination is not writable")
-                output.use { stream ->
+                pending.openOutput().use { stream ->
                     result.file.inputStream().buffered().use { input ->
                         val buffer = ByteArray(256 * 1024)
                         var written = 0L
@@ -130,6 +133,7 @@ internal class ArchiveTranslationExportViewModel(application: Application) : And
                 }
                 checkCancelled()
                 success = true
+                pending.complete()
                 val total = result.translatedPages + result.keptOriginalPages
                 state.postValue(ArchiveTranslationExportState(
                     percent = 100,
@@ -160,7 +164,7 @@ internal class ArchiveTranslationExportViewModel(application: Application) : And
                 android.util.Log.w("ArchiveTranslation", "Translation ran out of memory")
                 state.postValue(ArchiveTranslationExportState(failed = true))
             } finally {
-                if (!success) removeOutput(destination)
+                if (!success) pending.abandon()
                 directory?.deleteRecursively()
                 EnhancementRuntime.busy.set(false)
             }
@@ -169,17 +173,6 @@ internal class ArchiveTranslationExportViewModel(application: Application) : And
 
     private fun checkCancelled() {
         TranslationModels.checkCancelled(cancelled)
-    }
-
-    private fun removeOutput(uri: Uri) {
-        runCatching {
-            if (!DocumentsContract.isDocumentUri(app, uri) ||
-                !DocumentsContract.deleteDocument(app.contentResolver, uri)) {
-                app.contentResolver.delete(uri, null, null)
-            }
-        }.onFailure {
-            android.util.Log.w("ArchiveTranslation", "Could not remove incomplete output (${it.javaClass.simpleName})")
-        }
     }
 
     override fun onCleared() {
@@ -205,11 +198,6 @@ internal class ArchiveTranslationDialog : DialogFragment() {
         if (result.resultCode != Activity.RESULT_OK || uri == null) {
             dismiss()
         } else {
-            runCatching {
-                requireContext().contentResolver.takePersistableUriPermission(
-                    uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-            }
             val languages = resources.getStringArray(R.array.translation_languages)
             val languageIndex = runCatching {
                 TranslationSettingsStore.load(requireContext()).targetLanguageIndex
@@ -229,7 +217,8 @@ internal class ArchiveTranslationDialog : DialogFragment() {
                 translatedPages = savedInstanceState.getInt("translatedPages"),
                 keptOriginalPages = savedInstanceState.getInt("keptOriginalPages"),
                 pagesWithoutText = savedInstanceState.getInt("pagesWithoutText"),
-                issueMessage = savedInstanceState.getInt("issueMessage").takeIf { it != 0 },
+                issueMessage = savedInstanceState.getInt("issueMessage").takeIf { it != 0 }
+                    ?: R.string.reader_export_interrupted.takeUnless { done },
                 done = done,
                 failed = !done
             )

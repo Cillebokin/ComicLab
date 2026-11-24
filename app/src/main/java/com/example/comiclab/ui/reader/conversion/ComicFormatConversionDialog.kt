@@ -7,7 +7,6 @@ import android.content.DialogInterface
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.provider.DocumentsContract
 import android.view.View
 import android.view.WindowManager
 import android.widget.ProgressBar
@@ -22,6 +21,7 @@ import androidx.lifecycle.ViewModelProvider
 import com.example.comiclab.R
 import com.example.comiclab.core.archive.ComicConversionTarget
 import com.example.comiclab.core.archive.ComicFormatConverter
+import com.example.comiclab.core.reader.ExportDocumentJournal
 import com.example.comiclab.core.reader.enhance.EnhancementRuntime
 import com.example.comiclab.ui.common.createRounded
 import java.io.File
@@ -37,7 +37,8 @@ internal data class ComicFormatConversionState(
     val done: Boolean = false,
     val failed: Boolean = false,
     val busy: Boolean = false,
-    val cancelled: Boolean = false
+    val cancelled: Boolean = false,
+    val issueMessage: Int? = null
 )
 
 internal class ComicFormatConversionViewModel(application: Application) : AndroidViewModel(application) {
@@ -68,9 +69,19 @@ internal class ComicFormatConversionViewModel(application: Application) : Androi
 
     fun start(source: File, destination: Uri, targetFormat: ComicConversionTarget) {
         if (started) return
-        if (!acquireBusySlot()) return
-        started = true
         target = destination
+        val pending = ExportDocumentJournal(app).reserve(destination, "${source.nameWithoutExtension}.${targetFormat.extension}")
+        if (pending == null) {
+            releaseBusySlot()
+            started = true
+            state.value = ComicFormatConversionState(failed = true, issueMessage = R.string.reader_export_tracking_failed)
+            return
+        }
+        started = true
+        if (!acquireBusySlot()) {
+            EnhancementRuntime.io.execute { pending.abandon() }
+            return
+        }
         cancelled.set(false)
         state.value = ComicFormatConversionState(percent = 0)
 
@@ -88,9 +99,7 @@ internal class ComicFormatConversionViewModel(application: Application) : Androi
                 }
                 checkCancelled()
                 state.postValue(ComicFormatConversionState(percent = 95, saving = true))
-                val destinationStream = app.contentResolver.openOutputStream(destination, "wt")
-                    ?: error("Destination is not writable")
-                destinationStream.use { stream ->
+                pending.openOutput().use { stream ->
                     output.inputStream().buffered().use { input ->
                         val buffer = ByteArray(256 * 1024)
                         var written = 0L
@@ -113,6 +122,7 @@ internal class ComicFormatConversionViewModel(application: Application) : Androi
                 }
                 checkCancelled()
                 success = true
+                pending.complete()
                 state.postValue(ComicFormatConversionState(percent = 100, done = true))
             } catch (_: CancellationException) {
                 state.postValue(ComicFormatConversionState(cancelled = true))
@@ -123,7 +133,7 @@ internal class ComicFormatConversionViewModel(application: Application) : Androi
             } catch (failure: Exception) {
                 postFailure("Conversion failed", failure)
             } finally {
-                if (!success) removeOutput(destination)
+                if (!success) pending.abandon()
                 workDirectory?.deleteRecursively()
                 ownsBusySlot = false
                 EnhancementRuntime.busy.set(false)
@@ -141,20 +151,6 @@ internal class ComicFormatConversionViewModel(application: Application) : Androi
 
     private fun checkCancelled() {
         if (cancelled.get() || Thread.currentThread().isInterrupted) throw CancellationException()
-    }
-
-    private fun removeOutput(uri: Uri) {
-        runCatching {
-            val removedByDocumentProvider = runCatching {
-                DocumentsContract.isDocumentUri(app, uri) &&
-                    DocumentsContract.deleteDocument(app.contentResolver, uri)
-            }.getOrDefault(false)
-            if (!removedByDocumentProvider) {
-                app.contentResolver.delete(uri, null, null)
-            }
-        }.onFailure {
-            android.util.Log.w("ComicFormatConversion", "Could not remove incomplete output", it)
-        }
     }
 
     override fun onCleared() {
@@ -183,12 +179,6 @@ internal class ComicFormatConversionDialog : DialogFragment() {
             model.releaseBusySlot()
             dismiss()
         } else {
-            runCatching {
-                requireContext().contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-            }
             model.start(sourceFile, uri, target)
         }
     }
@@ -199,10 +189,12 @@ internal class ComicFormatConversionDialog : DialogFragment() {
         pickerLaunched = savedInstanceState?.getBoolean(STATE_PICKER_LAUNCHED) ?: false
         val restoredTarget = savedInstanceState?.getString(STATE_TARGET)?.let(Uri::parse)
         val target = targetFormat
-        if (!sourceFile.isFile || target == null) {
+        if (!model.started && restoredTarget != null) {
+            val done = savedInstanceState?.getBoolean("done") == true
+            model.state.value = ComicFormatConversionState(percent = if (done) 100 else -1,
+                done = done, failed = !done, issueMessage = R.string.reader_export_interrupted.takeUnless { done })
+        } else if (!sourceFile.isFile || target == null) {
             model.state.value = ComicFormatConversionState(failed = true)
-        } else if (!model.started && restoredTarget != null) {
-            model.start(sourceFile, restoredTarget, target)
         }
     }
 
@@ -256,7 +248,7 @@ internal class ComicFormatConversionDialog : DialogFragment() {
                 state.done -> status.setText(R.string.comic_conversion_done)
                 state.failed -> status.setText(
                     if (state.busy) R.string.comic_conversion_busy
-                    else R.string.comic_conversion_failed
+                    else state.issueMessage ?: R.string.comic_conversion_failed
                 )
                 state.cancelled -> dismiss()
                 state.saving -> status.text = getString(R.string.comic_conversion_saving, state.percent)
@@ -289,6 +281,7 @@ internal class ComicFormatConversionDialog : DialogFragment() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean(STATE_PICKER_LAUNCHED, pickerLaunched)
+        outState.putBoolean("done", model.state.value?.done == true)
         model.target?.let { outState.putString(STATE_TARGET, it.toString()) }
         super.onSaveInstanceState(outState)
     }

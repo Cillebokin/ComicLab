@@ -1,5 +1,7 @@
 package com.example.comiclab
 
+import com.example.comiclab.core.reader.ExportDocumentJournal
+
 import com.example.comiclab.ui.browser.organize.ComicOrganizeController
 import com.example.comiclab.ui.browser.refresh.DirectoryRefreshController
 import com.example.comiclab.core.concurrent.LatestTaskDispatcher
@@ -261,6 +263,7 @@ class MainActivity : AppCompatActivity() {
     private var nasCachedArchivePickerDialog: AlertDialog? = null
     private var nasCachedArchiveActionDialog: AlertDialog? = null
     private var nasCacheDeleteConfirmDialog: AlertDialog? = null
+    private var interruptedExportNotice: AlertDialog? = null
     private var isNasProfileChooserShowing = false
 
     private sealed interface NasDirectoryLoadResult {
@@ -582,6 +585,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        showInterruptedExportNotice()
         updateIncognitoModeButton()
         refreshNasFeatureAvailability()
         updateNasCacheSummary()
@@ -597,6 +601,27 @@ class MainActivity : AppCompatActivity() {
         if (prefs.getBoolean(KEY_STORAGE_PERMISSION_PROMPTED, false)) {
             initializeBrowserIfPermitted(captureFileListScrollState())
         }
+    }
+
+    private fun showInterruptedExportNotice() {
+        if (interruptedExportNotice?.isShowing == true) return
+        val journal = ExportDocumentJournal(this)
+        val pending = journal.interruptedExports()
+        if (pending.isEmpty()) return
+        val documents = pending.joinToString("\n") { record ->
+            getString(
+                if (record.writing) R.string.reader_export_check_written else R.string.reader_export_check_reserved,
+                record.name
+            )
+        }
+        interruptedExportNotice = AlertDialog.Builder(this)
+            .setTitle(R.string.reader_export_interrupted_title)
+            .setMessage(getString(R.string.reader_export_interrupted_notice, documents))
+            .setPositiveButton(android.R.string.ok) { _, _ -> journal.acknowledge(pending) }
+            .createRounded().apply {
+                setOnDismissListener { interruptedExportNotice = null }
+                show()
+            }
     }
 
     override fun onPause() {
@@ -626,6 +651,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        interruptedExportNotice?.dismiss()
         directoryLoadGeneration.incrementAndGet()
         cancelNasDirectoryRequest()
         nasDownloadGeneration++

@@ -25,8 +25,7 @@ internal class EnhancementExportActivity : AppCompatActivity() {
         val uri = result.data?.data
         if (result.resultCode != Activity.RESULT_OK || uri == null) finish()
         else {
-            runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
-            model.start(source, uri, book = false)
+            model.start(source, uri, book = false, destinationName = intent.getStringExtra(EXTRA_NAME) ?: source.name)
         }
     }
 
@@ -66,7 +65,8 @@ internal class EnhancementExportActivity : AppCompatActivity() {
                     }
                 }
                 state.failed -> {
-                    status.setText(if (state.busy) R.string.reader_enhance_busy else R.string.enhancement_export_failed)
+                    status.setText(if (state.busy) R.string.reader_enhance_busy
+                        else state.issueMessage ?: R.string.enhancement_export_failed)
                     close.setText(R.string.reader_enhance_close)
                     progress.visibility = View.GONE
                     window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -80,8 +80,11 @@ internal class EnhancementExportActivity : AppCompatActivity() {
         }
         if (!model.started) {
             val restoredTarget = savedInstanceState?.getString(STATE_TARGET)?.let(Uri::parse)
-            if (restoredTarget != null) model.start(source, restoredTarget, book = false)
-            else if (savedInstanceState == null) {
+            if (restoredTarget != null) {
+                val done = savedInstanceState?.getBoolean("done") == true
+                model.state.value = EnhancementExportState(percent = if (done) 100 else -1,
+                    done = done, failed = !done, issueMessage = R.string.reader_export_interrupted.takeUnless { done })
+            } else if (savedInstanceState == null) {
                 createDocument.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
                     type = "image/png"
@@ -92,6 +95,7 @@ internal class EnhancementExportActivity : AppCompatActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("done", model.state.value?.done == true)
         model.target?.let { outState.putString(STATE_TARGET, it.toString()) }
         super.onSaveInstanceState(outState)
     }
