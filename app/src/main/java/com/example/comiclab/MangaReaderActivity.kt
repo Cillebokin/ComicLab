@@ -357,24 +357,25 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        clearNextHandoff()
-        destroyed = true
-        pageEnhancementDialog?.close()
-        pageEnhancementDialog = null
-        readerLoadGeneration.incrementAndGet()
-        readerLoadExecutor.shutdownNow().forEach { task ->
-            (task as? PreparedReaderCacheLeaseTask)?.cancelBeforeRun()
+        CrashLogManager.finishReaderSession(this, readerSessionMarker) {
+            clearNextHandoff()
+            destroyed = true
+            pageEnhancementDialog?.close()
+            pageEnhancementDialog = null
+            readerLoadGeneration.incrementAndGet()
+            readerLoadExecutor.shutdownNow().forEach { task ->
+                (task as? PreparedReaderCacheLeaseTask)?.cancelBeforeRun()
+            }
+            readerProgressController.shutdown()
+            handler.removeCallbacksAndMessages(null)
+            readerControlsController.close()
+            pageAdapter?.close()
+            pageAdapter = null
+            readerPreviewAdapter?.close()
+            readerPreviewAdapter = null
+            super.onDestroy()
         }
-        readerProgressController.shutdown()
-        handler.removeCallbacksAndMessages(null)
-        readerControlsController.close()
-        CrashLogManager.recordReaderSessionFinished(this, readerSessionMarker)
         readerSessionMarker = null
-        pageAdapter?.close()
-        pageAdapter = null
-        readerPreviewAdapter?.close()
-        readerPreviewAdapter = null
-        super.onDestroy()
     }
 
     override fun onTrimMemory(level: Int) {

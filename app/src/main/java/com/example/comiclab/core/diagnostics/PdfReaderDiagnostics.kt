@@ -18,22 +18,25 @@ internal object PdfReaderDiagnostics {
     private data class Scope(val session: Session, val task: Long)
     private val scope = ThreadLocal<Scope>()
 
-    fun begin(file: File): Session = synchronized(ownershipLock) {
+    fun begin(context: Context, file: File): Session = synchronized(ownershipLock) {
+        val path = DiagnosticPrivacy(context).filePath(file.path)
         Session("app=${BuildConfig.VERSION_NAME} code=${BuildConfig.VERSION_CODE} build=${BuildConfig.BUILD_TYPE} " +
-            "file=${file.absolutePath.replace('\n', ' ').replace('\r', ' ').take(512)} " +
+            "file=$path " +
             "size=${file.length()} modified=${file.lastModified()}", clock = SystemClock::elapsedRealtimeNanos)
             .also { latest = it }
     }
 
     fun persist(context: Context, session: Session) = synchronized(ownershipLock) {
         if (latest === session) PrefsGateway.open(context.applicationContext, PREFS).edit {
-            putString(KEY, "savedAtEpochMs=${System.currentTimeMillis()} process=${android.os.Process.myPid()}\n" + session.snapshot())
+            val snapshot = session.snapshotForStorage(DiagnosticPrivacy(context))
+            putString(KEY, "savedAtEpochMs=${System.currentTimeMillis()} process=${android.os.Process.myPid()}\n" + snapshot)
         }
     }
 
-    fun snapshot(context: Context): String? = latest?.snapshot()?.let { "source=live\n$it" }
+    fun snapshot(context: Context, privacy: DiagnosticPrivacy = DiagnosticPrivacy(context)): String? =
+        latest?.snapshotForStorage(privacy)?.let { "source=live\n$it" }
         ?: PrefsGateway.open(context.applicationContext, PREFS).getString(KEY, null)?.let {
-            "source=persisted (possibly from a previous process)\n$it"
+            "source=persisted (possibly from a previous process)\n" + privacy.pdfSnapshot(it)
         }
 
     fun <T> withTask(session: Session?, task: Long, action: () -> T): T {
@@ -49,7 +52,7 @@ internal object PdfReaderDiagnostics {
         scope.get()?.let { it.session.phase(it.task, phase, details, durationNanos) }
     }
 
-    class Session(private val identity: String, private val clock: () -> Long) {
+    class Session(private var identity: String, private val clock: () -> Long) {
         @Volatile internal var eventSinkForTest: ((String) -> Unit)? = null
         private val lock = Any()
         private val token = UUID.randomUUID().toString()
@@ -196,6 +199,14 @@ internal object PdfReaderDiagnostics {
 
         fun close() = synchronized(lock) {
             if (closedAt == null) { event("closed"); closedAt = clock() }
+        }
+
+        internal fun snapshotForStorage(privacy: DiagnosticPrivacy): String {
+            val text = synchronized(lock) {
+                identity = privacy.record(identity, pdf = true)?.text ?: "file=${DiagnosticPrivacy.REDACTED}"
+                snapshot()
+            }
+            return privacy.pdfSnapshot(text)
         }
 
         fun snapshot(): String = synchronized(lock) {

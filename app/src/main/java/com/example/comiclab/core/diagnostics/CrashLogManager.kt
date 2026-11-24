@@ -4,9 +4,8 @@ import android.content.Context
 import android.os.Build
 import android.os.SystemClock
 import com.example.comiclab.core.store.PrefsGateway
+import com.example.comiclab.ui.privacy.PrivacySessionManager
 import java.io.File
-import java.io.PrintWriter
-import java.io.StringWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -32,6 +31,7 @@ object CrashLogManager {
 
     private val readerRenderPersistenceLock = Any()
     private var lastReaderRenderPersistElapsedRealtime = Long.MIN_VALUE
+    private val readerCleanupSource = ThreadLocal<String>()
 
     fun install(context: Context) {
         if (installed) {
@@ -64,9 +64,11 @@ object CrashLogManager {
     fun createLatestCrashLogExport(context: Context): File? {
         val latest = latestCrashLog(context)
         val prefs = diagnosticPrefs(context)
-        val pdf = PdfReaderDiagnostics.snapshot(context)
+        val privacy = DiagnosticPrivacy(context)
+        val pdf = PdfReaderDiagnostics.snapshot(context, privacy)
         val render = prefs.getString(READER_RENDER_KEY, null)
-        if (latest == null && pdf == null && render == null) return null
+        val checkpoint = prefs.getString(READER_CHECKPOINT_KEY, null)
+        if (latest == null && pdf == null && render == null && checkpoint == null) return null
         val exportDir = File(context.cacheDir, CRASH_EXPORT_DIR_NAME).apply {
             mkdirs()
         }
@@ -76,11 +78,11 @@ object CrashLogManager {
             writer.appendLine("App: ${appVersionText(context)}")
             writer.appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
             writer.appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
-            writer.appendLine("Reader render: ${render ?: "none"}")
-            writer.appendLine("Reader checkpoint: ${prefs.getString(READER_CHECKPOINT_KEY, "none")}")
+            writer.appendLine("Reader render: ${privacy.record(render)?.text ?: "none"}")
+            writer.appendLine("Reader checkpoint: ${privacy.record(checkpoint)?.text ?: "none"}")
             writer.appendLine(pdf ?: "No PDF timing snapshot available")
             writer.appendLine("Latest crash/interruption log (may be from another session):")
-            if (latest != null) latest.bufferedReader().use { it.copyTo(writer) }
+            if (latest != null) latest.bufferedReader().use { writer.write(privacy.historicalLog(it.lineSequence())) }
             else writer.appendLine("No crash log available")
         }
         return exportFile
@@ -94,7 +96,7 @@ object CrashLogManager {
         durable: Boolean = false
     ) {
         val snapshot = formatReaderCheckpoint(
-            filePath = file.absolutePath,
+            filePath = DiagnosticPrivacy(context).filePath(file.path),
             fileSize = file.length(),
             fileModified = file.lastModified(),
             position = position,
@@ -111,7 +113,7 @@ object CrashLogManager {
 
     fun recordReaderSessionStarted(context: Context, file: File): String {
         val marker = formatReaderSessionMarker(
-            filePath = file.absolutePath,
+            filePath = DiagnosticPrivacy(context).filePath(file.path),
             fileSize = file.length(),
             fileModified = file.lastModified()
         ) + " token=${UUID.randomUUID()}"
@@ -126,7 +128,9 @@ object CrashLogManager {
         return marker
     }
 
-    fun recordReaderSessionFinished(context: Context, marker: String?) {
+    fun finishReaderSession(context: Context, marker: String?, cleanup: () -> Unit) {
+        val source = marker?.let { DiagnosticPrivacy(context).record(it)?.filePath ?: DiagnosticPrivacy.REDACTED }
+        withReaderCleanupSource(source, cleanup)
         val prefs = diagnosticPrefs(context)
         if (!isSameReaderSessionMarker(prefs.getString(READER_SESSION_KEY, null), marker)) {
             return
@@ -135,6 +139,20 @@ object CrashLogManager {
             .remove(READER_SESSION_KEY)
             .remove(READER_RENDER_PHASE_KEY)
             .commit()
+    }
+
+    internal fun readerCleanupAction(context: Context, file: File, action: () -> Unit): Runnable {
+        val source = readerCleanupSource.get()?.takeIf { it == DiagnosticPrivacy.REDACTED }
+            ?: DiagnosticPrivacy(context).filePath(file.path)
+        return Runnable { withReaderCleanupSource(source, action) }
+    }
+
+    private fun withReaderCleanupSource(source: String?, action: () -> Unit) {
+        val previous = readerCleanupSource.get()
+        if (source != null) readerCleanupSource.set(source)
+        // 清理中的异常应继续交给原有未捕获异常处理器，此时来源仍绑定在出错线程。
+        action()
+        if (previous == null) readerCleanupSource.remove() else readerCleanupSource.set(previous)
     }
 
     fun recordReaderRenderStarted(
@@ -147,11 +165,11 @@ object CrashLogManager {
     ) {
         val runtime = Runtime.getRuntime()
         val snapshot = formatReaderRender(
-            filePath = file.absolutePath,
+            filePath = DiagnosticPrivacy(context).filePath(file.path),
             fileSize = file.length(),
             fileModified = file.lastModified(),
             position = position,
-            kind = kind,
+            kind = DiagnosticPrivacy.renderKind(kind),
             targetWidth = targetWidth,
             targetHeight = targetHeight,
             bitmapBytes = null,
@@ -199,11 +217,11 @@ object CrashLogManager {
     ) {
         val runtime = Runtime.getRuntime()
         val snapshot = formatReaderRender(
-            filePath = file.absolutePath,
+            filePath = DiagnosticPrivacy(context).filePath(file.path),
             fileSize = file.length(),
             fileModified = file.lastModified(),
             position = position,
-            kind = kind,
+            kind = DiagnosticPrivacy.renderKind(kind),
             targetWidth = targetWidth,
             targetHeight = targetHeight,
             bitmapBytes = bitmapBytes,
@@ -231,28 +249,38 @@ object CrashLogManager {
         throwable: Throwable,
         time: Date
     ): String {
-        val stackTrace = StringWriter().use { writer ->
-            PrintWriter(writer).use { printWriter ->
-                throwable.printStackTrace(printWriter)
-            }
-            writer.toString()
-        }
+        val privacy = DiagnosticPrivacy(context)
+        val diagnostics = diagnosticPrefs(context)
+        val marker = diagnostics.getString(READER_SESSION_KEY, null)
+        val activeReader = isReaderSessionMarkerActive(marker)
+        val session = privacy.record(marker)
+        val checkpoint = privacy.record(diagnostics.getString(READER_CHECKPOINT_KEY, null))
+        val renderPhase = safeRenderPhase(diagnostics.getString(READER_RENDER_PHASE_KEY, null))
+        val render = privacy.record(diagnostics.getString(READER_RENDER_KEY, null))
+        val pdf = PdfReaderDiagnostics.snapshot(context, privacy)
+        val cleanupSource = if (thread === Thread.currentThread()) readerCleanupSource.get() else null
+        val redactMessages = PrivacySessionManager.isInPrivacySpace ||
+            (cleanupSource != null && privacy.filePath(cleanupSource) == DiagnosticPrivacy.REDACTED) ||
+            (activeReader && session?.redacted != false) ||
+            (renderPhase == "started" && render?.redacted != false) ||
+            (!activeReader && privacy.isActivePrivatePdf(pdf))
+        val verifiedOrdinaryReader = !redactMessages && activeReader && cleanupSource == null
 
         return buildString {
             appendLine("ComicLab Crash Log")
             appendLine("Time: ${displayTimeFormatter.format(time)}")
-            appendLine("Thread: ${thread.name}")
+            appendLine("Thread: ${if (redactMessages || privacy.containsPrivatePath(thread.name)) DiagnosticPrivacy.REDACTED else thread.name}")
             appendLine("App: ${appVersionText(context)}")
             appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
             appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
-            val diagnostics = diagnosticPrefs(context)
-            appendLine("Reader session: ${diagnostics.getString(READER_SESSION_KEY, "none")}")
-            appendLine("Reader checkpoint: ${diagnostics.getString(READER_CHECKPOINT_KEY, "unknown")}")
-            appendLine("Reader render phase: ${diagnostics.getString(READER_RENDER_PHASE_KEY, "unknown")}")
-            appendLine("Reader render: ${diagnostics.getString(READER_RENDER_KEY, "unknown")}")
-            appendLine(PdfReaderDiagnostics.snapshot(context) ?: "No PDF timing snapshot available")
+            appendLine("Reader session: ${session?.text ?: "none"}")
+            appendLine("Reader checkpoint: ${checkpoint?.text ?: "unknown"}")
+            appendLine("Reader render phase: $renderPhase")
+            appendLine("Reader render: ${render?.text ?: "unknown"}")
+            appendLine(pdf ?: "No PDF timing snapshot available")
             appendLine()
-            appendLine(stackTrace)
+            appendLine(if (verifiedOrdinaryReader) DiagnosticPrivacy.READER_STACK_HEADER else DiagnosticPrivacy.STACK_HEADER)
+            append(privacy.throwableText(throwable, redactMessages))
         }
     }
 
@@ -287,17 +315,18 @@ object CrashLogManager {
         }
         val now = Date()
         val logFile = File(logDir, "reader_interrupted_${timestampFormatter.format(now)}.txt")
+        val privacy = DiagnosticPrivacy(context)
         val recovered = runCatching {
             logFile.writeText(
                 buildString {
                     appendLine("ComicLab Suspected Reader Interruption")
                     appendLine("Time: ${displayTimeFormatter.format(now)}")
                     appendLine("Reason: reader session was still active when the process started")
-                    appendLine("Reader session: $marker")
-                    appendLine("Reader checkpoint: ${prefs.getString(READER_CHECKPOINT_KEY, "unknown")}")
-                    appendLine("Reader render phase: ${prefs.getString(READER_RENDER_PHASE_KEY, "unknown")}")
-                    appendLine("Reader render: ${prefs.getString(READER_RENDER_KEY, "unknown")}")
-                    appendLine(PdfReaderDiagnostics.snapshot(context) ?: "No PDF timing snapshot available")
+                    appendLine("Reader session: ${privacy.record(marker)?.text ?: "unknown"}")
+                    appendLine("Reader checkpoint: ${privacy.record(prefs.getString(READER_CHECKPOINT_KEY, null))?.text ?: "unknown"}")
+                    appendLine("Reader render phase: ${safeRenderPhase(prefs.getString(READER_RENDER_PHASE_KEY, null))}")
+                    appendLine("Reader render: ${privacy.record(prefs.getString(READER_RENDER_KEY, null))?.text ?: "unknown"}")
+                    appendLine(PdfReaderDiagnostics.snapshot(context, privacy) ?: "No PDF timing snapshot available")
                 }
             )
             trimOldCrashLogs(logDir)
@@ -317,6 +346,10 @@ object CrashLogManager {
 
     private fun diagnosticPrefs(context: Context) =
         PrefsGateway.open(context.applicationContext, READER_DIAGNOSTIC_PREFS_NAME)
+
+    private val renderPhases = setOf("session_started", "started", "completed", "recovered")
+
+    private fun safeRenderPhase(value: String?): String = value?.takeIf { it in renderPhases } ?: "unknown"
 }
 
 internal fun formatReaderCheckpoint(
