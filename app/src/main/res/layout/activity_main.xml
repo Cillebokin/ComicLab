@@ -425,6 +425,7 @@
                 </LinearLayout>
 
                 <FrameLayout
+                    android:id="@+id/nasDirectoryBody"
                     android:layout_width="match_parent"
                     android:layout_height="0dp"
                     android:layout_weight="1">
@@ -462,37 +463,40 @@
                             android:textSize="@dimen/text_caption" />
                     </LinearLayout>
 
-                    <LinearLayout
-                        android:id="@+id/nasStatusPanel"
-                        android:layout_width="match_parent"
-                        android:layout_height="match_parent"
-                        android:gravity="center"
-                        android:orientation="vertical"
-                        android:paddingStart="24dp"
-                        android:paddingEnd="24dp"
-                        android:visibility="gone">
-
-                        <TextView
-                            android:id="@+id/tvNasBrowserStatus"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:gravity="center"
-                            android:textColor="@color/comiclab_text_secondary"
-                            android:textSize="@dimen/text_caption" />
-
-                        <Button
-                            android:id="@+id/btnNasRetry"
-                            android:layout_width="wrap_content"
-                            android:layout_height="40dp"
-                            android:layout_marginTop="12dp"
-                            android:background="@drawable/bg_preview_action_button"
-                            android:text="@string/retry"
-                            android:textColor="@color/white"
-                            android:textSize="@dimen/text_value"
-                            android:visibility="gone" />
-                    </LinearLayout>
                 </FrameLayout>
 
+                <LinearLayout
+                    android:id="@+id/nasStatusPanel"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:paddingStart="24dp"
+                    android:paddingEnd="24dp"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/tvNasBrowserStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:textColor="@color/comiclab_text_secondary"
+                        android:textSize="@dimen/text_caption" />
+
+                    <Button
+                        android:id="@+id/btnNasRetry"
+                        android:layout_width="wrap_content"
+                        android:layout_height="40dp"
+                        android:layout_marginTop="12dp"
+                        android:background="@drawable/bg_preview_action_button"
+                        android:text="@string/retry"
+                        android:textColor="@color/white"
+                        android:textSize="@dimen/text_value"
+                        android:visibility="gone" />
+                </LinearLayout>
                 <TextView
                     android:id="@+id/tvNasEmptyHint"
                     android:layout_width="match_parent"

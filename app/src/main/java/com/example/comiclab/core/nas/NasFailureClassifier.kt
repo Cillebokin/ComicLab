@@ -4,6 +4,7 @@ import android.content.Context
 import com.example.comiclab.R
 import com.hierynomus.mserref.NtStatus
 import com.hierynomus.mssmb2.SMBApiException
+import com.hierynomus.protocol.transport.TransportException
 import java.io.IOException
 import java.net.ConnectException
 import java.net.NoRouteToHostException
@@ -11,6 +12,7 @@ import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.Locale
+import java.util.concurrent.TimeoutException
 
 internal data class NasFailureDetails(
     val messageResId: Int,
@@ -59,10 +61,10 @@ internal object NasFailureClassifier {
 
         val messageResId = when {
             causes.any { it is UnknownHostException } -> R.string.nas_failure_unknown_host
-            causes.any { it is SocketTimeoutException } -> R.string.nas_failure_timeout
+            causes.any { it is SocketTimeoutException || it is TimeoutException } -> R.string.nas_failure_timeout
             causes.any { it is ConnectException || it is NoRouteToHostException } ->
                 R.string.nas_failure_network
-            causes.any { it is SocketException } -> R.string.nas_failure_disconnected
+            causes.any { it is SocketException || it is TransportException } -> R.string.nas_failure_disconnected
             localDownload && causes.any(::isLocalPermissionFailure) ->
                 R.string.nas_failure_storage_permission
             else -> R.string.nas_failure_generic

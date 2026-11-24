@@ -26,6 +26,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
+import androidx.lifecycle.Lifecycle
 import com.example.comiclab.core.nas.NasDirectoryEntry
 import com.example.comiclab.core.nas.NasFailureClassifier
 import com.example.comiclab.core.nas.NasSharePasswordRequiredException
@@ -99,6 +100,105 @@ class NasShareCredentialDeviceTest {
         assertEquals("", anonymous.username)
         assertNull(anonymous.encryptedPassword)
         assertNull(NasShareStore.rememberedPassword(anonymous))
+    }
+
+    @Test
+    fun nasDirectoryPreservesAnchorThroughRefreshAndIgnoresThePreviousShare() {
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("nasDirectoryFixture") == "true")
+        val books = NasShareProfile(UUID.randomUUID().toString(), "Fixture books", "127.0.0.1", "BOOKS", "", false)
+        val other = books.copy(id = UUID.randomUUID().toString(), name = "Fixture other", shareName = "OTHER")
+        val prefs = app.getSharedPreferences("nas_share_settings", Context.MODE_PRIVATE)
+        check(prefs.all.isEmpty() && NasShareArchiveDownloader.cacheSummary(app.cacheDir).fileCount == 0)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        try {
+            NasShareStore.save(app, books, "", false)
+            NasShareStore.save(app, other, "", false)
+            NasShareStore.setActiveShare(app, books.id)
+            NasShareStore.setNasEnabled(app, true)
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { it.findViewById<View>(R.id.btnSourceNas).performClick() }
+                awaitFixture("long NAS listing did not load") {
+                    withNasList(scenario) { list -> list.isShown && list.isEnabled && list.count >= 65 }
+                }
+                scenario.onActivity { it.findViewById<ListView>(R.id.listNasFiles).setSelectionFromTop(35, -14) }
+                awaitFixture("NAS list did not scroll to the fixture row") {
+                    withNasList(scenario) { it.firstVisiblePosition == 35 && it.getChildAt(0)?.top == -14 }
+                }
+                var anchor = ""
+                scenario.onActivity {
+                    val list = it.findViewById<ListView>(R.id.listNasFiles)
+                    val index = list.firstVisiblePosition
+                    anchor = (list.adapter.getItem(index) as NasDirectoryEntry).name
+                    list.performItemClick(list.getChildAt(0), index, list.adapter.getItemId(index))
+                }
+                clickInNasPopup(R.id.btnReadNasArchive, isDialog())
+                val preview = awaitResumed<MangaPreviewActivity> { it.findViewById<View>(R.id.btnFullRead).isEnabled }
+                instrumentation.runOnMainSync { preview.findViewById<View>(R.id.btnFullRead).performClick() }
+                val reader = awaitResumed<MangaReaderActivity> { it.imageEntriesForTest.isNotEmpty() }
+                instrumentation.runOnMainSync { reader.finish() }
+                awaitResumed<MangaPreviewActivity>()
+                instrumentation.runOnMainSync { preview.finish() }
+
+                fun atAnchor(list: ListView): Boolean {
+                    val index = list.firstVisiblePosition
+                    return list.isShown && list.isEnabled && index in 0 until list.count &&
+                        (list.adapter.getItem(index) as NasDirectoryEntry).name == anchor &&
+                        list.getChildAt(0)?.top == -14
+                }
+                awaitFixture("returning from reading lost the NAS anchor") { withNasList(scenario, ::atAnchor) }
+
+                android.util.Log.i("CL033Fixture", "READY_FOR_DROP")
+                awaitFixture("fixture did not disconnect directory reads") {
+                    runCatching { NasShareDirectoryBrowser.list(books, "", "") }
+                        .exceptionOrNull()?.let(NasFailureClassifier::classify)?.messageResId == R.string.nas_failure_disconnected
+                }
+                scenario.moveToState(Lifecycle.State.STARTED)
+                scenario.moveToState(Lifecycle.State.RESUMED)
+                awaitFixture("temporary failure hid the original NAS list or lost its anchor") {
+                    withNasList(scenario, ::atAnchor) && withNasActivity(scenario) {
+                        it.findViewById<View>(R.id.btnNasRetry).isShown
+                    }
+                }
+                android.util.Log.i("CL033Fixture", "READY_FOR_RECOVERY")
+                awaitFixture("SMB fixture did not recover with an inserted row") {
+                    runCatching { NasShareDirectoryBrowser.list(books, "", "") }
+                        .getOrNull()?.any { it.name == "000-inserted.cbz" } == true
+                }
+                scenario.onActivity { it.findViewById<View>(R.id.btnNasRetry).performClick() }
+                awaitFixture("refresh did not retain the named row after an insertion") {
+                    withNasList(scenario) { atAnchor(it) && it.firstVisiblePosition == 36 }
+                }
+
+                android.util.Log.i("CL033Fixture", "READY_FOR_DELAY")
+                SystemClock.sleep(650)
+                scenario.moveToState(Lifecycle.State.STARTED)
+                scenario.moveToState(Lifecycle.State.RESUMED)
+                awaitFixture("old share did not begin its refresh") { withNasList(scenario) { !it.isEnabled } }
+                scenario.onActivity { it.findViewById<View>(R.id.btnNasSwitchShare).performClick() }
+                onView(androidx.test.espresso.matcher.ViewMatchers.withText(other.name)).inRoot(isDialog()).perform(click())
+                fun hasNewShare() = withNasList(scenario) {
+                    it.isShown && it.isEnabled && it.count == 1 &&
+                        (it.adapter.getItem(0) as NasDirectoryEntry).name == "other.cbz"
+                }
+                awaitFixture("new share waited for the slow previous request", timeoutMs = 4_000) { hasNewShare() }
+                SystemClock.sleep(8_500)
+                assertTrue("obsolete result replaced the new share", hasNewShare())
+            }
+        } finally {
+            NasShareStore.delete(app, books.id)
+            NasShareStore.delete(app, other.id)
+            check(prefs.edit().clear().commit())
+            check(NasShareArchiveDownloader.clearCache(app.cacheDir).completed)
+        }
+    }
+
+    private fun withNasList(scenario: ActivityScenario<MainActivity>, check: (ListView) -> Boolean) =
+        withNasActivity(scenario) { check(it.findViewById(R.id.listNasFiles)) }
+
+    private fun withNasActivity(scenario: ActivityScenario<MainActivity>, check: (MainActivity) -> Boolean): Boolean {
+        var result = false
+        scenario.onActivity { result = check(it) }
+        return result
     }
 
     @Test

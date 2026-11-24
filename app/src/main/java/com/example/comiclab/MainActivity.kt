@@ -32,6 +32,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -86,6 +87,7 @@ import java.io.File
 import java.util.Collections
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
@@ -127,6 +129,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnNasManageShares: Button
     private lateinit var nasDirectoryListView: ListView
     private lateinit var nasLoadingPanel: View
+    private lateinit var nasDirectoryBody: View
     private lateinit var nasStatusPanel: View
     private lateinit var tvNasBrowserStatus: TextView
     private lateinit var tvNasEmptyHint: TextView
@@ -162,7 +165,9 @@ class MainActivity : AppCompatActivity() {
     private val pendingDirectoryChildCountPaths = Collections.synchronizedSet(mutableSetOf<String>())
     private val classifyExecutor = Executors.newSingleThreadExecutor()
     private val fileTransferExecutor = Executors.newSingleThreadExecutor()
-    private val nasDirectoryExecutor = Executors.newSingleThreadExecutor()
+    private val nasDirectoryExecutor = Executors.newCachedThreadPool()
+    private var nasDirectoryRequest: Future<*>? = null
+    private var displayedNasDirectory: Pair<NasShareProfile, String>? = null
     private val nasDownloadExecutor = Executors.newSingleThreadExecutor()
     private val nasCacheExecutor = Executors.newSingleThreadExecutor()
     private val directoryLoadGeneration = AtomicInteger(0)
@@ -353,6 +358,7 @@ class MainActivity : AppCompatActivity() {
         btnNasManageShares = findViewById(R.id.btnNasManageShares)
         nasDirectoryListView = findViewById(R.id.listNasFiles)
         nasLoadingPanel = findViewById(R.id.nasLoadingPanel)
+        nasDirectoryBody = findViewById(R.id.nasDirectoryBody)
         nasStatusPanel = findViewById(R.id.nasStatusPanel)
         tvNasBrowserStatus = findViewById(R.id.tvNasBrowserStatus)
         tvNasEmptyHint = findViewById(R.id.tvNasEmptyHint)
@@ -620,7 +626,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         directoryLoadGeneration.incrementAndGet()
-        nasDirectoryLoadGeneration.incrementAndGet()
+        cancelNasDirectoryRequest()
         nasDownloadGeneration++
         nasDownloadCancellation?.cancel()
         dismissNasDownloadProgress()
@@ -1446,8 +1452,7 @@ class MainActivity : AppCompatActivity() {
         val wasNas = isNasSourceSelected
         if (wasNas && !isNas) {
             pendingNasArchiveReopen = null
-            nasDirectoryLoadGeneration.incrementAndGet()
-            nasDirectoryLoadInProgress = false
+            cancelNasDirectoryRequest()
         }
         val generation = ++sourceTransitionGeneration
         listView.animate().cancel()
@@ -1585,9 +1590,10 @@ class MainActivity : AppCompatActivity() {
         val activeShareId = runCatching { NasShareStore.activeShareId(this) }.getOrNull()
         val profile = profiles.firstOrNull { it.id == activeShareId }
         if (profile != null) {
-            if (previousProfile == null ||
+            if (previousProfile == null || previousProfile.id != profile.id ||
                 previousProfile.host != profile.host ||
-                previousProfile.shareName != profile.shareName
+                previousProfile.shareName != profile.shareName ||
+                previousProfile.username != profile.username
             ) {
                 currentNasRelativePath = ""
             }
@@ -1615,7 +1621,8 @@ class MainActivity : AppCompatActivity() {
         btnNasManageShares.setText(actionResId)
         btnNasManageShares.visibility = View.VISIBLE
         btnNasSwitchShare.visibility = View.GONE
-        nasDirectoryLoadInProgress = false
+        cancelNasDirectoryRequest()
+        displayedNasDirectory = null
         updateSourcePathDisplay()
         updateFileTransferToolbar()
         updateNasCacheSummary()
@@ -1664,7 +1671,8 @@ class MainActivity : AppCompatActivity() {
         }
         pendingNasArchiveReopen = null
         val targetChanged = selectedNasProfile?.let {
-            it.host != profile.host || it.shareName != profile.shareName
+            it.id != profile.id || it.host != profile.host || it.shareName != profile.shareName ||
+                it.username != profile.username
         } ?: true
         selectedNasProfile = profile
         if (targetChanged) {
@@ -1756,24 +1764,36 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun cancelNasDirectoryRequest() {
+        nasDirectoryLoadGeneration.incrementAndGet()
+        nasDirectoryRequest?.cancel(true)
+        nasDirectoryRequest = null
+        nasDirectoryLoadInProgress = false
+    }
+
     private fun loadNasDirectory(promptForPassword: Boolean = false) {
         val profile = selectedNasProfile ?: return
         val requestedPath = currentNasRelativePath
         pendingNasArchiveReopen = pendingNasArchiveReopen?.takeIf {
             it.source.matches(profile) && it.directory == requestedPath
         }
-        val generation = nasDirectoryLoadGeneration.incrementAndGet()
+        cancelNasDirectoryRequest()
+        val generation = nasDirectoryLoadGeneration.get()
+        val target = profile to requestedPath
+        val keepList = displayedNasDirectory == target && nasDirectoryItems.isNotEmpty()
+        if (!keepList) displayedNasDirectory = null
         nasDirectoryLoadInProgress = true
-        nasDirectoryListView.visibility = View.GONE
+        nasDirectoryBody.visibility = View.VISIBLE
+        nasDirectoryListView.visibility = if (keepList) View.VISIBLE else View.GONE
         nasStatusPanel.visibility = View.GONE
         tvNasEmptyHint.visibility = View.GONE
-        nasLoadingPanel.visibility = View.VISIBLE
+        nasLoadingPanel.visibility = if (keepList) View.GONE else View.VISIBLE
         updateNasPathDisplay()
         updateFileTransferToolbar()
 
-        nasDirectoryExecutor.execute {
+        nasDirectoryRequest = nasDirectoryExecutor.submit {
             if (generation != nasDirectoryLoadGeneration.get() || isDestroyed) {
-                return@execute
+                return@submit
             }
             val password = resolveNasAccessPassword(profile)
             val result = if (password == null) {
@@ -1784,17 +1804,17 @@ class MainActivity : AppCompatActivity() {
                 )
             } catch (exception: Exception) {
                 val failure = NasFailureClassifier.classify(exception)
-                discardRejectedNasPassword(profile, password, failure)
                 NasDirectoryLoadResult.Failed(failure)
             }
 
             runOnUiThread {
                 if (isDestroyed || !isNasSourceSelected ||
                     generation != nasDirectoryLoadGeneration.get() ||
-                    selectedNasProfile?.id != profile.id
+                    selectedNasProfile != profile || currentNasRelativePath != requestedPath
                 ) {
                     return@runOnUiThread
                 }
+                nasDirectoryRequest = null
                 nasDirectoryLoadInProgress = false
                 nasLoadingPanel.visibility = View.GONE
                 when (result) {
@@ -1821,22 +1841,38 @@ class MainActivity : AppCompatActivity() {
                             }
                             addAll(result.entries)
                         }
-                        nasFileListAdapter.replaceItems(visibleEntries)
+                        val oldPosition = if (keepList) nasDirectoryListView.firstVisiblePosition else 0
+                        val oldTop = if (keepList) {
+                            (nasDirectoryListView.getChildAt(0)?.top ?: nasDirectoryListView.paddingTop) -
+                                nasDirectoryListView.paddingTop
+                        } else 0
+                        val oldAnchor = if (keepList) nasDirectoryItems.getOrNull(oldPosition) else null
+                        val replaceList = displayedNasDirectory != target || nasDirectoryItems != visibleEntries
+                        if (replaceList) nasFileListAdapter.replaceItems(visibleEntries)
+                        displayedNasDirectory = target
                         if (visibleEntries.isEmpty()) {
-                            nasDirectoryListView.visibility = View.GONE
-                            tvNasBrowserStatus.setText(R.string.nas_empty_directory)
-                            btnNasRetry.visibility = View.GONE
-                            nasStatusPanel.visibility = View.VISIBLE
+                            showNasDirectoryStatus(getString(R.string.nas_empty_directory), canRetry = false)
                         } else {
                             nasStatusPanel.visibility = View.GONE
                             nasDirectoryListView.visibility = View.VISIBLE
-                            nasDirectoryListView.setSelection(0)
+                            if (replaceList) {
+                                val anchorPosition = oldAnchor?.let { anchor ->
+                                    visibleEntries.indexOfFirst {
+                                        it.relativePath == anchor.relativePath && it.isParent == anchor.isParent
+                                    }
+                                } ?: -1
+                                nasDirectoryListView.setSelectionFromTop(
+                                    if (anchorPosition >= 0) anchorPosition else oldPosition.coerceIn(visibleEntries.indices),
+                                    oldTop
+                                )
+                            }
                         }
                         resumeNasArchive(profile, result.entries)
                     }
                     NasDirectoryLoadResult.PasswordUnavailable -> {
+                        displayedNasDirectory = null
                         val sessionPasswordNeeded = !profile.rememberPassword
-                        showNasDirectoryError(
+                        showNasDirectoryStatus(
                             getString(
                                 if (sessionPasswordNeeded) R.string.nas_session_password_required
                                 else R.string.nas_directory_password_required
@@ -1849,9 +1885,17 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                     is NasDirectoryLoadResult.Failed -> {
-                        showNasDirectoryError(
+                        password?.let { discardRejectedNasPassword(profile, it, result.failure) }
+                        val preserve = keepList && when (result.failure.messageResId) {
+                            R.string.nas_failure_network, R.string.nas_failure_timeout,
+                            R.string.nas_failure_disconnected, R.string.nas_failure_unknown_host -> true
+                            else -> false
+                        }
+                        if (!preserve) displayedNasDirectory = null
+                        showNasDirectoryStatus(
                             NasFailureClassifier.format(this@MainActivity, result.failure),
-                            canRetry = true
+                            canRetry = true,
+                            keepList = preserve
                         )
                     }
                 }
@@ -2484,12 +2528,17 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    private fun showNasDirectoryError(message: CharSequence, canRetry: Boolean) {
-        nasDirectoryListView.visibility = View.GONE
+    private fun showNasDirectoryStatus(message: CharSequence, canRetry: Boolean, keepList: Boolean = false) {
+        nasDirectoryBody.visibility = if (keepList) View.VISIBLE else View.GONE
+        nasDirectoryListView.visibility = if (keepList) View.VISIBLE else View.GONE
         tvNasEmptyHint.visibility = View.GONE
         tvNasBrowserStatus.text = message
         btnNasRetry.setText(R.string.retry)
         btnNasRetry.visibility = if (canRetry) View.VISIBLE else View.GONE
+        nasStatusPanel.layoutParams = (nasStatusPanel.layoutParams as LinearLayout.LayoutParams).apply {
+            height = if (keepList) LinearLayout.LayoutParams.WRAP_CONTENT else 0
+            weight = if (keepList) 0f else 1f
+        }
         nasStatusPanel.visibility = View.VISIBLE
     }
 
