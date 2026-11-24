@@ -186,8 +186,12 @@ internal object PrivacyStore {
 
     fun isUnderPrivacyDirectory(context: Context, file: File): Boolean {
         val path = resolveCanonicalPath(file) ?: return true
-        return privacyDirectories(context).any { BookcaseFolderPaths.isPathInDirectory(path, it) }
+        return isCanonicalPathUnderPrivacyDirectory(context, path)
     }
+
+    /** 匹配已通过规范化的路径，调用方应先拒绝解析失败的输入。 */
+    internal fun isCanonicalPathUnderPrivacyDirectory(context: Context, canonicalPath: String): Boolean =
+        privacyDirectories(context).any { BookcaseFolderPaths.isPathInDirectory(canonicalPath, it) }
 
     // 两个子树查询用于拦截文件操作，路径无法确认时也需要拦截。
     fun containsPrivacyDescendant(context: Context, directoryPath: String): Boolean {
