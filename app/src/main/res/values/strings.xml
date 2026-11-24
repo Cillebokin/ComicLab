@@ -579,4 +579,6 @@
     <string name="favorite_paths_read_failed">无法读取目录收藏，已保留原数据</string>
     <string name="reading_history_read_failed">无法读取阅读历史，已保留原数据</string>
     <string name="ebook_content_too_large">电子书展开内容过大，暂时无法安全加载</string>
+    <string name="privacy_browser_title">隐私空间</string>
+    <string name="privacy_browser_empty">暂无隐私文件夹</string>
 </resources>

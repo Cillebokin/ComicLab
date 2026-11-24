@@ -25,9 +25,9 @@ object RoundedPopupMenu {
         anchor: View,
         items: List<Item>,
         widthDp: Int
-    ) {
+    ): PopupWindow? {
         if (items.isEmpty()) {
-            return
+            return null
         }
 
         val content = LinearLayout(context).apply {
@@ -116,6 +116,7 @@ object RoundedPopupMenu {
                 popupTop - anchorLocation[1] - anchor.height
             )
         }
+        return popupWindow
     }
 
     private fun dpToPx(context: Context, value: Int): Int {

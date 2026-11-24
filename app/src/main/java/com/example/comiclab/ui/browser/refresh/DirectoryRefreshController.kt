@@ -14,6 +14,7 @@ import com.example.comiclab.ui.browser.DirectoryBrowserController
 import com.example.comiclab.ui.browser.FileListAdapter
 import com.example.comiclab.ui.browser.dpToPx
 import com.example.comiclab.ui.browser.model.FileItem
+import com.example.comiclab.ui.privacy.PrivacyAccessGuard.PRIVACY_VIRTUAL_ROOT_PATH
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -32,7 +33,8 @@ internal class DirectoryRefreshController(
     private val sortOrderProvider: () -> DirectorySortOrder,
     private val currentPathProvider: () -> String,
     private val applyResolvedPath: (String) -> Unit,
-    private val notifyListChanged: () -> Unit
+    private val notifyListChanged: () -> Unit,
+    private val onDirectoryDisplayed: (String?) -> Unit
 ) {
     private val listView: ListView
         get() = checkNotNull(listViewOrNull())
@@ -69,6 +71,7 @@ internal class DirectoryRefreshController(
                     pathInputProvider().setText(R.string.storage_permission_required)
                     fileItems.clear()
                     notifyListChanged()
+                    onDirectoryDisplayed(null)
                 }
                 is DirectoryBrowserController.Result.Loaded -> {
                     if (!result.archiveRecoveryComplete) {
@@ -80,16 +83,20 @@ internal class DirectoryRefreshController(
                     applyResolvedPath(resolvedPath)
                     fileItems.clear()
                     fileItems.addAll(items)
-                    pathInputProvider().setText(resolvedPath)
+                    if (resolvedPath == PRIVACY_VIRTUAL_ROOT_PATH) {
+                        pathInputProvider().setText(R.string.privacy_browser_title)
+                    } else {
+                        pathInputProvider().setText(resolvedPath)
+                    }
                     notifyListChanged()
                     if (pathToCenter == null) {
                         if (result.scrollState != null) {
-                            restoreFileListScrollState(result.scrollState, resolvedPath)
+                            restoreFileListScrollState(result.scrollState, resolvedPath, generation)
                         } else {
-                            scrollFileListToTop()
+                            scrollFileListToTop(generation)
                         }
                     } else {
-                        centerFileItemIfPresent(pathToCenter)
+                        centerFileItemIfPresent(pathToCenter, generation)
                     }
                     ComicLabPerformance.record(
                         event = "directory_ui_apply",
@@ -102,6 +109,7 @@ internal class DirectoryRefreshController(
                         pathHash = resolvedPath.hashCode(),
                         rowCount = items.size
                     )
+                    onDirectoryDisplayed(resolvedPath)
                 }
             }
         }
@@ -138,7 +146,7 @@ internal class DirectoryRefreshController(
 
         val firstVisibleItem = fileItems[firstVisiblePosition]
         return FileListScrollState(
-            directoryPath = File(currentPathProvider()).absolutePath,
+            directoryPath = currentPathProvider(),
             firstVisiblePosition = firstVisiblePosition,
             firstVisibleTop = listView.getChildAt(0)?.top ?: 0,
             anchorPath = firstVisibleItem.file?.absolutePath,
@@ -174,7 +182,7 @@ internal class DirectoryRefreshController(
         listView.viewTreeObserver.addOnPreDrawListener(listener)
     }
 
-    private fun centerFileItemIfPresent(path: String) {
+    private fun centerFileItemIfPresent(path: String, generation: Int) {
         val targetIndex = fileItems.indexOfFirst { item ->
             item.file?.absolutePath == path
         }
@@ -183,27 +191,28 @@ internal class DirectoryRefreshController(
         }
 
         listView.post {
-            centerListPosition(targetIndex)
+            if (generation == directoryLoadGeneration.get()) centerListPosition(targetIndex)
         }
     }
 
-    private fun scrollFileListToTop() {
+    private fun scrollFileListToTop(generation: Int) {
         listView.post {
-            listView.setSelectionFromTop(0, 0)
+            if (generation == directoryLoadGeneration.get()) listView.setSelectionFromTop(0, 0)
         }
     }
 
     private fun restoreFileListScrollState(
         scrollState: FileListScrollState,
-        resolvedPath: String
+        resolvedPath: String,
+        generation: Int
     ) {
-        if (File(scrollState.directoryPath).absolutePath != File(resolvedPath).absolutePath) {
-            scrollFileListToTop()
+        if (scrollState.directoryPath != resolvedPath) {
+            scrollFileListToTop(generation)
             return
         }
 
         listView.post {
-            if (fileItems.isEmpty()) {
+            if (generation != directoryLoadGeneration.get() || fileItems.isEmpty()) {
                 return@post
             }
 

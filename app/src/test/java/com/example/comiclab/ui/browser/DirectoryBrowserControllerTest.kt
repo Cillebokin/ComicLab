@@ -6,6 +6,9 @@ import com.example.comiclab.ui.browser.DirectoryScrollStateCache
 import com.example.comiclab.ui.browser.DirectorySortOrder
 import com.example.comiclab.ui.browser.FileListScrollState
 import com.example.comiclab.core.concurrent.LatestTaskDispatcher
+import com.example.comiclab.core.store.PrivacyStore
+import com.example.comiclab.ui.privacy.PrivacyAccessGuard.PRIVACY_VIRTUAL_ROOT_PATH
+import com.example.comiclab.ui.privacy.PrivacySessionManager
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
@@ -21,6 +24,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 
 @RunWith(RobolectricTestRunner::class)
 class DirectoryBrowserControllerTest {
@@ -65,17 +69,112 @@ class DirectoryBrowserControllerTest {
     private val generation = AtomicInteger()
     private val counts = DirectoryChildCountCache()
     private val scrollStates = DirectoryScrollStateCache()
-    private val pending = mutableSetOf<String>()
+    private val pending = mutableSetOf<DirectoryBrowserController.ChildCountRequest>()
     private val uiTasks = ConcurrentLinkedQueue<() -> Unit>()
     private val childTasks = ArrayDeque<Runnable>()
     private val results = mutableListOf<DirectoryBrowserController.Result>()
     private val root by lazy { temporaryFolder.newFolder("storage") }
     private val browser by lazy {
         DirectoryBrowserController(root.absolutePath, LatestTaskDispatcher(executor),
-            Executor { childTasks.add(it) }, generation, counts, scrollStates, pending)
+            Executor { childTasks.add(it) }, generation, counts, scrollStates, pending, RuntimeEnvironment.getApplication())
     }
 
-    @After fun stopExecutor() { executor.shutdownNow() }
+    @After fun stopExecutor() {
+        executor.shutdownNow()
+        PrivacySessionManager.lock()
+        PrivacySessionManager.consumePendingNormalRestorePath()
+    }
+
+    @Test fun normalPostedResultRechecksMarksAndNeverShowsNewlyPrivateDirectory() {
+        val hidden = File(root, "hidden").apply { mkdir() }
+        val visible = File(root, "visible").apply { mkdir() }
+        load(root.absolutePath)
+        awaitWorker()
+        assertTrue(PrivacyStore.addPrivacyDirectory(RuntimeEnvironment.getApplication(), hidden))
+        drainUi()
+        drainLoad()
+        val result = results.single() as DirectoryBrowserController.Result.Loaded
+        assertEquals(listOf(visible), result.items.map { it.file })
+    }
+
+    @Test fun virtualRootShowsOnlyExistingOutermostMarksAndStopsAtItsBoundary() {
+        val ordinary = File(root, "ordinary").apply { mkdir() }
+        val outer = File(ordinary, "outer").apply { mkdir() }
+        val nested = File(outer, "middle/nested").apply { mkdirs() }
+        val missing = File(root, "missing").apply { mkdir() }
+        val context = RuntimeEnvironment.getApplication()
+        listOf(outer, nested, missing).forEach { assertTrue(PrivacyStore.addPrivacyDirectory(context, it)) }
+        assertTrue(missing.delete())
+        assertTrue(PrivacySessionManager.enterPrivacySpace(ordinary.path, PrivacySessionManager.sessionEpoch))
+        load(PRIVACY_VIRTUAL_ROOT_PATH)
+        drainLoad()
+        val result = results.single() as DirectoryBrowserController.Result.Loaded
+        assertEquals(PRIVACY_VIRTUAL_ROOT_PATH, result.resolvedPath)
+        assertEquals(listOf(outer), result.items.map { it.file })
+        assertEquals(PRIVACY_VIRTUAL_ROOT_PATH, browser.parentNavigation(outer.path).path)
+        assertEquals(nested.parentFile!!.path, browser.parentNavigation(nested.path).path)
+    }
+
+    @Test fun postedResultsCannotCrossPrivacyEntryOrLockEvenWithoutANewerLoad() {
+        val hidden = File(root, "hidden").apply { mkdir() }
+        assertTrue(PrivacyStore.addPrivacyDirectory(RuntimeEnvironment.getApplication(), hidden))
+        load(root.path)
+        awaitWorker()
+        assertTrue(PrivacySessionManager.enterPrivacySpace(root.path, PrivacySessionManager.sessionEpoch))
+        drainUi()
+        assertTrue(results.isEmpty())
+        load(hidden.path)
+        awaitWorker()
+        PrivacySessionManager.lock()
+        drainUi()
+        assertTrue(results.isEmpty())
+    }
+
+    @Test fun childCountRechecksMarksAndCountsVirtualRootEntriesInPrivateMode() {
+        val directory = File(root, "shelf").apply { mkdir() }
+        val hidden = File(directory, "hidden collection").apply { mkdir() }
+        File(directory, ".hidden file").writeText("dot")
+        File(directory, "visible.txt").writeText("page")
+        val context = RuntimeEnvironment.getApplication()
+        val updates = mutableListOf<Int>()
+        fun request(path: String) = browser.requestChildCount(directory, { true }, { path },
+            { uiTasks.add(it) }, { _, count -> updates.add(count) })
+        request(root.path)
+        childTasks.removeFirst().run()
+        assertTrue(PrivacyStore.addPrivacyDirectory(context, hidden))
+        drainUi()
+        assertTrue(updates.isEmpty())
+        childTasks.removeFirst().run()
+        drainUi()
+        assertEquals(listOf(1), updates)
+        assertTrue(PrivacyStore.addPrivacyDirectory(context, directory))
+        assertTrue(PrivacySessionManager.enterPrivacySpace(root.path, PrivacySessionManager.sessionEpoch))
+        request(PRIVACY_VIRTUAL_ROOT_PATH)
+        childTasks.removeFirst().run()
+        drainUi()
+        assertEquals(listOf(1, 2), updates)
+    }
+
+    @Test fun privateChildCountPostedBeforeLockCannotApplyInTheNextSession() {
+        val hidden = File(root, "hidden").apply { mkdir() }
+        File(hidden, "chapter.txt").writeText("page")
+        assertTrue(PrivacyStore.addPrivacyDirectory(RuntimeEnvironment.getApplication(), hidden))
+        assertTrue(PrivacySessionManager.enterPrivacySpace(root.path, PrivacySessionManager.sessionEpoch))
+        val updates = mutableListOf<Int>()
+        fun request() = browser.requestChildCount(hidden, { true }, { PRIVACY_VIRTUAL_ROOT_PATH },
+            { uiTasks.add(it) }, { _, count -> updates.add(count) })
+        request()
+        childTasks.removeFirst().run()
+        PrivacySessionManager.lock()
+        PrivacySessionManager.consumePendingNormalRestorePath()
+        assertTrue(PrivacySessionManager.enterPrivacySpace(root.path, PrivacySessionManager.sessionEpoch))
+        request()
+        drainUi()
+        assertTrue(updates.isEmpty())
+        childTasks.removeFirst().run()
+        drainUi()
+        assertEquals(listOf(1), updates)
+    }
 
     @Test fun resolvesInvalidPathToRootFiltersHiddenFilesAndSortsDirectoriesFirst() {
         File(root, "z-folder").mkdir()
@@ -214,7 +313,7 @@ class DirectoryBrowserControllerTest {
     @Test fun rejectedChildCountSubmissionClearsPendingPath() {
         val rejected = DirectoryBrowserController(root.absolutePath, LatestTaskDispatcher(executor),
             Executor { throw java.util.concurrent.RejectedExecutionException() },
-            generation, counts, scrollStates, pending)
+            generation, counts, scrollStates, pending, RuntimeEnvironment.getApplication())
         rejected.requestChildCount(File(root, "child"), { true }, { root.absolutePath },
             { uiTasks.add(it) }, { _, _ -> fail("Rejected work must not update rows") })
         assertTrue(pending.isEmpty())

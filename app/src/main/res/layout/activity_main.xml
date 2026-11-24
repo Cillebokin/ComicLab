@@ -111,6 +111,7 @@
                 android:focusable="false"
                 android:gravity="center_vertical"
                 android:maxLines="1"
+                android:saveEnabled="false"
                 android:singleLine="true"
                 android:text="@string/path_placeholder"
                 android:textColor="@color/comiclab_text_secondary"
@@ -304,7 +305,17 @@
             android:clipToPadding="true"
             android:divider="@drawable/divider_file_picker_item"
             android:dividerHeight="1dp"
-            android:listSelector="@android:color/transparent" />
+            android:listSelector="@android:color/transparent"
+            android:saveEnabled="false" />
+
+        <TextView
+            android:id="@+id/tvPrivacyBrowserEmpty"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="@string/privacy_browser_empty"
+            android:textColor="@color/comiclab_text_secondary"
+            android:visibility="gone" />
 
         <FrameLayout
             android:id="@+id/nasEmptyState"

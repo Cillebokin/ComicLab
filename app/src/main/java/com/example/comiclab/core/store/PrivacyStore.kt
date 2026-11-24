@@ -166,14 +166,25 @@ internal object PrivacyStore {
         readPaths(PrefsGateway.open(context, PREFS_NAME)).toSet()
     }
 
-    fun visibleRootDirectories(context: Context): List<File> {
-        val paths = privacyDirectories(context)
-        return paths.asSequence()
-            .filter { path -> paths.none { it != path && BookcaseFolderPaths.isPathInDirectory(path, it) } }
-            .sorted()
-            .map(::File)
-            .filter(File::isDirectory)
-            .toList()
+    fun visibleRootDirectories(context: Context): List<File> = visibleRootDirectories(privacyDirectories(context))
+
+    fun visibleRootDirectories(paths: Set<String>): List<File> = paths.asSequence()
+        .filter { path -> isOutermostDirectory(path, paths) }
+        .sorted()
+        .map(::File)
+        .filter(File::isDirectory)
+        .toList()
+
+    fun isOutermostDirectory(path: String, marks: Set<String>): Boolean =
+        path in marks && marks.none { it != path && BookcaseFolderPaths.isPathInDirectory(path, it) }
+
+    fun registerDirectoryChangeListener(context: Context, onChanged: () -> Unit): SharedPreferences.OnSharedPreferenceChangeListener =
+        SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == null || key == KEY_PRIVACY_DIRECTORIES) onChanged()
+        }.also { PrefsGateway.open(context, PREFS_NAME).registerOnSharedPreferenceChangeListener(it) }
+
+    fun unregisterDirectoryChangeListener(context: Context, listener: SharedPreferences.OnSharedPreferenceChangeListener) {
+        PrefsGateway.open(context, PREFS_NAME).unregisterOnSharedPreferenceChangeListener(listener)
     }
 
     fun isPrivacyDirectoryMarked(context: Context, path: String): Boolean {

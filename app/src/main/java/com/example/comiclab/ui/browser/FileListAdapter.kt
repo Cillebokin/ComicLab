@@ -49,7 +49,8 @@ class FileListAdapter(
     private val items: MutableList<FileItem>,
     private val onCollectionCoverClick: ((File) -> Unit)? = null,
     private val onDirectoryLongClick: ((File) -> Unit)? = null,
-    private val onDirectoryChildCountRequested: ((File) -> Unit)? = null
+    private val onDirectoryChildCountRequested: ((File) -> Unit)? = null,
+    private val canShowCollectionSource: (File) -> Boolean = { true }
 ) : ArrayAdapter<FileItem>(context, 0, items) {
 
     private val archiveCoverCache = object : LruCache<String, Bitmap>(ARCHIVE_COVER_CACHE_SIZE) {}
@@ -85,6 +86,7 @@ class FileListAdapter(
     private val failedArchiveCovers = Collections.synchronizedSet(mutableSetOf<String>())
     private val collectionSourceRequestIds = ConcurrentHashMap<String, Long>()
     private val nextCollectionSourceRequestId = AtomicLong()
+    private val collectionVisibilityRevision = AtomicLong()
     private val failedCollectionSources = Collections.synchronizedSet(mutableSetOf<String>())
     private val collectionRefreshLock = Any()
     @Volatile
@@ -114,6 +116,12 @@ class FileListAdapter(
     override fun notifyDataSetChanged() {
         refreshFavoriteMarkerCache()
         super.notifyDataSetChanged()
+    }
+
+    internal fun invalidateCollectionVisibility() {
+        collectionVisibilityRevision.incrementAndGet()
+        collectionSourceCache.evictAll()
+        failedCollectionSources.clear()
     }
 
     fun notifyDataSetChangedWhenIdle(listView: AbsListView) {
@@ -356,7 +364,7 @@ class FileListAdapter(
             return
         }
 
-        val cachedSources = collectionSourceCache.get(cacheKey)
+        val cachedSources = collectionSourceCache.get(cacheKey)?.filter { canShowCollectionSource(it.file) }
         if (cachedSources.isNullOrEmpty()) {
             resetCollectionCoverContainer(iconContainer, infoContainer, imgIcon, collectionCoverList)
             bindDirectoryClick(directory, row, collectionCoverList)
@@ -383,7 +391,9 @@ class FileListAdapter(
                 val sourceScanStartedAtNanos = ComicLabPerformance.nowNanos()
                 val sources = ComicLabPerformance.trace("comiclab.bookcase.source_scan") {
                     runCatching {
-                        MangaCollectionCoverPlanner.findCoverSourcesWithEntries(directory)
+                        MangaCollectionCoverPlanner.findCoverSourcesWithEntries(directory, isSupportedArchive = { file ->
+                            canShowCollectionSource(file) && ComicArchive.isSupportedArchive(file)
+                        })
                     }.getOrDefault(emptyList())
                 }
                 ComicLabPerformance.record(
@@ -391,7 +401,9 @@ class FileListAdapter(
                     startedAtNanos = sourceScanStartedAtNanos,
                     fields = "archives=${sources.size} bookcaseHash=${directory.absolutePath.hashCode()}"
                 )
-                if (closed || !collectionSourceRequestIds.remove(cacheKey, requestId)) {
+                if (closed || !collectionSourceRequestIds.remove(cacheKey, requestId) ||
+                    cacheKey != mangaCollectionCacheKey(directory)
+                ) {
                     return@executeCoverTask
                 }
 
@@ -464,6 +476,7 @@ class FileListAdapter(
         imageView: ImageView
     ) {
         val file = source.file
+        if (!canShowCollectionSource(file)) return
         val cacheKey = "${archiveCoverCacheKey(file)}:collection:${source.imageEntry}"
         imageView.tag = cacheKey
         val coverRequestStartedAtNanos = ComicLabPerformance.nowNanos()
@@ -490,7 +503,7 @@ class FileListAdapter(
             taskKey = "collection-cover:$cacheKey",
             onRejected = { collectionCoverLoadTracker.complete(cacheKey, requestId) }
         ) {
-            if (closed) {
+            if (closed || !canShowCollectionSource(file)) {
                 collectionCoverLoadTracker.complete(cacheKey, requestId)
                 return@executeCoverTask
             }
@@ -885,7 +898,9 @@ class FileListAdapter(
     }
 
     private fun mangaCollectionCacheKey(directory: File): String {
-        return "collection:${directory.absolutePath}:${directory.lastModified()}"
+        val key = "collection:${directory.absolutePath}:${directory.lastModified()}"
+        val revision = collectionVisibilityRevision.get()
+        return if (revision == 0L) key else "$key:$revision"
     }
 
     companion object {

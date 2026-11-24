@@ -1,5 +1,6 @@
 package com.example.comiclab.ui.browser
 
+import com.example.comiclab.ui.privacy.PrivacyAccessGuard.PRIVACY_VIRTUAL_ROOT_PATH
 import java.io.File
 
 internal data class FileListScrollState(
@@ -20,12 +21,12 @@ internal class DirectoryScrollStateCache(
     }
 
     fun save(state: FileListScrollState) {
-        val directoryPath = File(state.directoryPath).absolutePath
+        val directoryPath = key(state.directoryPath)
         states[directoryPath] = state.copy(directoryPath = directoryPath)
     }
 
     fun get(directoryPath: String): FileListScrollState? {
-        return states[File(directoryPath).absolutePath]
+        return states[key(directoryPath)]
     }
 
     fun snapshot(): List<FileListScrollState> {
@@ -36,4 +37,7 @@ internal class DirectoryScrollStateCache(
         states.clear()
         savedStates.forEach(::save)
     }
+
+    private fun key(path: String): String =
+        if (path == PRIVACY_VIRTUAL_ROOT_PATH) path else File(path).absolutePath
 }

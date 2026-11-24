@@ -7,6 +7,7 @@ import android.util.LruCache
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.PopupWindow
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.ProgressBar
@@ -30,8 +31,11 @@ class FavoriteComicAdapter(
     private val items: MutableList<FavoriteComicStore.Item>,
     private val onItemClick: (FavoriteComicStore.Item) -> Unit,
     private val onJumpToPath: (FavoriteComicStore.Item) -> Unit,
-    private val onItemsEmptyChanged: (Boolean) -> Unit
+    private val onItemsEmptyChanged: (Boolean) -> Unit,
+    private val canUseItem: (FavoriteComicStore.Item) -> Boolean = { true }
 ) : RecyclerView.Adapter<FavoriteComicAdapter.ComicViewHolder>() {
+    private var optionsPopup: PopupWindow? = null
+
 
     private val coverCache = object : LruCache<String, Bitmap>(FAVORITE_COMIC_COVER_CACHE_SIZE) {}
     private val pageCounts = object : LruCache<String, Int>(FAVORITE_COMIC_COVER_CACHE_SIZE) {}
@@ -101,6 +105,8 @@ class FavoriteComicAdapter(
 
     fun close() {
         closed = true
+        optionsPopup?.dismiss()
+        optionsPopup = null
         ReaderProgressStore.unregisterChangeListener(context, progressListener)
         EbookProgressStore.unregisterChangeListener(context, progressListener)
         mainHandler.removeCallbacks(refreshProgress)
@@ -111,8 +117,10 @@ class FavoriteComicAdapter(
 
     private fun showItemOptionsMenu(anchor: View, position: Int) {
         val item = items.getOrNull(position) ?: return
+        if (closed || !canUseItem(item)) return
 
-        RoundedPopupMenu.show(
+        optionsPopup?.dismiss()
+        optionsPopup = RoundedPopupMenu.show(
             context = context,
             anchor = anchor,
             widthDp = 148,
@@ -128,6 +136,7 @@ class FavoriteComicAdapter(
     }
 
     private fun removeItem(item: FavoriteComicStore.Item) {
+        if (closed || !canUseItem(item)) return
         val itemIndex = items.indexOfFirst {
             it.file.absolutePath == item.file.absolutePath
         }

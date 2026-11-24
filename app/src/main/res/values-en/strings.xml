@@ -581,4 +581,6 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="favorite_paths_read_failed">Could not read favorite folders. Existing data was preserved</string>
     <string name="reading_history_read_failed">Could not read reading history. Existing data was preserved</string>
     <string name="ebook_content_too_large">This ebook is too large to load safely</string>
+    <string name="privacy_browser_title">Privacy space</string>
+    <string name="privacy_browser_empty">No private folders</string>
 </resources>
