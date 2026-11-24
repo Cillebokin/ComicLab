@@ -1,19 +1,52 @@
 package com.example.comiclab
 
+import android.app.Activity
+import android.content.Intent
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
+import android.os.Environment
+import android.os.SystemClock
+import android.text.InputType
+import android.view.View
+import android.widget.ListView
+import android.widget.TextView
+import androidx.test.core.app.ActivityScenario
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.UiController
+import androidx.test.espresso.ViewAction
+import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.action.ViewActions.replaceText
+import androidx.test.espresso.matcher.RootMatchers.isDialog
+import androidx.test.espresso.matcher.RootMatchers.isPlatformPopup
+import androidx.test.espresso.matcher.ViewMatchers.withId
+import androidx.test.espresso.matcher.ViewMatchers.withInputType
+import androidx.test.espresso.matcher.ViewMatchers.isClickable
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
+import androidx.lifecycle.Lifecycle
+import com.example.comiclab.core.nas.NasDirectoryEntry
+import com.example.comiclab.core.nas.NasFailureClassifier
 import com.example.comiclab.core.nas.NasSharePasswordRequiredException
 import com.example.comiclab.core.nas.NasShareProfile
 import com.example.comiclab.core.nas.NasShareStore
+import com.example.comiclab.core.nas.NasShareArchiveDownloader
+import com.example.comiclab.core.nas.NasShareDirectoryBrowser
+import com.example.comiclab.core.store.FavoriteComicStore
+import com.example.comiclab.core.store.ReaderProgressStore
+import com.example.comiclab.core.store.ReadingHistoryStore
+import com.example.comiclab.ui.browser.model.FileItem
+import java.io.File
 import java.util.UUID
+import java.util.zip.ZipFile
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -68,6 +101,615 @@ class NasShareCredentialDeviceTest {
         assertEquals("", anonymous.username)
         assertNull(anonymous.encryptedPassword)
         assertNull(NasShareStore.rememberedPassword(anonymous))
+    }
+
+    @Test
+    fun nasDirectoryPreservesAnchorThroughRefreshAndIgnoresThePreviousShare() {
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("nasDirectoryFixture") == "true")
+        val books = NasShareProfile(UUID.randomUUID().toString(), "Fixture books", "127.0.0.1", "BOOKS", "", false)
+        val other = books.copy(id = UUID.randomUUID().toString(), name = "Fixture other", shareName = "OTHER")
+        val prefs = app.getSharedPreferences("nas_share_settings", Context.MODE_PRIVATE)
+        check(prefs.all.isEmpty() && NasShareArchiveDownloader.cacheSummary(app.cacheDir).fileCount == 0)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        try {
+            NasShareStore.save(app, books, "", false)
+            NasShareStore.save(app, other, "", false)
+            NasShareStore.setActiveShare(app, books.id)
+            NasShareStore.setNasEnabled(app, true)
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { it.findViewById<View>(R.id.btnSourceNas).performClick() }
+                awaitFixture("long NAS listing did not load") {
+                    withNasList(scenario) { list -> list.isShown && list.isEnabled && list.count >= 65 }
+                }
+                scenario.onActivity { it.findViewById<ListView>(R.id.listNasFiles).setSelectionFromTop(35, -14) }
+                awaitFixture("NAS list did not scroll to the fixture row") {
+                    withNasList(scenario) { it.firstVisiblePosition == 35 && it.getChildAt(0)?.top == -14 }
+                }
+                var anchor = ""
+                scenario.onActivity {
+                    val list = it.findViewById<ListView>(R.id.listNasFiles)
+                    val index = list.firstVisiblePosition
+                    anchor = (list.adapter.getItem(index) as NasDirectoryEntry).name
+                    list.performItemClick(list.getChildAt(0), index, list.adapter.getItemId(index))
+                }
+                clickInNasPopup(R.id.btnReadNasArchive, isDialog())
+                val preview = awaitResumed<MangaPreviewActivity> { it.findViewById<View>(R.id.btnFullRead).isEnabled }
+                instrumentation.runOnMainSync { preview.findViewById<View>(R.id.btnFullRead).performClick() }
+                val reader = awaitResumed<MangaReaderActivity> { it.imageEntriesForTest.isNotEmpty() }
+                instrumentation.runOnMainSync { reader.finish() }
+                awaitResumed<MangaPreviewActivity>()
+                instrumentation.runOnMainSync { preview.finish() }
+
+                fun atAnchor(list: ListView): Boolean {
+                    val index = list.firstVisiblePosition
+                    return list.isShown && list.isEnabled && index in 0 until list.count &&
+                        (list.adapter.getItem(index) as NasDirectoryEntry).name == anchor &&
+                        list.getChildAt(0)?.top == -14
+                }
+                awaitFixture("returning from reading lost the NAS anchor") { withNasList(scenario, ::atAnchor) }
+
+                android.util.Log.i("CL033Fixture", "READY_FOR_DROP")
+                awaitFixture("fixture did not disconnect directory reads") {
+                    runCatching { NasShareDirectoryBrowser.list(books, "", "") }
+                        .exceptionOrNull()?.let(NasFailureClassifier::classify)?.messageResId == R.string.nas_failure_disconnected
+                }
+                scenario.moveToState(Lifecycle.State.STARTED)
+                scenario.moveToState(Lifecycle.State.RESUMED)
+                awaitFixture("temporary failure hid the original NAS list or lost its anchor") {
+                    withNasList(scenario, ::atAnchor) && withNasActivity(scenario) {
+                        it.findViewById<View>(R.id.btnNasRetry).isShown
+                    }
+                }
+                android.util.Log.i("CL033Fixture", "READY_FOR_RECOVERY")
+                awaitFixture("SMB fixture did not recover with an inserted row") {
+                    runCatching { NasShareDirectoryBrowser.list(books, "", "") }
+                        .getOrNull()?.any { it.name == "000-inserted.cbz" } == true
+                }
+                scenario.onActivity { it.findViewById<View>(R.id.btnNasRetry).performClick() }
+                awaitFixture("refresh did not retain the named row after an insertion") {
+                    withNasList(scenario) { atAnchor(it) && it.firstVisiblePosition == 36 }
+                }
+
+                android.util.Log.i("CL033Fixture", "READY_FOR_DELAY")
+                SystemClock.sleep(650)
+                scenario.moveToState(Lifecycle.State.STARTED)
+                scenario.moveToState(Lifecycle.State.RESUMED)
+                awaitFixture("old share did not begin its refresh") { withNasList(scenario) { !it.isEnabled } }
+                scenario.onActivity { it.findViewById<View>(R.id.btnNasSwitchShare).performClick() }
+                onView(androidx.test.espresso.matcher.ViewMatchers.withText(other.name)).inRoot(isDialog()).perform(click())
+                fun hasNewShare() = withNasList(scenario) {
+                    it.isShown && it.isEnabled && it.count == 1 &&
+                        (it.adapter.getItem(0) as NasDirectoryEntry).name == "other.cbz"
+                }
+                awaitFixture("new share waited for the slow previous request", timeoutMs = 4_000) { hasNewShare() }
+                SystemClock.sleep(8_500)
+                assertTrue("obsolete result replaced the new share", hasNewShare())
+            }
+        } finally {
+            NasShareStore.delete(app, books.id)
+            NasShareStore.delete(app, other.id)
+            check(prefs.edit().clear().commit())
+            check(NasShareArchiveDownloader.clearCache(app.cacheDir).completed)
+        }
+    }
+
+    private fun withNasList(scenario: ActivityScenario<MainActivity>, check: (ListView) -> Boolean) =
+        withNasActivity(scenario) { check(it.findViewById(R.id.listNasFiles)) }
+
+    @Test
+    fun localDownloadRefreshesTheOpenDestinationWithoutLosingItsAnchor() {
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("nasLocalRefreshFixture") == "true")
+        check(Environment.isExternalStorageManager())
+        val fixture = NasShareProfile(UUID.randomUUID().toString(), "Fixture", "127.0.0.1", "BOOKS", "", false)
+        val nasPrefs = app.getSharedPreferences("nas_share_settings", Context.MODE_PRIVATE)
+        val browserPrefs = app.getSharedPreferences("saf_prefs", Context.MODE_PRIVATE)
+        check(nasPrefs.all.isEmpty()) { "This test requires an isolated app instance" }
+        val previousLocalPath = browserPrefs.getString("current_path", null)
+        val destination = "Download/ComicLab-CL034-${fixture.id}"
+        val directory = File(Environment.getExternalStorageDirectory(), destination)
+        val output = File(directory, "sample.cbz")
+        val localFiles = List(65) { File(directory, "z-local-${it.toString().padStart(3, '0')}.txt") }
+        try {
+            check(directory.mkdirs())
+            localFiles.forEach { check(it.createNewFile()) }
+            check(browserPrefs.edit().putString("current_path", directory.absolutePath).commit())
+            NasShareStore.save(app, fixture, "", false)
+            NasShareStore.setActiveShare(app, fixture.id)
+            NasShareStore.setNasEnabled(app, true)
+            NasShareStore.setDownloadPath(app, destination)
+
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                fun withLocalList(check: (ListView) -> Boolean) =
+                    withNasActivity(scenario) { check(it.findViewById(R.id.listFiles)) }
+                fun atAnchor(list: ListView, position: Int): Boolean =
+                    list.firstVisiblePosition == position &&
+                        (list.adapter.getItem(position) as FileItem).file?.name == localFiles[34].name &&
+                        list.getChildAt(0)?.top == -14
+
+                awaitFixture("local destination did not load") { withLocalList { it.count == 66 } }
+                scenario.onActivity { it.findViewById<ListView>(R.id.listFiles).setSelectionFromTop(35, -14) }
+                awaitFixture("local list did not scroll to the fixture row") { withLocalList { atAnchor(it, 35) } }
+                scenario.onActivity { it.findViewById<View>(R.id.btnSourceNas).performClick() }
+                awaitFixture("SMB subdirectory did not appear") { clickFixtureEntry(scenario, "shelf") }
+                awaitFixture("SMB archive did not appear") { clickFixtureEntry(scenario, output.name) }
+                clickInNasPopup(R.id.btnDownloadNasArchiveToLocal, isDialog())
+                awaitFixture("download did not complete", timeoutMs = 35_000) {
+                    output.length() > 0L && withNasActivity(scenario) {
+                        it.findViewById<View>(R.id.btnSourceLocal).isEnabled
+                    }
+                }
+                scenario.onActivity { it.findViewById<View>(R.id.btnSourceLocal).performClick() }
+                awaitFixture("downloaded archive did not appear after switching to Local") {
+                    withLocalList { list ->
+                        list.isShown && list.count == 67 && (list.adapter.getItem(1) as FileItem).file?.name == output.name
+                    }
+                }
+                awaitFixture("local list did not retain the preceding anchor and pixel offset") {
+                    withLocalList { atAnchor(it, 36) }
+                }
+            }
+        } finally {
+            output.delete()
+            localFiles.forEach { it.delete() }
+            directory.delete()
+            NasShareStore.delete(app, fixture.id)
+            check(nasPrefs.edit().clear().commit())
+            check(browserPrefs.edit().putString("current_path", previousLocalPath).commit())
+        }
+    }
+
+    private fun withNasActivity(scenario: ActivityScenario<MainActivity>, check: (MainActivity) -> Boolean): Boolean {
+        var result = false
+        scenario.onActivity { result = check(it) }
+        return result
+    }
+
+    @Test
+    fun nasSettingsTestReflectsRootAccessAndCurrentForm() {
+        val mode = InstrumentationRegistry.getArguments().getString("nasConnectionFixture")
+        org.junit.Assume.assumeTrue(mode in listOf("deny-root", "edited", "empty-root"))
+        val profile = NasShareProfile(UUID.randomUUID().toString(), "Fixture", "127.0.0.1", "BOOKS", "fixture", false)
+        val password = "comiclab-fixture-only"
+        val expectedFailure = if (mode == "deny-root") {
+            NasShareDirectoryBrowser.withDiskShare(profile, password) { }
+            val denied = assertThrows(Exception::class.java) {
+                NasShareDirectoryBrowser.list(profile, password, "")
+            }
+            NasFailureClassifier.classify(denied).also {
+                assertEquals(R.string.nas_failure_access_denied, it.messageResId)
+            }
+        } else null
+        if (mode == "empty-root") {
+            assertTrue(NasShareDirectoryBrowser.list(profile, password, "").isEmpty())
+        }
+        val prefs = app.getSharedPreferences("nas_share_settings", Context.MODE_PRIVATE)
+        check(prefs.all.isEmpty()) { "This test requires an isolated app instance" }
+        try {
+            NasShareStore.save(app, profile, password, rememberPassword = expectedFailure != null)
+            NasShareStore.setActiveShare(app, profile.id)
+            NasShareStore.setNasEnabled(app, true)
+            val intent = Intent(app, SettingsActivity::class.java)
+                .putExtra(SettingsActivity.EXTRA_SETTINGS_SECTION, SettingsActivity.SETTINGS_SECTION_NAS)
+            ActivityScenario.launch<SettingsActivity>(intent).use { scenario ->
+                if (expectedFailure != null) {
+                    scenario.onActivity { it.findViewById<View>(R.id.btnNasShareTest).performClick() }
+                    awaitFixture("saved share test did not report missing root permission") {
+                        var status = ""
+                        scenario.onActivity {
+                            status = it.findViewById<TextView>(R.id.tvNasShareTestStatus).text.toString()
+                        }
+                        status == NasFailureClassifier.format(app, expectedFailure)
+                    }
+                }
+                scenario.onActivity { it.findViewById<View>(R.id.btnNasShareEdit).performClick() }
+                onView(withId(R.id.inputNasPassword)).inRoot(isDialog()).perform(replaceText(password))
+                clickInNasPopup(android.R.id.button3, isDialog())
+                if (mode == "edited") {
+                    onView(withId(R.id.inputNasShareFolder)).inRoot(isDialog()).perform(replaceText("CHANGED"))
+                }
+                awaitFixture("test did not finish") {
+                    var enabled = false
+                    onView(withId(android.R.id.button3)).inRoot(isDialog()).check { view, error ->
+                        if (error != null) throw error
+                        enabled = view.isEnabled
+                    }
+                    enabled
+                }
+                onView(withId(R.id.tvNasFormStatus)).inRoot(isDialog()).check { view, error ->
+                    if (error != null) throw error
+                    val status = (view as TextView).text.toString()
+                    when {
+                        expectedFailure != null -> assertEquals(NasFailureClassifier.format(app, expectedFailure), status)
+                        mode == "edited" -> assertEquals(app.getString(R.string.nas_test_form_changed), status)
+                        else -> assertEquals(app.getString(R.string.nas_test_success), status)
+                    }
+                }
+                if (mode == "edited") {
+                    onView(withId(R.id.inputNasShareFolder)).inRoot(isDialog()).perform(replaceText("BOOKS"))
+                    clickInNasPopup(android.R.id.button3, isDialog())
+                    awaitFixture("updated form did not get its own result") {
+                        var status = ""
+                        onView(withId(R.id.tvNasFormStatus)).inRoot(isDialog()).check { view, error ->
+                            if (error != null) throw error
+                            status = (view as TextView).text.toString()
+                        }
+                        status == app.getString(R.string.nas_test_success)
+                    }
+                    onView(withId(R.id.inputNasShareFolder)).inRoot(isDialog()).perform(replaceText("ANOTHER"))
+                    onView(withId(R.id.tvNasFormStatus)).inRoot(isDialog()).check { view, error ->
+                        if (error != null) throw error
+                        assertEquals(app.getString(R.string.nas_test_form_changed), (view as TextView).text.toString())
+                    }
+                }
+            }
+            if (expectedFailure != null) {
+                ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                    scenario.onActivity { it.findViewById<View>(R.id.btnSourceNas).performClick() }
+                    awaitFixture("browser did not report the same root access failure") {
+                        var matched = false
+                        scenario.onActivity {
+                            val status = it.findViewById<TextView>(R.id.tvNasBrowserStatus)
+                            matched = status.isShown && status.text.toString() ==
+                                NasFailureClassifier.format(app, expectedFailure)
+                        }
+                        matched
+                    }
+                }
+            }
+        } finally {
+            NasShareStore.delete(app, profile.id)
+            check(prefs.edit().clear().commit())
+        }
+    }
+
+    @Test
+    fun publicDownloadReachesStagingBeforeProcessStop() {
+        val mode = InstrumentationRegistry.getArguments().getString("nasPublicRestartFixture")
+        org.junit.Assume.assumeTrue(mode == "true")
+        val profile = NasShareProfile(UUID.randomUUID().toString(), "Fixture", "127.0.0.1", "BOOKS", "", false)
+        val prefs = app.getSharedPreferences("nas_share_settings", Context.MODE_PRIVATE)
+        check(prefs.all.isEmpty()) { "This test requires an isolated app instance" }
+        val path = "Download/ComicLab-CL031"
+        val directory = File(Environment.getExternalStorageDirectory(), path)
+        NasShareStore.save(app, profile, "", false)
+        NasShareStore.setActiveShare(app, profile.id)
+        NasShareStore.setNasEnabled(app, true)
+        NasShareStore.setDownloadPath(app, path)
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { it.findViewById<View>(R.id.btnSourceNas).performClick() }
+            awaitFixture("remote folder did not appear") { clickFixtureEntry(scenario, "shelf") }
+            awaitFixture("remote comic did not appear") { clickFixtureEntry(scenario, "sample.cbz") }
+            clickInNasPopup(R.id.btnDownloadNasArchiveToLocal, isDialog())
+            awaitFixture("interrupted public download had no staging file") {
+                directory.listFiles()?.any { it.name.startsWith(".comiclab-nas-") && it.extension == "part" } == true
+            }
+            android.util.Log.i("CL031Fixture", "READY_FOR_PROCESS_STOP")
+            SystemClock.sleep(30_000)
+            error("The isolated harness did not stop the process")
+        }
+    }
+
+    @Test
+    fun equalLengthRemoteRewriteRequiresRefreshBeforePublishing() {
+        val mode = InstrumentationRegistry.getArguments().getString("nasVersionRace")
+        org.junit.Assume.assumeTrue(mode in listOf("before-open", "during-read"))
+        val profile = NasShareProfile(UUID.randomUUID().toString(), "Fixture", "127.0.0.1", "BOOKS", "", false)
+        val prefs = app.getSharedPreferences("nas_share_settings", Context.MODE_PRIVATE)
+        check(prefs.all.isEmpty() && NasShareArchiveDownloader.cacheSummary(app.cacheDir).fileCount == 0) {
+            "This test requires an isolated app instance"
+        }
+        val cache = NasShareArchiveDownloader.cacheDirectory(app.cacheDir)
+        fun remote() = NasShareDirectoryBrowser.list(profile, "", "shelf").single { it.name == "sample.cbz" }
+        val original = remote()
+        val oldDestination = NasShareArchiveDownloader.cacheFile(cache, profile, original)
+        try {
+            NasShareStore.save(app, profile, "", false)
+            NasShareStore.setActiveShare(app, profile.id)
+            NasShareStore.setNasEnabled(app, true)
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { it.findViewById<View>(R.id.btnSourceNas).performClick() }
+                awaitFixture("remote folder did not appear") { clickFixtureEntry(scenario, "shelf") }
+                awaitFixture("remote comic did not appear") { clickFixtureEntry(scenario, "sample.cbz") }
+                if (mode == "before-open") {
+                    android.util.Log.i("CL030Fixture", "READY_BEFORE_OPEN")
+                    awaitFixture("fixture did not change the remote version") { remote().modifiedAt != original.modifiedAt }
+                }
+                clickInNasPopup(R.id.btnReadNasArchive, isDialog())
+                val message = androidx.test.espresso.matcher.ViewMatchers.withText(app.getString(R.string.nas_download_version_changed))
+                awaitFixture("download did not show the version-change message", timeoutMs = 20_000) {
+                    check(!oldDestination.exists()) { "Mixed or updated content was published under the stale cache key" }
+                    try {
+                        onView(message).check(androidx.test.espresso.assertion.ViewAssertions.matches(
+                            androidx.test.espresso.matcher.ViewMatchers.isDisplayed()
+                        ))
+                        true
+                    } catch (_: androidx.test.espresso.NoMatchingViewException) {
+                        false
+                    }
+                }
+                val changed = remote()
+                assertEquals(original.sizeBytes, changed.sizeBytes)
+                check(original.modifiedAt != changed.modifiedAt)
+                check(cache.walkTopDown().none { it.isFile })
+                clickInNasPopup(android.R.id.button1, isDialog())
+                awaitFixture("refreshed remote comic did not appear") { clickFixtureEntry(scenario, "sample.cbz") }
+                clickInNasPopup(R.id.btnReadNasArchive, isDialog())
+                val preview = awaitResumed<MangaPreviewActivity>()
+                val updated = NasShareArchiveDownloader.cacheFile(cache, profile, changed)
+                assertEquals(updated.absolutePath, preview.intent.getStringExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH))
+                ZipFile(updated).use { zip ->
+                    assertEquals("new", zip.getInputStream(zip.getEntry("revision.txt")).bufferedReader().use { it.readText() })
+                }
+                assertEquals(listOf(updated), cache.walkTopDown().filter { it.isFile }.toList())
+                InstrumentationRegistry.getInstrumentation().runOnMainSync { preview.finish() }
+            }
+        } finally {
+            NasShareStore.delete(app, profile.id)
+            check(prefs.edit().clear().commit())
+            check(NasShareArchiveDownloader.clearCache(app.cacheDir).completed)
+        }
+    }
+
+    @Test
+    fun nasDownloadReportsTheOutcomeOfReadAndCloseFailures() {
+        val mode = InstrumentationRegistry.getArguments().getString("nasDownloadFixture")
+        org.junit.Assume.assumeTrue(mode in listOf("cancel-read", "broken-read", "close-fail"))
+        val profile = NasShareProfile(UUID.randomUUID().toString(), "Fixture", "127.0.0.1", "BOOKS", "", false)
+        val prefs = app.getSharedPreferences("nas_share_settings", Context.MODE_PRIVATE)
+        check(prefs.all.isEmpty() && NasShareArchiveDownloader.cacheSummary(app.cacheDir).fileCount == 0) {
+            "This test requires an isolated app instance"
+        }
+        val cached = NasShareArchiveDownloader.cacheDirectory(app.cacheDir)
+        try {
+            NasShareStore.save(app, profile, "", false)
+            NasShareStore.setActiveShare(app, profile.id)
+            NasShareStore.setNasEnabled(app, true)
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { it.findViewById<View>(R.id.btnSourceNas).performClick() }
+                awaitFixture("remote folder did not appear") { clickFixtureEntry(scenario, "shelf") }
+                awaitFixture("remote comic did not appear") { clickFixtureEntry(scenario, "sample.cbz") }
+                clickInNasPopup(R.id.btnReadNasArchive, isDialog())
+                val failureTitle = androidx.test.espresso.matcher.ViewMatchers.withText(app.getString(R.string.nas_failure_title))
+                when (mode) {
+                    "cancel-read" -> {
+                        awaitFixture("download did not create staging file") {
+                            cached.walkTopDown().any { it.extension == "part" }
+                        }
+                        SystemClock.sleep(250)
+                        clickInNasPopup(android.R.id.button2, isDialog())
+                        awaitFixture("cancellation waited for the SMB read timeout", timeoutMs = 5_000) {
+                            cached.walkTopDown().none { it.isFile }
+                        }
+                        awaitResumed<MainActivity>()
+                        onView(withId(R.id.tvFileOperationProgressStatus))
+                            .check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                        onView(failureTitle).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                    }
+                    "broken-read" -> {
+                        awaitFixture("disconnected SMB read did not show a failure", timeoutMs = 35_000) {
+                            try {
+                                onView(failureTitle).check(androidx.test.espresso.assertion.ViewAssertions.matches(
+                                    androidx.test.espresso.matcher.ViewMatchers.isDisplayed()
+                                ))
+                                true
+                            } catch (_: androidx.test.espresso.NoMatchingViewException) {
+                                false
+                            }
+                        }
+                        check(cached.walkTopDown().none { it.isFile })
+                    }
+                    "close-fail" -> {
+                        val preview = awaitResumed<MangaPreviewActivity>()
+                        check(cached.walkTopDown().count { it.isFile } == 1)
+                        check(cached.walkTopDown().none { it.extension == "part" })
+                        InstrumentationRegistry.getInstrumentation().runOnMainSync { preview.finish() }
+                    }
+                }
+            }
+        } finally {
+            NasShareStore.delete(app, profile.id)
+            check(prefs.edit().clear().commit())
+            check(NasShareArchiveDownloader.clearCache(app.cacheDir).completed)
+        }
+    }
+
+    @Test
+    fun recoversEvictedNasComicFromFavoritesAndHistoryAndSeparatesRemoteUpdate() {
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("nasCacheRecovery") == "true")
+        val fixture = NasShareProfile(UUID.randomUUID().toString(), "Fixture", "127.0.0.1", "BOOKS", "", false)
+        val prefs = app.getSharedPreferences("nas_share_settings", Context.MODE_PRIVATE)
+        val fixtureStores = listOf("favorite_comic_prefs", "reading_history_prefs", "reader_prefs", "nas_cached_archive_sources")
+            .map { app.getSharedPreferences(it, Context.MODE_PRIVATE) }
+        check(prefs.all.isEmpty() && fixtureStores.all { it.all.isEmpty() } &&
+            NasShareArchiveDownloader.cacheSummary(app.cacheDir).fileCount == 0
+        ) { "This test requires an isolated app instance" }
+        val cacheDirectory = NasShareArchiveDownloader.cacheDirectory(app.cacheDir)
+        val original = NasShareDirectoryBrowser.list(fixture, "", "shelf").single { it.name == "sample.cbz" }
+        val file = NasShareArchiveDownloader.cacheFile(cacheDirectory, fixture, original)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        try {
+            NasShareStore.save(app, fixture, "", false)
+            NasShareStore.setActiveShare(app, fixture.id)
+            NasShareStore.setNasEnabled(app, true)
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { it.findViewById<View>(R.id.btnSourceNas).performClick() }
+                awaitFixture("remote folder was not listed") { clickFixtureEntry(scenario, "shelf") }
+                awaitFixture("remote comic was not listed") { clickFixtureEntry(scenario, original.name) }
+                clickInNasPopup(R.id.btnReadNasArchive, isDialog())
+                val preview = awaitResumed<MangaPreviewActivity> { it.findViewById<View>(R.id.btnFullRead).isEnabled }
+                assertTrue(file.isFile)
+                instrumentation.runOnMainSync { preview.findViewById<View>(R.id.btnFullRead).performClick() }
+                val reader = awaitResumed<MangaReaderActivity> { it.imageEntriesForTest.size >= 5 }
+                instrumentation.runOnMainSync { reader.jumpReaderToPageForTest(2) }
+                awaitFixture("reader did not reach the middle of the comic") {
+                    var reached = false
+                    instrumentation.runOnMainSync { reached = reader.currentReaderPositionForTest == 2 }
+                    reached
+                }
+                instrumentation.runOnMainSync { reader.saveReaderPositionForTest(forceCommit = true) }
+                awaitFixture("middle page was not saved") { ReaderProgressStore.readPositionAndOffset(app, file).first == 2 }
+                instrumentation.runOnMainSync { reader.finish() }
+                awaitResumed<MangaPreviewActivity>()
+                instrumentation.runOnMainSync { preview.finish() }
+                assertEquals(FavoriteComicStore.RecordResult.ADDED, FavoriteComicStore.record(app, file))
+
+                check(NasShareArchiveDownloader.clearCache(app.cacheDir).completed)
+                check(FavoriteComicStore.items(app).any { it.file == file })
+                check(ReadingHistoryStore.items(app).any { it.file == file })
+                scenario.onActivity {
+                    it.findViewById<View>(R.id.btnSourceLocal).performClick()
+                    it.findViewById<View>(R.id.btnFavoriteComics).performClick()
+                }
+                clickInNasPopup(R.id.layoutFavoriteComicContent, isPlatformPopup())
+                val favoritePreview = awaitResumed<MangaPreviewActivity> {
+                    it.findViewById<View>(R.id.btnFullRead).isEnabled
+                }
+                assertEquals(2, ReaderProgressStore.readPositionAndOffset(app, file).first)
+                instrumentation.runOnMainSync { favoritePreview.findViewById<View>(R.id.btnFullRead).performClick() }
+                clickInNasPopup(R.id.btnContinueReading, isDialog())
+                val resumed = awaitResumed<MangaReaderActivity> { it.currentReaderPositionForTest == 2 }
+                instrumentation.runOnMainSync { resumed.finish() }
+                awaitResumed<MangaPreviewActivity>()
+                instrumentation.runOnMainSync { favoritePreview.finish() }
+
+                check(NasShareArchiveDownloader.clearCache(app.cacheDir).completed)
+                scenario.onActivity { it.findViewById<View>(R.id.btnReadingHistory).performClick() }
+                clickInNasPopup(R.id.layoutReadingHistoryForeground, isPlatformPopup())
+                val historyPreview = awaitResumed<MangaPreviewActivity>()
+                assertEquals(2, ReaderProgressStore.readPositionAndOffset(app, file).first)
+                instrumentation.runOnMainSync { historyPreview.finish() }
+
+                check(NasShareArchiveDownloader.clearCache(app.cacheDir).completed)
+                android.util.Log.i("CL028Fixture", "Ready for updated version")
+                var updated = original
+                awaitFixture("fixture did not publish a new remote version", timeoutMs = 25_000) {
+                    updated = NasShareDirectoryBrowser.list(fixture, "", "shelf").single { it.name == original.name }
+                    updated.modifiedAt != original.modifiedAt
+                }
+                scenario.onActivity { it.findViewById<View>(R.id.btnFavoriteComics).performClick() }
+                clickInNasPopup(R.id.layoutFavoriteComicContent, isPlatformPopup())
+                onView(androidx.test.espresso.matcher.ViewMatchers.withText(app.getString(R.string.nas_cache_archive_updated)))
+                    .inRoot(isDialog()).check(androidx.test.espresso.assertion.ViewAssertions.matches(
+                        androidx.test.espresso.matcher.ViewMatchers.isDisplayed()
+                    ))
+                clickInNasPopup(android.R.id.button1, isDialog())
+                val updatedPreview = awaitResumed<MangaPreviewActivity>()
+                val updatedFile = NasShareArchiveDownloader.cacheFile(cacheDirectory, fixture, updated)
+                assertEquals(updatedFile.absolutePath, updatedPreview.intent.getStringExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH))
+                assertEquals(0 to 0, ReaderProgressStore.readPositionAndOffset(app, updatedFile))
+                instrumentation.runOnMainSync { updatedPreview.finish() }
+            }
+        } finally {
+            NasShareStore.delete(app, fixture.id)
+            check(prefs.edit().clear().commit())
+            fixtureStores.forEach { check(it.edit().clear().commit()) }
+            check(NasShareArchiveDownloader.clearCache(app.cacheDir).completed)
+        }
+    }
+
+    private fun clickInNasPopup(id: Int, root: org.hamcrest.Matcher<androidx.test.espresso.Root>) {
+        onView(withId(id)).inRoot(root).perform(object : ViewAction {
+            override fun getConstraints() = isClickable()
+            override fun getDescription() = "Select NAS fixture action"
+            override fun perform(uiController: UiController, view: View) {
+                check(view.performClick())
+            }
+        })
+    }
+
+    private inline fun <reified T : Activity> awaitResumed(crossinline ready: (T) -> Boolean = { true }): T {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        var result: T? = null
+        awaitFixture("${T::class.java.simpleName} did not resume", timeoutMs = 20_000) {
+            instrumentation.runOnMainSync {
+                result = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                    .filterIsInstance<T>().firstOrNull { !it.isFinishing && ready(it) }
+            }
+            result != null
+        }
+        return checkNotNull(result)
+    }
+
+    @Test
+    fun browsesAndDownloadsFromIsolatedSmbFixture() {
+        val mode = InstrumentationRegistry.getArguments().getString("nasFixtureMode")
+        org.junit.Assume.assumeTrue(mode in listOf("saved-session", "prompt", "anonymous"))
+        val password = "comiclab-fixture-only"
+        val fixture = NasShareProfile(UUID.randomUUID().toString(), "Fixture", "127.0.0.1",
+            "BOOKS", if (mode == "anonymous") "" else "fixture", false)
+        val preferences = app.getSharedPreferences("nas_share_settings", Context.MODE_PRIVATE)
+        check(preferences.all.isEmpty()) { "This test requires an isolated app instance" }
+        val destination = "Download/ComicLab-CL027-${fixture.id}"
+        val outputDir = File(Environment.getExternalStorageDirectory(), destination)
+        val output = File(outputDir, "sample.cbz")
+        try {
+            NasShareStore.save(app, fixture, if (mode == "saved-session") password else "", false)
+            NasShareStore.setActiveShare(app, fixture.id)
+            NasShareStore.setNasEnabled(app, true)
+            NasShareStore.setDownloadPath(app, destination)
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { it.findViewById<View>(R.id.btnSourceNas).performClick() }
+                if (mode == "prompt") {
+                    awaitFixture("password entry button is unavailable") {
+                        var visible = false
+                        scenario.onActivity { visible = it.findViewById<View>(R.id.btnNasRetry).isShown }
+                        visible
+                    }
+                    scenario.onActivity { it.findViewById<View>(R.id.btnNasRetry).performClick() }
+                    onView(withInputType(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD))
+                        .inRoot(isDialog()).perform(replaceText(password))
+                    onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
+                }
+                awaitFixture("SMB subdirectory did not appear") { clickFixtureEntry(scenario, "shelf") }
+                awaitFixture("SMB archive did not appear") { clickFixtureEntry(scenario, "sample.cbz") }
+                onView(withId(R.id.btnDownloadNasArchiveToLocal)).inRoot(isDialog()).perform(object : ViewAction {
+                    override fun getConstraints() = isClickable()
+                    override fun getDescription() = "Select download from the NAS action sheet"
+                    override fun perform(uiController: UiController, view: View) {
+                        check(Environment.isExternalStorageManager()) { "Isolated emulator needs storage access" }
+                        check(view.performClick())
+                    }
+                })
+                awaitFixture("SMB archive was not downloaded", timeoutMs = 35_000) {
+                    output.isFile && output.length() > 0
+                }
+                ZipFile(output).use { zip ->
+                    assertEquals("CL-027 fixture", zip.getInputStream(zip.getEntry("sample.txt")).bufferedReader().use { it.readText() })
+                }
+                assertNull(NasShareStore.load(app).single().encryptedPassword)
+                check(!preferences.getString("shares_json", "").orEmpty().contains(password))
+            }
+        } finally {
+            output.delete()
+            outputDir.delete()
+            NasShareStore.delete(app, fixture.id)
+            check(preferences.edit().clear().commit())
+        }
+    }
+
+    private fun clickFixtureEntry(scenario: ActivityScenario<MainActivity>, name: String): Boolean {
+        var clicked = false
+        scenario.onActivity { activity ->
+            val list = activity.findViewById<ListView>(R.id.listNasFiles)
+            val adapter = list.adapter
+            if (!list.isShown || adapter == null) return@onActivity
+            val index = (0 until adapter.count).firstOrNull {
+                (adapter.getItem(it) as? NasDirectoryEntry)?.name == name
+            } ?: return@onActivity
+            val entry = adapter.getItem(index) as NasDirectoryEntry
+            check(entry.isDirectory || entry.sizeBytes > 0) { "SMB fixture reports an empty archive" }
+            clicked = list.performItemClick(list.getChildAt(index), index, adapter.getItemId(index))
+        }
+        return clicked
+    }
+
+    private fun awaitFixture(message: String, timeoutMs: Long = 12_000, condition: () -> Boolean) {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (condition()) return
+            SystemClock.sleep(100)
+        }
+        check(condition()) { message }
     }
 
     private fun seedShare(): NasShareProfile {

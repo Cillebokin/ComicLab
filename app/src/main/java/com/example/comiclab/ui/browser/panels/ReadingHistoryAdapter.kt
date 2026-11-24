@@ -131,7 +131,8 @@ class ReadingHistoryAdapter(
         val file = item.file
 
         holder.tvName.text = file.name
-        holder.tvPath.text = file.parentFile?.absolutePath.orEmpty()
+        holder.tvPath.text = if (file.isFile) file.parentFile?.absolutePath.orEmpty()
+            else context.getString(R.string.nas_cache_entry_missing)
         val cacheKey = "${file.absolutePath}:${file.lastModified()}:${file.length()}"
         bindReadingProgressBar(context, file, holder.progress, pageCounts.get(cacheKey) ?: 0)
         holder.content.setOnClickListener {
@@ -255,6 +256,10 @@ class ReadingHistoryAdapter(
             R.color.comiclab_icon
         )
         imgCover.setImageResource(R.drawable.png_press_package_icon)
+        if (!file.isFile) {
+            imgCover.tag = null
+            return
+        }
 
         val cacheKey = "${file.absolutePath}:${file.lastModified()}:${file.length()}"
         imgCover.tag = cacheKey

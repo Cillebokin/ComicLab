@@ -32,8 +32,6 @@ internal class ArchiveEnhancementDialog : DialogFragment() {
         val uri = result.data?.data
         if (result.resultCode != Activity.RESULT_OK || uri == null) dismiss()
         else {
-            runCatching { requireContext().contentResolver.takePersistableUriPermission(uri,
-                Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
             model.start(source, uri, book = true, scale = scale)
         }
     }
@@ -47,7 +45,8 @@ internal class ArchiveEnhancementDialog : DialogFragment() {
                 savedInstanceState?.getBoolean("failed") == true)) {
             val done = savedInstanceState?.getBoolean("done") == true
             model.state.value = EnhancementExportState(percent = if (done) 100 else -1,
-                done = done, failed = !done)
+                done = done, failed = !done,
+                issueMessage = R.string.reader_export_interrupted.takeIf { !done && target != null })
         }
     }
 
@@ -79,7 +78,7 @@ internal class ArchiveEnhancementDialog : DialogFragment() {
             when {
                 state.done -> status.setText(R.string.enhancement_export_done)
                 state.failed -> status.setText(if (state.busy) R.string.reader_enhance_busy
-                    else R.string.enhancement_export_failed)
+                    else state.issueMessage ?: R.string.enhancement_export_failed)
                 state.cancelled -> dismiss()
                 state.total > 0 -> status.text = getString(R.string.enhancement_book_progress,
                     state.page, state.total, state.pagePercent, state.percent)

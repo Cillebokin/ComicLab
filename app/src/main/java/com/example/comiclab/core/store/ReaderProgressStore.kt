@@ -1,6 +1,7 @@
 package com.example.comiclab.core.store
 
 import android.content.Context
+import com.example.comiclab.core.nas.NasCachedArchiveStore
 import android.content.SharedPreferences
 import com.example.comiclab.core.archive.ArchiveFormatDetector
 import com.example.comiclab.core.settings.ComicLabMangaProgress
@@ -346,10 +347,16 @@ object ReaderProgressStore {
         val archiveKey = readerArchiveKey(file)
         val prefs = preferences(context)
         synchronized(stateLock) {
-            pendingWrites.keys.removeAll { it.archiveKey == archiveKey }
+            val keys = if (NasCachedArchiveStore.isCacheFile(context, file)) {
+                matchingArchiveVersionKeys(prefs, pendingWrites.keys.map { it.archiveKey }, file)
+                    .toMutableSet().apply { add(archiveKey) }
+            } else {
+                setOf(archiveKey)
+            }
+            pendingWrites.keys.removeAll { it.archiveKey in keys }
             publishPendingResumeProgress(clearedKey = archiveKey)
             try {
-                removeStoredProgress(prefs, archiveKey)
+                prefs.edit().apply { keys.forEach { removeProgress(it) } }.apply()
             } finally {
                 publishPendingResumeProgress()
             }
@@ -599,7 +606,32 @@ object ReaderProgressStore {
             .remove(coveredPositionKey(key))
             .remove(totalCountKey(key))
 
-    private data class ArchiveKeyParts(val path: String, val length: Long)
+    private data class ArchiveKeyParts(val path: String, val length: Long, val modifiedAt: Long)
+
+    internal fun latestArchiveProgressTimestamp(context: Context, file: File): Long? {
+        val prefs = preferences(context)
+        return matchingArchiveVersionKeys(prefs, pendingResumeProgress.keys, file)
+            .mapNotNull { key ->
+                if (prefs.contains(positionKey(key)) && prefs.contains(offsetKey(key)) ||
+                    pendingResumeProgress[key]?.value != null
+                ) parseArchiveKey(key)?.modifiedAt else null
+            }
+            .filter { it > 0 }
+            .maxOrNull()
+    }
+
+    private fun matchingArchiveVersionKeys(
+        prefs: SharedPreferences,
+        pendingKeys: Collection<String>,
+        file: File
+    ): Sequence<String> {
+        val prefix = "$ARCHIVE_KEY_PREFIX${file.absolutePath}:"
+        val length = file.length()
+        return (prefs.all.keys.asSequence().mapNotNull(::archiveKeyOf) + pendingKeys.asSequence())
+            .filter { it.startsWith(prefix) }
+            .distinct()
+            .filter { key -> parseArchiveKey(key)?.let { it.path == file.absolutePath && it.length == length } == true }
+    }
 
     private fun archiveKeyOf(storageKey: String): String? {
         val suffix = when {
@@ -614,10 +646,10 @@ object ReaderProgressStore {
         val body = archiveKey.removePrefix(ARCHIVE_KEY_PREFIX)
         val length = body.substringAfterLast(':').toLongOrNull() ?: return null
         val withoutLength = body.substringBeforeLast(':')
-        if (withoutLength.substringAfterLast(':').toLongOrNull() == null) return null
+        val modifiedAt = withoutLength.substringAfterLast(':').toLongOrNull() ?: return null
         val path = withoutLength.substringBeforeLast(':')
         if (path.isBlank()) return null
-        return ArchiveKeyParts(path = path, length = length)
+        return ArchiveKeyParts(path = path, length = length, modifiedAt = modifiedAt)
     }
 
     private fun preferences(context: Context): SharedPreferences =

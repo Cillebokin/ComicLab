@@ -1,6 +1,7 @@
 package com.example.comiclab.core.store
 
 import com.example.comiclab.ebook.ReaderFileDetector
+import com.example.comiclab.core.nas.NasCachedArchiveStore
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
@@ -97,7 +98,7 @@ object FavoriteComicStore {
         val storedItems = readStoredItems(context) ?: return emptyList()
         val visibleItems = storedItems.mapNotNull { storedItem ->
             val file = File(storedItem.path)
-            if (!file.isFile || !ReaderFileDetector.isSupported(file)) {
+            if (!ReaderFileDetector.isSupported(file) && !NasCachedArchiveStore.isMissingCacheFile(context, file)) {
                 return@mapNotNull null
             }
 

@@ -14,7 +14,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.HttpsURLConnection
 
 class TranslationNetworkTest {
-    private class Connection(private val body: String?, private val code: Int = 200) : HttpsURLConnection(URL("https://example.invalid/v1/chat/completions")) {
+    private class Connection(
+        private val body: String?,
+        private val code: Int = 200,
+        private val errorBody: String? = null
+    ) : HttpsURLConnection(URL("https://example.invalid/v1/chat/completions")) {
         val entered = CountDownLatch(1); val closed = CountDownLatch(1)
         val request = ByteArrayOutputStream()
         var sends = 0
@@ -31,6 +35,7 @@ class TranslationNetworkTest {
             return code
         }
         override fun getInputStream(): InputStream = body!!.byteInputStream()
+        override fun getErrorStream(): InputStream? = errorBody?.byteInputStream()
     }
 
     @Test fun cancelDisconnectsBlockedRequestAndReportsCancellationWithoutRetry() {
@@ -57,6 +62,43 @@ class TranslationNetworkTest {
         assertEquals("model", request.getString("model")); assertFalse(request.getBoolean("stream"))
         assertFalse(request.has("temperature")); assertFalse(request.has("response_format")); assertFalse(request.has("max_tokens"))
         assertEquals(1, connection.sends); assertFalse(connection.instanceFollowRedirects)
+    }
+
+    @Test fun authenticationRejectionIsDistinguishableFromPageFailure() {
+        val connection = Connection("unused", 401)
+        val failure = assertThrows(TranslationServiceException::class.java) {
+            TranslationApi.request(
+                TranslationSettings("https://example.invalid/v1", "model", "key"),
+                listOf("original"), "English", AtomicBoolean()
+            ) { connection }
+        }
+        assertEquals(TranslationServiceException.Reason.AUTHENTICATION, failure.reason)
+        assertEquals(1, connection.sends)
+    }
+
+    @Test fun classifiesExplicitModelRejectionWithoutExposingProviderErrorBody() {
+        val connection = Connection("unused", 400, """{"error":{"code":"model_not_found","message":"private provider data"}}""")
+        val failure = assertThrows(TranslationServiceException::class.java) {
+            TranslationApi.request(TranslationSettings("https://example.invalid/v1", "model", "key"),
+                listOf("original"), "English", AtomicBoolean()) { connection }
+        }
+        assertEquals(TranslationServiceException.Reason.MODEL_OR_ENDPOINT, failure.reason)
+        assertEquals("AI HTTP 400", failure.message)
+    }
+
+    @Test fun ordinaryBadRequestIsPageLocalAndOfflineIsServiceUnavailable() {
+        val settings = TranslationSettings("https://example.invalid/v1", "model", "key")
+        val badRequest = Connection("unused", 400, """{"error":{"code":"context_length_exceeded"}}""")
+        val pageFailure = assertThrows(IllegalStateException::class.java) {
+            TranslationApi.request(settings, listOf("original"), "English", AtomicBoolean()) { badRequest }
+        }
+        assertFalse(pageFailure is TranslationServiceException)
+        val offline = assertThrows(TranslationServiceException::class.java) {
+            TranslationApi.request(settings, listOf("original"), "English", AtomicBoolean()) {
+                throw java.net.UnknownHostException()
+            }
+        }
+        assertEquals(TranslationServiceException.Reason.UNAVAILABLE, offline.reason)
     }
 
     @Test fun completeCorruptPartialIsResetInsteadOfRepeatingRange416() {

@@ -77,6 +77,35 @@ class NasShareCredentialRobolectricTest {
     }
 
     @Test
+    fun unrememberedPasswordIsSharedInMemoryOnlyAndScopedToTheCurrentAccount() {
+        val before = NasShareStore.load(context).single()
+        val password = "session-only-fixture"
+        try {
+            NasShareStore.save(context, before, password, rememberPassword = false)
+            val saved = NasShareStore.load(context).single()
+            assertNull(saved.encryptedPassword)
+            assertEquals(password, NasShareStore.accessPassword(saved))
+            assertNull(NasShareStore.accessPassword(saved.copy(host = "different.invalid")))
+            assertNull(NasShareStore.accessPassword(saved.copy(username = "different")))
+            NasShareStore.save(context, saved.copy(name = "renamed"), "", rememberPassword = false)
+            assertEquals(password, NasShareStore.accessPassword(NasShareStore.load(context).single()))
+
+            NasShareStore.setSessionPassword(saved, "new-session-password")
+            NasShareStore.discardRejectedSessionPassword(saved, password)
+            assertEquals("new-session-password", NasShareStore.accessPassword(saved))
+            NasShareStore.discardRejectedSessionPassword(saved, "new-session-password")
+            assertNull(NasShareStore.accessPassword(saved))
+
+            NasShareStore.setSessionPassword(saved, password)
+            NasShareStore.save(context, saved.copy(username = ""), "", rememberPassword = false)
+            assertEquals("", NasShareStore.accessPassword(NasShareStore.load(context).single()))
+            assertNull(NasShareStore.accessPassword(saved))
+        } finally {
+            NasShareStore.delete(context, before.id)
+        }
+    }
+
+    @Test
     fun editorDoesNotTestOrSaveChangedHostWithBlankPassword() {
         withEditor { activity, dialog ->
             val host = checkNotNull(dialog.findViewById<EditText>(R.id.inputNasHost))

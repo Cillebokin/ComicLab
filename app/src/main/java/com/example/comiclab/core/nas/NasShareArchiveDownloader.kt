@@ -1,19 +1,24 @@
 package com.example.comiclab.core.nas
 
+import android.util.Log
 import com.hierynomus.msdtyp.AccessMask
 import com.hierynomus.msfscc.FileAttributes
+import com.hierynomus.msfscc.fileinformation.FileAllInformation
 import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2CreateOptions
 import com.hierynomus.mssmb2.SMB2ShareAccess
+import java.io.Closeable
 import java.io.EOFException
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.EnumSet
 import java.util.Locale
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicBoolean
 
 internal object NasShareArchiveDownloader {
     private const val CACHE_DIRECTORY_NAME = "nas-comics"
@@ -27,6 +32,24 @@ internal object NasShareArchiveDownloader {
     ) : IOException("Insufficient cache space")
 
     class DownloadCancelledException : IOException("NAS download cancelled")
+
+    class RemoteVersionChangedException : IOException("NAS archive version changed")
+
+    private data class RemoteVersion(
+        val size: Long,
+        val modifiedAt: Long,
+        val lastWriteTicks: Long,
+        val changeTicks: Long,
+        val fileIndex: Long
+    )
+
+    private fun FileAllInformation.remoteVersion() = RemoteVersion(
+        standardInformation.endOfFile,
+        basicInformation.lastWriteTime.toEpochMillis(),
+        basicInformation.lastWriteTime.windowsTimeStamp,
+        basicInformation.changeTime.windowsTimeStamp,
+        internalInformation.indexNumber
+    )
 
     data class CacheSummary(val fileCount: Int, val totalBytes: Long)
 
@@ -219,13 +242,56 @@ internal object NasShareArchiveDownloader {
         password: String,
         entry: NasDirectoryEntry,
         destination: File,
-        cancelled: AtomicBoolean,
+        cancellation: NasDownloadCancellation,
         cleanupRoot: File?,
         replaceExisting: Boolean,
+        publicParts: NasPublicDownloadPartJournal? = null,
         onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit
     ): File {
         require(!entry.isDirectory) { "Cannot download a directory" }
         validateRemotePath(entry.relativePath)
+        return writeDownload(
+            destination, entry.sizeBytes, cancellation, cleanupRoot, replaceExisting, onProgress, publicParts
+        ) { receive ->
+            NasShareDirectoryBrowser.withDiskShare(profile, password, cancellation) { share ->
+                val path = entry.relativePath.replace('/', '\\')
+                share.openFile(
+                    path,
+                    EnumSet.of(AccessMask.GENERIC_READ),
+                    EnumSet.of(FileAttributes.FILE_ATTRIBUTE_NORMAL),
+                    SMB2ShareAccess.ALL,
+                    SMB2CreateDisposition.FILE_OPEN,
+                    EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE)
+                ).useNasResource(cancellation) { source ->
+                    val initial = source.getFileInformation(FileAllInformation::class.java).remoteVersion()
+                    if (initial.size != entry.sizeBytes || initial.modifiedAt != entry.modifiedAt) {
+                        throw RemoteVersionChangedException()
+                    }
+                    source.inputStream.use { input ->
+                        receive(initial.size, input) {
+                            // Check the path as well as the open handle: a rename can replace the path
+                            // while the reader still holds a valid handle to the previous file.
+                            val currentHandle = source.getFileInformation(FileAllInformation::class.java).remoteVersion()
+                            if (initial != currentHandle || initial != share.getFileInformation(path).remoteVersion()) {
+                                throw RemoteVersionChangedException()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    internal fun writeDownload(
+        destination: File,
+        expectedSize: Long,
+        cancellation: NasDownloadCancellation,
+        cleanupRoot: File?,
+        replaceExisting: Boolean,
+        onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit,
+        publicParts: NasPublicDownloadPartJournal? = null,
+        withInput: ((Long, InputStream, () -> Unit) -> Unit) -> Unit
+    ): File = cancellation.run {
         val parent = destination.parentFile
             ?: throw IOException("NAS cache destination has no parent")
         if (!parent.isDirectory && !parent.mkdirs()) {
@@ -234,74 +300,72 @@ internal object NasShareArchiveDownloader {
         if (destination.exists() && !replaceExisting) {
             throw IOException("NAS download destination already exists")
         }
-        if (destination.isFile && destination.length() == entry.sizeBytes && entry.sizeBytes > 0L) {
-            return destination
-        }
-
         cleanupRoot?.let(::cleanupPartialFiles)
         val temporary = File(parent, ".comiclab-nas-${UUID.randomUUID()}.part")
-        var completed = false
+        var ready = false
+        var staged = false
+        var partLease: Closeable? = null
         try {
-            checkNotCancelled(cancelled)
-            NasShareDirectoryBrowser.withDiskShare(profile, password) { share ->
-                val remoteFile = share.openFile(
-                    entry.relativePath.replace('/', '\\'),
-                    EnumSet.of(AccessMask.GENERIC_READ),
-                    EnumSet.of(FileAttributes.FILE_ATTRIBUTE_NORMAL),
-                    SMB2ShareAccess.ALL,
-                    SMB2CreateDisposition.FILE_OPEN,
-                    EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE)
-                )
-                remoteFile.use { source ->
-                    val totalBytes = source.length
-                    if (totalBytes <= 0L) throw EOFException("NAS archive is empty")
-                    ensureAvailableSpace(parent, totalBytes)
-                    onProgress(0L, totalBytes)
-
-                    var downloadedBytes = 0L
-                    FileOutputStream(temporary).use { output ->
-                        source.inputStream.use { input ->
-                            val buffer = ByteArray(BUFFER_SIZE_BYTES)
-                            while (true) {
-                                checkNotCancelled(cancelled)
-                                val count = input.read(buffer)
-                                if (count < 0) break
-                                if (count == 0) continue
-                                if (downloadedBytes > totalBytes - count) {
-                                    throw IOException("NAS archive changed during download")
-                                }
-
-                                output.write(buffer, 0, count)
-                                downloadedBytes += count
-                                onProgress(downloadedBytes, totalBytes)
-                            }
-                        }
-                        output.fd.sync()
-                    }
-
-                    checkNotCancelled(cancelled)
-                    if (downloadedBytes != totalBytes) {
-                        throw EOFException("NAS archive changed during download")
-                    }
-                    if (destination.exists()) {
-                        if (!replaceExisting) {
-                            throw IOException("NAS download destination already exists")
-                        }
-                        if (!destination.delete()) {
-                            throw IOException("Could not replace invalid NAS cache file")
-                        }
-                    }
-                    if (!temporary.renameTo(destination)) {
-                        throw IOException("Could not finalize NAS cache file")
-                    }
-                    onProgress(totalBytes, totalBytes)
+            cancellation.checkActive()
+            withInput { totalBytes, input, verifyRemoteVersion ->
+                if (totalBytes <= 0L) throw EOFException("NAS archive is empty")
+                if (destination.isFile && destination.length() == expectedSize && expectedSize > 0L) {
+                    cancellation.beginPublication()
+                    ready = true
+                    return@withInput
                 }
+                ensureAvailableSpace(parent, totalBytes)
+                onProgress(0L, totalBytes)
+                var downloadedBytes = 0L
+                if (publicParts != null) {
+                    partLease = publicParts.createPart(temporary)
+                } else {
+                    Files.createFile(temporary.toPath())
+                }
+                staged = true
+                FileOutputStream(temporary).use { output ->
+                    val buffer = ByteArray(BUFFER_SIZE_BYTES)
+                    while (true) {
+                        cancellation.checkActive()
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        if (count == 0) continue
+                        if (downloadedBytes > totalBytes - count) {
+                            throw RemoteVersionChangedException()
+                        }
+                        cancellation.checkActive()
+                        output.write(buffer, 0, count)
+                        downloadedBytes += count
+                        onProgress(downloadedBytes, totalBytes)
+                    }
+                    output.fd.sync()
+                }
+                if (downloadedBytes != totalBytes) {
+                    throw RemoteVersionChangedException()
+                }
+                cancellation.checkActive()
+                verifyRemoteVersion()
+                cancellation.beginPublication()
+                if (replaceExisting) {
+                    Files.move(temporary.toPath(), destination.toPath(),
+                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                } else {
+                    Files.move(temporary.toPath(), destination.toPath())
+                }
+                ready = true
             }
-            completed = true
-            return destination
+        } catch (exception: Exception) {
+            if (!ready) throw exception
+            Log.w("ComicLabNAS", "SMB cleanup failed after NAS download was published", exception)
         } finally {
-            if (!completed) temporary.delete()
+            try {
+                if (staged && !ready) temporary.delete()
+            } finally {
+                partLease?.close()
+            }
         }
+        check(ready)
+        destination
     }
 
     fun cleanupPartialFiles(cacheRoot: File) {
@@ -356,9 +420,4 @@ internal object NasShareArchiveDownloader {
     private fun isNasPartialFile(file: File): Boolean =
         file.name.startsWith(".comiclab-nas-") && file.name.endsWith(".part", ignoreCase = true)
 
-    private fun checkNotCancelled(cancelled: AtomicBoolean) {
-        if (cancelled.get() || Thread.currentThread().isInterrupted) {
-            throw DownloadCancelledException()
-        }
-    }
 }

@@ -37,6 +37,7 @@ private data class RepairTask(val blockIndex: Int, val region: TextRegion, val w
 private data class RepairWindowResult(val patch: TranslationPatch?, val darkBackground: Boolean)
 private data class InpaintResult(val pixels: IntArray, val inputNanos: Long, val inferenceNanos: Long, val outputNanos: Long)
 internal data class TranslationStyle(val font: String = "sans-serif", val scale: Float = 1f)
+internal class NoReadableTranslationTextException : IllegalArgumentException("No readable text detected")
 
 /** 一个工作线程、一页、一个阶段模型；任何时候均不创建原尺寸整页Bitmap。 */
 internal class SinglePageTranslation(private val context: Context, private val cancelled: AtomicBoolean,
@@ -106,7 +107,7 @@ internal class SinglePageTranslation(private val context: Context, private val c
                 lines = det.lines.map { line -> TextLine(line.quad.map { Pt(it.x * sx, it.y * sy) }, line.score) }
             } finally { preview.recycle() }
             checkCancelled() // Do not load the next model after an in-flight detection was cancelled.
-            require(lines.isNotEmpty()) { "No text detected" }
+            if (lines.isEmpty()) throw NoReadableTranslationTextException()
             require(lines.size <= 400) { "Too many text regions for a single page" }
             val alphabet = context.assets.open("translation/alphabet-all-v5.txt").bufferedReader().use { it.readLines() }
             Ocr(File(models, "ocr_48px_ctc.ncnn.param").path, alphabet, OcrConfig(concurrent = true)).use { ocr ->
@@ -141,7 +142,8 @@ internal class SinglePageTranslation(private val context: Context, private val c
                 }
             }
             val regions = Grouping.group(lines.filter { it.text.isNotBlank() })
-            require(regions.isNotEmpty() && regions.size <= 200) { "No readable text, or too many dialogue blocks" }
+            if (regions.isEmpty()) throw NoReadableTranslationTextException()
+            require(regions.size <= 200) { "Too many dialogue blocks for translation limit" }
             status("translate"); checkCancelled()
             // 修补或编码失败后重试可复用已付费译文；只有识别内容、语言、模型或地址变化才重新请求。
             val sourceTexts = regions.map { it.sourceText }

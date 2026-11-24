@@ -75,6 +75,7 @@ internal object NasShareDirectoryBrowser {
     internal fun <T> withDiskShare(
         profile: NasShareProfile,
         password: String,
+        cancellation: NasDownloadCancellation? = null,
         action: (DiskShare) -> T
     ): T {
         val configBuilder = SmbConfig.builder()
@@ -86,14 +87,12 @@ internal object NasShareDirectoryBrowser {
         val config = configBuilder.build()
 
         return SMBClient(config).use { client ->
-            client.connect(profile.host).use { connection ->
-                val session = connection.authenticate(authentication(profile, password))
-                try {
+            client.connect(profile.host).useNasResource(cancellation) { connection ->
+                cancellation?.checkActive()
+                connection.authenticate(authentication(profile, password)).useNasResource(cancellation) { session ->
                     val share = session.connectShare(profile.shareName) as? DiskShare
                         ?: throw IllegalStateException("The SMB share is not a disk share")
-                    share.use(action)
-                } finally {
-                    session.close()
+                    share.useNasResource(cancellation, action)
                 }
             }
         }

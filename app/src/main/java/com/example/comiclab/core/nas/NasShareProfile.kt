@@ -42,6 +42,12 @@ internal object NasShareStore {
     private const val KEY_DOWNLOAD_PATH = "download_path"
     const val DEFAULT_DOWNLOAD_PATH = "Download/ComicLab/NAS"
     private val lock = Any()
+    private val sessionPasswords = mutableMapOf<String, SessionPassword>()
+
+    private class SessionPassword(val host: String, val username: String, val value: String) {
+        fun matches(profile: NasShareProfile): Boolean =
+            profile.matchesCredentialIdentity(host, username)
+    }
 
     fun isNasEnabled(context: Context): Boolean = synchronized(lock) {
         PrefsGateway.open(context, PREFERENCES_NAME)
@@ -139,6 +145,12 @@ internal object NasShareStore {
         )
         val next = current.filterNot { it.id == profile.id } + updated
         persist(context, next)
+        if (rememberPassword || profile.username.isBlank() ||
+            previous?.matchesCredentialIdentity(profile.host, profile.username) != true
+        ) {
+            sessionPasswords.remove(profile.id)
+        }
+        setSessionPassword(updated, password)
     }
 
     fun delete(context: Context, id: String) = synchronized(lock) {
@@ -148,6 +160,31 @@ internal object NasShareStore {
             load(context).filterNot { it.id == id },
             clearActiveShare = wasActive
         )
+        sessionPasswords.remove(id)
+        Unit
+    }
+
+    fun accessPassword(profile: NasShareProfile): String? {
+        if (profile.username.isBlank()) return ""
+        if (profile.rememberPassword) return rememberedPassword(profile)
+        return synchronized(lock) { sessionPasswords[profile.id]?.takeIf { it.matches(profile) }?.value }
+    }
+
+    fun setSessionPassword(profile: NasShareProfile, password: String) {
+        if (profile.rememberPassword || profile.username.isBlank() || password.isEmpty()) return
+        synchronized(lock) {
+            sessionPasswords[profile.id] = SessionPassword(profile.host, profile.username, password)
+        }
+    }
+
+    fun discardRejectedSessionPassword(profile: NasShareProfile, password: String) {
+        if (profile.rememberPassword) return
+        synchronized(lock) {
+            val current = sessionPasswords[profile.id]
+            if (current != null && current.matches(profile) && current.value == password) {
+                sessionPasswords.remove(profile.id)
+            }
+        }
     }
 
     fun rememberedPassword(profile: NasShareProfile): String? {

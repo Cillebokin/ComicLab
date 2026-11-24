@@ -2,9 +2,10 @@ package com.example.comiclab.ui.reader.enhance
 
 import android.app.Application
 import android.net.Uri
-import android.provider.DocumentsContract
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.MutableLiveData
+import com.example.comiclab.R
+import com.example.comiclab.core.reader.ExportDocumentJournal
 import com.example.comiclab.core.reader.enhance.ArchiveSuperResolution
 import com.example.comiclab.core.reader.enhance.EnhancementRuntime
 import java.io.File
@@ -14,7 +15,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 internal data class EnhancementExportState(val percent: Int = -1, val page: Int = 0,
     val total: Int = 0, val pagePercent: Int = 0, val done: Boolean = false,
-    val failed: Boolean = false, val busy: Boolean = false, val cancelled: Boolean = false)
+    val failed: Boolean = false, val busy: Boolean = false, val cancelled: Boolean = false,
+    val issueMessage: Int? = null)
 
 internal class EnhancementExportViewModel(application: Application) : AndroidViewModel(application) {
     val state = MutableLiveData(EnhancementExportState())
@@ -28,12 +30,19 @@ internal class EnhancementExportViewModel(application: Application) : AndroidVie
 
     fun ownImage(file: File) { ownedImage = file }
 
-    fun start(source: File, destination: Uri, book: Boolean, scale: Int = 2) {
+    fun start(source: File, destination: Uri, book: Boolean, scale: Int = 2,
+        destinationName: String = if (book) "${source.nameWithoutExtension}_HD.cbz" else source.name) {
         if (started) return
         started = true
         target = destination
+        val pending = ExportDocumentJournal(app).reserve(destination, destinationName)
+        if (pending == null) {
+            ownedImage?.delete()
+            state.value = EnhancementExportState(failed = true, issueMessage = R.string.reader_export_tracking_failed)
+            return
+        }
         if (book && !EnhancementRuntime.busy.compareAndSet(false, true)) {
-            removeOutput(destination)
+            EnhancementRuntime.io.execute { pending.abandon() }
             state.value = EnhancementExportState(failed = true, busy = true)
             return
         }
@@ -55,8 +64,7 @@ internal class EnhancementExportViewModel(application: Application) : AndroidVie
                     }
                 } else source
                 checkCancelled()
-                app.contentResolver.openOutputStream(destination, "wt").use { output ->
-                    checkNotNull(output) { "Destination is not writable" }
+                pending.openOutput().use { output ->
                     result.inputStream().buffered().use { input ->
                         val buffer = ByteArray(256 * 1024)
                         var written = 0L
@@ -76,6 +84,7 @@ internal class EnhancementExportViewModel(application: Application) : AndroidVie
                 }
                 checkCancelled()
                 success = true
+                pending.complete()
                 state.postValue(EnhancementExportState(percent = 100, done = true))
             } catch (_: CancellationException) {
                 state.postValue(EnhancementExportState(cancelled = true))
@@ -89,7 +98,7 @@ internal class EnhancementExportViewModel(application: Application) : AndroidVie
                 android.util.Log.e("EnhancementExport", "Export memory exhausted", failure)
                 state.postValue(EnhancementExportState(failed = true))
             } finally {
-                if (!success) removeOutput(destination)
+                if (!success) pending.abandon()
                 directory?.deleteRecursively()
                 ownedImage?.delete()
                 if (book) EnhancementRuntime.busy.set(false)
@@ -98,14 +107,6 @@ internal class EnhancementExportViewModel(application: Application) : AndroidVie
     }
 
     private fun checkCancelled() { if (cancelled.get()) throw CancellationException() }
-
-    private fun removeOutput(uri: Uri) {
-        runCatching {
-            if (!DocumentsContract.isDocumentUri(app, uri) || !DocumentsContract.deleteDocument(app.contentResolver, uri)) {
-                app.contentResolver.delete(uri, null, null)
-            }
-        }.onFailure { android.util.Log.w("EnhancementExport", "Could not remove incomplete document", it) }
-    }
 
     override fun onCleared() {
         cancelled.set(true)
