@@ -15,7 +15,7 @@ import kotlin.system.exitProcess
 
 object CrashLogManager {
 
-    private const val CRASH_LOG_DIR_NAME = "crash_logs"
+    internal const val CRASH_LOG_DIR_NAME = "crash_logs"
     private const val CRASH_EXPORT_DIR_NAME = "crash_exports"
     private const val READER_DIAGNOSTIC_PREFS_NAME = "reader_diagnostics"
     private const val READER_CHECKPOINT_KEY = "latest_checkpoint"

@@ -3,9 +3,11 @@ package com.example.comiclab.core.settings
 import android.content.Context
 import com.example.comiclab.AppSettings
 import com.example.comiclab.MangaReaderActivity
+import com.example.comiclab.core.store.BookcaseFolderPaths
 import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.core.store.FavoriteComicStore
 import com.example.comiclab.core.store.FavoritePathStore
+import com.example.comiclab.core.store.PrivacyStore
 import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
 import com.example.comiclab.ebook.EbookProgress
@@ -28,37 +30,138 @@ object ComicLabConfigurationStore {
         val history = ReadingHistoryStore.items(context)
         val knownFiles = favoriteComics.mapTo(linkedSetOf()) { it.file }
         history.mapTo(knownFiles) { it.file }
+        val bookcasePaths = AppSettings.bookcaseDirectoryPaths(context)
+        val mangaReadingProgress = ReaderProgressStore.exportSavedProgress(context)
+        val mangaProgressPaths = mangaReadingProgress.mapTo(hashSetOf()) { it.path }
+        val ebookReadingProgress = EbookProgressStore.exportSavedProgress(context, knownFiles)
+        // 一次导出中的各类记录按同一份最新标记判定。
+        val privateDirectories = PrivacyStore.privacyDirectories(context)
 
+        fun isPrivatePath(path: String): Boolean =
+            privateDirectories.any { BookcaseFolderPaths.isPathInDirectory(path, it) }
+
+        fun exportPath(path: String): String? {
+            val canonicalPath = PrivacyStore.resolveCanonicalPath(path) ?: return null
+            if (isPrivatePath(canonicalPath)) return null
+            if (path == canonicalPath || privateDirectories.isEmpty()) return path
+            // 普通目标的原始别名也可能经过隐私目录，例如 private/../ordinary。
+            val privateAlias = isPrivatePath(path) || generateSequence(File(path).parentFile) { it.parentFile }
+                .any { parent ->
+                    val canonicalParent = PrivacyStore.resolveCanonicalPath(parent)
+                    canonicalParent == null || isPrivatePath(canonicalParent)
+                }
+            return if (privateAlias) canonicalPath else path
+        }
+
+        val settings = AppSettings.snapshot(context)
         return ComicLabConfiguration(
             schemaVersion = ComicLabConfigurationJson.CURRENT_SCHEMA_VERSION,
             exportedAt = System.currentTimeMillis(),
-            favoriteComics = favoriteComics.map { item ->
+            favoriteComics = favoriteComics.mapNotNull { item ->
                 ComicLabFavoriteComic(
-                    path = item.file.absolutePath,
+                    path = exportPath(item.file.path) ?: return@mapNotNull null,
                     addedAt = item.addedAt,
                     fileSize = item.fileSize,
                     modifiedAt = item.modifiedAt
                 )
             },
-            favoritePaths = favoritePaths.map { item ->
+            favoritePaths = favoritePaths.mapNotNull { item ->
                 ComicLabFavoritePath(
-                    path = item.directory.absolutePath,
+                    path = exportPath(item.directory.path) ?: return@mapNotNull null,
                     addedAt = item.addedAt
                 )
             },
-            readingHistory = history.map { item ->
+            readingHistory = history.mapNotNull { item ->
                 ComicLabHistoryEntry(
-                    path = item.file.absolutePath,
+                    path = exportPath(item.file.path) ?: return@mapNotNull null,
                     lastReadAt = item.lastReadAt,
                     fileSize = item.fileSize,
                     modifiedAt = item.modifiedAt
                 )
             },
-            bookcasePaths = AppSettings.bookcaseDirectoryPaths(context).sorted(),
-            mangaReadingProgress = ReaderProgressStore.exportSavedProgress(context),
-            ebookReadingProgress = EbookProgressStore.exportSavedProgress(context, knownFiles),
-            appSettings = AppSettings.snapshot(context)
+            bookcasePaths = bookcasePaths.mapNotNull(::exportPath).distinct().sorted(),
+            mangaReadingProgress = mangaReadingProgress.mapNotNull { item ->
+                val path = exportPath(item.path) ?: return@mapNotNull null
+                // 改写别名不能覆盖普通目标已有的进度。
+                if (path != item.path && path in mangaProgressPaths) return@mapNotNull null
+                item.copy(path = path)
+            }.distinctBy { it.path },
+            ebookReadingProgress = ebookReadingProgress.mapNotNull { item ->
+                item.copy(path = exportPath(item.path) ?: return@mapNotNull null)
+            },
+            appSettings = settings.copy(startMarkerErrorTags = settings.startMarkerErrorTags?.let { tags ->
+                exportErrorTags(tags, privateDirectories, ::exportPath)
+            })
         )
+    }
+
+    private fun exportErrorTags(
+        tags: String,
+        privateDirectories: Set<String>,
+        exportPath: (String) -> String?
+    ): String {
+        if (privateDirectories.isEmpty()) return tags
+        val checkedPaths = mutableListOf<IntRange>()
+        val privateReferences = mutableListOf<IntRange>()
+
+        fun checkPath(value: String, range: IntRange) {
+            val path = value.trim()
+            if (!File(path).isAbsolute) return
+            checkedPaths += range
+            if (exportPath(path) != path) privateReferences += range
+        }
+
+        // 引号界定完整路径，目录名中的空格和分号都作为路径内容检查。
+        val absoluteStart = """(?:[/\\]|[A-Za-z]:[/\\])"""
+        val quotedPaths = Regex(""""\s*$absoluteStart[^"]*"|'\s*$absoluteStart[^']*'""").findAll(tags).toList()
+        quotedPaths.forEach { checkPath(it.value.drop(1).dropLast(1), it.range) }
+
+        fun splitUnquoted(range: IntRange, separators: String): List<IntRange> = buildList {
+            var start = range.first
+            for (index in range) {
+                if (tags[index] in separators && quotedPaths.none { index in it.range }) {
+                    add(start until index)
+                    start = index + 1
+                }
+            }
+            add(start..range.last)
+        }
+
+        val parts = splitUnquoted(tags.indices, ";")
+        parts.forEach { part ->
+            val fields = splitUnquoted(part, ",，")
+            var index = 0
+            while (index < fields.size) {
+                val field = fields[index]
+                if (!File(tags.substring(field).trim()).isAbsolute) {
+                    index++
+                    continue
+                }
+                // 逗号也能出现在目录名里。优先采用确实存在的最长路径，再退回单个字段。
+                val end = (fields.lastIndex downTo index + 1).firstOrNull { candidate ->
+                    File(tags.substring(field.first, fields[candidate].last + 1).trim()).exists()
+                } ?: index
+                val pathRange = field.first..fields[end].last
+                checkPath(tags.substring(pathRange), pathRange)
+                index = end + 1
+            }
+        }
+
+        // 兼容旧标签中的裸路径字面值，已检查的完整路径优先于子串匹配。
+        privateDirectories.forEach { directory ->
+            val literalPath = Regex(
+                """(?<![\p{L}\p{N}_./\\-])${Regex.escape(directory)}(?=$|[/\\;\s,，"'=)\]])"""
+            )
+            literalPath.findAll(tags).forEach { match ->
+                if (checkedPaths.none { match.range.first in it && match.range.last in it }) {
+                    privateReferences += match.range
+                }
+            }
+        }
+        if (privateReferences.isEmpty()) return tags
+        return parts.filterNot { part ->
+            privateReferences.any { it.first <= part.last && part.first <= it.last }
+        }.map { tags.substring(it) }.filter { it.isNotBlank() }.joinToString(";")
     }
 
     fun importAndMerge(

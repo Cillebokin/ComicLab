@@ -27,7 +27,7 @@ import org.junit.runner.RunWith
 class ConfigurationImportCountInstrumentedTest {
     private val base = InstrumentationRegistry.getInstrumentation().targetContext
     private val names = listOf("app_settings", "favorite_comic_prefs", "favorite_path_prefs",
-        "reading_history_prefs", "reader_prefs", "ebook_progress_prefs")
+        "reading_history_prefs", "reader_prefs", "ebook_progress_prefs", "privacy_prefs")
     @get:Rule val temporaryFolder = TemporaryFolder(base.cacheDir)
     private lateinit var context: Context
     private lateinit var prefix: String
