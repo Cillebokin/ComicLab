@@ -65,6 +65,22 @@ class PrivacyStoreCredentialsTest {
     }
 
     @Test
+    fun invalidatedUiRequestCannotCommitInitializationOrAReplacement() {
+        val directory = temporaryFolder.newFolder("private")
+        var checks = 0
+        assertFalse(PrivacyStore.initializeCredentials(context, pin, pattern, directory) { ++checks == 1 })
+        assertEquals(CredentialState.UNINITIALIZED, PrivacyStore.credentialState(context))
+        assertTrue(PrivacyStore.privacyDirectories(context).isEmpty())
+
+        initialize()
+        checks = 0
+        assertEquals(VerifyResult.INVALID_STATE,
+            PrivacyStore.updatePinWithOldPin(context, pin, "654321", now) { ++checks == 1 })
+        assertEquals(0, PrivacyStore.failedAttempts(context, now))
+        assertEquals(VerifyResult.SUCCESS, PrivacyStore.verifyPin(context, pin, now))
+    }
+
+    @Test
     fun rejectsMalformedInputsWithoutCreatingAnAccountOrCountingAnAttempt() {
         assertFalse(PrivacyStore.initializeCredentials(context, "１２３４５６", pattern))
         assertFalse(PrivacyStore.initializeCredentials(context, pin, listOf(0, 1, 2)))

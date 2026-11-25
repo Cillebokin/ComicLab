@@ -22,6 +22,7 @@ import com.example.comiclab.core.store.PrefsGateway
 import com.example.comiclab.core.store.PrivacyStore
 import com.example.comiclab.ui.common.createRounded
 import com.example.comiclab.ui.common.SystemBars
+import com.example.comiclab.ui.privacy.PrivacyAuthDialogController
 import com.example.comiclab.ui.settings.SettingsSection
 import com.example.comiclab.ui.settings.SettingsSectionAdapter
 
@@ -42,6 +43,7 @@ import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.ArrayAdapter
 import android.widget.AdapterView
@@ -164,6 +166,12 @@ class SettingsActivity : AppCompatActivity() {
     private var configurationExportRunning = false
     @Volatile
     private var destroyed = false
+    private val privacyAuth by lazy {
+        PrivacyAuthDialogController(this) { visible ->
+            if (visible) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -194,6 +202,11 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
         refreshNasDownloadPath()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshPrivacySettings()
     }
 
     override fun onStop() {
@@ -260,6 +273,7 @@ class SettingsActivity : AppCompatActivity() {
         bindLanguageSetting()
         bindTranslationSettings()
         bindNasShareSettings()
+        bindPrivacySettings()
         bindDarkModeSetting()
         bindReadingDirection()
         bindEnhancementScale()
@@ -298,6 +312,9 @@ class SettingsActivity : AppCompatActivity() {
             SETTINGS_SECTION_NAS -> settingsSections.indexOfFirst {
                 it.layoutResId == R.layout.settings_section_nas
             }
+            SETTINGS_SECTION_PRIVACY -> settingsSections.indexOfFirst {
+                it.layoutResId == R.layout.settings_section_privacy
+            }
             SETTINGS_SECTION_AUTO_TRANSLATION -> settingsSections.indexOfFirst {
                 it.layoutResId == R.layout.settings_section_translation
             }
@@ -320,6 +337,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun createSettingsSections(): List<SettingsSection> = buildList {
         add(SettingsSection(R.string.settings_section_appearance, R.layout.settings_section_appearance))
         add(SettingsSection(R.string.file_browser, R.layout.settings_section_file_browser))
+        add(SettingsSection(R.string.settings_section_privacy, R.layout.settings_section_privacy))
         add(SettingsSection(R.string.settings_section_reading, R.layout.settings_section_reading))
         add(SettingsSection(R.string.settings_section_configuration, R.layout.settings_section_configuration))
         add(SettingsSection(R.string.source_nas, R.layout.settings_section_nas))
@@ -586,6 +604,40 @@ class SettingsActivity : AppCompatActivity() {
         cancelled.set(true)
         translationSettingsTestCancelled = null
         if (::btnTranslationTest.isInitialized) btnTranslationTest.isEnabled = true
+    }
+
+    private fun bindPrivacySettings() {
+        findViewById<View>(R.id.btnPrivacySetupCredentials).setOnClickListener {
+            privacyAuth.startInitializationFlow(onCompleted = ::refreshPrivacySettings)
+        }
+        findViewById<View>(R.id.btnPrivacyRepairPattern).setOnClickListener {
+            privacyAuth.showPinRecoveryPatternFlow(::refreshPrivacySettings)
+        }
+        findViewById<View>(R.id.btnPrivacyChangePin).setOnClickListener {
+            privacyAuth.showChangePinFlow(::refreshPrivacySettings)
+        }
+        findViewById<View>(R.id.btnPrivacyChangePattern).setOnClickListener {
+            privacyAuth.showChangePatternFlow(::refreshPrivacySettings)
+        }
+        refreshPrivacySettings()
+    }
+
+    private fun refreshPrivacySettings() {
+        val state = PrivacyStore.credentialState(this)
+        val ready = state == PrivacyStore.CredentialState.READY
+        findViewById<TextView>(R.id.tvPrivacyCredentialState).setText(when (state) {
+            PrivacyStore.CredentialState.UNINITIALIZED -> R.string.privacy_credentials_uninitialized
+            PrivacyStore.CredentialState.READY -> R.string.privacy_credentials_ready
+            PrivacyStore.CredentialState.PIN_ONLY_RECOVERABLE -> R.string.privacy_credentials_recoverable
+            PrivacyStore.CredentialState.CORRUPTED_LOCKED -> R.string.privacy_credentials_corrupted
+        })
+        findViewById<View>(R.id.btnPrivacySetupCredentials).visibility =
+            if (state == PrivacyStore.CredentialState.UNINITIALIZED) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.btnPrivacyRepairPattern).visibility =
+            if (state == PrivacyStore.CredentialState.PIN_ONLY_RECOVERABLE) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.btnPrivacyChangePin).visibility = if (ready) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.btnPrivacyChangePattern).visibility = if (ready) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.tvPrivacyResetHelp).visibility = if (ready) View.VISIBLE else View.GONE
     }
 
     private fun bindNasShareSettings() {
@@ -1127,6 +1179,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        privacyAuth.close()
         nasDownloadPathDialog?.dismiss()
         cancelTranslationSettingsTest()
         translationModelsImportDialog?.dismiss()
@@ -1684,6 +1737,7 @@ class SettingsActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_SETTINGS_SECTION = "settings_section"
         const val SETTINGS_SECTION_NAS = "nas"
+        const val SETTINGS_SECTION_PRIVACY = "privacy"
         const val SETTINGS_SECTION_AUTO_TRANSLATION = "auto_translation"
         private const val STATE_SETTINGS_SECTION_INDEX = "settings_section_index"
         private const val CHINESE_LANGUAGE_INDEX = 0

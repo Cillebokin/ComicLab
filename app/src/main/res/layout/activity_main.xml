@@ -296,17 +296,31 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/linearLayoutTool">
 
-        <com.example.comiclab.BookcaseAwareListView
-            android:id="@+id/listFiles"
+        <com.example.comiclab.ui.privacy.PrivacyPullDownLayout
+            android:id="@+id/privacyPullDownLayout"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="@android:color/transparent"
-            android:choiceMode="none"
-            android:clipToPadding="true"
-            android:divider="@drawable/divider_file_picker_item"
-            android:dividerHeight="1dp"
-            android:listSelector="@android:color/transparent"
-            android:saveEnabled="false" />
+            android:layout_height="match_parent">
+            <com.example.comiclab.BookcaseAwareListView
+                android:id="@+id/listFiles"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@android:color/transparent"
+                android:choiceMode="none"
+                android:clipToPadding="true"
+                android:divider="@drawable/divider_file_picker_item"
+                android:dividerHeight="1dp"
+                android:listSelector="@android:color/transparent"
+                android:saveEnabled="false" />
+            <TextView
+                android:id="@+id/tvPrivacyPullHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_file_picker_card"
+                android:gravity="center"
+                android:padding="12dp"
+                android:textColor="@color/comiclab_text_secondary"
+                android:visibility="gone" />
+        </com.example.comiclab.ui.privacy.PrivacyPullDownLayout>
 
         <TextView
             android:id="@+id/tvPrivacyBrowserEmpty"

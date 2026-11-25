@@ -57,7 +57,8 @@ internal object PrivacyStore {
         context: Context,
         pin: String,
         patternNodes: List<Int>,
-        initialDirectory: File? = null
+        initialDirectory: File? = null,
+        canCommit: () -> Boolean = { true }
     ): Boolean {
         if (!validPin(pin)) return false
         val pattern = patternValue(patternNodes) ?: return false
@@ -65,12 +66,14 @@ internal object PrivacyStore {
 
         return writeToStore {
             val preferences = PrefsGateway.open(context, PREFS_NAME)
-            if (readCredentials(preferences).state != CredentialState.UNINITIALIZED) {
+            if (!canCommit() || readCredentials(preferences).state != CredentialState.UNINITIALIZED) {
                 return@writeToStore false
             }
             val values = credentialValues(createCredential(pin), createCredential(pattern)).toMutableMap()
             if (initialPath != null) values[KEY_PRIVACY_DIRECTORIES] = setOf(initialPath)
-            commitChanges(preferences, values + Cooldown().values())
+            commitChanges(preferences, values + Cooldown().values()) {
+                canCommit() && (initialDirectory == null || markablePath(initialDirectory) == initialPath)
+            }
         }
     }
 
@@ -87,21 +90,23 @@ internal object PrivacyStore {
         context: Context,
         oldPin: String,
         newPin: String,
-        clock: ClockReading? = null
+        clock: ClockReading? = null,
+        canCommit: () -> Boolean = { true }
     ): VerifyResult {
         if (!validPin(newPin)) return VerifyResult.INVALID_INPUT
-        return authenticate(context, Kind.PIN, oldPin.takeIf(::validPin), clock, Replacement(Kind.PIN, newPin))
+        return authenticate(context, Kind.PIN, oldPin.takeIf(::validPin), clock, Replacement(Kind.PIN, newPin), canCommit)
     }
 
     fun updatePatternWithOldPattern(
         context: Context,
         oldPattern: List<Int>,
         newPattern: List<Int>,
-        clock: ClockReading? = null
+        clock: ClockReading? = null,
+        canCommit: () -> Boolean = { true }
     ): VerifyResult {
         val replacement = patternValue(newPattern) ?: return VerifyResult.INVALID_INPUT
         return authenticate(
-            context, Kind.PATTERN, patternValue(oldPattern), clock, Replacement(Kind.PATTERN, replacement)
+            context, Kind.PATTERN, patternValue(oldPattern), clock, Replacement(Kind.PATTERN, replacement), canCommit
         )
     }
 
@@ -109,10 +114,11 @@ internal object PrivacyStore {
         context: Context,
         pin: String,
         newPattern: List<Int>,
-        clock: ClockReading? = null
+        clock: ClockReading? = null,
+        canCommit: () -> Boolean = { true }
     ): VerifyResult {
         val replacement = patternValue(newPattern) ?: return VerifyResult.INVALID_INPUT
-        return authenticate(context, Kind.PIN, pin.takeIf(::validPin), clock, Replacement(Kind.PATTERN, replacement))
+        return authenticate(context, Kind.PIN, pin.takeIf(::validPin), clock, Replacement(Kind.PATTERN, replacement), canCommit)
     }
 
     fun failedAttempts(context: Context, clock: ClockReading? = null): Int =
@@ -248,10 +254,15 @@ internal object PrivacyStore {
         }
     }
 
-    private fun commitChanges(preferences: SharedPreferences, changes: Map<String, Any?>): Boolean =
+    private fun commitChanges(
+        preferences: SharedPreferences,
+        changes: Map<String, Any?>,
+        canCommit: () -> Boolean = { true }
+    ): Boolean =
         synchronized(lock) {
             val previous = preferences.all
             val changed = changes.filter { (key, value) -> previous[key] != value }
+            if (!canCommit()) return@synchronized false
             if (changed.isEmpty() || preferences.edit().putValues(changed).commit()) return@synchronized true
 
             // commit() 可能已更新内存，返回前同步尝试恢复本次修改。
@@ -367,8 +378,10 @@ internal object PrivacyStore {
         kind: Kind,
         input: String?,
         clock: ClockReading?,
-        replacement: Replacement? = null
+        replacement: Replacement? = null,
+        canCommit: () -> Boolean = { true }
     ): VerifyResult = writeToStore {
+        if (!canCommit()) return@writeToStore VerifyResult.INVALID_STATE
         val preferences = PrefsGateway.open(context, PREFS_NAME)
         val credentials = readCredentials(preferences)
         val pin = credentials.pin ?: return@writeToStore VerifyResult.INVALID_STATE
@@ -401,7 +414,9 @@ internal object PrivacyStore {
             Kind.PATTERN -> credentialValues(pin, createCredential(replacement.input))
             null -> emptyMap()
         }
-        if (commitChanges(preferences, changed + Cooldown().values())) VerifyResult.SUCCESS else VerifyResult.STORAGE_ERROR
+        if (commitChanges(preferences, changed + Cooldown().values(), canCommit)) return@writeToStore VerifyResult.SUCCESS
+        if (canCommit() || !commitChanges(preferences, Cooldown().values())) return@writeToStore VerifyResult.STORAGE_ERROR
+        VerifyResult.INVALID_STATE
     }
 
     private fun readClock(context: Context): ClockReading {
