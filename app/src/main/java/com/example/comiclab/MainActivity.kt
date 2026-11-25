@@ -299,6 +299,7 @@ class MainActivity : AppCompatActivity() {
         data class InsufficientSpace(val requiredBytes: Long, val availableBytes: Long) : NasDownloadResult
         data object Cancelled : NasDownloadResult
         data object RemoteVersionChanged : NasDownloadResult
+        data object InvalidLocalPath : NasDownloadResult
         data class Failed(
             val exception: Exception,
             val failure: NasFailureDetails
@@ -635,6 +636,7 @@ class MainActivity : AppCompatActivity() {
         }
         showInterruptedExportNotice()
         updateIncognitoModeButton()
+        val scrollStateToRestore = captureFileListScrollState()
         refreshNasFeatureAvailability()
         updateNasCacheSummary()
         clearFileListTouchState()
@@ -647,7 +649,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (prefs.getBoolean(KEY_STORAGE_PERMISSION_PROMPTED, false)) {
-            initializeBrowserIfPermitted(captureFileListScrollState())
+            initializeBrowserIfPermitted(scrollStateToRestore)
         }
     }
 
@@ -868,15 +870,6 @@ class MainActivity : AppCompatActivity() {
         // 接受新的显式定位后，回到前台时不再恢复进入隐私区之前的目录。
         PrivacySessionManager.consumePendingNormalRestorePath()
         return true
-    }
-
-    private fun canonicalPathWithinStorageRoot(path: String): File? {
-        val storageRoot = runCatching { File(STORAGE_ROOT_PATH).canonicalFile.toPath() }
-            .getOrNull()
-            ?: return null
-        return runCatching {
-            File(path).canonicalFile.takeIf { it.toPath().startsWith(storageRoot) }
-        }.getOrNull()
     }
 
     private fun openDirectoryContainingTarget(targetPath: String): Boolean {
@@ -1231,8 +1224,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun captureFileListScrollState(): FileListScrollState? {
-        return directoryRefreshController.captureFileListScrollState()
+    private fun captureFileListScrollState(): FileListScrollState? = if (isNasSourceSelected) {
+        directoryScrollStateCache.get(currentPath)
+    } else {
+        directoryRefreshController.captureFileListScrollState()
     }
 
     private fun showClassifyMenu() {
@@ -1780,7 +1775,7 @@ class MainActivity : AppCompatActivity() {
         btnBack.alpha = if (btnBack.isEnabled) 1f else 0.38f
 
         val canSwitchSource = pendingFileTransfer == null && !nasDownloadInProgress
-        sourceNasButton.isEnabled = canSwitchSource && !privacyBrowserActive && !replacingPrivateBrowser
+        sourceNasButton.isEnabled = canSwitchSource
         sourceLocalButton.isEnabled = canSwitchSource
         sourceSwitchTrack.alpha = if (canSwitchSource) 1f else 0.45f
 
@@ -1816,16 +1811,30 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun selectFileSource(isNas: Boolean) {
-        if (isNas == isNasSourceSelected || pendingFileTransfer != null || privacyBrowserActive || replacingPrivateBrowser) {
-            return
-        }
+        if (isNas == isNasSourceSelected || pendingFileTransfer != null) return
 
         val wasNas = isNasSourceSelected
+        var replacingLocal = false
+        var localPathChanged = false
         if (wasNas) {
             pendingNasArchiveReopen = null
             cancelNasDirectoryRequest()
+            val directory = PrivacyAccessGuard.resolveNormalRestoreDirectory(this, currentPath)
+            val ordinaryPath = directory?.path ?: STORAGE_ROOT_PATH
+            if (ordinaryPath != currentPath) {
+                clearBrowserRows()
+                setCurrentPath(ordinaryPath)
+                localPathChanged = true
+            }
         } else {
-            captureFileListScrollState()?.let(directoryScrollStateCache::save)
+            val restorePath = PrivacySessionManager.exitPrivacySpace()
+                ?: PrivacySessionManager.consumePendingNormalRestorePath()
+            replacingLocal = replacingPrivateBrowser || restorePath != null
+            if (restorePath != null) {
+                openNormalDirectoryAfterPrivacy(restorePath)
+            } else if (!replacingLocal) {
+                captureFileListScrollState()?.let(::normalScrollState)?.let(directoryScrollStateCache::save)
+            }
         }
         val generation = ++sourceTransitionGeneration
         listView.animate().cancel()
@@ -1834,7 +1843,7 @@ class MainActivity : AppCompatActivity() {
         listView.alpha = 1f
         nasEmptyState.translationX = 0f
         nasEmptyState.alpha = 1f
-        listView.visibility = if (wasNas) View.GONE else View.VISIBLE
+        listView.visibility = if (wasNas || replacingLocal) View.GONE else View.VISIBLE
         nasEmptyState.visibility = if (wasNas) View.VISIBLE else View.GONE
 
         isNasSourceSelected = isNas
@@ -1845,7 +1854,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             val downloadedDirectory = pendingLocalDownloadDirectory
             pendingLocalDownloadDirectory = null
-            if (downloadedDirectory != null && downloadedDirectory == canonicalPathWithinStorageRoot(currentPath)) {
+            if (localPathChanged || replacingPrivateBrowser || downloadedDirectory?.path == currentPath) {
                 loadCurrentDirectory(scrollStateToRestore = directoryScrollStateCache.get(currentPath))
             }
         }
@@ -1853,7 +1862,7 @@ class MainActivity : AppCompatActivity() {
         updateFileTransferToolbar()
 
         val width = findViewById<View>(R.id.fileListPanel).width.toFloat()
-        if (width <= 0f) {
+        if (replacingLocal || width <= 0f) {
             listView.visibility = if (isNas) View.GONE else View.VISIBLE
             nasEmptyState.visibility = if (isNas) View.VISIBLE else View.GONE
             return
@@ -2349,6 +2358,15 @@ class MainActivity : AppCompatActivity() {
                 .showRounded()
             return
         }
+        val cacheRoot = NasShareArchiveDownloader.cacheDirectory(cacheDir)
+        val destinationDirectory = if (saveToLocal) {
+            try {
+                NasShareArchiveDownloader.resolveLocalDownloadDirectory(this, NasShareStore.downloadPath(this))
+            } catch (_: Exception) {
+                showMessage(R.string.nas_download_path_choose_ordinary)
+                return
+            }
+        } else cacheRoot
         val profile = selectedNasProfile ?: run {
             showMessage(R.string.nas_directory_password_required)
             return
@@ -2360,24 +2378,6 @@ class MainActivity : AppCompatActivity() {
             } else {
                 showNasSessionPasswordDialog(profile) { startNasArchiveDownload(entry, saveToLocal) }
             }
-            return
-        }
-        val cacheRoot = NasShareArchiveDownloader.cacheDirectory(cacheDir)
-        val destinationDirectory = try {
-            if (saveToLocal) {
-                NasShareArchiveDownloader.resolveLocalDownloadDirectory(
-                    Environment.getExternalStorageDirectory(),
-                    NasShareStore.downloadPath(this)
-                )
-            } else {
-                cacheRoot
-            }
-        } catch (exception: Exception) {
-            android.util.Log.e("ComicLabNAS", "Invalid NAS local download directory", exception)
-            showNasFailureDialog(
-                if (saveToLocal) NasFailureClassifier.localPathFailure(exception)
-                else NasFailureClassifier.classify(exception)
-            )
             return
         }
         val destination = try {
@@ -2396,7 +2396,11 @@ class MainActivity : AppCompatActivity() {
         }
         val cached = !saveToLocal && destination.isFile && destination.length() == entry.sizeBytes
         try {
+            if (saveToLocal) NasShareArchiveDownloader.requireOrdinaryLocalPath(this, destination)
             if (!cached) NasShareArchiveDownloader.checkAvailableSpace(destinationDirectory, entry.sizeBytes)
+        } catch (_: NasShareArchiveDownloader.LocalDownloadPathException) {
+            showMessage(R.string.nas_download_path_choose_ordinary)
+            return
         } catch (exception: NasShareArchiveDownloader.InsufficientStorageException) {
             showNasDownloadInsufficientSpace(exception.requiredBytes, exception.availableBytes)
             return
@@ -2446,6 +2450,8 @@ class MainActivity : AppCompatActivity() {
                 NasDownloadResult.Cancelled
             } catch (_: NasShareArchiveDownloader.RemoteVersionChangedException) {
                 NasDownloadResult.RemoteVersionChanged
+            } catch (_: NasShareArchiveDownloader.LocalDownloadPathException) {
+                NasDownloadResult.InvalidLocalPath
             } catch (exception: Exception) {
                 val failure = NasFailureClassifier.classify(exception, localDownload = saveToLocal)
                 discardRejectedNasPassword(profile, password, failure)
@@ -2468,6 +2474,13 @@ class MainActivity : AppCompatActivity() {
                         if (result.openForReading && selectedNasProfile?.id == profile.id) {
                             openMangaPreview(result.file)
                         } else if (!result.openForReading) {
+                            if (runCatching {
+                                    NasShareArchiveDownloader.requireOrdinaryLocalPath(this, result.file)
+                                }.isFailure
+                            ) {
+                                showMessage(R.string.nas_download_path_choose_ordinary)
+                                return@runOnUiThread
+                            }
                             val downloadedDirectory = result.file.parentFile
                             invalidateDirectoryChildCount(downloadedDirectory)
                             pendingLocalDownloadDirectory = downloadedDirectory
@@ -2483,6 +2496,8 @@ class MainActivity : AppCompatActivity() {
                     )
 
                     NasDownloadResult.Cancelled -> showMessage(R.string.nas_download_cancelled)
+
+                    NasDownloadResult.InvalidLocalPath -> showMessage(R.string.nas_download_path_choose_ordinary)
 
                     NasDownloadResult.RemoteVersionChanged -> {
                         AlertDialog.Builder(this)

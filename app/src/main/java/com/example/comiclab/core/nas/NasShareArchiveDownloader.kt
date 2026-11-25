@@ -1,6 +1,9 @@
 package com.example.comiclab.core.nas
 
+import android.content.Context
+import android.os.Environment
 import android.util.Log
+import com.example.comiclab.core.store.PrivacyStore
 import com.hierynomus.msdtyp.AccessMask
 import com.hierynomus.msfscc.FileAttributes
 import com.hierynomus.msfscc.fileinformation.FileAllInformation
@@ -14,6 +17,8 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.EnumSet
@@ -34,6 +39,8 @@ internal object NasShareArchiveDownloader {
     class DownloadCancelledException : IOException("NAS download cancelled")
 
     class RemoteVersionChangedException : IOException("NAS archive version changed")
+
+    class LocalDownloadPathException : IOException("NAS download requires an ordinary local directory")
 
     private data class RemoteVersion(
         val size: Long,
@@ -183,25 +190,48 @@ internal object NasShareArchiveDownloader {
         return File(File(cacheRoot, directoryName), entry.name)
     }
 
-    fun resolveLocalDownloadDirectory(storageRoot: File, relativePath: String): File {
+    fun resolveLocalDownloadDirectory(context: Context, relativePath: String): File {
         val normalizedPath = relativePath.trim().replace('\\', '/')
-        require(
-            normalizedPath.isNotEmpty() &&
-                !normalizedPath.startsWith('/') &&
-                ':' !in normalizedPath &&
-                '\u0000' !in normalizedPath
-        ) { "Invalid local download path" }
-        val segments = normalizedPath.split('/')
-        require(segments.none { it.isBlank() || it == "." || it == ".." }) {
-            "Invalid local download path"
-        }
+        if (normalizedPath.startsWith('/') || ':' in normalizedPath || '\u0000' in normalizedPath ||
+            normalizedPath.split('/').any { it.isBlank() || it == "." || it == ".." }
+        ) throw LocalDownloadPathException()
 
-        val canonicalRoot = storageRoot.canonicalFile
-        val directory = File(canonicalRoot, normalizedPath).canonicalFile
-        check(directory != canonicalRoot && directory.toPath().startsWith(canonicalRoot.toPath())) {
-            "Local download path resolves outside shared storage"
+        val root = localStorageRoot(Environment.getExternalStorageDirectory())
+        val directory = PrivacyStore.resolveCanonicalPath(File(root.toFile(), normalizedPath))?.let(::File)
+            ?: throw LocalDownloadPathException()
+        requireOrdinaryLocalPath(context, directory, root)
+        if (generateSequence(directory) { it.parentFile }.takeWhile { it.toPath() != root }
+                .any { Files.exists(it.toPath(), NOFOLLOW_LINKS) && !it.isDirectory }
+        ) {
+            throw LocalDownloadPathException()
         }
         return directory
+    }
+
+    private fun localStorageRoot(root: File): Path =
+        PrivacyStore.resolveCanonicalPath(root)?.let { File(it).toPath() }
+            ?.takeIf { Files.isDirectory(it) } ?: throw LocalDownloadPathException()
+
+    fun requireOrdinaryLocalPath(
+        context: Context,
+        file: File,
+        root: Path = localStorageRoot(Environment.getExternalStorageDirectory())
+    ) {
+        val canonical = PrivacyStore.resolveCanonicalPath(file) ?: throw LocalDownloadPathException()
+        val path = File(canonical).toPath()
+        if (path != file.toPath() || path == root || !path.startsWith(root) ||
+            PrivacyStore.isCanonicalPathUnderPrivacyDirectory(context, canonical)
+        ) throw LocalDownloadPathException()
+    }
+
+    fun <T> withOrdinaryLocalPath(
+        context: Context,
+        file: File,
+        root: Path,
+        action: () -> T
+    ): T = PrivacyStore.withStableDirectoryMarks {
+        requireOrdinaryLocalPath(context, file, root)
+        action()
     }
 
     fun nonConflictingDestination(directory: File, fileName: String): File {
@@ -294,6 +324,7 @@ internal object NasShareArchiveDownloader {
     ): File = cancellation.run {
         val parent = destination.parentFile
             ?: throw IOException("NAS cache destination has no parent")
+        publicParts?.requireOrdinaryDestination(destination)
         if (!parent.isDirectory && !parent.mkdirs()) {
             throw IOException("Could not prepare NAS download directory")
         }
@@ -309,7 +340,7 @@ internal object NasShareArchiveDownloader {
             cancellation.checkActive()
             withInput { totalBytes, input, verifyRemoteVersion ->
                 if (totalBytes <= 0L) throw EOFException("NAS archive is empty")
-                if (destination.isFile && destination.length() == expectedSize && expectedSize > 0L) {
+                if (replaceExisting && destination.isFile && destination.length() == expectedSize && expectedSize > 0L) {
                     cancellation.beginPublication()
                     ready = true
                     return@withInput
@@ -318,6 +349,7 @@ internal object NasShareArchiveDownloader {
                 onProgress(0L, totalBytes)
                 var downloadedBytes = 0L
                 if (publicParts != null) {
+                    publicParts.requireOrdinaryDestination(destination)
                     partLease = publicParts.createPart(temporary)
                 } else {
                     Files.createFile(temporary.toPath())
@@ -346,12 +378,16 @@ internal object NasShareArchiveDownloader {
                 cancellation.checkActive()
                 verifyRemoteVersion()
                 cancellation.beginPublication()
-                if (replaceExisting) {
-                    Files.move(temporary.toPath(), destination.toPath(),
-                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-                } else {
-                    Files.move(temporary.toPath(), destination.toPath())
+                val movePart = {
+                    if (replaceExisting) {
+                        Files.move(temporary.toPath(), destination.toPath(),
+                            StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                    } else {
+                        Files.move(temporary.toPath(), destination.toPath())
+                    }
                 }
+                if (publicParts == null) movePart()
+                else publicParts.withOrdinaryDestination(destination, movePart)
                 ready = true
             }
         } catch (exception: Exception) {

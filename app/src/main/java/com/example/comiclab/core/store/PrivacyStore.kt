@@ -204,6 +204,9 @@ internal object PrivacyStore {
     internal fun isCanonicalPathUnderPrivacyDirectory(context: Context, canonicalPath: String): Boolean =
         privacyDirectories(context).any { BookcaseFolderPaths.isPathInDirectory(canonicalPath, it) }
 
+    /** 只在此执行短暂的文件系统操作，使其与隐私标记更新互斥。 */
+    internal fun <T> withStableDirectoryMarks(action: () -> T): T = synchronized(lock, action)
+
     // 两个子树查询用于拦截文件操作，路径无法确认时也需要拦截。
     fun containsPrivacyDescendant(context: Context, directoryPath: String): Boolean {
         val path = resolveCanonicalPath(directoryPath) ?: return true
