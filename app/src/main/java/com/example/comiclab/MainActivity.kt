@@ -82,6 +82,7 @@ import com.example.comiclab.ui.browser.model.FileItem
 import com.example.comiclab.ui.privacy.PrivacyAccessGuard
 import com.example.comiclab.ui.privacy.PrivacyAccessGuard.PRIVACY_VIRTUAL_ROOT_PATH
 import com.example.comiclab.ui.privacy.PrivacySessionManager
+import com.example.comiclab.ui.privacy.ReaderSourcePrivacy
 import com.example.comiclab.ui.browser.transfer.FileTransferController
 import com.example.comiclab.ui.browser.transfer.FileTransferWorkflowController
 import com.example.comiclab.ui.browser.transfer.FileTransferMetadataUpdatePolicy
@@ -3519,28 +3520,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openMangaPreview(file: File) {
-        when (ReaderFileDetector.typeOf(file)) {
+        val intent = when (ReaderFileDetector.typeOf(file)) {
             ReaderFileType.MOBI,
             ReaderFileType.EPUB,
-            ReaderFileType.TXT -> {
-                startActivity(
-                    Intent(this, EbookPreviewActivity::class.java).apply {
-                        putExtra(EbookPreviewActivity.EXTRA_BOOK_PATH, file.absolutePath)
-                    }
-                )
+            ReaderFileType.TXT -> Intent(this, EbookPreviewActivity::class.java).apply {
+                putExtra(EbookPreviewActivity.EXTRA_BOOK_PATH, file.absolutePath)
             }
 
             ReaderFileType.IMAGE_ARCHIVE,
-            ReaderFileType.PDF -> {
-                startActivity(
-                    Intent(this, MangaPreviewActivity::class.java).apply {
-                        putExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
-                    }
-                )
+            ReaderFileType.PDF -> Intent(this, MangaPreviewActivity::class.java).apply {
+                putExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
             }
 
-            null -> showMessage(getString(R.string.unsupported_archive_format))
+            null -> {
+                showMessage(getString(R.string.unsupported_archive_format))
+                return
+            }
         }
+        if (ReaderSourcePrivacy.authorizeLaunch(this, intent, file)) startActivity(intent)
     }
 
     private fun getMimeType(file: File): String {

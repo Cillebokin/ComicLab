@@ -1,5 +1,7 @@
 package com.example.comiclab
 
+import com.example.comiclab.ui.privacy.ReaderSourcePrivacy
+
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
@@ -27,6 +29,10 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
 
     private var prepareExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
+    private val sourcePrivacy = ReaderSourcePrivacy(this) {
+        stopPreparation()
+        discardPreparedCache()
+    }
 
     @Volatile
     private var destroyed = false
@@ -69,6 +75,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
 
         val path = intent.getStringExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH)
         val file = path?.let(::File)
+        if (file != null && !sourcePrivacy.bind(file)) return
         startFromBeginning = intent.getBooleanExtra(
             MangaReaderActivity.EXTRA_START_FROM_BEGINNING,
             false
@@ -86,12 +93,27 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
         prepareReader(file)
     }
 
-    override fun onDestroy() {
-        destroyed = true
+    override fun onStart() {
+        super.onStart()
+        sourcePrivacy.checkAccess()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        sourcePrivacy.checkAccess()
+    }
+
+    private fun stopPreparation() {
         prepareExecutor.shutdownNow().forEach { task ->
             (task as? PreparedReaderCacheLeaseTask)?.cancelBeforeRun()
         }
         handler.removeCallbacksAndMessages(null)
+    }
+
+    override fun onDestroy() {
+        destroyed = true
+        sourcePrivacy.close()
+        stopPreparation()
         if (!launchedReader) {
             discardPreparedCache()
         } else {
@@ -133,13 +155,13 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
             showError(R.string.reader_prepare_cache_failure)
             return
         }
-        val task = PreparedReaderCacheLeaseTask(writerLease, shouldRun = { !destroyed }) {
+        val task = PreparedReaderCacheLeaseTask(writerLease, shouldRun = { !destroyed && sourcePrivacy.canRead() }) {
             try {
                 prepareCacheOnWorker(file, outputDir)
             } catch (throwable: Throwable) {
                 android.util.Log.e("ComicLabPrepare", "prepared reader task failed", throwable)
                 handler.post {
-                    if (!destroyed) {
+                    if (!destroyed && sourcePrivacy.checkAccess()) {
                         discardPreparedCache()
                         showError(R.string.reader_prepare_cache_failure)
                     }
@@ -157,7 +179,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
 
     private fun prepareCacheOnWorker(file: File, outputDir: File) {
         clearOldPreparedReaderCaches()
-        if (destroyed || Thread.currentThread().isInterrupted) {
+        if (destroyed || Thread.currentThread().isInterrupted || !sourcePrivacy.canRead()) {
             return
         }
 
@@ -176,20 +198,21 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
 
         if (entries.isEmpty()) {
             handler.post {
-                if (!destroyed) {
+                if (!destroyed && sourcePrivacy.checkAccess()) {
                     discardPreparedCache()
                     showError(R.string.reader_prepare_no_images)
                 }
             }
             return
         }
+        if (!sourcePrivacy.canRead()) return
 
         val manifestWritten = runCatching {
             ComicArchive.writePreparedReaderManifest(outputDir, entries)
         }.isSuccess
         if (!manifestWritten) {
             handler.post {
-                if (!destroyed) {
+                if (!destroyed && sourcePrivacy.checkAccess()) {
                     discardPreparedCache()
                     showError(R.string.reader_prepare_cache_failure)
                 }
@@ -206,10 +229,10 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
                     file = file,
                     entries = initialEntries,
                     outputDir = outputDir,
-                    shouldContinue = { !destroyed }
+                    shouldContinue = { !destroyed && sourcePrivacy.canRead() }
                 ) { completed, total ->
                     handler.post {
-                        if (!destroyed) {
+                        if (!destroyed && sourcePrivacy.checkAccess()) {
                             setProgress(completed, total)
                         }
                     }
@@ -227,7 +250,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
         )
 
         handler.post {
-            if (destroyed) {
+            if (destroyed || !sourcePrivacy.checkAccess()) {
                 return@post
             }
 
@@ -297,6 +320,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
     }
 
     private fun openReader(file: File, outputDir: File) {
+        if (!sourcePrivacy.checkAccess()) return
         val handoff = PreparedReaderCacheLeaseRegistry.process.acquireHandoffLease(outputDir)
         if (handoff == null) {
             discardPreparedCache()
@@ -313,10 +337,15 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
             putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
             putExtra(MangaReaderActivity.EXTRA_START_PAGE_INDEX, explicitStartPageIndex)
             putExtra(MangaReaderActivity.EXTRA_PREPARED_READER_CACHE_DIR, outputDir.absolutePath)
+            putExtra(MangaReaderActivity.EXTRA_PREPARED_READER_HANDOFF_ID, handoff.id)
             putExtra(
                 MangaReaderActivity.EXTRA_READER_LOAD_STARTED_AT_NANOS,
                 readerLoadStartedAtNanos ?: 0L
             )
+        }
+        if (!ReaderSourcePrivacy.authorizeLaunch(this, intent, file)) {
+            discardPreparedCache()
+            return
         }
         try {
             startActivity(intent)
@@ -340,6 +369,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
     }
 
     private fun openReaderDirect(file: File) {
+        if (!sourcePrivacy.checkAccess()) return
         val intent = Intent(this, MangaReaderActivity::class.java).apply {
             putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
             putExtra(MangaReaderActivity.EXTRA_NEXT_HANDOFF_TOKEN,
@@ -353,6 +383,7 @@ class MangaReaderPrepareActivity : AppCompatActivity() {
                 readerLoadStartedAtNanos ?: 0L
             )
         }
+        if (!ReaderSourcePrivacy.authorizeLaunch(this, intent, file)) return
         try {
             startActivity(intent)
         } catch (throwable: Throwable) {

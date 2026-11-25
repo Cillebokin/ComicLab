@@ -111,6 +111,42 @@ class PreparedReaderCacheLeaseRegistryTest {
     }
 
     @Test
+    fun cancellingPendingHandoffWaitsForActiveWriter() {
+        val deletionExecutor = QueuedExecutor()
+        val registry = PreparedReaderCacheLeaseRegistry(deletionExecutor)
+        val directory = temporaryFolder.newFolder("cancelled-handoff")
+        val writer = checkNotNull(registry.acquireWriterLease(directory))
+        val handoff = checkNotNull(registry.acquireHandoffLease(directory))
+
+        registry.cancelHandoff(directory, writer.id)
+        assertEquals(0, deletionExecutor.pendingTaskCount)
+        registry.cancelHandoff(directory, handoff.id)
+        registry.cancelHandoff(directory, handoff.id)
+        assertEquals(0, deletionExecutor.pendingTaskCount)
+        assertTrue(directory.isDirectory)
+
+        writer.close()
+        assertEquals(1, deletionExecutor.pendingTaskCount)
+        deletionExecutor.runNext()
+        assertFalse(directory.exists())
+    }
+
+    @Test
+    fun cancellingConsumedHandoffLeavesReaderCacheIntact() {
+        val deletionExecutor = QueuedExecutor()
+        val registry = PreparedReaderCacheLeaseRegistry(deletionExecutor)
+        val directory = temporaryFolder.newFolder("consumed-handoff")
+        val handoff = checkNotNull(registry.acquireHandoffLease(directory))
+        val reader = checkNotNull(registry.acquireReaderOwner(directory))
+
+        registry.cancelHandoff(directory, handoff.id)
+        reader.close()
+
+        assertEquals(0, deletionExecutor.pendingTaskCount)
+        assertTrue(directory.isDirectory)
+    }
+
+    @Test
     fun remainingReaderOwnerCanContinueAcquiringUsageLeasesAfterAnotherOwnerCloses() {
         val deletionExecutor = QueuedExecutor()
         val registry = PreparedReaderCacheLeaseRegistry(deletionExecutor)

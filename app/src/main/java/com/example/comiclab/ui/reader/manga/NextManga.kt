@@ -7,7 +7,7 @@ import com.example.comiclab.ui.browser.DirectorySortPolicy
 import java.io.File
 import java.io.IOException
 
-internal fun findNextManga(current: File, order: DirectorySortOrder): File? {
+internal fun findNextManga(current: File, order: DirectorySortOrder, canOpen: (File) -> Boolean = { true }): File? {
     val parent = current.parentFile ?: return null
     val children = (parent.listFiles() ?: throw IOException("Cannot list comic directory"))
         .filterNot { it.name.startsWith(".") }
@@ -16,7 +16,7 @@ internal fun findNextManga(current: File, order: DirectorySortOrder): File? {
     if (index < 0) return null
     return sorted.drop(index + 1).firstOrNull {
         when (ReaderFileDetector.typeOf(it)) {
-            ReaderFileType.IMAGE_ARCHIVE, ReaderFileType.PDF -> true
+            ReaderFileType.IMAGE_ARCHIVE, ReaderFileType.PDF -> canOpen(it)
             else -> false
         }
     }

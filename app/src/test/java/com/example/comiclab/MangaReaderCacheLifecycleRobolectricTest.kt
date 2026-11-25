@@ -33,6 +33,7 @@ import com.example.comiclab.ui.reader.manga.ReaderPreviewAdapter
 import com.example.comiclab.ui.reader.manga.ReaderSubsamplingImageView
 import com.example.comiclab.ui.reader.manga.SubsamplingMangaPageAdapter
 import com.example.comiclab.ui.privacy.PrivacySessionManager
+import com.example.comiclab.ui.privacy.ReaderSourcePrivacy
 import java.lang.reflect.Proxy
 import android.content.Context
 import org.junit.Assert.assertEquals
@@ -68,10 +69,12 @@ class MangaReaderCacheLifecycleRobolectricTest {
         assertTrue(PrivacyStore.addPrivacyDirectory(context, directory))
         assertTrue(PrivacySessionManager.enterPrivacySpace(null, PrivacySessionManager.sessionEpoch))
         try {
+            val intent = Intent(context, MangaReaderActivity::class.java)
+                .putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, archive.absolutePath)
+            assertTrue(ReaderSourcePrivacy.authorizeLaunch(context, intent, archive))
             val controller = Robolectric.buildActivity(
                 MangaReaderActivity::class.java,
-                Intent(context, MangaReaderActivity::class.java)
-                    .putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, archive.absolutePath)
+                intent
             )
             val activity = controller.get()
             activity.readerLoadExecutorForTest = ManualExecutorService()

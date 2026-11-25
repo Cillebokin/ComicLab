@@ -1,6 +1,7 @@
 package com.example.comiclab
 
 import com.example.comiclab.ui.common.SystemBars
+import com.example.comiclab.ui.privacy.ReaderSourcePrivacy
 
 import android.content.Intent
 import android.os.Bundle
@@ -33,6 +34,7 @@ class EbookPreviewActivity : AppCompatActivity() {
     private lateinit var btnReadFromBeginning: Button
 
     private val previewExecutor = Executors.newSingleThreadExecutor()
+    private val sourcePrivacy = ReaderSourcePrivacy(this) { previewExecutor.shutdownNow() }
     @Volatile
     private var loadGeneration = 0
     private var bookFile: File? = null
@@ -61,6 +63,7 @@ class EbookPreviewActivity : AppCompatActivity() {
         btnReadFromBeginning = findViewById(R.id.btnEbookReadFromBeginning)
 
         val file = intent.getStringExtra(EXTRA_BOOK_PATH)?.let(::File)
+        if (file != null && !sourcePrivacy.bind(file)) return
         if (file == null || !file.isFile) {
             showError(getString(R.string.message_invalid_file))
             return
@@ -78,13 +81,20 @@ class EbookPreviewActivity : AppCompatActivity() {
         loadBook(file)
     }
 
+    override fun onStart() {
+        super.onStart()
+        sourcePrivacy.checkAccess()
+    }
+
     override fun onResume() {
         super.onResume()
+        if (!sourcePrivacy.checkAccess()) return
         updateProgress()
     }
 
     override fun onDestroy() {
         destroyed = true
+        sourcePrivacy.close()
         loadGeneration++
         imgCover.setImageDrawable(null)
         previewExecutor.shutdownNow()
@@ -101,6 +111,7 @@ class EbookPreviewActivity : AppCompatActivity() {
 
         runCatching {
             previewExecutor.execute {
+                if (!sourcePrivacy.canRead()) return@execute
                 val result = runCatching {
                     prepareEbookPreview(
                         EbookSessionFactory.open(file, untitledBookTitle, untitledChapterTitle),
@@ -108,13 +119,13 @@ class EbookPreviewActivity : AppCompatActivity() {
                     )
                 }
 
-                if (destroyed || generation != loadGeneration) {
+                if (destroyed || generation != loadGeneration || !sourcePrivacy.canRead()) {
                     result.getOrNull()?.cover?.recycle()
                     return@execute
                 }
 
                 runOnUiThread {
-                    if (destroyed || generation != loadGeneration) {
+                    if (destroyed || generation != loadGeneration || !sourcePrivacy.checkAccess() || isFinishing) {
                         result.getOrNull()?.cover?.recycle()
                         return@runOnUiThread
                     }
@@ -167,12 +178,12 @@ class EbookPreviewActivity : AppCompatActivity() {
 
     private fun openReader(startFromBeginning: Boolean) {
         val file = bookFile ?: return
-        startActivity(
-            Intent(this, EbookReaderActivity::class.java).apply {
-                putExtra(EbookReaderActivity.EXTRA_BOOK_PATH, file.absolutePath)
-                putExtra(EbookReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
-            }
-        )
+        if (!sourcePrivacy.checkAccess()) return
+        val intent = Intent(this, EbookReaderActivity::class.java).apply {
+            putExtra(EbookReaderActivity.EXTRA_BOOK_PATH, file.absolutePath)
+            putExtra(EbookReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
+        }
+        if (ReaderSourcePrivacy.authorizeLaunch(this, intent, file)) startActivity(intent)
     }
 
     private fun showError(message: String) {

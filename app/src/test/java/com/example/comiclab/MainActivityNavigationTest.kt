@@ -255,7 +255,19 @@ class MainActivityNavigationTest {
             val openComic = ReflectionHelpers.getField<(FavoriteComicStore.Item) -> Unit>(comicAdapter, "onItemClick")
             openComic(comics.single { it.file == publicBook })
             assertTrue(PrivacySessionManager.isUnlocked)
-            assertEquals(publicBook.path, shadowOf(activity).nextStartedActivity.getStringExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH))
+            val ordinaryPreview = shadowOf(activity).nextStartedActivity
+            assertEquals(publicBook.path, ordinaryPreview.getStringExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH))
+            Robolectric.buildActivity(MangaPreviewActivity::class.java, ordinaryPreview).setup().use {
+                assertFalse(it.get().isFinishing)
+                assertEquals(0, it.get().window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
+            }
+            openComic(comics.single { it.file == privateBook })
+            val privatePreview = shadowOf(activity).nextStartedActivity
+            assertEquals(privateBook.path, privatePreview.getStringExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH))
+            Robolectric.buildActivity(MangaPreviewActivity::class.java, privatePreview).setup().use {
+                assertFalse(it.get().isFinishing)
+                assertTrue(it.get().window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
+            }
 
             val folders = openPanel<FavoritePathStore.Item>(R.id.btnFavoritePaths, "favoritePathAdapter")
             assertEquals(setOf(ordinary, hidden), folders.map { it.directory }.toSet())

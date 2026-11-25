@@ -92,6 +92,9 @@ internal class PageEnhancementDialog private constructor(
             cleanupIfReleased()
         }
         dialog.setCanceledOnTouchOutside(false)
+        if (activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0) {
+            dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
         dialog.show()
         dialog.window?.apply {
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
