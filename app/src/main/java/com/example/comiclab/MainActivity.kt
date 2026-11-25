@@ -39,6 +39,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.ProgressBar
+import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -252,6 +253,8 @@ class MainActivity : AppCompatActivity() {
     private var privacyMarksListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
     private var displayedPrivacyMarks = emptySet<String>()
     private var browserItemMenu: BottomSheetDialog? = null
+    private var organizeMenu: PopupWindow? = null
+    private var createFolderDialog: AlertDialog? = null
     private var browserInitialized = false
     private var skipNextResumeDirectoryReload = false
     private var pendingCenterTargetPath: String? = null
@@ -514,7 +517,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnSearch.setOnClickListener {
-            if (!privacyBrowserActive && !replacingPrivateBrowser) sortAndSearchController.openSearch()
+            if (!replacingPrivateBrowser) sortAndSearchController.openSearch()
         }
 
         etPath.setOnLongClickListener {
@@ -688,6 +691,7 @@ class MainActivity : AppCompatActivity() {
         PrivacySessionManager.removeListener(privacyLockListener)
         privacyMarksListener?.let { PrivacyStore.unregisterDirectoryChangeListener(this, it) }
         dismissBrowserItemMenu()
+        dismissOrganizeUi()
         interruptedExportNotice?.dismiss()
         directoryLoadGeneration.incrementAndGet()
         cancelNasDirectoryRequest()
@@ -837,6 +841,10 @@ class MainActivity : AppCompatActivity() {
     private fun openPendingCenteredTargetIfPresent(): Boolean {
         val targetPath = pendingCenterTargetPath?.takeIf { it.isNotBlank() } ?: return false
         pendingCenterTargetPath = null
+        if (intent.hasExtra(EXTRA_CENTER_TARGET_PRIVACY_EPOCH) && !PrivacySessionManager.isCurrentSession(
+                intent.getLongExtra(EXTRA_CENTER_TARGET_PRIVACY_EPOCH, Long.MIN_VALUE)
+            )
+        ) return false
         if (!openDirectoryContainingTarget(targetPath)) return false
 
         browserInitialized = true
@@ -913,6 +921,7 @@ class MainActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         sidePanelController.dismissSidePanelsImmediately()
         dismissBrowserItemMenu()
+        dismissOrganizeUi()
         directoryChildCountCache.clear()
         fileListAdapter.invalidateCollectionVisibility()
         clearBrowserRows()
@@ -929,6 +938,7 @@ class MainActivity : AppCompatActivity() {
         directoryLoadGeneration.incrementAndGet()
         directoryRefreshController.removePendingFirstPreDrawListener()
         dismissBrowserItemMenu()
+        dismissOrganizeUi()
         privacyScrollStateCache.restore(emptyList())
         directoryChildCountCache.clear()
         fileListAdapter.invalidateCollectionVisibility()
@@ -954,6 +964,7 @@ class MainActivity : AppCompatActivity() {
         fileListAdapter.invalidateCollectionVisibility()
         sidePanelController.dismissSidePanelsImmediately()
         dismissBrowserItemMenu()
+        dismissOrganizeUi()
         if (!browserInitialized || replacingPrivateBrowser) return
         val scrollState = captureFileListScrollState()
         clearBrowserRows()
@@ -1152,30 +1163,52 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showClassifyMenu() {
-        val items = listOf(
-            RoundedPopupMenuItem(getString(R.string.create_directory_name)) {
+        val path = currentPath
+        val privateMode = privacyBrowserActive
+        val epoch = PrivacySessionManager.sessionEpoch
+        fun isCurrentDirectory(): Boolean = !replacingPrivateBrowser && currentPath == path &&
+            (if (privateMode) PrivacySessionManager.isCurrentSession(epoch) else !PrivacySessionManager.isInPrivacySpace) &&
+            PrivacyAccessGuard.resolveLocalPathInMode(this, File(path), privateMode)?.isDirectory == true
+        if (!isCurrentDirectory()) return
+        fun item(label: Int, action: () -> Unit) = RoundedPopupMenuItem(getString(label)) {
+            if (isCurrentDirectory()) action()
+        }
+        val items = listOfNotNull(
+            item(R.string.create_directory_name) {
                 showCreateDirectoryDialog()
             },
-            RoundedPopupMenuItem(getString(R.string.classify_comics)) {
+            item(R.string.classify_comics) {
                 comicOrganizeController.confirmClassifyCurrentDirectory()
             },
-            RoundedPopupMenuItem(getString(R.string.comic_migration)) {
+            if (privateMode) null else item(R.string.comic_migration) {
                 startComicMigration()
             },
-            RoundedPopupMenuItem(getString(ComicOrganizeController.MENU_TITLE_MERGE_COMICS_NON_RECURSIVE)) {
+            item(ComicOrganizeController.MENU_TITLE_MERGE_COMICS_NON_RECURSIVE) {
                 comicOrganizeController.startMergeComicsNonRecursive()
             },
-            RoundedPopupMenuItem(getString(ComicOrganizeController.MENU_TITLE_MERGE_FILES_NON_RECURSIVE)) {
+            item(ComicOrganizeController.MENU_TITLE_MERGE_FILES_NON_RECURSIVE) {
                 comicOrganizeController.startMergeFilesNonRecursive()
             }
         )
 
-        showRoundedPopupMenu(btnClassify, items, widthDp = 252)
+        organizeMenu?.dismiss()
+        organizeMenu = showRoundedPopupMenu(btnClassify, items, widthDp = 252)
+    }
+
+    private fun dismissOrganizeUi() {
+        organizeMenu?.dismiss()
+        organizeMenu = null
+        createFolderDialog?.let { dialog ->
+            if (dialog.isShowing) dialog.window?.decorView?.visibility = View.INVISIBLE
+            dialog.dismiss()
+        }
+        createFolderDialog = null
+        comicOrganizeController.onPrivacyScopeChanged()
     }
 
     private fun showCreateDirectoryDialog() {
         val parentDirectory = File(currentPath)
-        if (!parentDirectory.isDirectory) {
+        if (!parentDirectory.isDirectory || !canUseBrowserItem(parentDirectory)) {
             showMessage(getString(R.string.message_invalid_directory))
             return
         }
@@ -1187,14 +1220,24 @@ class MainActivity : AppCompatActivity() {
             setSelection(text.length)
         }
 
-        AlertDialog.Builder(this)
+        val privateMode = privacyBrowserActive
+        val epoch = PrivacySessionManager.sessionEpoch
+        createFolderDialog = AlertDialog.Builder(this)
             .setTitle(R.string.create_directory_name)
             .setView(input)
             .setPositiveButton(R.string.confirm) { _, _ ->
-                createDirectory(parentDirectory, input.text?.toString().orEmpty())
+                val name = input.text?.toString().orEmpty()
+                val inSameMode = if (privateMode) PrivacySessionManager.isCurrentSession(epoch)
+                    else !PrivacySessionManager.isInPrivacySpace
+                if (inSameMode && canUseBrowserItem(parentDirectory) &&
+                    canUseBrowserItem(File(parentDirectory, name.trim()))
+                ) createDirectory(parentDirectory, name)
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .showRounded()
+            .createRounded().also { dialog ->
+                if (privateMode) dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                dialog.show()
+            }
     }
 
     private fun createDirectory(parentDirectory: File, requestedName: String) {
@@ -1225,6 +1268,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startComicMigration() {
+        if (privacyBrowserActive || replacingPrivateBrowser || PrivacySessionManager.isInPrivacySpace) return
         if (!Environment.isExternalStorageManager()) {
             openManageAllFilesAccessSettings()
             return
@@ -1251,7 +1295,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val sourceDirectory = File(currentPath)
-        if (!sourceDirectory.isDirectory) {
+        if (PrivacyAccessGuard.resolveLocalPathInMode(this, sourceDirectory, false)?.isDirectory != true) {
             showMessage(getString(R.string.message_invalid_directory))
             return
         }
@@ -1605,8 +1649,6 @@ class MainActivity : AppCompatActivity() {
             button.alpha = if (!isActive && canUseLocalSourceActions) 1f else 0.38f
         }
         if (privacyBrowserActive) {
-            btnSearch.isEnabled = false
-            btnClassify.isEnabled = false
             if (atPrivacyRoot) btnClassify.visibility = View.GONE
         }
         val canNavigateBack = !isNasSourceSelected || currentNasRelativePath.isNotEmpty()
@@ -3470,6 +3512,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val PREFS_NAME = "saf_prefs"
         const val EXTRA_CENTER_TARGET_PATH = "center_target_path"
+        internal const val EXTRA_CENTER_TARGET_PRIVACY_EPOCH = "center_target_privacy_epoch"
         private const val KEY_STORAGE_PERMISSION_PROMPTED = "storage_permission_prompted"
         private const val KEY_CURRENT_PATH = "current_path"
         private const val KEY_FILE_LIST_SCROLL_DIRECTORY_PATH = "file_list_scroll_directory_path"

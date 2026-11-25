@@ -3,12 +3,16 @@ package com.example.comiclab
 import com.example.comiclab.core.migration.ComicMigrationCopyStatus
 import com.example.comiclab.core.migration.ComicMigrationPlanner
 import com.example.comiclab.core.migration.ComicMigrationTargetPlan
+import com.example.comiclab.core.store.PrivacyStore
 import com.example.comiclab.ui.common.SystemBars
 import com.example.comiclab.ui.common.createRounded
 import com.example.comiclab.ui.migration.ComicMigrationDirectoryAdapter
+import com.example.comiclab.ui.privacy.PrivacyAccessGuard
+import com.example.comiclab.ui.privacy.PrivacySessionManager
 
 import android.app.ActivityManager
 import android.app.AlertDialog
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
@@ -45,7 +49,7 @@ class ComicMigrationActivity : AppCompatActivity() {
     private var migrationWorkerExecutor: ExecutorService? = null
     private val migrationGeneration = AtomicInteger(0)
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val planner = ComicMigrationPlanner(allowFileCopy = true)
+    private val planner = ComicMigrationPlanner(allowFileCopy = true, canUsePath = ::canMigratePath)
     private var sourceDirectory: File? = null
     private var migrationRoot: File? = null
     private var targetPlans: List<ComicMigrationTargetPlan> = emptyList()
@@ -63,6 +67,7 @@ class ComicMigrationActivity : AppCompatActivity() {
     private var tvPreparationProgress: TextView? = null
     private var preparationTask: Future<*>? = null
     private var targetDirectoryDialog: AlertDialog? = null
+    private var markListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,7 +91,7 @@ class ComicMigrationActivity : AppCompatActivity() {
 
         val sourcePath = intent.getStringExtra(EXTRA_SOURCE_DIRECTORY_PATH)
             ?.takeIf { it.isNotBlank() }
-        val source = sourcePath?.let(::File)
+        val source = sourcePath?.let(::File)?.let(::normalDirectory)
         if (!Environment.isExternalStorageManager()) {
             Toast.makeText(this, R.string.storage_permission_required, Toast.LENGTH_SHORT).show()
             finish()
@@ -99,6 +104,9 @@ class ComicMigrationActivity : AppCompatActivity() {
         }
 
         sourceDirectory = source
+        markListener = PrivacyStore.registerDirectoryChangeListener(this) {
+            runOnUiThread { if (!destroyed && !isFinishing) closeMigrationForPrivacyChange() }
+        }
         tvSourceDirectory.text = source.absolutePath
         tvMigrationRoot.text = getString(R.string.comic_migration_path_not_selected)
         tvDefaultDirectory.text = getString(R.string.comic_migration_path_not_selected)
@@ -123,6 +131,7 @@ class ComicMigrationActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        markListener?.let { PrivacyStore.unregisterDirectoryChangeListener(this, it) }
         destroyed = true
         migrationGeneration.incrementAndGet()
         preparationTask?.cancel(true)
@@ -138,6 +147,38 @@ class ComicMigrationActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (!isFinishing && sourceDirectory?.let(::canMigratePath) != true) closeMigrationForPrivacyChange()
+    }
+
+    private fun canMigratePath(file: File): Boolean = !PrivacySessionManager.isInPrivacySpace &&
+        PrivacyAccessGuard.resolveLocalPathInMode(this, file, false) != null
+
+    private fun normalDirectory(file: File): File? = if (PrivacySessionManager.isInPrivacySpace) null else
+        PrivacyAccessGuard.resolveLocalPathInMode(this, file, false)?.takeIf(File::isDirectory)
+
+    private fun canCopyBetween(source: File, destination: File): Boolean {
+        val sourceRoot = sourceDirectory ?: return false
+        val destinationRoot = migrationRoot ?: return false
+        val actualSource = PrivacyAccessGuard.resolveLocalPathInMode(this, source, false) ?: return false
+        val actualDestination = normalDirectory(destination) ?: return false
+        return actualSource.toPath().startsWith(sourceRoot.toPath()) &&
+            actualDestination.toPath().startsWith(destinationRoot.toPath()) &&
+            ComicMigrationPlanner.isSafeDestinationDirectory(sourceRoot, actualDestination)
+    }
+
+    private fun closeMigrationForPrivacyChange() {
+        migrationGeneration.incrementAndGet()
+        preparationTask?.cancel(true)
+        findViewById<View>(android.R.id.content).visibility = View.INVISIBLE
+        listOf(directoryPickerDialog, preparationProgressDialog, targetDirectoryDialog).forEach { dialog ->
+            dialog?.window?.decorView?.visibility = View.INVISIBLE
+            dialog?.dismiss()
+        }
+        finish()
+    }
+
     private fun showMigrationRootPicker() {
         showDirectoryPicker(DirectoryPickerPurpose.DESTINATION_TREE)
     }
@@ -151,11 +192,11 @@ class ComicMigrationActivity : AppCompatActivity() {
             return
         }
 
-        val storageRoot = Environment.getExternalStorageDirectory()
+        val storageRoot = normalDirectory(Environment.getExternalStorageDirectory()) ?: return
         pickerDirectory = when (purpose) {
             DirectoryPickerPurpose.DESTINATION_TREE -> sourceDirectory?.parentFile
             DirectoryPickerPurpose.DEFAULT_DESTINATION -> migrationRoot
-        }?.takeIf { it.isDirectory } ?: storageRoot
+        }?.let(::normalDirectory) ?: storageRoot
 
         val content = layoutInflater.inflate(
             R.layout.dialog_comic_migration_directory_picker,
@@ -173,8 +214,12 @@ class ComicMigrationActivity : AppCompatActivity() {
 
         fun refreshPickerContents() {
             val currentDirectory = pickerDirectory
-                ?.takeIf { it.isDirectory }
+                ?.let(::normalDirectory)
                 ?: storageRoot.also { pickerDirectory = it }
+            if (!canMigratePath(currentDirectory)) {
+                closeMigrationForPrivacyChange()
+                return
+            }
             tvPath.text = currentDirectory.absolutePath
 
             val parent = currentDirectory.parentFile
@@ -219,7 +264,7 @@ class ComicMigrationActivity : AppCompatActivity() {
                     R.string.comic_migration_select_default_directory
                 }
             ) { _, _ ->
-                val selectedDirectory = pickerDirectory ?: storageRoot
+                val selectedDirectory = normalDirectory(pickerDirectory ?: storageRoot) ?: return@setPositiveButton
                 val source = sourceDirectory ?: return@setPositiveButton
                 when (purpose) {
                     DirectoryPickerPurpose.DESTINATION_TREE -> {
@@ -277,7 +322,9 @@ class ComicMigrationActivity : AppCompatActivity() {
             return
         }
         val source = sourceDirectory ?: return
-        if (!ComicMigrationPlanner.isSafeDestinationDirectory(source, rootDirectory) ||
+        if (!canMigratePath(source) || !canMigratePath(rootDirectory) || !canMigratePath(defaultTargetDirectory) ||
+            !defaultTargetDirectory.toPath().startsWith(rootDirectory.toPath()) ||
+            !ComicMigrationPlanner.isSafeDestinationDirectory(source, rootDirectory) ||
             !ComicMigrationPlanner.isSafeDestinationDirectory(source, defaultTargetDirectory)
         ) {
             Toast.makeText(this, R.string.message_invalid_directory, Toast.LENGTH_SHORT).show()
@@ -425,10 +472,15 @@ class ComicMigrationActivity : AppCompatActivity() {
             completeMigration()
             return
         }
+        val choices = currentPlan.directories.mapNotNull(::normalDirectory)
+        if (!canMigratePath(currentPlan.comicFile) || choices.isEmpty()) {
+            closeMigrationForPrivacyChange()
+            return
+        }
         showTargetDirectoryChoices(
             currentPlan.comicFile,
             currentPlan.startMarker,
-            currentPlan.directories
+            choices
         )
     }
 
@@ -487,6 +539,10 @@ class ComicMigrationActivity : AppCompatActivity() {
         if (!isMigrationActive || destroyed) {
             return
         }
+        if (!canCopyBetween(currentFile, targetDirectory)) {
+            closeMigrationForPrivacyChange()
+            return
+        }
 
         copyState = CopyState.COPYING
         tvMigrationStatus.text = getString(R.string.comic_migration_copying)
@@ -495,12 +551,17 @@ class ComicMigrationActivity : AppCompatActivity() {
         runCatching {
             migrationExecutor.execute {
                 val result = planner.copyComicFile(currentFile, targetDirectory) {
-                    copyState == CopyState.STOP_REQUESTED || generation != migrationGeneration.get()
+                    copyState == CopyState.STOP_REQUESTED || generation != migrationGeneration.get() ||
+                        !canCopyBetween(currentFile, targetDirectory)
                 }
                 runOnUiThread {
                     if (destroyed || generation != migrationGeneration.get() ||
                         !isMigrationActive
                     ) {
+                        return@runOnUiThread
+                    }
+                    if (!canCopyBetween(currentFile, targetDirectory)) {
+                        closeMigrationForPrivacyChange()
                         return@runOnUiThread
                     }
 
@@ -651,9 +712,10 @@ class ComicMigrationActivity : AppCompatActivity() {
     }
 
     private fun listChildDirectories(directory: File): List<File> {
+        if (!canMigratePath(directory)) return emptyList()
         return runCatching {
             directory.listFiles()
-                ?.filter { it.isDirectory }
+                ?.filter { !it.name.startsWith('.') && canMigratePath(it) && it.isDirectory }
                 ?.sortedWith(
                     compareBy<File>(
                         { it.name.lowercase(Locale.ROOT) },

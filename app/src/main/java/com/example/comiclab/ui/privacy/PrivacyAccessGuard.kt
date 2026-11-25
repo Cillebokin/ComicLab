@@ -47,6 +47,11 @@ internal object PrivacyAccessGuard {
         return target.takeIf { isUnderRoot(it, root) && (allowRoot || it != root) }
     }
 
+    fun resolveLocalPathInMode(context: Context, file: File, inPrivacySpace: Boolean): File? =
+        resolveLocalPath(file)?.takeIf {
+            PrivacyStore.isCanonicalPathUnderPrivacyDirectory(context, it.path) == inPrivacySpace
+        }
+
     private fun canAccessCanonicalTarget(context: Context, target: File): Boolean =
         !PrivacyStore.isCanonicalPathUnderPrivacyDirectory(context, target.path) || PrivacySessionManager.isUnlocked
 

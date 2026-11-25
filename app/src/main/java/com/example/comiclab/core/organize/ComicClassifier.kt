@@ -32,9 +32,10 @@ object ComicClassifier {
     fun classify(
         rootDirectory: File,
         startMarkerErrorTags: String,
+        canUsePath: (File) -> Boolean = { true },
         onProgress: (Progress) -> Unit
     ): Result {
-        if (!rootDirectory.isDirectory) {
+        if (!canUsePath(rootDirectory) || !rootDirectory.isDirectory) {
             return Result(
                 outputDirectory = null,
                 totalCount = 0,
@@ -45,7 +46,7 @@ object ComicClassifier {
         }
 
         onProgress(Progress(stage = Stage.SCANNING))
-        val comicFiles = scanComicFiles(rootDirectory)
+        val comicFiles = scanComicFiles(rootDirectory, canUsePath)
         if (comicFiles.isEmpty()) {
             return Result(
                 outputDirectory = null,
@@ -56,13 +57,18 @@ object ComicClassifier {
             )
         }
 
-        val outputDirectory = createNextOutputDirectory(rootDirectory)
+        val outputDirectory = createNextOutputDirectory(rootDirectory, canUsePath)
+            ?: return Result(null, comicFiles.size, 0, comicFiles.size, 0)
         var copiedCount = 0
         var failedCount = 0
         var noTagCount = 0
         val markerDirectories = mutableListOf<File>()
 
         comicFiles.forEachIndexed { index, comicFile ->
+            if (!canUsePath(comicFile)) {
+                failedCount++
+                return@forEachIndexed
+            }
             onProgress(
                 Progress(
                     stage = Stage.COPYING,
@@ -96,9 +102,10 @@ object ComicClassifier {
             }
 
             val copied = runCatching {
+                if (!canUsePath(targetDirectory)) return@runCatching false
                 targetDirectory.mkdirs()
                 val targetFile = uniqueTargetFile(targetDirectory, comicFile.name)
-                copyFile(comicFile, targetFile)
+                copyFile(comicFile, targetFile, canUsePath)
             }.getOrDefault(false)
 
             if (copied) {
@@ -125,18 +132,23 @@ object ComicClassifier {
         )
     }
 
-    private fun scanComicFiles(rootDirectory: File): List<File> {
+    private fun scanComicFiles(rootDirectory: File, canUsePath: (File) -> Boolean): List<File> {
         val result = mutableListOf<File>()
         val stack = ArrayDeque<File>()
+        val visited = mutableSetOf<String>()
         stack.add(rootDirectory)
 
         while (stack.isNotEmpty()) {
             val directory = stack.removeLast()
+            if (!canUsePath(directory)) continue
+            val canonicalPath = runCatching { directory.canonicalPath }.getOrNull() ?: continue
+            if (!visited.add(canonicalPath)) continue
             val children = runCatching {
                 directory.listFiles()?.toList().orEmpty()
             }.getOrDefault(emptyList())
 
             children.forEach { child ->
+                if (!canUsePath(child)) return@forEach
                 when {
                     child.isDirectory && shouldScanDirectory(child) -> stack.add(child)
                     child.isFile && ReaderFileDetector.isSupported(child) -> result.add(child)
@@ -151,7 +163,7 @@ object ComicClassifier {
         return !directory.name.startsWith(".") && !isClassifyOutputDirectory(directory.name)
     }
 
-    private fun createNextOutputDirectory(rootDirectory: File): File {
+    private fun createNextOutputDirectory(rootDirectory: File, canUsePath: (File) -> Boolean): File? {
         var index = 0
         while (true) {
             val directory = File(
@@ -159,8 +171,7 @@ object ComicClassifier {
                 "$OUTPUT_DIRECTORY_PREFIX${String.format(Locale.ROOT, "%03d", index)}"
             )
             if (!directory.exists()) {
-                directory.mkdirs()
-                return directory
+                return directory.takeIf { canUsePath(it) && it.mkdir() }
             }
             index++
         }
@@ -197,9 +208,9 @@ object ComicClassifier {
         }
     }
 
-    private fun copyFile(sourceFile: File, targetFile: File): Boolean {
-        targetFile.parentFile?.mkdirs()
+    private fun copyFile(sourceFile: File, targetFile: File, canUsePath: (File) -> Boolean): Boolean {
         val tempFile = File(targetFile.parentFile, "${targetFile.name}.part")
+        if (!canUsePath(sourceFile) || !canUsePath(targetFile) || !canUsePath(tempFile)) return false
         tempFile.delete()
 
         val copied = runCatching {
@@ -212,7 +223,7 @@ object ComicClassifier {
             return false
         }
 
-        if (!tempFile.renameTo(targetFile)) {
+        if (!canUsePath(sourceFile) || !canUsePath(targetFile) || !canUsePath(tempFile) || !tempFile.renameTo(targetFile)) {
             tempFile.delete()
             return false
         }

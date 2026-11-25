@@ -11,12 +11,13 @@ internal object ImageFileMergeOperations {
 
     fun merge(
         rootDirectory: File,
-        copyImageToTarget: (File, File) -> Boolean = ::copyImageFileToTarget,
+        copyImageToTarget: ((File, File) -> Boolean)? = null,
         createOutputDirectory: (File) -> Boolean = { it.mkdirs() },
+        canUsePath: (File) -> Boolean = { true },
         onProgress: (ImageFileMergeProgress) -> Unit
     ): ImageFileMergeResult {
         onProgress(ImageFileMergeProgress(ImageFileMergeProgress.Stage.SCANNING_DIRECTORIES))
-        val directories = imageSourceDirectoriesInCurrentDirectory(rootDirectory)
+        val directories = if (canUsePath(rootDirectory)) imageSourceDirectoriesInCurrentDirectory(rootDirectory, canUsePath) else emptyList()
         if (directories.isEmpty()) {
             return ImageFileMergeResult.Completed(
                 outputDirectory = null,
@@ -36,7 +37,7 @@ internal object ImageFileMergeOperations {
                     total = directories.size
                 )
             )
-            val images = imageFilesInDirectory(directory)
+            val images = if (canUsePath(directory)) imageFilesInDirectory(directory, canUsePath) else emptyList()
             if (images.isNotEmpty()) {
                 sources.add(ImageFileMergeSource(directory, images))
             }
@@ -61,7 +62,7 @@ internal object ImageFileMergeOperations {
         }
 
         val outputDirectory = buildOutputDirectory(rootDirectory)
-        if (!createOutputDirectory(outputDirectory)) {
+        if (!canUsePath(outputDirectory) || !createOutputDirectory(outputDirectory)) {
             return ImageFileMergeResult.Failed(ImageFileMergeResult.Failure.OUTPUT_DIRECTORY_CREATION)
         }
 
@@ -75,7 +76,8 @@ internal object ImageFileMergeOperations {
             source.images.forEach { imageFile ->
                 val outputName = buildOutputFileName(nextOutputIndex, numberWidth, imageFile.name)
                 val targetFile = File(outputDirectory, outputName)
-                val copied = copyImageToTarget(imageFile, targetFile)
+                val copied = canUsePath(imageFile) && canUsePath(targetFile) &&
+                    (copyImageToTarget?.invoke(imageFile, targetFile) ?: copyImageFileToTarget(imageFile, targetFile, canUsePath))
                 completedCount++
 
                 if (copied) {
@@ -88,7 +90,7 @@ internal object ImageFileMergeOperations {
                 onProgress(
                     ImageFileMergeProgress(
                         stage = ImageFileMergeProgress.Stage.COPYING_IMAGES,
-                        sourceDirectoryName = source.directory.name,
+                        sourceDirectoryName = source.directory.name.takeIf { canUsePath(source.directory) },
                         completed = completedCount,
                         total = totalImageCount
                     )
@@ -119,8 +121,12 @@ internal object ImageFileMergeOperations {
         return outputDirectory
     }
 
-    internal fun copyImageFileToTarget(sourceFile: File, targetFile: File): Boolean {
-        if (!sourceFile.isFile || sourceFile.length() <= 0L) {
+    internal fun copyImageFileToTarget(
+        sourceFile: File,
+        targetFile: File,
+        canUsePath: (File) -> Boolean = { true }
+    ): Boolean {
+        if (!canUsePath(sourceFile) || !canUsePath(targetFile) || !sourceFile.isFile || sourceFile.length() <= 0L) {
             return false
         }
 
@@ -134,6 +140,7 @@ internal object ImageFileMergeOperations {
         }.getOrNull() ?: return false
 
         return try {
+            if (!canUsePath(sourceFile) || !canUsePath(tempFile)) return false
             val copied = runCatching {
                 sourceFile.copyTo(tempFile, overwrite = true, bufferSize = COPY_BUFFER_SIZE)
                 tempFile.isFile && tempFile.length() == sourceFile.length()
@@ -143,6 +150,7 @@ internal object ImageFileMergeOperations {
             }
 
             try {
+                if (!canUsePath(sourceFile) || !canUsePath(targetFile) || !canUsePath(tempFile)) return false
                 Files.move(tempFile.toPath(), targetFile.toPath())
             } catch (_: Exception) {
                 return false
@@ -155,11 +163,11 @@ internal object ImageFileMergeOperations {
         }
     }
 
-    private fun imageSourceDirectoriesInCurrentDirectory(rootDirectory: File): List<File> {
+    private fun imageSourceDirectoriesInCurrentDirectory(rootDirectory: File, canUsePath: (File) -> Boolean): List<File> {
         return runCatching {
             rootDirectory.listFiles()
                 ?.filter { file ->
-                    file.isDirectory &&
+                    canUsePath(file) && file.isDirectory &&
                         !file.name.startsWith(".") &&
                         !isGeneratedMergeDirectory(file.name)
                 }
@@ -170,11 +178,11 @@ internal object ImageFileMergeOperations {
         }.getOrDefault(emptyList())
     }
 
-    private fun imageFilesInDirectory(directory: File): List<File> {
+    private fun imageFilesInDirectory(directory: File, canUsePath: (File) -> Boolean): List<File> {
         return runCatching {
             directory.listFiles()
                 ?.filter { file ->
-                    file.isFile &&
+                    canUsePath(file) && file.isFile &&
                         file.extension.lowercase(Locale.ROOT) in IMAGE_FILE_EXTENSIONS
                 }
                 ?.sortedWith { left, right ->

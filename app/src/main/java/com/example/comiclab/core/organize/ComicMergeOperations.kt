@@ -15,10 +15,11 @@ internal object ComicMergeOperations {
         rootDirectory: File,
         extractEntryToFile: (File, String, File) -> Boolean = ComicArchive::extractImageEntryToFile,
         createOutputDirectory: (File) -> Boolean = { it.mkdirs() },
+        canUsePath: (File) -> Boolean = { true },
         onProgress: (ComicArchiveMergeProgress) -> Unit
     ): ComicMergeResult {
         onProgress(ComicArchiveMergeProgress(ComicArchiveMergeProgress.Stage.SCANNING_ARCHIVES))
-        val archives = comicArchivesInCurrentDirectory(rootDirectory)
+        val archives = if (canUsePath(rootDirectory)) comicArchivesInCurrentDirectory(rootDirectory, canUsePath) else emptyList()
         if (archives.isEmpty()) {
             return ComicMergeResult.Completed(
                 outputDirectory = null,
@@ -33,6 +34,7 @@ internal object ComicMergeOperations {
         val unreadableArchives = mutableListOf<String>()
         val archivesWithoutImages = mutableListOf<String>()
         archives.forEachIndexed { index, archive ->
+            if (!canUsePath(archive)) return@forEachIndexed
             onProgress(
                 ComicArchiveMergeProgress(
                     stage = ComicArchiveMergeProgress.Stage.READING_ARCHIVES,
@@ -40,6 +42,7 @@ internal object ComicMergeOperations {
                     total = archives.size
                 )
             )
+            if (!canUsePath(archive)) return@forEachIndexed
             val entries = ComicArchive.readArchiveImageEntries(archive).getOrNull()
             when {
                 entries == null -> unreadableArchives.add(archive.name)
@@ -69,7 +72,7 @@ internal object ComicMergeOperations {
         }
 
         val outputDirectory = buildOutputDirectory(rootDirectory)
-        if (!createOutputDirectory(outputDirectory)) {
+        if (!canUsePath(outputDirectory) || !createOutputDirectory(outputDirectory)) {
             return ComicMergeResult.Failed(ComicMergeResult.Failure.OUTPUT_DIRECTORY_CREATION)
         }
 
@@ -84,11 +87,14 @@ internal object ComicMergeOperations {
                 val outputName = buildMergedImageFileName(nextOutputIndex, numberWidth, entryName)
                 val targetFile = File(outputDirectory, outputName)
                 val stagedFile = runCatching {
-                    File.createTempFile(STAGING_FILE_PREFIX, STAGING_FILE_SUFFIX, outputDirectory)
+                    if (!canUsePath(source.archive) || !canUsePath(targetFile)) null
+                    else File.createTempFile(STAGING_FILE_PREFIX, STAGING_FILE_SUFFIX, outputDirectory)
                 }.getOrNull()
                 val copied = stagedFile?.let { staged ->
                     try {
-                        extractEntryToFile(source.archive, entryName, staged) &&
+                        canUsePath(source.archive) && canUsePath(staged) &&
+                            extractEntryToFile(source.archive, entryName, staged) &&
+                            canUsePath(source.archive) && canUsePath(staged) && canUsePath(targetFile) &&
                             runCatching {
                                 Files.move(staged.toPath(), targetFile.toPath())
                                 true
@@ -109,7 +115,7 @@ internal object ComicMergeOperations {
                 onProgress(
                     ComicArchiveMergeProgress(
                         stage = ComicArchiveMergeProgress.Stage.MERGING_ARCHIVE_ENTRIES,
-                        sourceArchiveName = source.archive.name,
+                        sourceArchiveName = source.archive.name.takeIf { canUsePath(source.archive) },
                         completed = completedCount,
                         total = totalImageCount
                     )
@@ -150,11 +156,11 @@ internal object ComicMergeOperations {
         return "${index.toString().padStart(numberWidth, '0')}.$extension"
     }
 
-    private fun comicArchivesInCurrentDirectory(rootDirectory: File): List<File> {
+    private fun comicArchivesInCurrentDirectory(rootDirectory: File, canUsePath: (File) -> Boolean): List<File> {
         return runCatching {
             rootDirectory.listFiles()
                 ?.filter { file ->
-                    file.isFile &&
+                    canUsePath(file) && file.isFile &&
                         ComicArchive.isSupportedArchive(file) &&
                         !ComicArchive.isPdf(file)
                 }
