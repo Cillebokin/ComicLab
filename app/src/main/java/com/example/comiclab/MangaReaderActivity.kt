@@ -69,6 +69,7 @@ import com.example.comiclab.ui.reader.manga.findNextManga
 import com.example.comiclab.ui.browser.DirectorySortPolicy
 import com.example.comiclab.ui.common.createRounded
 import com.example.comiclab.ui.privacy.ReaderSourcePrivacy
+import com.example.comiclab.core.reader.ReaderDerivationPrivacy
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ExecutorService
@@ -689,7 +690,8 @@ class MangaReaderActivity : AppCompatActivity() {
             val archive = archiveFile ?: return@setOnClickListener
             if (imageEntries.isEmpty()) return@setOnClickListener
             val position = currentReaderPosition.coerceIn(imageEntries.indices)
-            if (ComicArchive.isPdf(archive) ||
+            if (!sourcePrivacy.checkAccess() || ReaderDerivationPrivacy.ordinaryPath(this, archive) == null ||
+                ComicArchive.isPdf(archive) ||
                 !TranslationPageSource.supportsEntry(imageEntries[position]) ||
                 !TranslationModels.isAvailable(this)
             ) {
@@ -702,7 +704,9 @@ class MangaReaderActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.btnReaderEnhance).setOnClickListener {
             val archive = archiveFile ?: return@setOnClickListener
-            if (pageEnhancementDialog != null || imageEntries.isEmpty() || !sourcePrivacy.checkAccess()) return@setOnClickListener
+            if (pageEnhancementDialog != null || imageEntries.isEmpty() || !sourcePrivacy.checkAccess() ||
+                ReaderDerivationPrivacy.ordinaryPath(this, archive) == null
+            ) return@setOnClickListener
             val position = currentReaderPosition.coerceIn(imageEntries.indices)
             pageEnhancementDialog = PageEnhancementDialog.open(
                 this, archive, imageEntries[position], position + 1
@@ -1723,8 +1727,10 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun updateReaderTranslationVisibility() {
         val button = findViewById<Button>(R.id.btnReaderTranslate) ?: return
         val archive = archiveFile
+        val allowed = ReaderDerivationPrivacy.ordinaryPath(this, archive) != null
+        findViewById<Button>(R.id.btnReaderEnhance)?.visibility = if (allowed) View.VISIBLE else View.GONE
         val entry = imageEntries.getOrNull(currentReaderPosition)
-        val supportedPage = archive != null && !ComicArchive.isPdf(archive) &&
+        val supportedPage = allowed && archive != null && !ComicArchive.isPdf(archive) &&
             entry != null && TranslationPageSource.supportsEntry(entry)
         button.visibility = if (supportedPage && TranslationModels.isAvailable(this)) {
             View.VISIBLE

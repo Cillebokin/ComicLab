@@ -1,6 +1,7 @@
 package com.example.comiclab
 
 import com.example.comiclab.core.reader.ExportDocumentJournal
+import com.example.comiclab.core.reader.ReaderDerivationPrivacy
 
 import com.example.comiclab.ui.browser.organize.ComicOrganizeController
 import com.example.comiclab.ui.browser.refresh.DirectoryRefreshController
@@ -655,18 +656,19 @@ class MainActivity : AppCompatActivity() {
         val journal = ExportDocumentJournal(this)
         val pending = journal.interruptedExports()
         if (pending.isEmpty()) return
-        val documents = pending.joinToString("\n") { record ->
-            getString(
-                if (record.writing) R.string.reader_export_check_written else R.string.reader_export_check_reserved,
-                record.name
-            )
-        }
+        val named = pending.filter(journal::canShowName)
+        val documents = named.map { record ->
+            getString(if (record.writing) R.string.reader_export_check_written else R.string.reader_export_check_reserved,
+                record.name)
+        }.toMutableList()
+        val hiddenCount = pending.size - named.size
+        if (hiddenCount > 0) documents.add(getString(R.string.reader_export_hidden_count, hiddenCount))
         interruptedExportNotice = AlertDialog.Builder(this)
             .setTitle(R.string.reader_export_interrupted_title)
-            .setMessage(getString(R.string.reader_export_interrupted_notice, documents))
+            .setMessage(getString(R.string.reader_export_interrupted_notice, documents.joinToString("\n")))
             .setPositiveButton(android.R.string.ok) { _, _ -> journal.acknowledge(pending) }
             .createRounded().apply {
-                setOnDismissListener { interruptedExportNotice = null }
+                setOnDismissListener { if (interruptedExportNotice === this) interruptedExportNotice = null }
                 show()
             }
     }
@@ -976,6 +978,12 @@ class MainActivity : AppCompatActivity() {
         val marks = PrivacyStore.privacyDirectories(this)
         if (marks == displayedPrivacyMarks) return
         displayedPrivacyMarks = marks
+        interruptedExportNotice?.takeIf { it.isShowing }?.let { notice ->
+            notice.window?.decorView?.visibility = View.INVISIBLE
+            notice.dismiss()
+            interruptedExportNotice = null
+            if (!isFinishing && !isDestroyed) showInterruptedExportNotice()
+        }
         directoryChildCountCache.updatePrivacyMarks(marks)
         fileListAdapter.invalidateCollectionVisibility()
         sidePanelController.dismissSidePanelsImmediately()
@@ -3127,10 +3135,12 @@ class MainActivity : AppCompatActivity() {
             btnDeleteFile
         )
         val canStartTransfer = pendingFileTransfer == null && !isFileTransferInProgress
-        btnEnhance.visibility = if (ComicArchive.isSupportedArchive(file) &&
+        val derivationPath = ReaderDerivationPrivacy.ordinaryPath(this, file)
+        btnEnhance.visibility = if (derivationPath != null && ComicArchive.isSupportedArchive(file) &&
             !file.extension.equals("pdf", true)) View.VISIBLE else View.GONE
         btnTranslate.visibility = if (TranslationModels.isAvailable(this)) btnEnhance.visibility else View.GONE
         val conversionTarget = when {
+            derivationPath == null -> null
             ComicArchive.isPdf(file) -> ComicConversionTarget.CBZ
             ComicArchive.isSupportedArchive(file) -> ComicConversionTarget.PDF
             else -> null
@@ -3235,20 +3245,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnConvert.setOnClickListener {
-            if (!canUseMenu()) return@setOnClickListener
+            if (!canUseMenu() || !ReaderDerivationPrivacy.allows(this, file, derivationPath)) return@setOnClickListener
             val target = conversionTarget ?: return@setOnClickListener
             dialog.dismiss()
             ComicFormatConversionDialog.show(this, file, target)
         }
 
         btnEnhance.setOnClickListener {
-            if (!canUseMenu()) return@setOnClickListener
+            if (!canUseMenu() || !ReaderDerivationPrivacy.allows(this, file, derivationPath)) return@setOnClickListener
             dialog.dismiss()
             ArchiveEnhancementDialog.show(this, file)
         }
 
         btnTranslate.setOnClickListener {
-            if (!canUseMenu()) return@setOnClickListener
+            if (!canUseMenu() || !ReaderDerivationPrivacy.allows(this, file, derivationPath)) return@setOnClickListener
             dialog.dismiss()
             ArchiveTranslationDialog.show(this, file)
         }

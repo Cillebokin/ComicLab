@@ -1,5 +1,7 @@
 package com.example.comiclab.core.reader.translation
 
+import com.example.comiclab.core.reader.ReaderDerivationPrivacy
+
 import android.content.Context
 import com.example.comiclab.ComicArchive
 import com.example.comiclab.core.archive.ArchiveEntryLister
@@ -31,12 +33,14 @@ internal object ArchiveTranslation {
         ocrConcurrency: Int = SinglePageTranslation.DEFAULT_OCR_CONCURRENCY,
         inpaintConcurrency: Int = SinglePageTranslation.DEFAULT_INPAINT_CONCURRENCY,
         translate: (TranslationSettings, List<String>, String, AtomicBoolean) -> List<String> = TranslationApi::translate,
+        sourcePath: String? = ReaderDerivationPrivacy.ordinaryPath(context, source),
         onProgress: (page: Int, total: Int, pagePercent: Int, stage: String,
             translatedPages: Int, keptOriginalPages: Int) -> Unit
     ): ArchiveTranslationResult {
         require(source.isFile && !ComicArchive.isPdf(source))
         fun checkCancelled() {
             if (cancelled.get() || Thread.currentThread().isInterrupted) throw CancellationException()
+            ReaderDerivationPrivacy.check(context, source, sourcePath)
         }
 
         checkCancelled()
@@ -52,10 +56,12 @@ internal object ArchiveTranslation {
             val models = TranslationModels.ensure(context, cancelled) { detail ->
                 onProgress(0, entries.size, 0, "models|$detail", 0, 0)
             }
+            checkCancelled()
             return ComicArchive.openPreparedImageExtractor(source, inputs).use { extractor ->
                 translatePages(
                     output, entries, cancelled,
                     extractPage = { index, entry ->
+                        checkCancelled()
                         extractor.extract(index, entry) ?: error("Could not extract page ${index + 1}")
                     },
                     translatePage = { index, entry, original, report ->
@@ -71,7 +77,8 @@ internal object ArchiveTranslation {
                                 language = language,
                                 translate = translate,
                                 modelDirectory = models,
-                                preparedSource = original
+                                preparedSource = original,
+                                sourcePath = sourcePath
                             )
                             pipeline.render(analysis, pageDirectory, TranslationStyle()).also { rendered ->
                                 pageDirectory.listFiles()?.forEach { if (it != rendered) it.deleteRecursively() }

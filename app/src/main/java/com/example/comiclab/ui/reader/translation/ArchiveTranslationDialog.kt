@@ -24,6 +24,7 @@ import androidx.lifecycle.ViewModelProvider
 import com.example.comiclab.R
 import com.example.comiclab.SettingsActivity
 import com.example.comiclab.core.reader.ExportDocumentJournal
+import com.example.comiclab.core.reader.ReaderDerivationPrivacy
 import com.example.comiclab.core.reader.enhance.EnhancementRuntime
 import com.example.comiclab.core.reader.translation.ArchiveTranslation
 import com.example.comiclab.core.reader.translation.ArchiveTranslationPagesFailedException
@@ -62,11 +63,17 @@ internal class ArchiveTranslationExportViewModel(application: Application) : And
         private set
     private val app = application
 
-    fun start(source: File, destination: Uri, language: String) {
+    fun start(source: File, destination: Uri, language: String,
+        sourcePath: String? = ReaderDerivationPrivacy.ordinaryPath(app, source)) {
         if (started) return
         started = true
         target = destination
-        val pending = ExportDocumentJournal(app).reserve(destination, "${source.nameWithoutExtension}_translated.cbz")
+        if (!ReaderDerivationPrivacy.allows(app, source, sourcePath)) {
+            ReaderDerivationPrivacy.abandonRejectedDestination(app, destination)
+            state.value = ArchiveTranslationExportState(failed = true, issueMessage = R.string.privacy_operation_denied)
+            return
+        }
+        val pending = ExportDocumentJournal(app).reserve(destination, "${source.nameWithoutExtension}_translated.cbz", sourcePath)
         if (pending == null) {
             state.value = ArchiveTranslationExportState(failed = true, issueMessage = R.string.reader_export_tracking_failed)
             return
@@ -81,8 +88,13 @@ internal class ArchiveTranslationExportViewModel(application: Application) : And
         EnhancementRuntime.worker.execute {
             var directory: File? = null
             var success = false
+            var writing = false
+            fun checkCurrent() {
+                TranslationModels.checkCancelled(cancelled)
+                ReaderDerivationPrivacy.check(app, source, sourcePath)
+            }
             try {
-                checkCancelled()
+                checkCurrent()
                 val settings = TranslationSettingsStore.load(app)
                 directory = File(app.cacheDir, "archive-translation/${UUID.randomUUID()}")
                     .apply { check(mkdirs() || isDirectory) }
@@ -92,8 +104,10 @@ internal class ArchiveTranslationExportViewModel(application: Application) : And
                     directory = directory!!,
                     cancelled = cancelled,
                     language = language,
-                    settings = settings
+                    settings = settings,
+                    sourcePath = sourcePath
                 ) { page, total, pagePercent, stage, translated, keptOriginal ->
+                    checkCurrent()
                     val percent = if (page <= 0 || total <= 0) 0 else
                         (((page - 1L) * 100 + pagePercent.coerceAtLeast(0)) * 95 / (total * 100L)).toInt()
                     state.postValue(ArchiveTranslationExportState(
@@ -105,14 +119,15 @@ internal class ArchiveTranslationExportViewModel(application: Application) : And
                         keptOriginalPages = keptOriginal
                     ))
                 }
-                checkCancelled()
+                checkCurrent()
                 pending.openOutput().use { stream ->
+                    writing = true
                     result.file.inputStream().buffered().use { input ->
                         val buffer = ByteArray(256 * 1024)
                         var written = 0L
                         var last = -1
                         while (true) {
-                            checkCancelled()
+                            checkCurrent()
                             val count = input.read(buffer)
                             if (count < 0) break
                             stream.write(buffer, 0, count)
@@ -131,7 +146,7 @@ internal class ArchiveTranslationExportViewModel(application: Application) : And
                         stream.flush()
                     }
                 }
-                checkCancelled()
+                checkCurrent()
                 success = true
                 pending.complete()
                 val total = result.translatedPages + result.keptOriginalPages
@@ -164,15 +179,14 @@ internal class ArchiveTranslationExportViewModel(application: Application) : And
                 android.util.Log.w("ArchiveTranslation", "Translation ran out of memory")
                 state.postValue(ArchiveTranslationExportState(failed = true))
             } finally {
-                if (!success) pending.abandon()
+                if (!success) {
+                    if (!writing && !ReaderDerivationPrivacy.allows(app, source, sourcePath)) pending.abandonIfEmpty()
+                    else pending.abandon()
+                }
                 directory?.deleteRecursively()
                 EnhancementRuntime.busy.set(false)
             }
         }
-    }
-
-    private fun checkCancelled() {
-        TranslationModels.checkCancelled(cancelled)
     }
 
     override fun onCleared() {
@@ -190,6 +204,7 @@ private fun TranslationServiceException.Reason.messageRes(): Int = when (this) {
 internal class ArchiveTranslationDialog : DialogFragment() {
     private val model by lazy { ViewModelProvider(this)[ArchiveTranslationExportViewModel::class.java] }
     private val source get() = File(requireArguments().getString("source")!!)
+    private val sourcePath get() = requireArguments().getString(ReaderDerivationPrivacy.SOURCE_PATH)
     private var pickerLaunched = false
     private var content: View? = null
 
@@ -203,7 +218,8 @@ internal class ArchiveTranslationDialog : DialogFragment() {
                 TranslationSettingsStore.load(requireContext()).targetLanguageIndex
             }.getOrDefault(0).coerceIn(0, languages.lastIndex)
             val language = languages[languageIndex]
-            model.start(source, uri, language)
+            val allowedPath = sourcePath?.takeIf { ReaderDerivationPrivacy.allows(requireContext(), source, it) }
+            model.start(source, uri, language, allowedPath)
         }
     }
 
@@ -245,6 +261,10 @@ internal class ArchiveTranslationDialog : DialogFragment() {
         val chooseDestination = alert.getButton(DialogInterface.BUTTON_POSITIVE)
         chooseDestination.setOnClickListener {
             if (pickerLaunched || model.started) return@setOnClickListener
+            if (!ReaderDerivationPrivacy.allows(requireContext(), source, sourcePath)) {
+                dismiss()
+                return@setOnClickListener
+            }
             pickerLaunched = true
             chooseDestination.isEnabled = false
             chooseDestination.visibility = View.GONE
@@ -350,6 +370,7 @@ internal class ArchiveTranslationDialog : DialogFragment() {
 
     companion object {
         fun show(activity: FragmentActivity, source: File) {
+            val sourcePath = ReaderDerivationPrivacy.ordinaryPath(activity, source) ?: return
             if (activity.supportFragmentManager.findFragmentByTag("archive-translation") != null) return
             val settings = runCatching { TranslationSettingsStore.load(activity) }.getOrNull()
             val configured = settings != null && settings.address.isNotBlank() &&
@@ -364,7 +385,10 @@ internal class ArchiveTranslationDialog : DialogFragment() {
                 return
             }
             ArchiveTranslationDialog().apply {
-                arguments = Bundle().apply { putString("source", source.absolutePath) }
+                arguments = Bundle().apply {
+                    putString("source", source.absolutePath)
+                    putString(ReaderDerivationPrivacy.SOURCE_PATH, sourcePath)
+                }
             }.show(activity.supportFragmentManager, "archive-translation")
         }
     }

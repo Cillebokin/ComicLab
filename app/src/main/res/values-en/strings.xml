@@ -570,6 +570,7 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="reader_export_interrupted_notice">These exports could not be confirmed. Check whether each file is complete at its save location before deciding whether to delete it. A name below may be the suggested filename.\n\n%1$s</string>
     <string name="reader_export_check_reserved">%1$s (writing did not start)</string>
     <string name="reader_export_check_written">%1$s (check whether writing completed)</string>
+    <string name="reader_export_hidden_count">Check %1$d exports with hidden details</string>
     <string name="reader_export_interrupted">The export could not be confirmed. Check whether the file is complete at its original save location</string>
     <string name="reader_export_tracking_failed">Could not record this export. Check the selected location for an empty file before exporting again</string>
     <string name="enhancement_scale">Enhancement scale</string>

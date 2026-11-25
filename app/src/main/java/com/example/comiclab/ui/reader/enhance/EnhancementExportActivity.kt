@@ -15,17 +15,33 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.ViewModelProvider
 import com.example.comiclab.R
+import com.example.comiclab.core.reader.ReaderDerivationPrivacy
 import com.example.comiclab.ui.common.SystemBars
 import java.io.File
 
 internal class EnhancementExportActivity : AppCompatActivity() {
     private val model by lazy { ViewModelProvider(this)[EnhancementExportViewModel::class.java] }
-    private val source get() = File(checkNotNull(intent.getStringExtra(EXTRA_SOURCE)))
+    private val original get() = intent.getStringExtra(EXTRA_ORIGINAL)?.let(::File)
+    private val sourcePath get() = intent.getStringExtra(ReaderDerivationPrivacy.SOURCE_PATH)
+
+    private fun stagedImage(): File? = runCatching {
+        val root = File(cacheDir, "enhancement-exports").canonicalFile
+        intent.getStringExtra(EXTRA_SOURCE)?.let(::File)?.canonicalFile
+            ?.takeIf { it.parentFile == root && it.isFile }
+    }.getOrNull()
     private val createDocument = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val uri = result.data?.data
         if (result.resultCode != Activity.RESULT_OK || uri == null) finish()
         else {
-            model.start(source, uri, book = false, destinationName = intent.getStringExtra(EXTRA_NAME) ?: source.name)
+            val stage = stagedImage()
+            if (stage == null) {
+                ReaderDerivationPrivacy.abandonRejectedDestination(this, uri)
+                finish()
+            } else {
+                val allowedPath = sourcePath?.takeIf { ReaderDerivationPrivacy.allows(this, original, it) }
+                model.start(stage, uri, book = false, destinationName = intent.getStringExtra(EXTRA_NAME) ?: stage.name,
+                    original = original, sourcePath = allowedPath)
+            }
         }
     }
 
@@ -35,13 +51,11 @@ internal class EnhancementExportActivity : AppCompatActivity() {
         SystemBars.fitContentBelowSystemBars(this, findViewById(R.id.enhancementExportRoot),
             statusBarColorResId = R.color.black)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        if (intent.getStringExtra(EXTRA_SOURCE) == null || !source.isFile) { finish(); return }
-        run {
-            // 只接收预览窗口生成的独立暂存图片，不将用户漫画文件作为可删除的暂存源
-            val root = File(cacheDir, "enhancement-exports").canonicalFile
-            if (source.canonicalFile.parentFile != root) { finish(); return }
-            model.ownImage(source)
-        }
+        val stage = stagedImage()
+        stage?.let(model::ownImage)
+        val allowed = stage != null && ReaderDerivationPrivacy.allows(this, original, sourcePath)
+        // An outstanding picker result still needs its empty-document cleanup after recreation.
+        if (!allowed && savedInstanceState == null) { finish(); return }
         val title = findViewById<TextView>(R.id.tvExportTitle)
         val status = findViewById<TextView>(R.id.tvExportStatus)
         val progress = findViewById<ProgressBar>(R.id.progressExport)
@@ -84,7 +98,7 @@ internal class EnhancementExportActivity : AppCompatActivity() {
                 val done = savedInstanceState?.getBoolean("done") == true
                 model.state.value = EnhancementExportState(percent = if (done) 100 else -1,
                     done = done, failed = !done, issueMessage = R.string.reader_export_interrupted.takeUnless { done })
-            } else if (savedInstanceState == null) {
+            } else if (allowed && savedInstanceState == null) {
                 createDocument.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
                     type = "image/png"
@@ -102,12 +116,19 @@ internal class EnhancementExportActivity : AppCompatActivity() {
 
     companion object {
         private const val EXTRA_SOURCE = "enhancement_source"
+        private const val EXTRA_ORIGINAL = "enhancement_original_source"
         private const val EXTRA_NAME = "enhancement_name"
         private const val STATE_TARGET = "enhancement_target"
 
-        fun launchImage(activity: Activity, staged: File, name: String) {
+        fun launchImage(activity: Activity, staged: File, name: String, original: File, sourcePath: String?) {
+            if (!ReaderDerivationPrivacy.allows(activity, original, sourcePath)) {
+                staged.delete()
+                return
+            }
             activity.startActivity(Intent(activity, EnhancementExportActivity::class.java)
-                .putExtra(EXTRA_SOURCE, staged.absolutePath).putExtra(EXTRA_NAME, name))
+                .putExtra(EXTRA_SOURCE, staged.absolutePath).putExtra(EXTRA_NAME, name)
+                .putExtra(EXTRA_ORIGINAL, original.absolutePath)
+                .putExtra(ReaderDerivationPrivacy.SOURCE_PATH, sourcePath))
         }
 
     }

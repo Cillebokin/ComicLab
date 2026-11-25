@@ -11,6 +11,7 @@ import com.example.comiclab.R
 import com.example.comiclab.core.reader.enhance.EnhancementRuntime
 import com.example.comiclab.ui.reader.enhance.EnhancementExportActivity
 import com.example.comiclab.ui.reader.translation.PageTranslationActivity
+import com.example.comiclab.core.reader.ReaderDerivationPrivacy
 import com.example.comiclab.ui.reader.translation.PageTranslationViewModel
 import com.example.comiclab.ui.reader.translation.TranslationUiState
 import com.example.comiclab.ui.reader.translation.stageTranslatedPage
@@ -44,8 +45,10 @@ class PageTranslationSaveTest {
 
     @Test
     fun stagingFailureShowsFeedbackWithoutOpeningPickerAndCanBeRetried() {
+        val source = temporaryFolder.newFile("fixture.cbz")
         val intent = Intent(RuntimeEnvironment.getApplication(), PageTranslationActivity::class.java)
-            .putExtra("archive", "fixture.cbz")
+            .putExtra("archive", source.absolutePath)
+            .putExtra(ReaderDerivationPrivacy.SOURCE_PATH, source.canonicalPath)
             .putExtra("entry", "003.png")
             .putExtra("page", 3)
         val controller = Robolectric.buildActivity(PageTranslationActivity::class.java, intent).setup()

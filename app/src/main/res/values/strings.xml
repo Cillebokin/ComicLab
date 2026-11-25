@@ -568,6 +568,7 @@
     <string name="reader_export_interrupted_notice">以下导出未能确认完成。请到保存位置检查文件是否完整，再决定是否删除。列表可能显示保存时建议的文件名。\n\n%1$s</string>
     <string name="reader_export_check_reserved">%1$s（尚未开始写入）</string>
     <string name="reader_export_check_written">%1$s（写入完整性待确认）</string>
+    <string name="reader_export_hidden_count">另有 %1$d 个导出文件需要检查，详细信息已隐藏</string>
     <string name="reader_export_interrupted">导出状态未能确认，请到原保存位置检查文件是否完整</string>
     <string name="reader_export_tracking_failed">无法记录这次导出的状态。请到所选位置检查是否留有空文件，再重新导出</string>
     <string name="enhancement_scale">高清化放大倍数</string>
