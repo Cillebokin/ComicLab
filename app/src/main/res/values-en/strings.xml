@@ -328,6 +328,7 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="folder_copy_success">Folder copied</string>
     <string name="folder_cut_success">Folder cut</string>
     <string name="file_transfer_failed">File operation failed</string>
+    <string name="file_transfer_in_progress">A file transfer is in progress. Try again when it finishes.</string>
     <string name="file_transfer_copied_source_retained">Copied to destination; the source changed or could not be safely removed, so the original was kept.</string>
     <string name="file_transfer_copy_incomplete">Copy incomplete. The original was kept. Check the copy at the destination.</string>
     <string name="file_transfer_source_missing">The source file or folder no longer exists</string>
@@ -583,4 +584,9 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="ebook_content_too_large">This ebook is too large to load safely</string>
     <string name="privacy_browser_title">Privacy space</string>
     <string name="privacy_browser_empty">No private folders</string>
+    <string name="privacy_operation_denied">This operation must stay within the same area</string>
+    <string name="privacy_parent_operation_denied">This folder contains private folders. Remove those folders from the privacy space before continuing.</string>
+    <string name="privacy_top_level_operation_denied">Remove this folder from the privacy space before renaming, copying, or moving it.</string>
+    <string name="privacy_independent_mark_operation_denied">This folder or a subfolder has its own privacy mark. Remove the applicable marks before renaming, copying, or moving it.</string>
+    <string name="privacy_directory_mark_cleanup_failed">The folder was deleted, but its privacy marks could not be cleared.</string>
 </resources>

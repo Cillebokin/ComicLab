@@ -3,6 +3,7 @@ package com.example.comiclab.core.transfer
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.Path
 import java.util.ArrayDeque
 
 internal object DirectoryFileTree {
@@ -12,9 +13,29 @@ internal object DirectoryFileTree {
         val totalItems: Int
     )
 
+    fun entryAccess(directory: File, allowLeafLinks: Boolean = false): (File) -> Boolean {
+        val selected = directory.toPath().toAbsolutePath().normalize()
+        val rootWasLink = Files.isSymbolicLink(selected)
+        val approved = physicalEntry(selected, allowLeafLinks)
+        return { entry ->
+            val path = entry.toPath().toAbsolutePath().normalize()
+            approved != null && path.startsWith(selected) &&
+                (path != selected || Files.isSymbolicLink(path) == rootWasLink) &&
+                physicalEntry(path, allowLeafLinks) == approved.resolve(selected.relativize(path))
+        }
+    }
+
+    private fun physicalEntry(path: Path, allowLeafLinks: Boolean): Path? = runCatching {
+        if (!Files.isSymbolicLink(path)) path.toRealPath()
+        else if (allowLeafLinks) path.parent?.toRealPath()?.resolve(path.fileName)
+        else null
+    }.getOrNull()
+
     fun scan(
         directory: File,
         rejectSymbolicLinks: Boolean,
+        canContinue: () -> Boolean = { true },
+        canAccessEntry: (File) -> Boolean = entryAccess(directory, allowLeafLinks = !rejectSymbolicLinks),
         onProgress: (FileOperationProgress) -> Unit
     ): Summary {
         if (!directory.isDirectory &&
@@ -27,11 +48,12 @@ internal object DirectoryFileTree {
         val pendingEntries = ArrayDeque<File>()
         pendingEntries.addLast(directory)
         while (pendingEntries.isNotEmpty()) {
-            if (Thread.currentThread().isInterrupted) {
+            if (Thread.currentThread().isInterrupted || !canContinue()) {
                 throw InterruptedException("Directory scan interrupted")
             }
 
             val entry = pendingEntries.removeLast()
+            if (!canAccessEntry(entry)) throw IOException("Directory entry changed during scan")
             if (Files.isSymbolicLink(entry.toPath())) {
                 if (rejectSymbolicLinks) {
                     throw IOException("Symbolic links are not supported")
@@ -43,6 +65,7 @@ internal object DirectoryFileTree {
             when {
                 entry.isDirectory -> {
                     state.recordItem(entry.name)
+                    if (!canAccessEntry(entry)) throw IOException("Directory entry changed during scan")
                     val children = entry.listFiles()
                         ?: throw IOException("Could not read directory")
                     children.forEach { child -> pendingEntries.addLast(child) }
@@ -67,6 +90,8 @@ internal object DirectoryFileTree {
 
     fun deleteRecursively(
         directory: File,
+        canContinue: () -> Boolean = { true },
+        canAccessEntry: (File) -> Boolean = entryAccess(directory, allowLeafLinks = true),
         onProgress: (FileOperationProgress) -> Unit = {}
     ): Boolean {
         if (!directory.isDirectory && !Files.isSymbolicLink(directory.toPath())) {
@@ -83,21 +108,27 @@ internal object DirectoryFileTree {
             val summary = scan(
                 directory = directory,
                 rejectSymbolicLinks = false,
+                canContinue = canContinue,
+                canAccessEntry = canAccessEntry,
                 onProgress = onProgress
             )
             deleteWithSummary(
                 directory = directory,
                 summary = summary,
                 phase = FileOperationProgress.Phase.DELETING,
+                canContinue = canContinue,
+                canAccessEntry = canAccessEntry,
                 onProgress = onProgress
             )
         }.getOrDefault(false)
     }
 
-    fun deleteWithSummary(
+    private fun deleteWithSummary(
         directory: File,
         summary: Summary,
         phase: FileOperationProgress.Phase,
+        canContinue: () -> Boolean,
+        canAccessEntry: (File) -> Boolean,
         onProgress: (FileOperationProgress) -> Unit
     ): Boolean {
         return runCatching {
@@ -109,20 +140,26 @@ internal object DirectoryFileTree {
                     currentItemName = directory.name
                 )
             )
-            deleteEntry(directory, state)
+            deleteEntry(directory, state, canContinue, canAccessEntry)
         }.getOrDefault(false)
     }
 
-    private fun deleteEntry(entry: File, state: DeleteState): Boolean {
+    private fun deleteEntry(
+        entry: File,
+        state: DeleteState,
+        canContinue: () -> Boolean,
+        canAccessEntry: (File) -> Boolean
+    ): Boolean {
         val pendingEntries = ArrayDeque<PendingDeletion>()
         pendingEntries.addLast(PendingDeletion(entry, deleteAfterChildren = false))
         while (pendingEntries.isNotEmpty()) {
-            if (Thread.currentThread().isInterrupted) {
+            if (Thread.currentThread().isInterrupted || !canContinue()) {
                 throw InterruptedException("Directory deletion interrupted")
             }
 
             val pending = pendingEntries.removeLast()
             val current = pending.file
+            if (!canAccessEntry(current)) return false
             // 删除时把符号链接当作叶子处理，避免递归触及链接目标
             if (!pending.deleteAfterChildren &&
                 !Files.isSymbolicLink(current.toPath()) && current.isDirectory

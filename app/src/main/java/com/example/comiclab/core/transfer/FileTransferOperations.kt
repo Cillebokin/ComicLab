@@ -60,8 +60,10 @@ internal object FileTransferOperations {
         targetFile: File,
         moveSource: Boolean,
         move: (File, File) -> TransferFileMove.Result = TransferFileMove::move,
+        canContinue: () -> Boolean = { true },
         onProgress: (FileOperationProgress) -> Unit = {}
     ): Result {
+        if (!canContinue()) return Result.FAILED
         if (!sourceFile.isFile || (moveSource && Files.isSymbolicLink(sourceFile.toPath()))) {
             return Result.SOURCE_NOT_FILE
         }
@@ -80,7 +82,7 @@ internal object FileTransferOperations {
                 onProgress(
                     FileOperationProgress(FileOperationProgress.Phase.MOVING, currentItemName = sourceFile.name)
                 )
-                if (Thread.currentThread().isInterrupted) return Result.FAILED
+                if (Thread.currentThread().isInterrupted || !canContinue()) return Result.FAILED
                 when (move(sourceFile, targetFile)) {
                     TransferFileMove.Result.MOVED -> return Result.SUCCESS
                     TransferFileMove.Result.TARGET_EXISTS -> return Result.TARGET_EXISTS
@@ -98,6 +100,7 @@ internal object FileTransferOperations {
                     currentItemName = sourceFile.name
                 )
             )
+            if (!canContinue()) return Result.FAILED
             val tempFile = File.createTempFile(
                 ".comiclab-transfer-",
                 ".tmp",
@@ -132,21 +135,22 @@ internal object FileTransferOperations {
                 )
             )
 
-            if (Thread.currentThread().isInterrupted) return Result.FAILED
+            if (Thread.currentThread().isInterrupted || !canContinue()) return Result.FAILED
             val publication = TransferFileMove.publish(tempFile, targetFile, move.takeIf { moveSource }) {
                 onProgress(FileOperationProgress(FileOperationProgress.Phase.PUBLISHING))
+                check(canContinue())
             }
             when (publication) {
                 TransferFileMove.Publication.MOVED -> {
                     temporaryFile = null
-                    if (!moveSource || deleteVerifiedSource(copiedSnapshot, onProgress)) {
+                    if (!moveSource || deleteVerifiedSource(copiedSnapshot, canContinue, onProgress)) {
                         Result.SUCCESS
                     } else {
                         Result.COPIED_SOURCE_RETAINED
                     }
                 }
                 TransferFileMove.Publication.COPIED -> {
-                    if (!moveSource || deleteVerifiedSource(copiedSnapshot, onProgress)) {
+                    if (!moveSource || deleteVerifiedSource(copiedSnapshot, canContinue, onProgress)) {
                         Result.SUCCESS
                     } else {
                         Result.COPIED_SOURCE_RETAINED
@@ -167,6 +171,7 @@ internal object FileTransferOperations {
 
     private fun deleteVerifiedSource(
         snapshot: TransferFileMove.CopiedFileSnapshot,
+        canContinue: () -> Boolean,
         onProgress: (FileOperationProgress) -> Unit
     ): Boolean {
         if (Thread.currentThread().isInterrupted) return false
@@ -177,8 +182,8 @@ internal object FileTransferOperations {
                 currentItemName = snapshot.file.name
             )
         )
-        if (!TransferFileMove.matchesMetadataAndContent(snapshot)) return false
-        if (Thread.currentThread().isInterrupted || !TransferFileMove.matchesMetadata(snapshot)) return false
+        if (!canContinue() || !TransferFileMove.matchesMetadataAndContent(snapshot)) return false
+        if (Thread.currentThread().isInterrupted || !canContinue() || !TransferFileMove.matchesMetadata(snapshot)) return false
         if (!snapshot.file.delete()) return false
         onProgress(
             FileOperationProgress(

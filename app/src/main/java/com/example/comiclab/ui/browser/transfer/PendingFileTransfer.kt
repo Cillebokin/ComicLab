@@ -8,5 +8,6 @@ enum class FileTransferMode {
 data class PendingFileTransfer(
     val sourcePath: String,
     val mode: FileTransferMode,
-    val isDirectory: Boolean
+    val isDirectory: Boolean,
+    val privacyEpoch: Long? = null
 )

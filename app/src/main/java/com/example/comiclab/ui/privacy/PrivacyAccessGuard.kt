@@ -2,10 +2,13 @@ package com.example.comiclab.ui.privacy
 
 import android.content.Context
 import android.os.Environment
+import com.example.comiclab.R
+import com.example.comiclab.core.store.BookcaseFolderPaths
 import com.example.comiclab.core.nas.NasCachedArchiveStore
 import com.example.comiclab.core.nas.NasShareArchiveDownloader
 import com.example.comiclab.core.store.PrivacyStore
 import java.io.File
+import java.nio.file.Files
 
 internal object PrivacyAccessGuard {
     const val PRIVACY_VIRTUAL_ROOT_PATH = "__comiclab_privacy_root__"
@@ -51,6 +54,27 @@ internal object PrivacyAccessGuard {
         resolveLocalPath(file)?.takeIf {
             PrivacyStore.isCanonicalPathUnderPrivacyDirectory(context, it.path) == inPrivacySpace
         }
+
+    fun directoryChangeRestriction(context: Context, directory: File, inPrivacySpace: Boolean, deleting: Boolean = false): Int? {
+        val target = resolveLocalPath(directory, allowRoot = false) ?: return R.string.privacy_operation_denied
+        if (Files.isSymbolicLink(directory.toPath())) return R.string.privacy_operation_denied
+        val marks = PrivacyStore.privacyDirectories(context)
+        if (marks.any { BookcaseFolderPaths.isPathInDirectory(target.path, it) } != inPrivacySpace) {
+            return R.string.privacy_operation_denied
+        }
+        val containsMark = marks.any { BookcaseFolderPaths.isPathInDirectory(it, target.path) }
+        return when {
+            !inPrivacySpace && containsMark -> R.string.privacy_parent_operation_denied
+            inPrivacySpace && !deleting && PrivacyStore.isOutermostDirectory(target.path, marks) -> R.string.privacy_top_level_operation_denied
+            inPrivacySpace && !deleting && containsMark -> R.string.privacy_independent_mark_operation_denied
+            else -> null
+        }
+    }
+
+    fun allowsLocalChild(context: Context, directory: File, child: File, inPrivacySpace: Boolean): Boolean {
+        val parent = resolveLocalPathInMode(context, directory, inPrivacySpace) ?: return false
+        return resolveLocalPathInMode(context, child, inPrivacySpace)?.parentFile == parent
+    }
 
     private fun canAccessCanonicalTarget(context: Context, target: File): Boolean =
         !PrivacyStore.isCanonicalPathUnderPrivacyDirectory(context, target.path) || PrivacySessionManager.isUnlocked

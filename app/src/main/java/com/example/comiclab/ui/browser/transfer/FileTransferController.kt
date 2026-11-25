@@ -18,7 +18,7 @@ class FileTransferController {
         return if (transfer.isDirectory) {
             isSamePathOrDescendant(file, source)
         } else {
-            file.absoluteFile.toPath().normalize() == source.absoluteFile.toPath().normalize()
+            normalizedPath(file) == normalizedPath(source)
         }
     }
 
@@ -30,9 +30,11 @@ class FileTransferController {
     }
 
     private fun isSamePathOrDescendant(candidate: File, directory: File): Boolean {
-        return candidate.absoluteFile.toPath().normalize()
-            .startsWith(directory.absoluteFile.toPath().normalize())
+        return normalizedPath(candidate).startsWith(normalizedPath(directory))
     }
+
+    private fun normalizedPath(file: File) = runCatching { file.canonicalFile.toPath() }
+        .getOrElse { file.absoluteFile.toPath().normalize() }
 
     fun begin(transfer: PendingFileTransfer): Boolean {
         if (pendingTransfer != null || isTransferInProgress) return false

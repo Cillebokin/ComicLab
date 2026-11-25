@@ -6,6 +6,8 @@ import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.OneShotPreDrawListener
+import androidx.core.view.doOnPreDraw
 import com.example.comiclab.core.diagnostics.ComicLabPerformance
 import com.example.comiclab.ui.browser.DirectorySortOrder
 import com.example.comiclab.ui.browser.FileListScrollState
@@ -39,7 +41,11 @@ internal class DirectoryRefreshController(
     private val listView: ListView
         get() = checkNotNull(listViewOrNull())
 
+    private class CenterRequest(val directoryPath: String, val targetPath: String, val generation: Int)
+
     private var pendingFirstPreDrawListener: ViewTreeObserver.OnPreDrawListener? = null
+    private var pendingCenter: CenterRequest? = null
+    private var pendingCenterPreDrawListener: OneShotPreDrawListener? = null
 
     // 测试接口：返回最近一次恢复目录滚动时请求的 top 值，不参与运行时逻辑。
     private var requestedScrollTopRecord: Int? = null
@@ -47,19 +53,31 @@ internal class DirectoryRefreshController(
     internal val requestedScrollTopForTest: Int?
         get() = requestedScrollTopRecord
 
+    internal fun refreshCurrentDirectory(scrollStateToRestore: FileListScrollState?) {
+        val requestedPath = currentPathProvider()
+        val target = pendingCenter?.takeIf {
+            it.directoryPath == requestedPath && it.generation == directoryLoadGeneration.get()
+        }?.targetPath
+        loadCurrentDirectory(target, scrollStateToRestore)
+    }
+
     internal fun loadCurrentDirectory(
         pathToCenter: String? = null,
         scrollStateToRestore: FileListScrollState? = null
     ) {
         val generation = directoryLoadGeneration.incrementAndGet()
         val hasPermission = Environment.isExternalStorageManager()
+        val requestedPath = currentPathProvider()
+        val center = pathToCenter?.takeIf { hasPermission }?.let { CenterRequest(requestedPath, it, generation) }
+        clearPendingCenter()
+        pendingCenter = center
         if (hasPermission) {
             removePendingFirstPreDrawListener()
         }
         val loadStartedAtNanos = if (hasPermission) ComicLabPerformance.nowNanos() else null
         directoryBrowserController.load(
             generation = generation,
-            requestedPath = currentPathProvider(),
+            requestedPath = requestedPath,
             hasPermission = hasPermission,
             sortOrder = sortOrderProvider,
             scrollState = scrollStateToRestore,
@@ -89,14 +107,14 @@ internal class DirectoryRefreshController(
                         pathInputProvider().setText(resolvedPath)
                     }
                     notifyListChanged()
-                    if (pathToCenter == null) {
+                    if (center == null) {
                         if (result.scrollState != null) {
                             restoreFileListScrollState(result.scrollState, resolvedPath, generation)
                         } else {
                             scrollFileListToTop(generation)
                         }
                     } else {
-                        centerFileItemIfPresent(pathToCenter, generation)
+                        centerFileItemIfPresent(center)
                     }
                     ComicLabPerformance.record(
                         event = "directory_ui_apply",
@@ -126,7 +144,18 @@ internal class DirectoryRefreshController(
         }
     }
 
-    internal fun removePendingFirstPreDrawListener() {
+    internal fun cancelPendingDirectoryPresentation() {
+        clearPendingCenter()
+        removePendingFirstPreDrawListener()
+    }
+
+    private fun clearPendingCenter() {
+        pendingCenterPreDrawListener?.removeListener()
+        pendingCenterPreDrawListener = null
+        pendingCenter = null
+    }
+
+    private fun removePendingFirstPreDrawListener() {
         val listener = pendingFirstPreDrawListener ?: return
         pendingFirstPreDrawListener = null
         val view = listViewOrNull()
@@ -182,16 +211,28 @@ internal class DirectoryRefreshController(
         listView.viewTreeObserver.addOnPreDrawListener(listener)
     }
 
-    private fun centerFileItemIfPresent(path: String, generation: Int) {
+    private fun centerFileItemIfPresent(request: CenterRequest) {
+        if (pendingCenter !== request) return
         val targetIndex = fileItems.indexOfFirst { item ->
-            item.file?.absolutePath == path
+            item.file?.absolutePath == request.targetPath
         }
         if (targetIndex < 0) {
+            clearPendingCenter()
             return
         }
 
         listView.post {
-            if (generation == directoryLoadGeneration.get()) centerListPosition(targetIndex)
+            if (pendingCenter !== request) return@post
+            if (request.generation != directoryLoadGeneration.get() || activity.isFinishing || activity.isDestroyed ||
+                !centerListPosition(targetIndex)
+            ) {
+                clearPendingCenter()
+                return@post
+            }
+            // The visible scroll anchor updates after the list lays out the requested selection.
+            pendingCenterPreDrawListener = listView.doOnPreDraw {
+                if (pendingCenter === request) clearPendingCenter()
+            }
         }
     }
 
@@ -231,11 +272,11 @@ internal class DirectoryRefreshController(
         }
     }
 
-    private fun centerListPosition(position: Int) {
+    private fun centerListPosition(position: Int): Boolean {
         val itemCount = fileItems.size
         val listHeight = listView.height
         if (position !in 0 until itemCount || listHeight <= 0) {
-            return
+            return false
         }
 
         val itemHeight = (listView.getChildAt(0)?.height ?: activity.dpToPx(FILE_ITEM_HEIGHT_DP))
@@ -249,6 +290,7 @@ internal class DirectoryRefreshController(
         val firstVisibleTop = -(scrollTop % rowHeight)
 
         listView.setSelectionFromTop(firstVisiblePosition, firstVisibleTop)
+        return true
     }
 
     private companion object {
