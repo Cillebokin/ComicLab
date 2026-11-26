@@ -18,6 +18,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModelProvider
 import com.example.comiclab.AppSettings
 import com.example.comiclab.R
+import com.example.comiclab.core.reader.ReaderDerivationPrivacy
 import com.example.comiclab.ui.common.createRounded
 import java.io.File
 
@@ -25,6 +26,7 @@ import java.io.File
 internal class ArchiveEnhancementDialog : DialogFragment() {
     private val model by lazy { ViewModelProvider(this)[EnhancementExportViewModel::class.java] }
     private val source get() = File(requireArguments().getString("source")!!)
+    private val sourcePath get() = requireArguments().getString(ReaderDerivationPrivacy.SOURCE_PATH)
     private val scale get() = requireArguments().getInt("scale", 2)
     private var pickerLaunched = false
     private var content: View? = null
@@ -32,7 +34,8 @@ internal class ArchiveEnhancementDialog : DialogFragment() {
         val uri = result.data?.data
         if (result.resultCode != Activity.RESULT_OK || uri == null) dismiss()
         else {
-            model.start(source, uri, book = true, scale = scale)
+            val allowedPath = sourcePath?.takeIf { ReaderDerivationPrivacy.allows(requireContext(), source, it) }
+            model.start(source, uri, book = true, scale = scale, sourcePath = allowedPath)
         }
     }
 
@@ -87,6 +90,10 @@ internal class ArchiveEnhancementDialog : DialogFragment() {
             }
         }
         if (!model.started && !pickerLaunched) {
+            if (!ReaderDerivationPrivacy.allows(requireContext(), source, sourcePath)) {
+                dismiss()
+                return
+            }
             pickerLaunched = true
             createDocument.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
@@ -118,10 +125,12 @@ internal class ArchiveEnhancementDialog : DialogFragment() {
 
     companion object {
         fun show(activity: FragmentActivity, source: File) {
+            val sourcePath = ReaderDerivationPrivacy.ordinaryPath(activity, source) ?: return
             if (activity.supportFragmentManager.findFragmentByTag("archive-enhancement") != null) return
             ArchiveEnhancementDialog().apply {
                 arguments = Bundle().apply {
                     putString("source", source.absolutePath)
+                    putString(ReaderDerivationPrivacy.SOURCE_PATH, sourcePath)
                     putInt("scale", AppSettings.getEnhancementScale(activity))
                 }
             }.show(activity.supportFragmentManager, "archive-enhancement")

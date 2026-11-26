@@ -4,9 +4,11 @@ package com.example.comiclab.ui.browser
 class DirectoryChildCountCache(private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {
 
     private data class Entry(val lastModified: Long, val childCount: Int)
+    private data class Key(val directoryPath: String, val inPrivacySpace: Boolean)
     data class Lookup(val childCount: Int?, val generation: Long)
 
-    private val entries = LinkedHashMap<String, Entry>(16, 0.75f, true)
+    private val entries = LinkedHashMap<Key, Entry>(16, 0.75f, true)
+    private var privacyMarks = emptySet<String>()
     private var invalidationGeneration = 0L
 
     init {
@@ -14,24 +16,25 @@ class DirectoryChildCountCache(private val maxEntries: Int = DEFAULT_MAX_ENTRIES
     }
 
     @Synchronized
-    fun lookup(directoryPath: String, lastModified: Long): Lookup {
-        val entry = entries[directoryPath]
+    fun lookup(directoryPath: String, lastModified: Long, inPrivacySpace: Boolean = false): Lookup {
+        val key = Key(directoryPath, inPrivacySpace)
+        val entry = entries[key]
             ?: return Lookup(null, invalidationGeneration)
         if (entry.lastModified != lastModified) {
-            entries.remove(directoryPath)
+            entries.remove(key)
             invalidationGeneration++
             return Lookup(null, invalidationGeneration)
         }
         return Lookup(entry.childCount, invalidationGeneration)
     }
 
-    fun get(directoryPath: String, lastModified: Long): Int? =
-        lookup(directoryPath, lastModified).childCount
+    fun get(directoryPath: String, lastModified: Long, inPrivacySpace: Boolean = false): Int? =
+        lookup(directoryPath, lastModified, inPrivacySpace).childCount
 
     @Synchronized
-    fun put(directoryPath: String, lastModified: Long, childCount: Int) {
+    fun put(directoryPath: String, lastModified: Long, childCount: Int, inPrivacySpace: Boolean = false) {
         require(childCount >= 0) { "childCount must not be negative" }
-        putEntry(directoryPath, lastModified, childCount)
+        putEntry(Key(directoryPath, inPrivacySpace), lastModified, childCount)
     }
 
     @Synchronized
@@ -42,23 +45,38 @@ class DirectoryChildCountCache(private val maxEntries: Int = DEFAULT_MAX_ENTRIES
         directoryPath: String,
         lastModified: Long,
         childCount: Int,
-        expectedGeneration: Long
+        expectedGeneration: Long,
+        inPrivacySpace: Boolean = false
     ): Boolean {
         if (expectedGeneration != invalidationGeneration) {
             return false
         }
-        put(directoryPath, lastModified, childCount)
+        put(directoryPath, lastModified, childCount, inPrivacySpace)
         return true
     }
 
     @Synchronized
     fun invalidate(directoryPath: String) {
-        entries.remove(directoryPath)
+        entries.remove(Key(directoryPath, false))
+        entries.remove(Key(directoryPath, true))
         invalidationGeneration++
     }
 
-    private fun putEntry(directoryPath: String, lastModified: Long, childCount: Int) {
-        entries[directoryPath] = Entry(lastModified, childCount)
+    @Synchronized
+    fun updatePrivacyMarks(marks: Set<String>) {
+        if (marks == privacyMarks) return
+        privacyMarks = marks
+        clear()
+    }
+
+    @Synchronized
+    fun clear() {
+        entries.clear()
+        invalidationGeneration++
+    }
+
+    private fun putEntry(key: Key, lastModified: Long, childCount: Int) {
+        entries[key] = Entry(lastModified, childCount)
         while (entries.size > maxEntries) {
             val leastRecentlyUsed = entries.entries.iterator()
             if (!leastRecentlyUsed.hasNext()) {

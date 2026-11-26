@@ -17,6 +17,26 @@ class DirectoryTransferOperationsTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
+    fun copyRejectsAnOutOfTreeEntryDiscoveredAfterTheScan() {
+        val root = temporaryFolder.newFolder("source")
+        val destination = temporaryFolder.newFolder("destination")
+        val ordinary = File(root, "ordinary.cbz").apply { writeText("ordinary") }
+        val outside = temporaryFolder.newFile("outside.cbz").apply { writeText("separate") }
+        var copying = false
+        val source = object : File(root.path) {
+            override fun listFiles(): Array<File>? = if (copying) arrayOf(outside) else super.listFiles()
+        }
+        val result = DirectoryTransferOperations.transfer(source, destination, "copied", moveSource = false) { progress ->
+            if (progress.phase == FileOperationProgress.Phase.COPYING) copying = true
+        }
+
+        assertEquals(DirectoryTransferOperations.Result.FAILED, result)
+        assertTrue(destination.listFiles()!!.isEmpty())
+        assertEquals("ordinary", ordinary.readText())
+        assertEquals("separate", outside.readText())
+    }
+
+    @Test
     fun suggestedNameAddsFirstAvailableNumber() {
         val destination = temporaryFolder.newFolder("destination")
         File(destination, "Manga (1)").mkdir()

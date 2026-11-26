@@ -1,5 +1,7 @@
 package com.example.comiclab.core.reader.translation
 
+import com.example.comiclab.core.reader.ReaderDerivationPrivacy
+
 import android.content.Context
 import android.graphics.*
 import android.text.Layout
@@ -75,13 +77,16 @@ internal class SinglePageTranslation(private val context: Context, private val c
 
     fun process(archive: File, entry: String, directory: File, settings: TranslationSettings, language: String,
         translate: (TranslationSettings, List<String>, String, AtomicBoolean) -> List<String> = TranslationApi::translate,
-        modelDirectory: File? = null, preparedSource: File? = null): TranslationAnalysis {
+        modelDirectory: File? = null, preparedSource: File? = null,
+        sourcePath: String? = ReaderDerivationPrivacy.ordinaryPath(context, archive)): TranslationAnalysis {
         checkCancelled()
+        ReaderDerivationPrivacy.check(context, archive, sourcePath)
         require(!ComicArchive.isPdf(archive)) { "PDF translation is not supported yet" }
         require(TranslationPageSource.supportsEntry(entry)) { "Image format is not supported for translation" }
         val models = modelDirectory ?: TranslationModels.ensure(context, cancelled) { status("models|$it") }
         check(NcnnBackend.available) { "Native translation runtime unavailable" }
         status("extract")
+        ReaderDerivationPrivacy.check(context, archive, sourcePath)
         val source = preparedSource ?: File(directory, "source.${entry.substringAfterLast('.', "img")}").also {
             check(ComicArchive.extractImageEntryToFile(archive, entry, it)) { "Could not extract source page" }
         }
@@ -155,6 +160,7 @@ internal class SinglePageTranslation(private val context: Context, private val c
             val cachedTexts = if (saved?.optString("signature") == signature)
                 runCatching { TranslationPolicy.parseTranslations(saved.getString("blocks"), regions.size) }.getOrNull() else null
             val texts = cachedTexts ?: run {
+                ReaderDerivationPrivacy.check(context, archive, sourcePath)
                 translate(settings, sourceTexts, language, cancelled).also { result ->
                     val rows = org.json.JSONArray().apply { result.forEachIndexed { i, text -> put(org.json.JSONObject().put("id", i + 1).put("text", text)) } }
                     val atomic = android.util.AtomicFile(cached); val stream = atomic.startWrite()

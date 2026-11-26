@@ -95,8 +95,10 @@ internal object DirectoryTransferOperations {
         targetName: String,
         moveSource: Boolean,
         move: (File, File) -> TransferFileMove.Result = TransferFileMove::move,
+        canContinue: () -> Boolean = { true },
         onProgress: (FileOperationProgress) -> Unit = {}
     ): Result {
+        if (!canContinue()) return Result.FAILED
         if (!sourceDirectory.isDirectory) {
             return Result.SOURCE_NOT_DIRECTORY
         }
@@ -119,7 +121,9 @@ internal object DirectoryTransferOperations {
         }
 
         var stagingDirectory: File? = null
+        var stagingAccess: ((File) -> Boolean)? = null
         return try {
+            val sourceAccess = DirectoryFileTree.entryAccess(sourceDirectory)
             onProgress(
                 FileOperationProgress(
                     phase = FileOperationProgress.Phase.SCANNING,
@@ -129,11 +133,13 @@ internal object DirectoryTransferOperations {
             val summary = DirectoryFileTree.scan(
                 directory = sourceDirectory,
                 rejectSymbolicLinks = true,
+                canContinue = canContinue,
+                canAccessEntry = sourceAccess,
                 onProgress = onProgress
             )
             if (moveSource) {
                 onProgress(FileOperationProgress(FileOperationProgress.Phase.MOVING, currentItemName = sourceDirectory.name))
-                if (Thread.currentThread().isInterrupted) return Result.FAILED
+                if (Thread.currentThread().isInterrupted || !canContinue() || !sourceAccess(sourceDirectory)) return Result.FAILED
                 when (move(sourceDirectory, targetDirectory)) {
                     TransferFileMove.Result.MOVED -> return Result.SUCCESS
                     TransferFileMove.Result.TARGET_EXISTS -> return Result.TARGET_EXISTS
@@ -149,32 +155,38 @@ internal object DirectoryTransferOperations {
                     currentItemName = sourceDirectory.name
                 )
             )
+            if (!canContinue()) return Result.FAILED
             val staging = Files.createTempDirectory(
                 destinationDirectory.toPath(),
                 STAGING_DIRECTORY_PREFIX
             ).toFile()
             stagingDirectory = staging
+            val canAccessStaging = DirectoryFileTree.entryAccess(staging)
+            stagingAccess = canAccessStaging
             val copyState = CopyState(summary, onProgress)
             val copiedSnapshot = CopiedTreeSnapshot()
-            copyDirectoryContents(sourceDirectory, staging, copyState, copiedSnapshot, isRoot = true)
-            if (Thread.currentThread().isInterrupted) {
+            copyDirectoryContents(sourceDirectory, staging, copyState, copiedSnapshot, isRoot = true) { source, target ->
+                canContinue() && sourceAccess(source) && canAccessStaging(target)
+            }
+            if (Thread.currentThread().isInterrupted || !canContinue() || !canAccessStaging(staging)) {
                 throw InterruptedException("Directory transfer interrupted")
             }
 
             val publication = TransferFileMove.publish(staging, targetDirectory, move.takeIf { moveSource }) {
                 onProgress(FileOperationProgress(FileOperationProgress.Phase.PUBLISHING))
+                check(canContinue() && canAccessStaging(staging))
             }
             when (publication) {
                 TransferFileMove.Publication.MOVED -> {
                     stagingDirectory = null
-                    if (!moveSource || deleteVerifiedSources(sourceDirectory, copiedSnapshot, onProgress)) {
+                    if (!moveSource || deleteVerifiedSources(sourceDirectory, copiedSnapshot, canContinue, sourceAccess, onProgress)) {
                         Result.SUCCESS
                     } else {
                         Result.COPIED_SOURCE_RETAINED
                     }
                 }
                 TransferFileMove.Publication.COPIED -> {
-                    if (!moveSource || deleteVerifiedSources(sourceDirectory, copiedSnapshot, onProgress)) {
+                    if (!moveSource || deleteVerifiedSources(sourceDirectory, copiedSnapshot, canContinue, sourceAccess, onProgress)) {
                         Result.SUCCESS
                     } else {
                         Result.COPIED_SOURCE_RETAINED
@@ -192,7 +204,9 @@ internal object DirectoryTransferOperations {
             stagingDirectory?.let {
                 val interrupted = Thread.interrupted()
                 try {
-                    DirectoryFileTree.deleteRecursively(it)
+                    stagingAccess?.let { canAccessEntry ->
+                        DirectoryFileTree.deleteRecursively(it, canAccessEntry = canAccessEntry)
+                    }
                 } finally {
                     if (interrupted) Thread.currentThread().interrupt()
                 }
@@ -205,14 +219,16 @@ internal object DirectoryTransferOperations {
         targetDirectory: File,
         state: CopyState,
         snapshot: CopiedTreeSnapshot,
-        isRoot: Boolean
+        isRoot: Boolean,
+        canCopy: (File, File) -> Boolean
     ) {
+        check(canCopy(sourceDirectory, targetDirectory))
         val entries = sourceDirectory.listFiles()
             ?: throw IOException("Could not read source directory")
 
         val recordedChildNames = HashSet<String>(entries.size)
         entries.forEach { sourceEntry ->
-            if (Thread.currentThread().isInterrupted) {
+            if (Thread.currentThread().isInterrupted || !canCopy(sourceEntry, targetDirectory)) {
                 throw InterruptedException("Directory transfer interrupted")
             }
             if (Files.isSymbolicLink(sourceEntry.toPath())) {
@@ -226,7 +242,7 @@ internal object DirectoryTransferOperations {
                     if (!targetEntry.mkdir()) {
                         throw IOException("Could not create target directory")
                     }
-                    copyDirectoryContents(sourceEntry, targetEntry, state, snapshot, isRoot = false)
+                    copyDirectoryContents(sourceEntry, targetEntry, state, snapshot, isRoot = false, canCopy)
                     state.recordItem(sourceEntry.name)
                 }
 
@@ -255,19 +271,21 @@ internal object DirectoryTransferOperations {
     private fun deleteVerifiedSources(
         sourceDirectory: File,
         snapshot: CopiedTreeSnapshot,
+        canContinue: () -> Boolean,
+        sourceAccess: (File) -> Boolean,
         onProgress: (FileOperationProgress) -> Unit
     ): Boolean {
         if (Thread.currentThread().isInterrupted) return false
         for (dirSnapshot in snapshot.directories) {
-            if (Thread.currentThread().isInterrupted) return false
+            if (Thread.currentThread().isInterrupted || !canContinue()) return false
             val dir = dirSnapshot.directory
-            if (Files.isSymbolicLink(dir.toPath()) || !dir.isDirectory) return false
+            if (!sourceAccess(dir) || !dir.isDirectory) return false
             val currentNames = dir.listFiles()?.mapTo(HashSet()) { it.name } ?: return false
             if (currentNames != dirSnapshot.childNames) return false
         }
         for (fileSnapshot in snapshot.files) {
-            if (Thread.currentThread().isInterrupted) return false
-            if (!TransferFileMove.matchesMetadataAndContent(fileSnapshot)) return false
+            if (Thread.currentThread().isInterrupted || !canContinue()) return false
+            if (!sourceAccess(fileSnapshot.file) || !TransferFileMove.matchesMetadataAndContent(fileSnapshot)) return false
         }
 
         val totalItems = snapshot.files.size + snapshot.directories.size
@@ -280,7 +298,9 @@ internal object DirectoryTransferOperations {
             )
         )
         for (fileSnapshot in snapshot.files) {
-            if (Thread.currentThread().isInterrupted || !TransferFileMove.matchesMetadata(fileSnapshot)) return false
+            if (Thread.currentThread().isInterrupted || !canContinue() || !sourceAccess(fileSnapshot.file) ||
+                !TransferFileMove.matchesMetadata(fileSnapshot)
+            ) return false
             if (!fileSnapshot.file.delete()) return false
             completedItems++
             onProgress(
@@ -293,7 +313,7 @@ internal object DirectoryTransferOperations {
             )
         }
         for (dirSnapshot in snapshot.directories) {
-            if (Thread.currentThread().isInterrupted || Files.isSymbolicLink(dirSnapshot.directory.toPath())) return false
+            if (Thread.currentThread().isInterrupted || !canContinue() || !sourceAccess(dirSnapshot.directory)) return false
             // File.delete on a directory uses rmdir and refuses if new files appeared concurrently.
             if (!dirSnapshot.directory.delete()) return false
             completedItems++

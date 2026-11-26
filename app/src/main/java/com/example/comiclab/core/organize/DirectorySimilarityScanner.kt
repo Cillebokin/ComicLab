@@ -12,10 +12,11 @@ internal object DirectorySimilarityScanner {
         rootDirectory: File,
         formatMessage: (DirectorySimilarityReportMessage, Array<out Any>) -> String,
         clock: () -> Date = { Date() },
+        canUsePath: (File) -> Boolean = { true },
         onProgress: (DirectorySimilarityProgress) -> Unit
     ): DirectorySimilarityReport {
         onProgress(DirectorySimilarityProgress(DirectorySimilarityProgress.Stage.SCANNING_DIRECTORIES))
-        val directories = scanDirectories(rootDirectory)
+        val directories = scanDirectories(rootDirectory, canUsePath)
         onProgress(
             DirectorySimilarityProgress(
                 stage = DirectorySimilarityProgress.Stage.COMPARING_DIRECTORY_NAMES,
@@ -33,7 +34,9 @@ internal object DirectorySimilarityScanner {
                 )
             )
         }
+        check(canUsePath(rootDirectory))
         val outputFile = createReportFile(rootDirectory, clock())
+        check(canUsePath(outputFile) && directories.all { canUsePath(File(it.path)) })
         outputFile.writeText(
             buildReportText(rootDirectory, directories, pairs, formatMessage, clock),
             Charsets.UTF_8
@@ -45,10 +48,12 @@ internal object DirectorySimilarityScanner {
         )
     }
 
-    private fun scanDirectories(rootDirectory: File): List<SimilarDirectoryInfo> {
+    private fun scanDirectories(rootDirectory: File, canUsePath: (File) -> Boolean): List<SimilarDirectoryInfo> {
         val result = mutableListOf<SimilarDirectoryInfo>()
         val pending = ArrayDeque<File>()
         val visited = mutableSetOf<String>()
+
+        check(canUsePath(rootDirectory))
 
         runCatching {
             rootDirectory.listFiles()
@@ -59,7 +64,7 @@ internal object DirectorySimilarityScanner {
 
         while (pending.isNotEmpty()) {
             val directory = pending.removeLast()
-            if (!directory.isDirectory || directory.name.startsWith(".")) {
+            if (!canUsePath(directory) || !directory.isDirectory || directory.name.startsWith(".")) {
                 continue
             }
 

@@ -14,8 +14,11 @@ import com.example.comiclab.core.settings.ComicLabHistoryEntry
 import com.example.comiclab.core.settings.ComicLabMangaProgress
 import com.example.comiclab.core.store.FavoriteComicStore
 import com.example.comiclab.core.store.FavoritePathStore
+import com.example.comiclab.core.store.EbookProgressStore
+import com.example.comiclab.core.store.PrivacyStore
 import com.example.comiclab.core.store.ReadingHistoryStore
 import com.example.comiclab.core.settings.ComicLabConfigurationStore
+import com.example.comiclab.ebook.EbookProgress
 import java.io.File
 import java.nio.file.Files
 import org.junit.After
@@ -41,7 +44,8 @@ class ComicLabConfigurationStoreRobolectricTest {
         "favorite_path_prefs",
         "reading_history_prefs",
         "ebook_progress_prefs",
-        "reader_prefs"
+        "reader_prefs",
+        "privacy_prefs"
     )
 
     @Before
@@ -97,6 +101,280 @@ class ComicLabConfigurationStoreRobolectricTest {
             assertEquals(AppSettings.READING_DIRECTION_LEFT_TO_RIGHT, exported.appSettings.readingDirection)
             assertTrue(exported.appSettings.customReaderBrightnessEnabled == true)
             assertTrue(exported.exportedAt > 0L)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun exportUsesCurrentPrivacyMarksForAllSixCollectionsAndKeepsLocalData() {
+        val root = tempDirectory("comiclab-config-privacy")
+        try {
+            val privateDirectory = File(root, "private-fixture").apply { mkdir() }
+            val ordinaryDirectory = File(root, "private-fixture-sibling").apply { mkdir() }
+            val privateShelf = File(privateDirectory, "nested").apply { mkdir() }
+            val ordinaryShelf = File(ordinaryDirectory, "nested").apply { mkdir() }
+            val shelves = listOf(privateShelf, ordinaryShelf)
+            val comics = shelves.map { File(it, "comic.cbz").apply { writeText("comic") } }
+            val ebooks = shelves.map { File(it, "novel.epub").apply { writeText("ebook") } }
+
+            (comics + ebooks).forEach {
+                FavoriteComicStore.record(context, it)
+                ReadingHistoryStore.record(context, it)
+            }
+            listOf(privateDirectory, ordinaryDirectory).forEach { FavoritePathStore.record(context, it) }
+            AppSettings.setBookcaseDirectories(context, shelves, enabled = true)
+            comics.forEach { assertTrue(ReaderProgressStore.prepareSave(context, it, 3, -10).commit()) }
+            ebooks.forEach { EbookProgressStore.save(context, it, EbookProgress(2, 0.5f)) }
+            AppSettings.setCustomReaderBrightnessEnabled(context, true)
+
+            val beforeMarking = ComicLabConfigurationStore.export(context)
+            assertEquals(4, beforeMarking.favoriteComics.size)
+            assertEquals(2, beforeMarking.favoritePaths.size)
+            assertEquals(4, beforeMarking.readingHistory.size)
+            assertEquals(2, beforeMarking.bookcasePaths.size)
+            assertEquals(2, beforeMarking.mangaReadingProgress.size)
+            assertEquals(2, beforeMarking.ebookReadingProgress.size)
+            assertTrue(PrivacyStore.initializeCredentials(context, "123456", listOf(0, 1, 2, 5), privateDirectory))
+            val savedPreferences = preferenceNames.associateWith { context.getSharedPreferences(it, 0).all }
+
+            val json = ComicLabConfigurationJson.encode(ComicLabConfigurationStore.export(context))
+            val decoded = ComicLabConfigurationJson.decode(json)
+            val exported = decoded.configuration
+
+            val ordinaryComic = comics[1].absolutePath
+            val ordinaryEbook = ebooks[1].absolutePath
+            assertEquals(setOf(ordinaryComic, ordinaryEbook), exported.favoriteComics.map { it.path }.toSet())
+            assertEquals(listOf(ordinaryDirectory.absolutePath), exported.favoritePaths.map { it.path })
+            assertEquals(setOf(ordinaryComic, ordinaryEbook), exported.readingHistory.map { it.path }.toSet())
+            assertEquals(listOf(ordinaryShelf.absolutePath), exported.bookcasePaths)
+            assertEquals(listOf(ComicLabMangaProgress(ordinaryComic, 3, -10)), exported.mangaReadingProgress)
+            assertEquals(listOf(ComicLabEbookProgress(ordinaryEbook, 2, 0.5f)), exported.ebookReadingProgress)
+            assertEquals(beforeMarking.appSettings, exported.appSettings)
+            assertEquals(0, decoded.skippedEntries)
+            assertFalse(json.contains(org.json.JSONObject.quote(privateDirectory.absolutePath)))
+            val privatePrefix = org.json.JSONObject.quote(privateDirectory.absolutePath + File.separator).dropLast(1)
+            assertFalse(json.contains(privatePrefix))
+            savedPreferences.getValue("privacy_prefs").values.filterIsInstance<String>().forEach {
+                assertFalse(json.contains(org.json.JSONObject.quote(it)))
+            }
+            preferenceNames.forEach { assertEquals(savedPreferences[it], context.getSharedPreferences(it, 0).all) }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun exportRejectsBookcaseAliasesToPrivateDirectoriesAndUnresolvablePaths() {
+        val root = tempDirectory("comiclab-config-privacy-alias")
+        try {
+            val ordinary = File(root, "ordinary").apply { mkdir() }
+            val privateDirectory = File(root, "private").apply { mkdir() }
+            val privateAlias = File(ordinary, "../private").absolutePath
+            val candidates = setOf(ordinary.absolutePath, privateAlias, "relative-path", File(root, "bad\u0000path").path)
+            assertTrue(context.getSharedPreferences("app_settings", 0).edit()
+                .putStringSet("bookcase_directories", candidates).commit())
+            assertTrue(PrivacyStore.addPrivacyDirectory(context, privateDirectory))
+
+            assertEquals(listOf(ordinary.absolutePath), ComicLabConfigurationStore.export(context).bookcasePaths)
+            assertEquals(candidates, AppSettings.bookcaseDirectoryPaths(context))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun importedAliasesThatPassThroughPrivateDirectoriesExportOnlyTheOrdinaryTarget() {
+        val root = tempDirectory("comiclab-config-outward-alias")
+        try {
+            val privateDirectory = File(root, "private-fixture").apply { mkdir() }
+            val ordinaryDirectory = File(root, "ordinary-fixture").apply { mkdir() }
+            val ordinaryAlias = File(privateDirectory, "../ordinary-fixture")
+            val comic = File(ordinaryDirectory, "comic.cbz").apply { writeText("comic") }
+            val ebook = File(ordinaryDirectory, "novel.epub").apply { writeText("ebook") }
+            val comicAlias = File(ordinaryAlias, comic.name).absolutePath
+            val ebookAlias = File(ordinaryAlias, ebook.name).absolutePath
+            val backup = ComicLabConfiguration(
+                favoriteComics = listOf(ComicLabFavoriteComic(comicAlias, 1, comic.length(), comic.lastModified())),
+                favoritePaths = listOf(ComicLabFavoritePath(ordinaryAlias.absolutePath, 1)),
+                readingHistory = listOf(ComicLabHistoryEntry(comicAlias, 1, comic.length(), comic.lastModified())),
+                bookcasePaths = listOf(ordinaryAlias.absolutePath),
+                mangaReadingProgress = listOf(ComicLabMangaProgress(comicAlias, 3, -10)),
+                ebookReadingProgress = listOf(ComicLabEbookProgress(ebookAlias, 2, 0.5f))
+            )
+            val imported = ComicLabConfigurationJson.decode(ComicLabConfigurationJson.encode(backup))
+            assertEquals(6, ComicLabConfigurationStore.importAndMerge(
+                context, imported.configuration, applyAppSettings = false
+            ).restoredEntries)
+            assertEquals(listOf(ordinaryAlias.absolutePath), ComicLabConfigurationStore.export(context).bookcasePaths)
+            assertTrue(PrivacyStore.addPrivacyDirectory(context, privateDirectory))
+            val savedPreferences = preferenceNames.associateWith { context.getSharedPreferences(it, 0).all }
+
+            val json = ComicLabConfigurationJson.encode(ComicLabConfigurationStore.export(context))
+            val exported = ComicLabConfigurationJson.decode(json).configuration
+            assertEquals(comic.canonicalPath, exported.favoriteComics.single().path)
+            assertEquals(ordinaryDirectory.canonicalPath, exported.favoritePaths.single().path)
+            assertEquals(comic.canonicalPath, exported.readingHistory.single().path)
+            assertEquals(listOf(ordinaryDirectory.canonicalPath), exported.bookcasePaths)
+            assertEquals(backup.mangaReadingProgress.single().copy(path = comic.canonicalPath),
+                exported.mangaReadingProgress.single())
+            assertEquals(backup.ebookReadingProgress.single().copy(path = ebook.canonicalPath),
+                exported.ebookReadingProgress.single())
+            assertFalse(json.contains("private-fixture"))
+            preferenceNames.forEach { assertEquals(savedPreferences[it], context.getSharedPreferences(it, 0).all) }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun rewritingPrivateAliasesKeepsTheProgressForAnExistingOrdinaryPath() {
+        val root = tempDirectory("comiclab-config-alias-progress")
+        try {
+            val privateDirectory = File(root, "private-fixture").apply { mkdir() }
+            val ordinaryDirectory = File(root, "ordinary-fixture").apply { mkdir() }
+            val ordinaryBook = File(ordinaryDirectory, "comic.cbz").apply { writeText("comic") }
+            val privateAlias = File(privateDirectory, "../ordinary-fixture/comic.cbz")
+            val ordinaryAlias = File(ordinaryDirectory, "../ordinary-fixture/comic.cbz")
+            assertTrue(ReaderProgressStore.prepareSave(context, ordinaryBook, 8, -10).commit())
+            assertTrue(ReaderProgressStore.prepareSave(context, privateAlias, 2, -20).commit())
+            assertTrue(ReaderProgressStore.prepareSave(context, ordinaryAlias, 4, -30).commit())
+            assertTrue(PrivacyStore.addPrivacyDirectory(context, privateDirectory))
+
+            assertEquals(
+                setOf(
+                    ComicLabMangaProgress(ordinaryBook.absolutePath, 8, -10),
+                    ComicLabMangaProgress(ordinaryAlias.absolutePath, 4, -30)
+                ),
+                ComicLabConfigurationStore.export(context).mangaReadingProgress.toSet()
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun exportDropsTagsContainingPrivatePathsAndRetainsOrdinaryTags() {
+        val root = tempDirectory("comiclab-config-private-tags")
+        try {
+            val privateDirectory = File(root, "private-fixture").apply { mkdir() }
+            val sibling = File(root, "private-fixture-sibling").apply { mkdir() }
+            val semicolonDirectory = File(root, "private-fixture;extra").apply { mkdir() }
+            val privateAlias = File(sibling, "../private-fixture/book.cbz")
+            val ordinaryTags = listOf("keep", sibling.canonicalPath, "last")
+            val tags = listOf(
+                ordinaryTags[0], "legacy,${privateDirectory.canonicalPath}",
+                ordinaryTags[1], privateAlias.absolutePath, semicolonDirectory.canonicalPath, ordinaryTags[2]
+            ).joinToString(";")
+            AppSettings.setStartMarkerErrorTags(context, tags)
+            assertTrue(PrivacyStore.addPrivacyDirectory(context, privateDirectory))
+            assertTrue(PrivacyStore.addPrivacyDirectory(context, semicolonDirectory))
+
+            val json = ComicLabConfigurationJson.encode(ComicLabConfigurationStore.export(context))
+            val decoded = ComicLabConfigurationJson.decode(json).configuration
+            assertEquals(ordinaryTags.joinToString(";"), decoded.appSettings.startMarkerErrorTags)
+            assertEquals(tags, AppSettings.getStartMarkerErrorTags(context))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun exportDropsQuotedPrivatePathAliasesEmbeddedInTags() {
+        val root = tempDirectory("comiclab-config-quoted-private-tag")
+        try {
+            val privateDirectory = File(root, "private-fixture").apply { mkdir() }
+            val semicolonDirectory = File(root, "private;edition").apply { mkdir() }
+            val ordinary = File(root, "ordinary-fixture").apply { mkdir() }
+            val privateAlias = File(ordinary, "../private-fixture").absolutePath
+            val outwardAlias = File(privateDirectory, "../ordinary-fixture").absolutePath
+            val semicolonAlias = File(ordinary, "../private;edition").absolutePath
+            val tags = "keep;legacy,\"$privateAlias\";note,'$outwardAlias';note,\"$semicolonAlias\";last"
+            AppSettings.setStartMarkerErrorTags(context, tags)
+            assertTrue(PrivacyStore.addPrivacyDirectory(context, privateDirectory))
+            assertTrue(PrivacyStore.addPrivacyDirectory(context, semicolonDirectory))
+
+            val json = ComicLabConfigurationJson.encode(ComicLabConfigurationStore.export(context))
+            assertEquals("keep;last", ComicLabConfigurationJson.decode(json).configuration.appSettings.startMarkerErrorTags)
+            assertEquals(tags, AppSettings.getStartMarkerErrorTags(context))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun exportKeepsOrdinaryPathTagsWithASpaceSuffix() {
+        val root = tempDirectory("comiclab-config-space-suffix-tag")
+        try {
+            val privateDirectory = File(root, "private-fixture").apply { mkdir() }
+            val ordinary = File(root, "private-fixture shelf").apply { mkdir() }
+            val ordinaryPath = ordinary.canonicalPath
+            val quotedOrdinary = File(root, "private-fixture shelf;;edition").apply { mkdir() }
+            val quotedOrdinaryPath = "note,\"${quotedOrdinary.canonicalPath}\""
+            val tags = "keep;$ordinaryPath;$quotedOrdinaryPath;old,${privateDirectory.canonicalPath};last"
+            AppSettings.setStartMarkerErrorTags(context, tags)
+            assertTrue(PrivacyStore.addPrivacyDirectory(context, privateDirectory))
+
+            val json = ComicLabConfigurationJson.encode(ComicLabConfigurationStore.export(context))
+            val exported = ComicLabConfigurationJson.decode(json).configuration.appSettings.startMarkerErrorTags
+            assertEquals("keep;$ordinaryPath;$quotedOrdinaryPath;last", exported)
+            assertEquals(tags, AppSettings.getStartMarkerErrorTags(context))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun exportDropsUnquotedPrivatePathsSeparatedFromNotesByCommas() {
+        val root = tempDirectory("comiclab-config-unquoted-private-tag")
+        try {
+            val privateDirectory = File(root, "private-fixture").apply { mkdir() }
+            val ordinaryDirectory = File(root, "ordinary-fixture").apply { mkdir() }
+            val privatePath = privateDirectory.canonicalPath
+            val privateAlias = File(ordinaryDirectory, "../private-fixture").absolutePath
+            val tags = listOf(
+                "keep",
+                "$privatePath,legacy",
+                "$privatePath，旧备注",
+                "legacy,$privateAlias",
+                "old,${ordinaryDirectory.canonicalPath},$privatePath,entry",
+                "last"
+            ).joinToString(";")
+            AppSettings.setStartMarkerErrorTags(context, tags)
+            assertTrue(PrivacyStore.addPrivacyDirectory(context, privateDirectory))
+
+            val json = ComicLabConfigurationJson.encode(ComicLabConfigurationStore.export(context))
+            assertEquals("keep;last", ComicLabConfigurationJson.decode(json).configuration.appSettings.startMarkerErrorTags)
+            assertEquals(tags, AppSettings.getStartMarkerErrorTags(context))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun exportKeepsOrdinaryUnquotedPathsWithSpacesAndLiteralCommas() {
+        val root = tempDirectory("comiclab-config-unquoted-ordinary-tag")
+        try {
+            val privateDirectory = File(root, "private-fixture").apply { mkdir() }
+            val ordinaryWithSpace = File(root, "private-fixture shelf").apply { mkdir() }
+            val ordinaryWithComma = File(root, "private-fixture,shelf").apply { mkdir() }
+            val ordinaryWithTrailingComma = File(root, "private-fixture,").apply { mkdir() }
+            val shelf = File(ordinaryWithTrailingComma, "shelf").apply { mkdir() }
+            val ordinaryTags = listOf(
+                "old,${ordinaryWithSpace.canonicalPath}",
+                "旧备注，${ordinaryWithSpace.canonicalPath}，附注",
+                ordinaryWithComma.canonicalPath,
+                "old,${ordinaryWithComma.canonicalPath},note",
+                "old,${shelf.canonicalPath}"
+            )
+            val tags = (ordinaryTags + "old,${privateDirectory.canonicalPath}").joinToString(";")
+            AppSettings.setStartMarkerErrorTags(context, tags)
+            assertTrue(PrivacyStore.addPrivacyDirectory(context, privateDirectory))
+
+            val json = ComicLabConfigurationJson.encode(ComicLabConfigurationStore.export(context))
+            val exported = ComicLabConfigurationJson.decode(json).configuration.appSettings.startMarkerErrorTags
+            assertEquals(ordinaryTags.joinToString(";"), exported)
+            assertEquals(tags, AppSettings.getStartMarkerErrorTags(context))
         } finally {
             root.deleteRecursively()
         }

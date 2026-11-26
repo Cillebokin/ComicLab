@@ -26,13 +26,14 @@ class TranslationLifecycleTest {
         model.acquirePreview()
         try {
             model.directory.mkdirs()
+            val archive = File(model.directory, "fixture.cbz").apply { writeText("test source") }
             val source = File(model.directory, "source.png")
             val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.WHITE) }
             source.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
             PageTranslationViewModel::class.java.getDeclaredField("analysis").apply { isAccessible = true }
                 .set(model, TranslationAnalysis(source, 64, 64, 1, emptyList(), emptyList()))
             fun render(): File {
-                model.start(File("unused.cbz"), "unused.png", "English", TranslationStyle())
+                model.start(archive, "unused.png", "English", TranslationStyle())
                 val deadline = System.nanoTime() + 5_000_000_000
                 while (model.state.value?.busy == true && System.nanoTime() < deadline) {
                     Thread.sleep(10); shadowOf(Looper.getMainLooper()).idle()

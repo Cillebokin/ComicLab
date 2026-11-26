@@ -24,14 +24,27 @@ import com.example.comiclab.ComicArchive
 import com.example.comiclab.R
 import com.example.comiclab.SettingsActivity
 import com.example.comiclab.core.reader.enhance.EnhancementRuntime
+import com.example.comiclab.core.reader.ReaderDerivationPrivacy
 import com.example.comiclab.core.reader.translation.*
 import com.example.comiclab.ui.common.SystemBars
+import com.example.comiclab.ui.privacy.ReaderSourcePrivacy
 import com.example.comiclab.ui.reader.enhance.EnhancementExportActivity
 import com.example.comiclab.ui.reader.manga.ReaderSubsamplingImageView
 import java.io.File
 
 internal class PageTranslationActivity : AppCompatActivity() {
     private val model by lazy { ViewModelProvider(this)[PageTranslationViewModel::class.java] }
+    private val sourcePrivacy = ReaderSourcePrivacy(this) { model.cancel() }
+    private val archive get() = intent.getStringExtra("archive")?.let(::File)
+    private val sourcePath get() = intent.getStringExtra(ReaderDerivationPrivacy.SOURCE_PATH)
+
+    private fun allowedSource() = ReaderDerivationPrivacy.allows(this, archive, sourcePath)
+
+    private fun startTranslation() {
+        val source = archive ?: return
+        if (!sourcePrivacy.checkAccess()) return
+        model.start(source, intent.getStringExtra("entry") ?: return, languages[language.selectedItemPosition], style(), sourcePath)
+    }
     private lateinit var image: ReaderSubsamplingImageView
     private lateinit var start: Button
     private lateinit var rerender: Button
@@ -54,7 +67,9 @@ internal class PageTranslationActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (intent.getStringExtra("archive") == null || intent.getStringExtra("entry") == null) { finish(); return }
+        val source = archive
+        if (source == null || !allowedSource() || intent.getStringExtra("entry") == null) { finish(); return }
+        if (!sourcePrivacy.bind(source)) return
         model.acquirePreview()
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.BLACK); setPadding(16, 8, 16, 8) }
         setContentView(root); SystemBars.fitContentBelowSystemBars(this, root, statusBarColorResId = R.color.black)
@@ -135,15 +150,12 @@ internal class PageTranslationActivity : AppCompatActivity() {
                     ))
                     return@button
                 }
-                model.start(File(intent.getStringExtra("archive")!!), intent.getStringExtra("entry")!!, languages[language.selectedItemPosition], style())
+                startTranslation()
             }
         }
         edit = button(translationActions, R.string.translation_edit) { editBlocks() }
         rerender = button(translationActions, R.string.translation_render) {
-            if (model.analysis != null) model.start(
-                File(intent.getStringExtra("archive")!!), intent.getStringExtra("entry")!!,
-                languages[language.selectedItemPosition], style()
-            )
+            if (model.analysis != null) startTranslation()
         }
         spacer(translationActions)
         val pageActions = row()
@@ -177,6 +189,7 @@ internal class PageTranslationActivity : AppCompatActivity() {
             status.text = getString(text) + state.stage.substringAfter('|', "").let { if (it.isBlank()) "" else "\n$it" } +
                 state.error?.let { "\n" + getString(when(it) {
                     "busy" -> R.string.reader_enhance_busy; "no_text" -> R.string.translation_no_text
+                    "private" -> R.string.privacy_operation_denied
                     "translation_disabled" -> R.string.translation_models_disabled
                     "models_missing" -> R.string.translation_models_enable_requires_import
                     "overflow" -> R.string.translation_overflow; "memory" -> R.string.translation_memory
@@ -190,27 +203,29 @@ internal class PageTranslationActivity : AppCompatActivity() {
     }
 
     private fun loadOriginalPreview() {
-        val archive = File(intent.getStringExtra("archive")!!)
+        val archive = archive ?: return
         val entry = intent.getStringExtra("entry")!!
         val preview = File(model.directory, "preview.${entry.substringAfterLast('.', "img")}")
         model.acquirePreview()
         EnhancementRuntime.io.execute {
             val loaded = runCatching {
+                ReaderDerivationPrivacy.check(applicationContext, archive, sourcePath)
                 check(model.directory.mkdirs() || model.directory.isDirectory)
                 ComicArchive.extractImageEntryToFile(archive, entry, preview)
             }.getOrDefault(false)
             runOnUiThread {
                 try {
-                    if (loaded && !isFinishing && !isDestroyed) {
+                    if (loaded && !isFinishing && !isDestroyed && allowedSource()) {
                         originalPreview = preview
                         if (model.state.value?.result == null) display(preview)
-                    } else if (!loaded) preview.delete()
+                    } else preview.delete()
                 } finally { model.releasePreview() }
             }
         }
     }
 
     private fun display(file: File) {
+        if (!allowedSource()) return
         val current = ++generation
         model.retainFile(file)
         switching = true
@@ -220,7 +235,7 @@ internal class PageTranslationActivity : AppCompatActivity() {
                 displayed?.let { model.releaseFile(it) }
                 displayed = null
             }
-            if (isDestroyed || current != generation || result.isFailure) {
+            if (isDestroyed || current != generation || result.isFailure || !allowedSource()) {
                 model.releaseFile(file)
                 if (!isDestroyed && current == generation) {
                     switching = false
@@ -284,37 +299,44 @@ internal class PageTranslationActivity : AppCompatActivity() {
     }
 
     private fun editBlocks() {
+        if (!allowedSource()) return
         val blocks = model.analysis?.blocks ?: return
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 8, 24, 8) }
         val inputs = blocks.mapIndexed { i, block ->
             list.addView(TextView(this).apply { text = "${i + 1}. ${block.region.sourceText}" })
             EditText(this).apply { setText(block.text); list.addView(this) }
         }
-        AlertDialog.Builder(this).setTitle(R.string.translation_edit).setView(ScrollView(this).apply { addView(list) })
+        val dialog = AlertDialog.Builder(this).setTitle(R.string.translation_edit).setView(ScrollView(this).apply { addView(list) })
             .setPositiveButton(android.R.string.ok) { _, _ ->
-                if (inputs.all { it.text.isNotBlank() && it.text.length <= 6000 }) {
+                if (allowedSource() && inputs.all { it.text.isNotBlank() && it.text.length <= 6000 }) {
                     blocks.forEachIndexed { i, block -> block.text = inputs[i].text.toString() }
-                    model.start(File(intent.getStringExtra("archive")!!), intent.getStringExtra("entry")!!, languages[language.selectedItemPosition], style())
+                    startTranslation()
                 }
-            }.setNegativeButton(android.R.string.cancel, null).show()
+            }.setNegativeButton(android.R.string.cancel, null).create()
+        sourcePrivacy.showDialog(dialog)
     }
 
     private fun saveResult() {
+        val source = archive ?: return
         val result = model.state.value?.result ?: return
-        if (saving) return
+        if (saving || !allowedSource()) return
         saving = true; save.isEnabled = false
         model.acquirePreview() // 独立导出暂存复制结束前，不释放任务源文件
         model.retainFile(result)
         EnhancementRuntime.io.execute {
-            val staging = runCatching { stageTranslatedPage(result, File(cacheDir, "enhancement-exports")) }
+            val staging = runCatching {
+                ReaderDerivationPrivacy.check(applicationContext, source, sourcePath)
+                stageTranslatedPage(result, File(cacheDir, "enhancement-exports"))
+            }
             runOnUiThread {
                 saving = false
                 try {
                     val staged = staging.getOrNull()
                     when {
-                        isFinishing || isDestroyed -> staged?.delete()
+                        isFinishing || isDestroyed || !allowedSource() -> staged?.delete()
                         staged != null -> EnhancementExportActivity.launchImage(
-                            this, staged, "${File(intent.getStringExtra("archive")!!).nameWithoutExtension}_${intent.getIntExtra("page", 1)}_translated.png"
+                            this, staged, "${source.nameWithoutExtension}_${intent.getIntExtra("page", 1)}_translated.png",
+                            source, sourcePath
                         )
                         else -> {
                             val outOfSpace = generateSequence(staging.exceptionOrNull()) { it.cause }
@@ -339,6 +361,7 @@ internal class PageTranslationActivity : AppCompatActivity() {
         super.onSaveInstanceState(outState)
     }
     override fun onDestroy() {
+        sourcePrivacy.close()
         generation++
         if (::image.isInitialized) image.closeReaderImage {
             if (it.isSuccess) { displayed?.let { file -> model.releaseFile(file) }; displayed = null; model.releasePreview() }
@@ -347,7 +370,10 @@ internal class PageTranslationActivity : AppCompatActivity() {
     }
     companion object {
         fun launch(activity: Activity, archive: File, entry: String, page: Int) {
-            activity.startActivity(Intent(activity, PageTranslationActivity::class.java).putExtra("archive", archive.path).putExtra("entry", entry).putExtra("page", page))
+            val sourcePath = ReaderDerivationPrivacy.ordinaryPath(activity, archive) ?: return
+            activity.startActivity(Intent(activity, PageTranslationActivity::class.java)
+                .putExtra("archive", archive.absolutePath).putExtra("entry", entry).putExtra("page", page)
+                .putExtra(ReaderDerivationPrivacy.SOURCE_PATH, sourcePath))
         }
     }
 }

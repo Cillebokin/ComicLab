@@ -43,7 +43,8 @@ import java.util.concurrent.atomic.AtomicLong
 class SearchResultAdapter(
     context: Context,
     private val items: List<File>,
-    private val onCollectionCoverClick: ((File) -> Unit)? = null
+    private val onCollectionCoverClick: ((File) -> Unit)? = null,
+    private val canShowFile: (File) -> Boolean = { true }
 ) : ArrayAdapter<File>(context, 0, items) {
 
     private val coverCache = object : LruCache<String, Bitmap>(SEARCH_COVER_CACHE_SIZE) {}
@@ -246,7 +247,7 @@ class SearchResultAdapter(
             return
         }
 
-        val cachedSources = collectionSourceCache.get(cacheKey)
+        val cachedSources = collectionSourceCache.get(cacheKey)?.filter { canShowFile(it.file) }
         if (cachedSources.isNullOrEmpty()) {
             resetCollectionCoverContainer(iconContainer, infoContainer, imgIcon, collectionCoverList)
             bindDirectoryClick(directory, row, collectionCoverList)
@@ -271,7 +272,10 @@ class SearchResultAdapter(
                 onRejected = { collectionSourceRequestIds.remove(cacheKey, requestId) }
             ) {
                 val sources = runCatching {
-                    MangaCollectionCoverPlanner.findCoverSourcesWithEntries(directory)
+                    if (!canShowFile(directory)) emptyList()
+                    else MangaCollectionCoverPlanner.findCoverSourcesWithEntries(directory, isSupportedArchive = { file ->
+                        canShowFile(file) && ComicArchive.isSupportedArchive(file)
+                    })
                 }.getOrDefault(emptyList())
                 if (closed || !collectionSourceRequestIds.remove(cacheKey, requestId)) {
                     return@executeCoverTask
@@ -340,6 +344,7 @@ class SearchResultAdapter(
 
     private fun bindCollectionCover(source: MangaCollectionCoverSource, imageView: ImageView) {
         val file = source.file
+        if (!canShowFile(file)) return
         val cacheKey = "${archiveCoverCacheKey(file)}:collection:${source.imageEntry}"
         imageView.tag = cacheKey
 
@@ -360,7 +365,7 @@ class SearchResultAdapter(
             taskKey = "collection-cover:$cacheKey",
             onRejected = { collectionCoverLoadTracker.complete(cacheKey, requestId) }
         ) {
-            if (closed) {
+            if (closed || !canShowFile(file)) {
                 collectionCoverLoadTracker.complete(cacheKey, requestId)
                 return@executeCoverTask
             }
@@ -373,7 +378,7 @@ class SearchResultAdapter(
                     )
                 }
             }.getOrNull()
-            handleCollectionCoverResult(cacheKey, requestId, cover)
+            handleCollectionCoverResult(cacheKey, requestId, cover.takeIf { canShowFile(file) })
         }
     }
 
@@ -439,6 +444,10 @@ class SearchResultAdapter(
             taskKey = "archive-cover:$cacheKey",
             onRejected = { loadingCovers.remove(cacheKey) }
         ) {
+            if (closed || !canShowFile(file)) {
+                loadingCovers.remove(cacheKey)
+                return@executeCoverTask
+            }
             val entries = runCatching { ComicArchive.imageEntries(file) }.getOrDefault(emptyList())
             val cover = entries.firstOrNull()?.let {
                 runCatching {
@@ -462,7 +471,7 @@ class SearchResultAdapter(
                     }
                 }
             }
-            handleCoverResult(cacheKey, cover, imgIcon)
+            handleCoverResult(cacheKey, cover.takeIf { canShowFile(file) }, imgIcon)
         }
     }
 

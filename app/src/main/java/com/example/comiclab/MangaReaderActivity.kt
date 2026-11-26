@@ -67,7 +67,9 @@ import com.example.comiclab.ui.reader.manga.ReaderPreviewAdapter
 import com.example.comiclab.ui.reader.manga.SubsamplingMangaPageAdapter
 import com.example.comiclab.ui.reader.manga.findNextManga
 import com.example.comiclab.ui.browser.DirectorySortPolicy
-import com.example.comiclab.ui.common.showRounded
+import com.example.comiclab.ui.common.createRounded
+import com.example.comiclab.ui.privacy.ReaderSourcePrivacy
+import com.example.comiclab.core.reader.ReaderDerivationPrivacy
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ExecutorService
@@ -132,6 +134,17 @@ class MangaReaderActivity : AppCompatActivity() {
     private var nextReaderWasReady = false
 
     private val handler = Handler(Looper.getMainLooper())
+    private val sourcePrivacy = ReaderSourcePrivacy(this) { maySaveLastPosition ->
+        if (maySaveLastPosition) persistReaderPosition(forceCommit = true)
+        stopReaderLoads()
+        handler.removeCallbacksAndMessages(null)
+        pageEnhancementDialog?.close()
+        pageEnhancementDialog = null
+        pageAdapter?.close()
+        pageAdapter = null
+        readerPreviewAdapter?.close()
+        readerPreviewAdapter = null
+    }
     private var readerLoadExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     internal var openReaderSessionForTest: ((File) -> ComicArchive.ImageReaderSession)? = null
     private var readerProgressExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -249,8 +262,14 @@ class MangaReaderActivity : AppCompatActivity() {
 
         val path = intent.getStringExtra(EXTRA_ARCHIVE_PATH)
         val file = path?.let(::File)
-        if (file == null || (!file.isFile && !ComicArchive.hasPendingArchiveReplacement(file))) {
-            showError(getString(R.string.message_invalid_file))
+        val preparedCacheDir = intent.getStringExtra(EXTRA_PREPARED_READER_CACHE_DIR)?.let(::File)
+        val accessDenied = file != null && !sourcePrivacy.bind(file)
+        if (accessDenied || file == null || (!file.isFile && !ComicArchive.hasPendingArchiveReplacement(file))) {
+            val handoffId = intent.getLongExtra(EXTRA_PREPARED_READER_HANDOFF_ID, 0L)
+            if (preparedCacheDir != null && handoffId > 0) {
+                PreparedReaderCacheLeaseRegistry.process.cancelHandoff(preparedCacheDir, handoffId)
+            }
+            if (!accessDenied) showError(getString(R.string.message_invalid_file))
             return
         }
 
@@ -277,8 +296,6 @@ class MangaReaderActivity : AppCompatActivity() {
             NO_EXPLICIT_START_PAGE
         }
         configureDebugReaderStress()
-        val preparedCachePath = intent.getStringExtra(EXTRA_PREPARED_READER_CACHE_DIR)
-        val preparedCacheDir = preparedCachePath?.let(::File)
         if (preparedCacheDir != null &&
             preparedReaderViewModel.acquireReaderOwner(preparedCacheDir) &&
             preparedCacheDir.isDirectory
@@ -317,8 +334,14 @@ class MangaReaderActivity : AppCompatActivity() {
         super.onSaveInstanceState(outState)
     }
 
+    override fun onStart() {
+        super.onStart()
+        sourcePrivacy.checkAccess()
+    }
+
     override fun onResume() {
         super.onResume()
+        if (!sourcePrivacy.checkAccess()) return
         updateReaderTranslationVisibility()
         pageAdapter?.onReaderResumed()
         readerPreviewAdapter?.setDecodingEnabled(readerPreviewPanelVisible)
@@ -357,24 +380,30 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        clearNextHandoff()
-        destroyed = true
-        pageEnhancementDialog?.close()
-        pageEnhancementDialog = null
+        CrashLogManager.finishReaderSession(this, readerSessionMarker) {
+            clearNextHandoff()
+            destroyed = true
+            sourcePrivacy.close()
+            pageEnhancementDialog?.close()
+            pageEnhancementDialog = null
+            stopReaderLoads()
+            readerProgressController.shutdown()
+            handler.removeCallbacksAndMessages(null)
+            readerControlsController.close()
+            pageAdapter?.close()
+            pageAdapter = null
+            readerPreviewAdapter?.close()
+            readerPreviewAdapter = null
+            super.onDestroy()
+        }
+        readerSessionMarker = null
+    }
+
+    private fun stopReaderLoads() {
         readerLoadGeneration.incrementAndGet()
         readerLoadExecutor.shutdownNow().forEach { task ->
             (task as? PreparedReaderCacheLeaseTask)?.cancelBeforeRun()
         }
-        readerProgressController.shutdown()
-        handler.removeCallbacksAndMessages(null)
-        readerControlsController.close()
-        CrashLogManager.recordReaderSessionFinished(this, readerSessionMarker)
-        readerSessionMarker = null
-        pageAdapter?.close()
-        pageAdapter = null
-        readerPreviewAdapter?.close()
-        readerPreviewAdapter = null
-        super.onDestroy()
     }
 
     override fun onTrimMemory(level: Int) {
@@ -534,6 +563,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun configureBackHandling() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                if (!sourcePrivacy.checkAccess()) return
                 if (readerPreviewPanelVisible) {
                     hideReaderPreviewPanel()
                     return
@@ -545,10 +575,12 @@ class MangaReaderActivity : AppCompatActivity() {
                     nextReaderWasReady
                 ) {
                     try {
-                        startActivity(Intent(this@MangaReaderActivity, MangaPreviewActivity::class.java).apply {
+                        val previewIntent = Intent(this@MangaReaderActivity, MangaPreviewActivity::class.java).apply {
                             putExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
                             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                        })
+                        }
+                        if (!ReaderSourcePrivacy.authorizeLaunch(this@MangaReaderActivity, previewIntent, file)) return
+                        startActivity(previewIntent)
                     } catch (_: Exception) {
                         Toast.makeText(this@MangaReaderActivity, R.string.reader_next_unavailable, Toast.LENGTH_SHORT).show()
                         return
@@ -658,7 +690,8 @@ class MangaReaderActivity : AppCompatActivity() {
             val archive = archiveFile ?: return@setOnClickListener
             if (imageEntries.isEmpty()) return@setOnClickListener
             val position = currentReaderPosition.coerceIn(imageEntries.indices)
-            if (ComicArchive.isPdf(archive) ||
+            if (!sourcePrivacy.checkAccess() || ReaderDerivationPrivacy.ordinaryPath(this, archive) == null ||
+                ComicArchive.isPdf(archive) ||
                 !TranslationPageSource.supportsEntry(imageEntries[position]) ||
                 !TranslationModels.isAvailable(this)
             ) {
@@ -671,7 +704,9 @@ class MangaReaderActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.btnReaderEnhance).setOnClickListener {
             val archive = archiveFile ?: return@setOnClickListener
-            if (pageEnhancementDialog != null || imageEntries.isEmpty()) return@setOnClickListener
+            if (pageEnhancementDialog != null || imageEntries.isEmpty() || !sourcePrivacy.checkAccess() ||
+                ReaderDerivationPrivacy.ordinaryPath(this, archive) == null
+            ) return@setOnClickListener
             val position = currentReaderPosition.coerceIn(imageEntries.indices)
             pageEnhancementDialog = PageEnhancementDialog.open(
                 this, archive, imageEntries[position], position + 1
@@ -753,10 +788,10 @@ class MangaReaderActivity : AppCompatActivity() {
                 }
                 return@executeReaderLoadTask
             }
-            if (generation != readerLoadGeneration.get()) return@executeReaderLoadTask
+            if (generation != readerLoadGeneration.get() || !sourcePrivacy.canRead()) return@executeReaderLoadTask
 
             val sessionResult = runCatching { openArchiveReaderSession(file) }
-            if (generation != readerLoadGeneration.get()) {
+            if (generation != readerLoadGeneration.get() || !sourcePrivacy.canRead()) {
                 sessionResult.getOrNull()?.let(::closeUnboundReaderSession)
                 return@executeReaderLoadTask
             }
@@ -1635,6 +1670,10 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun saveReaderPosition(forceCommit: Boolean = false) {
+        if (sourcePrivacy.canRead()) persistReaderPosition(forceCommit)
+    }
+
+    private fun persistReaderPosition(forceCommit: Boolean) {
         if (AppSettings.isIncognitoModeEnabled(this) ||
             startFromBeginningPending ||
             (intent.getBooleanExtra(EXTRA_RETURN_TO_CURRENT_PREVIEW, false) && !nextReaderWasReady)
@@ -1688,8 +1727,10 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun updateReaderTranslationVisibility() {
         val button = findViewById<Button>(R.id.btnReaderTranslate) ?: return
         val archive = archiveFile
+        val allowed = ReaderDerivationPrivacy.ordinaryPath(this, archive) != null
+        findViewById<Button>(R.id.btnReaderEnhance)?.visibility = if (allowed) View.VISIBLE else View.GONE
         val entry = imageEntries.getOrNull(currentReaderPosition)
-        val supportedPage = archive != null && !ComicArchive.isPdf(archive) &&
+        val supportedPage = allowed && archive != null && !ComicArchive.isPdf(archive) &&
             entry != null && TranslationPageSource.supportsEntry(entry)
         button.visibility = if (supportedPage && TranslationModels.isAvailable(this)) {
             View.VISIBLE
@@ -1820,6 +1861,7 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun updateNextMangaAtEnd() {
+        if (!isReaderActive()) return
         if (!AppSettings.isNextMangaEnabled(this)) {
             atMangaEnd = false
             nextLookupGeneration++
@@ -1852,11 +1894,11 @@ class MangaReaderActivity : AppCompatActivity() {
         btnNextManga.setText(R.string.reader_next_loading)
         val order = DirectorySortPolicy.savedOrder(PrefsGateway.open(this, "saf_prefs"))
         executeReaderLoadTask {
-            val result = runCatching { findNextManga(file, order) }
+            val result = runCatching { findNextManga(file, order, sourcePrivacy::allowsRelatedBook) }
             runOnUiThread {
-                if (destroyed || !atMangaEnd || generation != nextLookupGeneration ||
+                if (!isReaderActive() || !atMangaEnd || generation != nextLookupGeneration ||
                     !AppSettings.isNextMangaEnabled(this)) return@runOnUiThread
-                nextManga = result.getOrNull()
+                nextManga = result.getOrNull()?.takeIf(sourcePrivacy::allowsRelatedBook)
                 btnNextManga.isEnabled = nextManga != null || result.isFailure
                 btnNextManga.text = when {
                     result.isFailure -> getString(R.string.reader_next_unavailable)
@@ -1875,6 +1917,7 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun chooseNextManga() {
+        if (!sourcePrivacy.checkAccess()) return
         if (!AppSettings.isNextMangaEnabled(this)) {
             updateNextMangaAtEnd()
             return
@@ -1884,26 +1927,28 @@ class MangaReaderActivity : AppCompatActivity() {
             updateNextMangaAtEnd()
             return
         }
-        if (!file.isFile) {
+        if (!sourcePrivacy.allowsRelatedBook(file) || !file.isFile) {
             Toast.makeText(this, R.string.reader_next_unavailable, Toast.LENGTH_SHORT).show()
             atMangaEnd = false
             updateNextMangaAtEnd()
             return
         }
         if (hasSavedReadingProgress(this, file)) {
-            AlertDialog.Builder(this)
+            val dialog = AlertDialog.Builder(this)
                 .setTitle(file.name)
                 .setMessage(R.string.reader_progress_dialog_message)
                 .setPositiveButton(R.string.continue_reading) { _, _ -> openNextManga(file, false) }
                 .setNegativeButton(R.string.read_from_beginning) { _, _ -> openNextManga(file, true) }
                 .setNeutralButton(R.string.cancel, null)
-                .showRounded()
+                .createRounded()
+            sourcePrivacy.showDialog(dialog)
         } else {
             openNextManga(file, false)
         }
     }
 
     private fun openNextManga(file: File, fromBeginning: Boolean) {
+        if (!sourcePrivacy.checkAccess() || !sourcePrivacy.allowsRelatedBook(file)) return
         if (!AppSettings.isNextMangaEnabled(this)) {
             updateNextMangaAtEnd()
             return
@@ -1920,12 +1965,17 @@ class MangaReaderActivity : AppCompatActivity() {
         val target = if (ComicArchive.isPdf(file)) MangaReaderActivity::class.java
             else MangaReaderPrepareActivity::class.java
         try {
-            startActivity(Intent(this, target).apply {
+            val readerIntent = Intent(this, target).apply {
                 putExtra(EXTRA_ARCHIVE_PATH, file.absolutePath)
                 putExtra(EXTRA_START_FROM_BEGINNING, fromBeginning)
                 putExtra(EXTRA_NEXT_HANDOFF_TOKEN, token)
                 putExtra(EXTRA_RETURN_TO_CURRENT_PREVIEW, true)
-            })
+            }
+            if (!ReaderSourcePrivacy.authorizeLaunch(this, readerIntent, file)) {
+                clearNextHandoff()
+                return
+            }
+            startActivity(readerIntent)
         } catch (_: Exception) {
             clearNextHandoff()
             Toast.makeText(this, R.string.reader_next_unavailable, Toast.LENGTH_SHORT).show()
@@ -2245,7 +2295,7 @@ class MangaReaderActivity : AppCompatActivity() {
         cacheLease: PreparedReaderCacheLeaseRegistry.Lease?,
         block: () -> Unit
     ) {
-        if (destroyed) {
+        if (destroyed || !sourcePrivacy.canRead()) {
             cacheLease?.close()
             return
         }
@@ -2253,7 +2303,7 @@ class MangaReaderActivity : AppCompatActivity() {
         if (cacheLease != null) {
             val task = PreparedReaderCacheLeaseTask(
                 lease = cacheLease,
-                shouldRun = { !destroyed }
+                shouldRun = { !destroyed && sourcePrivacy.canRead() }
             ) {
                 runReaderLoadBlock(block)
             }
@@ -2268,7 +2318,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
         try {
             readerLoadExecutor.execute {
-                if (!destroyed) {
+                if (!destroyed && sourcePrivacy.canRead()) {
                     runReaderLoadBlock(block)
                 }
             }
@@ -2286,7 +2336,7 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun isReaderActive(): Boolean {
-        return !destroyed && !isFinishing && !isDestroyed
+        return !destroyed && !isFinishing && !isDestroyed && sourcePrivacy.checkAccess()
     }
 
     private fun updateBrightnessControls() {
@@ -2314,6 +2364,7 @@ class MangaReaderActivity : AppCompatActivity() {
         const val EXTRA_START_FROM_BEGINNING = "start_from_beginning"
         const val EXTRA_START_PAGE_INDEX = "start_page_index"
         const val EXTRA_PREPARED_READER_CACHE_DIR = "prepared_reader_cache_dir"
+        internal const val EXTRA_PREPARED_READER_HANDOFF_ID = "prepared_reader_handoff_id"
         const val EXTRA_READER_LOAD_STARTED_AT_NANOS = "reader_load_started_at_nanos"
         const val EXTRA_DEBUG_READER_STRESS = "debug_reader_stress"
         const val EXTRA_DEBUG_READER_STRESS_ITERATIONS = "debug_reader_stress_iterations"

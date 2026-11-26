@@ -23,6 +23,7 @@ import com.example.comiclab.R
 import com.example.comiclab.core.reader.enhance.PageSuperResolution
 import com.example.comiclab.core.reader.enhance.EnhancementRuntime
 import com.example.comiclab.ui.reader.enhance.EnhancementExportActivity
+import com.example.comiclab.core.reader.ReaderDerivationPrivacy
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.CancellationException
@@ -32,6 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal class PageEnhancementDialog private constructor(
     private val activity: Activity,
     private val archive: File,
+    private val sourcePath: String,
     private val entry: String,
     private val pageNumber: Int,
     private val onClosed: () -> Unit
@@ -92,6 +94,9 @@ internal class PageEnhancementDialog private constructor(
             cleanupIfReleased()
         }
         dialog.setCanceledOnTouchOutside(false)
+        if (activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0) {
+            dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
         dialog.show()
         dialog.window?.apply {
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -100,6 +105,7 @@ internal class PageEnhancementDialog private constructor(
         }
         EnhancementRuntime.worker.execute {
             try {
+                ReaderDerivationPrivacy.check(app, archive, sourcePath)
                 check(directory.mkdirs()) { "Could not create enhancement cache" }
                 val original = File(directory, "original.${entry.substringAfterLast('.', "img")}")
                 check(ComicArchive.extractImageEntryToFile(archive, entry, original)) {
@@ -116,13 +122,14 @@ internal class PageEnhancementDialog private constructor(
                     }
                 }.getOrDefault(0)
                 main.post {
-                    if (!dismissed) {
+                    if (!dismissed && ReaderDerivationPrivacy.allows(app, archive, sourcePath)) {
                         source = original
                         orientation = rotation
                         display(false)
                     }
                 }
                 val enhanced = PageSuperResolution(app, scale = scale).enhance(original, directory, cancelled) { percent, gpu ->
+                    ReaderDerivationPrivacy.check(app, archive, sourcePath)
                     // 回调在工作线程，去重后再投递，避免大量编码行挤占主线程
                     if (percent != lastProgress || gpu != lastGpu) {
                         lastProgress = percent
@@ -138,7 +145,7 @@ internal class PageEnhancementDialog private constructor(
                     }
                 }
                 main.post {
-                    if (!dismissed) {
+                    if (!dismissed && ReaderDerivationPrivacy.allows(app, archive, sourcePath)) {
                         result = enhanced
                         saveButton.isEnabled = true
                         status.setText(R.string.reader_enhance_done)
@@ -147,7 +154,7 @@ internal class PageEnhancementDialog private constructor(
                     }
                 }
             } catch (_: CancellationException) {
-                // 用户关闭、旋转或离开阅读器：结果不再交给界面
+                main.post { if (!dismissed) close() }
             } catch (failure: Exception) {
                 android.util.Log.e("PageEnhancement", "Single-page enhancement failed", failure)
                 main.post { if (!dismissed) showFailure() }
@@ -229,13 +236,14 @@ internal class PageEnhancementDialog private constructor(
 
     private fun saveImage() {
         val file = result ?: return
-        if (exporting) return
+        if (exporting || !ReaderDerivationPrivacy.allows(app, archive, sourcePath)) return
         exporting = true
         saveButton.isEnabled = false
         // 单独暂存，系统文件选择器打开后即使阅读器旋转/关闭，也不依赖预览缓存
         EnhancementRuntime.io.execute {
             var staged: File? = null
             try {
+                ReaderDerivationPrivacy.check(app, archive, sourcePath)
                 val root = File(app.cacheDir, "enhancement-exports").apply { check(mkdirs() || isDirectory) }
                 val copy = File(root, "${UUID.randomUUID()}.png")
                 staged = copy
@@ -245,7 +253,7 @@ internal class PageEnhancementDialog private constructor(
                     if (!dismissed && !activity.isFinishing && !activity.isDestroyed) {
                         try {
                             EnhancementExportActivity.launchImage(activity, copy,
-                                "${archive.nameWithoutExtension}_${pageNumber}_HD.png")
+                                "${archive.nameWithoutExtension}_${pageNumber}_HD.png", archive, sourcePath)
                             saveButton.isEnabled = true
                         } catch (_: Exception) {
                             copy.delete()
@@ -278,6 +286,7 @@ internal class PageEnhancementDialog private constructor(
     companion object {
         fun open(activity: Activity, archive: File, entry: String, pageNumber: Int,
             onClosed: () -> Unit): PageEnhancementDialog? {
+            val sourcePath = ReaderDerivationPrivacy.ordinaryPath(activity, archive) ?: return null
             if (archive.extension.equals("pdf", true)) {
                 Toast.makeText(activity, R.string.reader_enhance_pdf_unsupported, Toast.LENGTH_LONG).show()
                 return null
@@ -286,7 +295,7 @@ internal class PageEnhancementDialog private constructor(
                 Toast.makeText(activity, R.string.reader_enhance_busy, Toast.LENGTH_SHORT).show()
                 return null
             }
-            return PageEnhancementDialog(activity, archive, entry, pageNumber, onClosed).also { it.show() }
+            return PageEnhancementDialog(activity, archive, sourcePath, entry, pageNumber, onClosed).also { it.show() }
         }
     }
 }

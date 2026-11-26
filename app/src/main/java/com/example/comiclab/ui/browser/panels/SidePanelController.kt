@@ -18,6 +18,8 @@ import com.example.comiclab.core.store.ReadingHistoryStore
 import com.example.comiclab.ui.browser.dpToPx
 import com.example.comiclab.ui.common.InsetDividerItemDecoration
 import com.example.comiclab.ui.common.showRounded
+import com.example.comiclab.ui.privacy.PrivacyAccessGuard
+import com.example.comiclab.ui.privacy.PrivacySessionManager
 import java.io.File
 
 /**
@@ -42,6 +44,7 @@ internal class SidePanelController(
     private var favoritePathsPopupWindow: PopupWindow? = null
     private var favoritePathAdapter: FavoritePathAdapter? = null
     private var isReadingHistoryScrimFadingOut = false
+    private var clearConfirmation: AlertDialog? = null
 
     internal fun showReadingHistoryPanel() {
         val rootView = activity.findViewById<View>(R.id.main)
@@ -53,22 +56,29 @@ internal class SidePanelController(
         val listReadingHistory = content.findViewById<RecyclerView>(R.id.listReadingHistory)
         val tvReadingHistoryEmpty = content.findViewById<TextView>(R.id.tvReadingHistoryEmpty)
         val btnClearReadingHistory = content.findViewById<ImageButton>(R.id.btnClearReadingHistory)
-        val historyItems = ReadingHistoryStore.items(activity).toMutableList()
+        val epoch = PrivacySessionManager.sessionEpoch
+        val historyItems = ReadingHistoryStore.items(activity)
+            .filter { PrivacyAccessGuard.canAccessFile(activity, it.file) }.toMutableList()
         val historyAdapter = ReadingHistoryAdapter(
             context = activity,
             items = historyItems,
             onItemClick = { item ->
-                dismissReadingHistoryPanel()
-                onOpenMangaPreview(item.file)
+                if (isAuthorized(epoch, item.file)) {
+                    dismissReadingHistoryPanel()
+                    onOpenMangaPreview(item.file)
+                }
             },
             onJumpToPath = { item ->
-                dismissReadingHistoryPanel()
-                onJumpToDirectory(item.file.absolutePath)
+                if (isAuthorized(epoch, item.file)) {
+                    dismissReadingHistoryPanel()
+                    onJumpToDirectory(item.file.absolutePath)
+                }
             },
             onItemsEmptyChanged = { isEmpty ->
                 listReadingHistory.visibility = if (isEmpty) View.GONE else View.VISIBLE
                 tvReadingHistoryEmpty.visibility = if (isEmpty) View.VISIBLE else View.GONE
-            }
+            },
+            canUseItem = { isAuthorized(epoch, it.file) }
         )
 
         listReadingHistory.layoutManager = LinearLayoutManager(activity)
@@ -82,12 +92,15 @@ internal class SidePanelController(
         listReadingHistory.visibility = if (historyItems.isEmpty()) View.GONE else View.VISIBLE
         tvReadingHistoryEmpty.visibility = if (historyItems.isEmpty()) View.VISIBLE else View.GONE
         btnClearReadingHistory.setOnClickListener {
-            AlertDialog.Builder(activity)
+            clearConfirmation = AlertDialog.Builder(activity)
                 .setTitle(R.string.clear_reading_history_title)
                 .setMessage(R.string.clear_reading_history_message)
                 .setPositiveButton(R.string.yes) { _, _ ->
-                    ReadingHistoryStore.clear(activity)
-                    historyAdapter.clearItems()
+                    if (epoch == PrivacySessionManager.sessionEpoch) {
+                        if (PrivacySessionManager.isUnlocked) ReadingHistoryStore.clear(activity)
+                        else historyItems.filter { isAuthorized(epoch, it.file) }.forEach { ReadingHistoryStore.remove(activity, it.file) }
+                        historyAdapter.clearItems()
+                    }
                 }
                 .setNegativeButton(R.string.no, null)
                 .showRounded()
@@ -128,18 +141,23 @@ internal class SidePanelController(
         val listFavoritePaths = content.findViewById<RecyclerView>(R.id.listFavoritePaths)
         val tvFavoritePathsEmpty = content.findViewById<TextView>(R.id.tvFavoritePathsEmpty)
         val btnClearFavoritePaths = content.findViewById<ImageButton>(R.id.btnClearFavoritePaths)
-        val favoriteItems = FavoritePathStore.items(activity).toMutableList()
+        val epoch = PrivacySessionManager.sessionEpoch
+        val favoriteItems = FavoritePathStore.items(activity)
+            .filter { PrivacyAccessGuard.canAccessPath(activity, it.directory.path) }.toMutableList()
         val adapter = FavoritePathAdapter(
             context = activity,
             items = favoriteItems,
             onItemClick = { item ->
-                dismissFavoritePathsPanel()
-                onNavigateToDirectory(item.directory.absolutePath)
+                if (epoch == PrivacySessionManager.sessionEpoch && PrivacyAccessGuard.canAccessPath(activity, item.directory.path)) {
+                    dismissFavoritePathsPanel()
+                    onNavigateToDirectory(item.directory.absolutePath)
+                }
             },
             onItemsEmptyChanged = { isEmpty ->
                 listFavoritePaths.visibility = if (isEmpty) View.GONE else View.VISIBLE
                 tvFavoritePathsEmpty.visibility = if (isEmpty) View.VISIBLE else View.GONE
-            }
+            },
+            canUseItem = { epoch == PrivacySessionManager.sessionEpoch && PrivacyAccessGuard.canAccessPath(activity, it.directory.path) }
         )
 
         listFavoritePaths.layoutManager = LinearLayoutManager(activity)
@@ -148,13 +166,17 @@ internal class SidePanelController(
         listFavoritePaths.visibility = if (favoriteItems.isEmpty()) View.GONE else View.VISIBLE
         tvFavoritePathsEmpty.visibility = if (favoriteItems.isEmpty()) View.VISIBLE else View.GONE
         btnClearFavoritePaths.setOnClickListener {
-            AlertDialog.Builder(activity)
+            clearConfirmation = AlertDialog.Builder(activity)
                 .setTitle(R.string.clear_favorite_paths_title)
                 .setMessage(R.string.clear_favorite_paths_message)
                 .setPositiveButton(R.string.yes) { _, _ ->
-                    FavoritePathStore.clear(activity)
-                    adapter.clearItems()
-                    onListChanged()
+                    if (epoch == PrivacySessionManager.sessionEpoch) {
+                        if (PrivacySessionManager.isUnlocked) FavoritePathStore.clear(activity)
+                        else favoriteItems.filter { PrivacyAccessGuard.canAccessPath(activity, it.directory.path) }
+                            .forEach { FavoritePathStore.remove(activity, it.directory) }
+                        adapter.clearItems()
+                        onListChanged()
+                    }
                 }
                 .setNegativeButton(R.string.no, null)
                 .showRounded()
@@ -174,6 +196,7 @@ internal class SidePanelController(
             animationStyle = R.style.Animation_ComicLab_ReadingHistoryPanel
             elevation = activity.dpToPx(READING_HISTORY_PANEL_ELEVATION_DP).toFloat()
             setOnDismissListener {
+                adapter.close()
                 if (favoritePathAdapter === adapter) {
                     favoritePathAdapter = null
                     favoritePathsPopupWindow = null
@@ -195,22 +218,29 @@ internal class SidePanelController(
         val listFavoriteComics = content.findViewById<RecyclerView>(R.id.listFavoriteComics)
         val tvFavoriteComicsEmpty = content.findViewById<TextView>(R.id.tvFavoriteComicsEmpty)
         val btnClearFavoriteComics = content.findViewById<ImageButton>(R.id.btnClearFavoriteComics)
-        val favoriteItems = FavoriteComicStore.items(activity).toMutableList()
+        val epoch = PrivacySessionManager.sessionEpoch
+        val favoriteItems = FavoriteComicStore.items(activity)
+            .filter { PrivacyAccessGuard.canAccessFile(activity, it.file) }.toMutableList()
         val adapter = FavoriteComicAdapter(
             context = activity,
             items = favoriteItems,
             onItemClick = { item ->
-                dismissFavoriteComicsPanel()
-                onOpenMangaPreview(item.file)
+                if (isAuthorized(epoch, item.file)) {
+                    dismissFavoriteComicsPanel()
+                    onOpenMangaPreview(item.file)
+                }
             },
             onJumpToPath = { item ->
-                dismissFavoriteComicsPanel()
-                onJumpToDirectory(item.file.absolutePath)
+                if (isAuthorized(epoch, item.file)) {
+                    dismissFavoriteComicsPanel()
+                    onJumpToDirectory(item.file.absolutePath)
+                }
             },
             onItemsEmptyChanged = { isEmpty ->
                 listFavoriteComics.visibility = if (isEmpty) View.GONE else View.VISIBLE
                 tvFavoriteComicsEmpty.visibility = if (isEmpty) View.VISIBLE else View.GONE
-            }
+            },
+            canUseItem = { isAuthorized(epoch, it.file) }
         )
 
         listFavoriteComics.layoutManager = LinearLayoutManager(activity)
@@ -219,13 +249,16 @@ internal class SidePanelController(
         listFavoriteComics.visibility = if (favoriteItems.isEmpty()) View.GONE else View.VISIBLE
         tvFavoriteComicsEmpty.visibility = if (favoriteItems.isEmpty()) View.VISIBLE else View.GONE
         btnClearFavoriteComics.setOnClickListener {
-            AlertDialog.Builder(activity)
+            clearConfirmation = AlertDialog.Builder(activity)
                 .setTitle(R.string.clear_favorite_comics_title)
                 .setMessage(R.string.clear_favorite_comics_message)
                 .setPositiveButton(R.string.yes) { _, _ ->
-                    FavoriteComicStore.clear(activity)
-                    adapter.clearItems()
-                    onListChanged()
+                    if (epoch == PrivacySessionManager.sessionEpoch) {
+                        if (PrivacySessionManager.isUnlocked) FavoriteComicStore.clear(activity)
+                        else favoriteItems.filter { isAuthorized(epoch, it.file) }.forEach { FavoriteComicStore.remove(activity, it.file) }
+                        adapter.clearItems()
+                        onListChanged()
+                    }
                 }
                 .setNegativeButton(R.string.no, null)
                 .showRounded()
@@ -258,10 +291,24 @@ internal class SidePanelController(
     }
 
     internal fun dismissSidePanels() {
+        clearConfirmation?.dismiss()
+        clearConfirmation = null
         dismissReadingHistoryPanel()
         dismissFavoriteComicsPanel()
         dismissFavoritePathsPanel()
     }
+
+    internal fun dismissSidePanelsImmediately() {
+        clearConfirmation?.window?.decorView?.visibility = View.INVISIBLE
+        listOf(readingHistoryPopupWindow, favoritePathsPopupWindow, favoriteComicsPopupWindow).forEach { popup ->
+            popup?.contentView?.visibility = View.INVISIBLE
+            popup?.animationStyle = 0
+        }
+        dismissSidePanels()
+    }
+
+    private fun isAuthorized(epoch: Long, file: File): Boolean =
+        epoch == PrivacySessionManager.sessionEpoch && PrivacyAccessGuard.canAccessFile(activity, file)
 
     private fun dismissReadingHistoryPanel() {
         readingHistoryPopupWindow?.dismiss()
@@ -274,6 +321,7 @@ internal class SidePanelController(
     private fun dismissFavoritePathsPanel() {
         favoritePathsPopupWindow?.dismiss()
         favoritePathsPopupWindow = null
+        favoritePathAdapter?.close()
         favoritePathAdapter = null
         hideReadingHistoryScrim()
     }

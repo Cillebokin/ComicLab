@@ -22,6 +22,7 @@ import com.example.comiclab.R
 import com.example.comiclab.core.archive.ComicConversionTarget
 import com.example.comiclab.core.archive.ComicFormatConverter
 import com.example.comiclab.core.reader.ExportDocumentJournal
+import com.example.comiclab.core.reader.ReaderDerivationPrivacy
 import com.example.comiclab.core.reader.enhance.EnhancementRuntime
 import com.example.comiclab.ui.common.createRounded
 import java.io.File
@@ -67,10 +68,18 @@ internal class ComicFormatConversionViewModel(application: Application) : Androi
         }
     }
 
-    fun start(source: File, destination: Uri, targetFormat: ComicConversionTarget) {
+    fun start(source: File, destination: Uri, targetFormat: ComicConversionTarget,
+        sourcePath: String? = ReaderDerivationPrivacy.ordinaryPath(app, source)) {
         if (started) return
         target = destination
-        val pending = ExportDocumentJournal(app).reserve(destination, "${source.nameWithoutExtension}.${targetFormat.extension}")
+        if (!ReaderDerivationPrivacy.allows(app, source, sourcePath)) {
+            releaseBusySlot()
+            started = true
+            ReaderDerivationPrivacy.abandonRejectedDestination(app, destination)
+            state.value = ComicFormatConversionState(failed = true, issueMessage = R.string.privacy_operation_denied)
+            return
+        }
+        val pending = ExportDocumentJournal(app).reserve(destination, "${source.nameWithoutExtension}.${targetFormat.extension}", sourcePath)
         if (pending == null) {
             releaseBusySlot()
             started = true
@@ -88,24 +97,31 @@ internal class ComicFormatConversionViewModel(application: Application) : Androi
         EnhancementRuntime.io.execute {
             var workDirectory: File? = null
             var success = false
-            try {
+            var writing = false
+            fun checkCurrent() {
                 checkCancelled()
+                ReaderDerivationPrivacy.check(app, source, sourcePath)
+            }
+            try {
+                checkCurrent()
                 workDirectory = File(app.cacheDir, "comic-format-conversion/${UUID.randomUUID()}")
                     .apply { check(mkdirs() || isDirectory) }
                 val output = File(workDirectory, "converted.${targetFormat.extension}")
                 ComicFormatConverter.convert(source, output, targetFormat, cancelled) { page, total ->
+                    checkCurrent()
                     val percent = (page * 90 / total.coerceAtLeast(1)).coerceAtMost(90)
                     state.postValue(ComicFormatConversionState(percent, page, total))
                 }
-                checkCancelled()
+                checkCurrent()
                 state.postValue(ComicFormatConversionState(percent = 95, saving = true))
                 pending.openOutput().use { stream ->
+                    writing = true
                     output.inputStream().buffered().use { input ->
                         val buffer = ByteArray(256 * 1024)
                         var written = 0L
                         var lastPercent = 95
                         while (true) {
-                            checkCancelled()
+                            checkCurrent()
                             val count = input.read(buffer)
                             if (count < 0) break
                             stream.write(buffer, 0, count)
@@ -120,7 +136,7 @@ internal class ComicFormatConversionViewModel(application: Application) : Androi
                         stream.flush()
                     }
                 }
-                checkCancelled()
+                checkCurrent()
                 success = true
                 pending.complete()
                 state.postValue(ComicFormatConversionState(percent = 100, done = true))
@@ -133,7 +149,10 @@ internal class ComicFormatConversionViewModel(application: Application) : Androi
             } catch (failure: Exception) {
                 postFailure("Conversion failed", failure)
             } finally {
-                if (!success) pending.abandon()
+                if (!success) {
+                    if (!writing && !ReaderDerivationPrivacy.allows(app, source, sourcePath)) pending.abandonIfEmpty()
+                    else pending.abandon()
+                }
                 workDirectory?.deleteRecursively()
                 ownsBusySlot = false
                 EnhancementRuntime.busy.set(false)
@@ -162,6 +181,7 @@ internal class ComicFormatConversionDialog : DialogFragment() {
     private val model by lazy { ViewModelProvider(this)[ComicFormatConversionViewModel::class.java] }
     private val sourceFile: File
         get() = File(requireArguments().getString(EXTRA_SOURCE).orEmpty())
+    private val sourcePath get() = requireArguments().getString(ReaderDerivationPrivacy.SOURCE_PATH)
     private val targetFormat: ComicConversionTarget?
         get() = requireArguments().getString(EXTRA_TARGET)?.let { value ->
             runCatching { ComicConversionTarget.valueOf(value) }.getOrNull()
@@ -176,10 +196,14 @@ internal class ComicFormatConversionDialog : DialogFragment() {
         val uri = result.data?.data
         val target = targetFormat
         if (result.resultCode != Activity.RESULT_OK || uri == null || target == null) {
+            if (result.resultCode == Activity.RESULT_OK && uri != null) {
+                ReaderDerivationPrivacy.abandonRejectedDestination(requireContext(), uri)
+            }
             model.releaseBusySlot()
             dismiss()
         } else {
-            model.start(sourceFile, uri, target)
+            val allowedPath = sourcePath?.takeIf { ReaderDerivationPrivacy.allows(requireContext(), sourceFile, it) }
+            model.start(sourceFile, uri, target, allowedPath)
         }
     }
 
@@ -193,7 +217,7 @@ internal class ComicFormatConversionDialog : DialogFragment() {
             val done = savedInstanceState?.getBoolean("done") == true
             model.state.value = ComicFormatConversionState(percent = if (done) 100 else -1,
                 done = done, failed = !done, issueMessage = R.string.reader_export_interrupted.takeUnless { done })
-        } else if (!sourceFile.isFile || target == null) {
+        } else if (!ReaderDerivationPrivacy.allows(requireContext(), sourceFile, sourcePath) || target == null) {
             model.state.value = ComicFormatConversionState(failed = true)
         }
     }
@@ -288,6 +312,11 @@ internal class ComicFormatConversionDialog : DialogFragment() {
 
     private fun launchDestinationPicker() {
         val target = targetFormat ?: return
+        if (!ReaderDerivationPrivacy.allows(requireContext(), sourceFile, sourcePath)) {
+            model.releaseBusySlot()
+            model.state.value = ComicFormatConversionState(failed = true, issueMessage = R.string.privacy_operation_denied)
+            return
+        }
         pickerLaunched = true
         runCatching {
             createDocument.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
@@ -312,10 +341,12 @@ internal class ComicFormatConversionDialog : DialogFragment() {
         private const val DIALOG_TAG = "comic-format-conversion"
 
         fun show(activity: FragmentActivity, source: File, target: ComicConversionTarget) {
+            val sourcePath = ReaderDerivationPrivacy.ordinaryPath(activity, source) ?: return
             if (activity.supportFragmentManager.findFragmentByTag(DIALOG_TAG) != null) return
             ComicFormatConversionDialog().apply {
                 arguments = Bundle().apply {
                     putString(EXTRA_SOURCE, source.absolutePath)
+                    putString(ReaderDerivationPrivacy.SOURCE_PATH, sourcePath)
                     putString(EXTRA_TARGET, target.name)
                 }
             }.show(activity.supportFragmentManager, DIALOG_TAG)

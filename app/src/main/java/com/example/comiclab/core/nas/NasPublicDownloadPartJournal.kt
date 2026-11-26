@@ -14,9 +14,16 @@ import java.nio.file.NoSuchFileException
 import java.nio.file.attribute.BasicFileAttributes
 
 /** Records public staging files outside the public directory before they can be created. */
-internal class NasPublicDownloadPartJournal(context: Context, storageRoot: File) {
+internal class NasPublicDownloadPartJournal(private val context: Context, storageRoot: File) {
     private val preferences = PrefsGateway.open(context, PREFS_NAME)
     private val root = storageRoot.canonicalFile.toPath()
+
+    fun requireOrdinaryDestination(destination: File) {
+        NasShareArchiveDownloader.requireOrdinaryLocalPath(context, destination, root)
+    }
+
+    fun <T> withOrdinaryDestination(destination: File, action: () -> T): T =
+        NasShareArchiveDownloader.withOrdinaryLocalPath(context, destination, root, action)
 
     fun createPart(file: File): Closeable = synchronized(lock) {
         val part = resolvePart(file.absolutePath)
@@ -29,9 +36,11 @@ internal class NasPublicDownloadPartJournal(context: Context, storageRoot: File)
             throw IOException("Could not register public NAS staging file")
         }
         try {
-            Files.createFile(path)
-        } catch (exception: FileAlreadyExistsException) {
-            preferences.edit().remove(part.path).apply()
+            withOrdinaryDestination(part) { Files.createFile(path) }
+        } catch (exception: IOException) {
+            if (exception is FileAlreadyExistsException || exception is NasShareArchiveDownloader.LocalDownloadPathException) {
+                preferences.edit().remove(part.path).apply()
+            }
             throw exception
         }
         activePaths += part.path
@@ -83,8 +92,10 @@ internal class NasPublicDownloadPartJournal(context: Context, storageRoot: File)
         private val lock = Any()
         private val activePaths = mutableSetOf<String>()
 
-        fun openIfWritable(context: Context): NasPublicDownloadPartJournal? {
-            val root = Environment.getExternalStorageDirectory()
+        fun openIfWritable(
+            context: Context,
+            root: File = Environment.getExternalStorageDirectory()
+        ): NasPublicDownloadPartJournal? {
             if (!Environment.isExternalStorageManager() ||
                 Environment.getExternalStorageState(root) != Environment.MEDIA_MOUNTED
             ) return null

@@ -6,6 +6,8 @@ import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.OneShotPreDrawListener
+import androidx.core.view.doOnPreDraw
 import com.example.comiclab.core.diagnostics.ComicLabPerformance
 import com.example.comiclab.ui.browser.DirectorySortOrder
 import com.example.comiclab.ui.browser.FileListScrollState
@@ -14,6 +16,7 @@ import com.example.comiclab.ui.browser.DirectoryBrowserController
 import com.example.comiclab.ui.browser.FileListAdapter
 import com.example.comiclab.ui.browser.dpToPx
 import com.example.comiclab.ui.browser.model.FileItem
+import com.example.comiclab.ui.privacy.PrivacyAccessGuard.PRIVACY_VIRTUAL_ROOT_PATH
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -32,12 +35,22 @@ internal class DirectoryRefreshController(
     private val sortOrderProvider: () -> DirectorySortOrder,
     private val currentPathProvider: () -> String,
     private val applyResolvedPath: (String) -> Unit,
-    private val notifyListChanged: () -> Unit
+    private val notifyListChanged: () -> Unit,
+    private val onDirectoryDisplayed: (String?) -> Unit
 ) {
     private val listView: ListView
         get() = checkNotNull(listViewOrNull())
 
+    private class CenterRequest(
+        val directoryPath: String,
+        val targetPath: String,
+        val generation: Int,
+        val highlightTarget: Boolean
+    )
+
     private var pendingFirstPreDrawListener: ViewTreeObserver.OnPreDrawListener? = null
+    private var pendingCenter: CenterRequest? = null
+    private var pendingCenterPreDrawListener: OneShotPreDrawListener? = null
 
     // 测试接口：返回最近一次恢复目录滚动时请求的 top 值，不参与运行时逻辑。
     private var requestedScrollTopRecord: Int? = null
@@ -45,19 +58,35 @@ internal class DirectoryRefreshController(
     internal val requestedScrollTopForTest: Int?
         get() = requestedScrollTopRecord
 
+    internal fun refreshCurrentDirectory(scrollStateToRestore: FileListScrollState?) {
+        val requestedPath = currentPathProvider()
+        val target = pendingCenter?.takeIf {
+            it.directoryPath == requestedPath && it.generation == directoryLoadGeneration.get()
+        }
+        loadCurrentDirectory(target?.targetPath, scrollStateToRestore, target?.highlightTarget == true)
+    }
+
     internal fun loadCurrentDirectory(
         pathToCenter: String? = null,
-        scrollStateToRestore: FileListScrollState? = null
+        scrollStateToRestore: FileListScrollState? = null,
+        highlightTarget: Boolean = false
     ) {
         val generation = directoryLoadGeneration.incrementAndGet()
         val hasPermission = Environment.isExternalStorageManager()
+        val requestedPath = currentPathProvider()
+        val center = pathToCenter?.takeIf { hasPermission }?.let {
+            CenterRequest(requestedPath, it, generation, highlightTarget)
+        }
+        clearSearchHighlight()
+        clearPendingCenter()
+        pendingCenter = center
         if (hasPermission) {
             removePendingFirstPreDrawListener()
         }
         val loadStartedAtNanos = if (hasPermission) ComicLabPerformance.nowNanos() else null
         directoryBrowserController.load(
             generation = generation,
-            requestedPath = currentPathProvider(),
+            requestedPath = requestedPath,
             hasPermission = hasPermission,
             sortOrder = sortOrderProvider,
             scrollState = scrollStateToRestore,
@@ -69,6 +98,7 @@ internal class DirectoryRefreshController(
                     pathInputProvider().setText(R.string.storage_permission_required)
                     fileItems.clear()
                     notifyListChanged()
+                    onDirectoryDisplayed(null)
                 }
                 is DirectoryBrowserController.Result.Loaded -> {
                     if (!result.archiveRecoveryComplete) {
@@ -80,16 +110,23 @@ internal class DirectoryRefreshController(
                     applyResolvedPath(resolvedPath)
                     fileItems.clear()
                     fileItems.addAll(items)
-                    pathInputProvider().setText(resolvedPath)
+                    if (resolvedPath == PRIVACY_VIRTUAL_ROOT_PATH) {
+                        pathInputProvider().setText(R.string.privacy_browser_title)
+                    } else {
+                        pathInputProvider().setText(resolvedPath)
+                    }
+                    fileListAdapterProvider().searchHighlightPath = center
+                        ?.takeIf { it.highlightTarget && it.directoryPath == resolvedPath }
+                        ?.targetPath
                     notifyListChanged()
-                    if (pathToCenter == null) {
+                    if (center == null) {
                         if (result.scrollState != null) {
-                            restoreFileListScrollState(result.scrollState, resolvedPath)
+                            restoreFileListScrollState(result.scrollState, resolvedPath, generation)
                         } else {
-                            scrollFileListToTop()
+                            scrollFileListToTop(generation)
                         }
                     } else {
-                        centerFileItemIfPresent(pathToCenter)
+                        centerFileItemIfPresent(center)
                     }
                     ComicLabPerformance.record(
                         event = "directory_ui_apply",
@@ -102,6 +139,7 @@ internal class DirectoryRefreshController(
                         pathHash = resolvedPath.hashCode(),
                         rowCount = items.size
                     )
+                    onDirectoryDisplayed(resolvedPath)
                 }
             }
         }
@@ -118,7 +156,29 @@ internal class DirectoryRefreshController(
         }
     }
 
-    internal fun removePendingFirstPreDrawListener() {
+    internal fun cancelPendingDirectoryPresentation() {
+        clearSearchHighlight()
+        clearPendingCenter()
+        removePendingFirstPreDrawListener()
+    }
+
+    private fun clearSearchHighlight() {
+        val list = listViewOrNull() ?: return
+        val adapter = list.adapter as? FileListAdapter ?: return
+        if (adapter.searchHighlightPath == null) return
+        adapter.searchHighlightPath = null
+        for (index in 0 until list.childCount) {
+            list.getChildAt(index).isActivated = false
+        }
+    }
+
+    private fun clearPendingCenter() {
+        pendingCenterPreDrawListener?.removeListener()
+        pendingCenterPreDrawListener = null
+        pendingCenter = null
+    }
+
+    private fun removePendingFirstPreDrawListener() {
         val listener = pendingFirstPreDrawListener ?: return
         pendingFirstPreDrawListener = null
         val view = listViewOrNull()
@@ -138,7 +198,7 @@ internal class DirectoryRefreshController(
 
         val firstVisibleItem = fileItems[firstVisiblePosition]
         return FileListScrollState(
-            directoryPath = File(currentPathProvider()).absolutePath,
+            directoryPath = currentPathProvider(),
             firstVisiblePosition = firstVisiblePosition,
             firstVisibleTop = listView.getChildAt(0)?.top ?: 0,
             anchorPath = firstVisibleItem.file?.absolutePath,
@@ -174,36 +234,49 @@ internal class DirectoryRefreshController(
         listView.viewTreeObserver.addOnPreDrawListener(listener)
     }
 
-    private fun centerFileItemIfPresent(path: String) {
+    private fun centerFileItemIfPresent(request: CenterRequest) {
+        if (pendingCenter !== request) return
         val targetIndex = fileItems.indexOfFirst { item ->
-            item.file?.absolutePath == path
+            item.file?.absolutePath == request.targetPath
         }
         if (targetIndex < 0) {
+            clearPendingCenter()
             return
         }
 
         listView.post {
-            centerListPosition(targetIndex)
+            if (pendingCenter !== request) return@post
+            if (request.generation != directoryLoadGeneration.get() || activity.isFinishing || activity.isDestroyed ||
+                !centerListPosition(targetIndex)
+            ) {
+                clearPendingCenter()
+                return@post
+            }
+            // The visible scroll anchor updates after the list lays out the requested selection.
+            pendingCenterPreDrawListener = listView.doOnPreDraw {
+                if (pendingCenter === request) clearPendingCenter()
+            }
         }
     }
 
-    private fun scrollFileListToTop() {
+    private fun scrollFileListToTop(generation: Int) {
         listView.post {
-            listView.setSelectionFromTop(0, 0)
+            if (generation == directoryLoadGeneration.get()) listView.setSelectionFromTop(0, 0)
         }
     }
 
     private fun restoreFileListScrollState(
         scrollState: FileListScrollState,
-        resolvedPath: String
+        resolvedPath: String,
+        generation: Int
     ) {
-        if (File(scrollState.directoryPath).absolutePath != File(resolvedPath).absolutePath) {
-            scrollFileListToTop()
+        if (scrollState.directoryPath != resolvedPath) {
+            scrollFileListToTop(generation)
             return
         }
 
         listView.post {
-            if (fileItems.isEmpty()) {
+            if (generation != directoryLoadGeneration.get() || fileItems.isEmpty()) {
                 return@post
             }
 
@@ -222,11 +295,11 @@ internal class DirectoryRefreshController(
         }
     }
 
-    private fun centerListPosition(position: Int) {
+    private fun centerListPosition(position: Int): Boolean {
         val itemCount = fileItems.size
         val listHeight = listView.height
         if (position !in 0 until itemCount || listHeight <= 0) {
-            return
+            return false
         }
 
         val itemHeight = (listView.getChildAt(0)?.height ?: activity.dpToPx(FILE_ITEM_HEIGHT_DP))
@@ -240,6 +313,7 @@ internal class DirectoryRefreshController(
         val firstVisibleTop = -(scrollTop % rowHeight)
 
         listView.setSelectionFromTop(firstVisiblePosition, firstVisibleTop)
+        return true
     }
 
     private companion object {

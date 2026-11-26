@@ -16,6 +16,32 @@ class DirectoryFileTreeTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
+    fun recursiveDeleteDoesNotTouchAChildResolvedOutsideTheApprovedTree() {
+        val root = temporaryFolder.newFolder("selected")
+        val other = temporaryFolder.newFolder("unselected")
+        val fixture = File(other, "keep.cbz").apply { writeText("kept") }
+        var deleteAttempted = false
+        var deleting = false
+        File(root, "selected.cbz").writeText("selected")
+        val outsideEntry = object : File(fixture.path) {
+            override fun delete(): Boolean {
+                deleteAttempted = true
+                return false
+            }
+        }
+        val selectedTree = object : File(root.path) {
+            override fun listFiles(): Array<File>? = if (deleting) arrayOf(outsideEntry) else super.listFiles()
+        }
+
+        assertFalse(DirectoryFileTree.deleteRecursively(selectedTree) { progress ->
+            if (progress.phase == FileOperationProgress.Phase.DELETING) deleting = true
+        })
+        assertFalse(deleteAttempted)
+        assertTrue(File(root, "selected.cbz").isFile)
+        assertEquals("kept", fixture.readText())
+    }
+
+    @Test
     fun deleteReportsScanAndPerEntryProgressIncludingTheRoot() {
         val directory = temporaryFolder.newFolder("library").apply {
             File(this, "nested/empty").mkdirs()

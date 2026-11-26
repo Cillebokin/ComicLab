@@ -10,8 +10,10 @@
     <application
         android:name=".ComicLabApplication"
         android:allowBackup="true"
+        android:backupAgent=".core.settings.ComicLabBackupAgent"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
+        android:fullBackupOnly="true"
         android:icon="@drawable/ic_launcher_harmony"
         android:label="@string/app_name"
         android:largeHeap="true"

@@ -1,6 +1,7 @@
 package com.example.comiclab
 
 import com.example.comiclab.core.reader.ExportDocumentJournal
+import com.example.comiclab.core.reader.ReaderDerivationPrivacy
 
 import com.example.comiclab.ui.browser.organize.ComicOrganizeController
 import com.example.comiclab.ui.browser.refresh.DirectoryRefreshController
@@ -19,6 +20,7 @@ import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Bundle
@@ -28,6 +30,7 @@ import android.provider.Settings
 import android.text.InputType
 import android.text.format.Formatter
 import android.view.View
+import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
 import android.webkit.MimeTypeMap
 import android.widget.Button
@@ -37,15 +40,18 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.ProgressBar
+import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
+import androidx.core.view.doOnPreDraw
 import com.example.comiclab.core.store.FavoriteComicStore
 import com.example.comiclab.core.store.FavoritePathStore
 import com.example.comiclab.core.store.PrefsGateway
+import com.example.comiclab.core.store.PrivacyStore
 import com.example.comiclab.core.store.EbookProgressStore
 import com.example.comiclab.core.store.ReaderProgressStore
 import com.example.comiclab.core.store.ReadingHistoryStore
@@ -74,6 +80,12 @@ import com.example.comiclab.ui.browser.DirectoryChildCountCache
 import com.example.comiclab.ui.browser.DirectoryScrollStateCache
 import com.example.comiclab.ui.browser.FileListScrollState
 import com.example.comiclab.ui.browser.model.FileItem
+import com.example.comiclab.ui.privacy.PrivacyAccessGuard
+import com.example.comiclab.ui.privacy.PrivacyAccessGuard.PRIVACY_VIRTUAL_ROOT_PATH
+import com.example.comiclab.ui.privacy.PrivacyAuthDialogController
+import com.example.comiclab.ui.privacy.PrivacyPullDownLayout
+import com.example.comiclab.ui.privacy.PrivacySessionManager
+import com.example.comiclab.ui.privacy.ReaderSourcePrivacy
 import com.example.comiclab.ui.browser.transfer.FileTransferController
 import com.example.comiclab.ui.browser.transfer.FileTransferWorkflowController
 import com.example.comiclab.ui.browser.transfer.FileTransferMetadataUpdatePolicy
@@ -106,7 +118,9 @@ class MainActivity : AppCompatActivity() {
     )
 
     private lateinit var listView: ListView
+    private lateinit var privacyPullDownLayout: PrivacyPullDownLayout
     private lateinit var etPath: EditText
+    private lateinit var privacyEmptyView: TextView
     private lateinit var btnBack: ImageButton
     private lateinit var btnIncognitoMode: ImageButton
     private lateinit var btnHelp: ImageButton
@@ -164,7 +178,10 @@ class MainActivity : AppCompatActivity() {
     private val directoryChildCountExecutor = Executors.newSingleThreadExecutor()
     private val directoryChildCountCache = DirectoryChildCountCache()
     private val directoryScrollStateCache = DirectoryScrollStateCache()
-    private val pendingDirectoryChildCountPaths = Collections.synchronizedSet(mutableSetOf<String>())
+    private val privacyScrollStateCache = DirectoryScrollStateCache()
+    private val pendingDirectoryChildCountPaths = Collections.synchronizedSet(
+        mutableSetOf<DirectoryBrowserController.ChildCountRequest>()
+    )
     private val classifyExecutor = Executors.newSingleThreadExecutor()
     private val fileTransferExecutor = Executors.newSingleThreadExecutor()
     private val nasDirectoryExecutor = Executors.newCachedThreadPool()
@@ -181,7 +198,9 @@ class MainActivity : AppCompatActivity() {
         directoryLoadGeneration,
         directoryChildCountCache,
         directoryScrollStateCache,
-        pendingDirectoryChildCountPaths
+        pendingDirectoryChildCountPaths,
+        this,
+        privacyScrollStateCache
     )
     private val classifyGeneration = AtomicInteger(0)
     private val sidePanelController = SidePanelController(
@@ -196,10 +215,7 @@ class MainActivity : AppCompatActivity() {
             if (NasCachedArchiveStore.isCacheFile(this, file)) reopenNasArchive(file, openArchive = false)
             else openDirectoryContainingTarget(path)
         },
-        onNavigateToDirectory = { path ->
-            setCurrentPath(path)
-            loadCurrentDirectory()
-        },
+        onNavigateToDirectory = { path -> navigateFromSidePanel(path) },
         onListChanged = { notifyListChanged() }
     )
     private val comicOrganizeController = ComicOrganizeController(
@@ -231,12 +247,29 @@ class MainActivity : AppCompatActivity() {
         directoryLoadGeneration = directoryLoadGeneration,
         sortOrderProvider = { sortAndSearchController.currentDirectorySortOrder() },
         currentPathProvider = { currentPath },
-        applyResolvedPath = { path ->
-            currentPath = path
-            saveCurrentPath()
-        },
-        notifyListChanged = { notifyListChanged() }
+        applyResolvedPath = { path -> currentPath = path },
+        notifyListChanged = { notifyListChanged() },
+        onDirectoryDisplayed = { path -> onDirectoryDisplayed(path) }
     )
+    private var privacyBrowserActive = false
+    private var replacingPrivateBrowser = false
+    private var privacyBrowserPresentation = 0L
+    private var waitingForSafePrivacyDraw = false
+    private var privacyAuthVisible = false
+    private val privacyAuth by lazy {
+        PrivacyAuthDialogController(this) { visible ->
+            privacyAuthVisible = visible
+            updatePrivacyWindowProtection()
+        }
+    }
+    private val privacyLockListener = PrivacySessionManager.Listener { onPrivacyBrowserLocked() }
+    private var privacyMarksListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+    private val detachedNormalPasteListener: (List<File>) -> Unit = ::refreshAfterDetachedNormalPaste
+    private var displayedPrivacyMarks = emptySet<String>()
+    private var browserItemMenu: BottomSheetDialog? = null
+    private var organizeMenu: PopupWindow? = null
+    private var createFolderDialog: AlertDialog? = null
+    private val browserOperationDialogs = mutableSetOf<AlertDialog>()
     private var browserInitialized = false
     private var skipNextResumeDirectoryReload = false
     private var pendingCenterTargetPath: String? = null
@@ -277,6 +310,7 @@ class MainActivity : AppCompatActivity() {
         data class InsufficientSpace(val requiredBytes: Long, val availableBytes: Long) : NasDownloadResult
         data object Cancelled : NasDownloadResult
         data object RemoteVersionChanged : NasDownloadResult
+        data object InvalidLocalPath : NasDownloadResult
         data class Failed(
             val exception: Exception,
             val failure: NasFailureDetails
@@ -299,6 +333,12 @@ class MainActivity : AppCompatActivity() {
         get() = fileTransferController.pendingTransfer
     private val isFileTransferInProgress: Boolean
         get() = fileTransferController.isTransferInProgress
+    private val browserPendingTransfer: PendingFileTransfer?
+        get() = pendingFileTransfer?.takeUnless { transfer ->
+            transfer.privacyEpoch?.let { !PrivacySessionManager.isCurrentSession(it) } == true
+        }
+    private val isBrowserTransferInProgress: Boolean
+        get() = isFileTransferInProgress && browserPendingTransfer != null
 
     private val fileTransferWorkflowController by lazy(LazyThreadSafetyMode.NONE) {
         FileTransferWorkflowController(
@@ -337,7 +377,17 @@ class MainActivity : AppCompatActivity() {
         )
 
         listView = findViewById(R.id.listFiles)
+        privacyPullDownLayout = findViewById(R.id.privacyPullDownLayout)
+        privacyPullDownLayout.canTriggerPullDown = { canUnlockPrivacyFromBrowser() && !privacyAuthVisible }
+        privacyPullDownLayout.onPullDownTriggered = {
+            if (canUnlockPrivacyFromBrowser()) {
+                privacyAuth.showUnlockPrompt { epoch ->
+                    if (canUnlockPrivacyFromBrowser()) enterPrivacyBrowser(epoch)
+                }
+            }
+        }
         etPath = findViewById(R.id.etPath)
+        privacyEmptyView = findViewById(R.id.tvPrivacyBrowserEmpty)
         btnBack = findViewById(R.id.btnBack)
         btnIncognitoMode = findViewById(R.id.btnIncognitoMode)
         btnHelp = findViewById(R.id.btnHelp)
@@ -385,14 +435,20 @@ class MainActivity : AppCompatActivity() {
             context = this,
             items = fileItems,
             onCollectionCoverClick = { directory ->
-                setCurrentPath(directory.absolutePath)
-                loadCurrentDirectory()
+                if (canUseBrowserItem(directory)) {
+                    setCurrentPath(directory.absolutePath)
+                    loadCurrentDirectory()
+                }
             },
             onDirectoryLongClick = { directory ->
-                showDirectoryMenu(directory)
+                if (canUseBrowserItem(directory)) showDirectoryMenu(directory)
                 clearFileListTouchState()
             },
-            onDirectoryChildCountRequested = directoryRefreshController::requestDirectoryChildCount
+            onDirectoryChildCountRequested = directoryRefreshController::requestDirectoryChildCount,
+            canShowCollectionSource = { file ->
+                PrivacyAccessGuard.canAccessPath(this, file.path) &&
+                    PrivacyStore.isUnderPrivacyDirectory(this, file) == PrivacySessionManager.isInPrivacySpace
+            }
         )
         listView.adapter = fileListAdapter
         nasFileListAdapter = NasFileListAdapter(this, nasDirectoryItems)
@@ -429,7 +485,7 @@ class MainActivity : AppCompatActivity() {
         })
 
         btnBack.setOnClickListener {
-            if (!isFileTransferInProgress) {
+            if (!isBrowserTransferInProgress) {
                 goParent()
             }
         }
@@ -492,7 +548,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnSearch.setOnClickListener {
-            sortAndSearchController.openSearch()
+            if (!replacingPrivateBrowser) sortAndSearchController.openSearch()
         }
 
         etPath.setOnLongClickListener {
@@ -510,6 +566,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 return@setOnLongClickListener true
             }
+            if (currentPath == PRIVACY_VIRTUAL_ROOT_PATH || replacingPrivateBrowser) return@setOnLongClickListener true
             copyToClipboard(
                 label = getString(R.string.path_placeholder),
                 text = currentPath,
@@ -519,7 +576,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         listView.setOnItemClickListener { _, view, position, _ ->
-            val item = fileItems[position]
+            val item = fileItems.getOrNull(position) ?: return@setOnItemClickListener
 
             if (item.isParent) {
                 goParent()
@@ -528,7 +585,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             val file = item.file
-            if (file == null) {
+            if (file == null || !canUseBrowserItem(file)) {
                 clearFileListTouchState(view)
                 return@setOnItemClickListener
             }
@@ -550,7 +607,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             val file = item.file
-            if (file?.isDirectory != true) {
+            if (file?.isDirectory != true || !canUseBrowserItem(file)) {
                 return@setOnItemLongClickListener false
             }
 
@@ -562,8 +619,14 @@ class MainActivity : AppCompatActivity() {
         pendingCenterTargetPath = intent.getStringExtra(EXTRA_CENTER_TARGET_PATH)
         val restoredScrollState = savedInstanceState?.readFileListScrollState()
         directoryScrollStateCache.restore(
-            savedInstanceState?.readFileListScrollStates().orEmpty()
+            savedInstanceState?.readFileListScrollStates().orEmpty().mapNotNull(::normalScrollState)
         )
+        PrivacySessionManager.addListener(privacyLockListener)
+        displayedPrivacyMarks = PrivacyStore.privacyDirectories(this)
+        privacyMarksListener = PrivacyStore.registerDirectoryChangeListener(this) {
+            runOnUiThread { if (!isFinishing && !isDestroyed) onPrivacyMarksChanged() }
+        }
+        FileTransferWorkflowController.addDetachedNormalPasteListener(detachedNormalPasteListener)
         if (!showStoragePermissionNoticeIfNeeded()) {
             initializeBrowserIfPermitted(restoredScrollState)
             skipNextResumeDirectoryReload = true
@@ -585,8 +648,15 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (privacyBrowserActive && !Environment.isExternalStorageManager()) PrivacySessionManager.lock()
+        val restorePath = PrivacySessionManager.consumePendingNormalRestorePath()
+        if (restorePath != null) {
+            openNormalDirectoryAfterPrivacy(restorePath)
+            skipNextResumeDirectoryReload = true
+        }
         showInterruptedExportNotice()
         updateIncognitoModeButton()
+        val scrollStateToRestore = captureFileListScrollState()
         refreshNasFeatureAvailability()
         updateNasCacheSummary()
         clearFileListTouchState()
@@ -599,7 +669,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (prefs.getBoolean(KEY_STORAGE_PERMISSION_PROMPTED, false)) {
-            initializeBrowserIfPermitted(captureFileListScrollState())
+            initializeBrowserIfPermitted(scrollStateToRestore)
         }
     }
 
@@ -608,18 +678,19 @@ class MainActivity : AppCompatActivity() {
         val journal = ExportDocumentJournal(this)
         val pending = journal.interruptedExports()
         if (pending.isEmpty()) return
-        val documents = pending.joinToString("\n") { record ->
-            getString(
-                if (record.writing) R.string.reader_export_check_written else R.string.reader_export_check_reserved,
-                record.name
-            )
-        }
+        val named = pending.filter(journal::canShowName)
+        val documents = named.map { record ->
+            getString(if (record.writing) R.string.reader_export_check_written else R.string.reader_export_check_reserved,
+                record.name)
+        }.toMutableList()
+        val hiddenCount = pending.size - named.size
+        if (hiddenCount > 0) documents.add(getString(R.string.reader_export_hidden_count, hiddenCount))
         interruptedExportNotice = AlertDialog.Builder(this)
             .setTitle(R.string.reader_export_interrupted_title)
-            .setMessage(getString(R.string.reader_export_interrupted_notice, documents))
+            .setMessage(getString(R.string.reader_export_interrupted_notice, documents.joinToString("\n")))
             .setPositiveButton(android.R.string.ok) { _, _ -> journal.acknowledge(pending) }
             .createRounded().apply {
-                setOnDismissListener { interruptedExportNotice = null }
+                setOnDismissListener { if (interruptedExportNotice === this) interruptedExportNotice = null }
                 show()
             }
     }
@@ -633,17 +704,19 @@ class MainActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        captureFileListScrollState()?.let { scrollState ->
+        if (!privacyBrowserActive && !replacingPrivateBrowser) captureFileListScrollState()?.let(::normalScrollState)?.let { scrollState ->
             directoryScrollStateCache.save(scrollState)
             scrollState.writeTo(outState)
         }
         outState.putParcelableArrayList(
             KEY_FILE_LIST_SCROLL_STATES,
-            ArrayList(directoryScrollStateCache.snapshot().map { scrollState ->
+            ArrayList(directoryScrollStateCache.snapshot().mapNotNull(::normalScrollState).map { scrollState ->
                 Bundle().apply { scrollState.writeTo(this) }
             })
         )
-        pendingFileTransfer?.let { transfer ->
+        pendingFileTransfer?.takeIf { !isFileTransferInProgress && it.privacyEpoch == null &&
+            PrivacyAccessGuard.resolveLocalPathInMode(this, File(it.sourcePath), false) != null
+        }?.let { transfer ->
             outState.putString(KEY_PENDING_FILE_TRANSFER_PATH, transfer.sourcePath)
             outState.putString(KEY_PENDING_FILE_TRANSFER_MODE, transfer.mode.name)
             outState.putBoolean(KEY_PENDING_FILE_TRANSFER_IS_DIRECTORY, transfer.isDirectory)
@@ -651,6 +724,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        FileTransferWorkflowController.removeDetachedNormalPasteListener(detachedNormalPasteListener)
+        PrivacySessionManager.removeListener(privacyLockListener)
+        privacyAuth.close()
+        privacyMarksListener?.let { PrivacyStore.unregisterDirectoryChangeListener(this, it) }
+        dismissBrowserItemMenu()
+        dismissOrganizeUi()
+        dismissBrowserOperationDialogs()
+        fileTransferWorkflowController.dismissDialogs()
         interruptedExportNotice?.dismiss()
         directoryLoadGeneration.incrementAndGet()
         cancelNasDirectoryRequest()
@@ -665,13 +746,13 @@ class MainActivity : AppCompatActivity() {
         nasCachedArchiveActionDialog = null
         nasCacheDeleteConfirmDialog?.dismiss()
         nasCacheDeleteConfirmDialog = null
-        directoryRefreshController.removePendingFirstPreDrawListener()
+        directoryRefreshController.cancelPendingDirectoryPresentation()
         classifyGeneration.incrementAndGet()
         directoryLoadExecutor.shutdownNow()
         directoryChildCountExecutor.shutdownNow()
         pendingDirectoryChildCountPaths.clear()
         classifyExecutor.shutdownNow()
-        fileTransferExecutor.shutdownNow()
+        fileTransferExecutor.shutdown()
         nasDirectoryExecutor.shutdownNow()
         nasDownloadExecutor.shutdownNow()
         nasCacheExecutor.shutdownNow()
@@ -779,6 +860,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        if (!browserInitialized && PrivacySessionManager.isInPrivacySpace && !isNasSourceSelected) {
+            showPrivacyBrowser()
+        }
+
         if (openPendingCenteredTargetIfPresent()) {
             return
         }
@@ -796,48 +881,228 @@ class MainActivity : AppCompatActivity() {
     private fun openPendingCenteredTargetIfPresent(): Boolean {
         val targetPath = pendingCenterTargetPath?.takeIf { it.isNotBlank() } ?: return false
         pendingCenterTargetPath = null
-        val target = canonicalPathWithinStorageRoot(targetPath) ?: return false
+        if (intent.hasExtra(EXTRA_CENTER_TARGET_PRIVACY_EPOCH) && !PrivacySessionManager.isCurrentSession(
+                intent.getLongExtra(EXTRA_CENTER_TARGET_PRIVACY_EPOCH, Long.MIN_VALUE)
+            )
+        ) return false
+        if (!openDirectoryContainingTarget(targetPath)) return false
 
         browserInitialized = true
-        openDirectoryContainingTarget(target.absolutePath)
+        // 接受新的显式定位后，回到前台时不再恢复进入隐私区之前的目录。
+        PrivacySessionManager.consumePendingNormalRestorePath()
         return true
     }
 
-    private fun canonicalPathWithinStorageRoot(path: String): File? {
-        val storageRoot = runCatching { File(STORAGE_ROOT_PATH).canonicalFile.toPath() }
-            .getOrNull()
-            ?: return null
-        return runCatching {
-            File(path).canonicalFile.takeIf { it.toPath().startsWith(storageRoot) }
-        }.getOrNull()
-    }
-
-    private fun openDirectoryContainingTarget(targetPath: String) {
-        val storageRoot = File(STORAGE_ROOT_PATH).canonicalFile
-        val target = File(targetPath).canonicalFile
+    private fun openDirectoryContainingTarget(targetPath: String): Boolean {
+        if (!PrivacyAccessGuard.canAccessPath(this, targetPath)) return false
+        val storageRoot = PrivacyAccessGuard.resolveLocalPath(File(STORAGE_ROOT_PATH)) ?: return false
+        val target = PrivacyAccessGuard.resolveLocalPath(File(targetPath)) ?: return false
         val targetAbsolutePath = target.absolutePath
+        val targetIsPrivate = PrivacyStore.isUnderPrivacyDirectory(this, target)
+        val leftPrivacyBrowser = privacyBrowserActive && !targetIsPrivate
+        if (leftPrivacyBrowser) PrivacySessionManager.exitPrivacySpace()
         if (targetAbsolutePath == storageRoot.absolutePath) {
             setCurrentPath(STORAGE_ROOT_PATH)
             loadCurrentDirectory()
-            return
+            return true
         }
 
         val parentDirectory = target.parentFile
             ?.takeIf { it.isDirectory }
             ?: target.takeIf { it.isDirectory }
             ?: storageRoot
-        val parentPath = if (
-            runCatching { parentDirectory.canonicalFile == storageRoot }.getOrDefault(false)
-        ) {
-            STORAGE_ROOT_PATH
-        } else {
-            parentDirectory.absolutePath
+        val parentPath = when {
+            targetIsPrivate && !PrivacyStore.isUnderPrivacyDirectory(this, parentDirectory) -> PRIVACY_VIRTUAL_ROOT_PATH
+            parentDirectory == storageRoot -> STORAGE_ROOT_PATH
+            else -> parentDirectory.absolutePath
         }
         setCurrentPath(parentPath)
-        loadCurrentDirectory(targetAbsolutePath)
+        loadCurrentDirectory(targetAbsolutePath, highlightTarget = targetIsPrivate)
+        return true
+    }
+
+    private fun navigateFromSidePanel(path: String) {
+        if (!PrivacyAccessGuard.canAccessPath(this, path)) return
+        val directory = PrivacyAccessGuard.resolveLocalPath(File(path))?.takeIf(File::isDirectory) ?: return
+        if (privacyBrowserActive && !PrivacyStore.isUnderPrivacyDirectory(this, directory)) {
+            PrivacySessionManager.exitPrivacySpace()
+            openNormalDirectoryAfterPrivacy(directory.path)
+        } else {
+            setCurrentPath(directory.path)
+            loadCurrentDirectory()
+        }
+    }
+
+    private fun canUnlockPrivacyFromBrowser(): Boolean =
+        browserInitialized && !isNasSourceSelected && !privacyBrowserActive && !replacingPrivateBrowser &&
+            !PrivacySessionManager.isInPrivacySpace && pendingFileTransfer == null && !isFileTransferInProgress &&
+            !nasDownloadInProgress && Environment.isExternalStorageManager() &&
+            PrivacyStore.credentialState(this) != PrivacyStore.CredentialState.UNINITIALIZED
+
+    internal fun enterPrivacyBrowser(verifiedEpoch: Long): Boolean {
+        if (isNasSourceSelected || !Environment.isExternalStorageManager() || isFileTransferInProgress) return false
+        val normalDirectory = PrivacyAccessGuard.resolveNormalRestoreDirectory(this, currentPath) ?: return false
+        if (!PrivacySessionManager.enterPrivacySpace(normalDirectory.path, verifiedEpoch)) return false
+        captureFileListScrollState()?.let(::normalScrollState)?.let(directoryScrollStateCache::save)
+        showPrivacyBrowser()
+        loadCurrentDirectory()
+        return true
+    }
+
+    private fun showPrivacyBrowser() {
+        browserInitialized = true
+        privacyBrowserActive = true
+        replacingPrivateBrowser = false
+        privacyBrowserPresentation++
+        waitingForSafePrivacyDraw = false
+        updatePrivacyWindowProtection()
+        sidePanelController.dismissSidePanelsImmediately()
+        dismissBrowserItemMenu()
+        dismissOrganizeUi()
+        dismissBrowserOperationDialogs()
+        fileTransferWorkflowController.dismissDialogs()
+        directoryChildCountCache.clear()
+        fileListAdapter.invalidateCollectionVisibility()
+        clearBrowserRows()
+        currentPath = PRIVACY_VIRTUAL_ROOT_PATH
+        updateFileTransferToolbar()
+    }
+
+    private fun onPrivacyBrowserLocked() {
+        privacyPullDownLayout.cancelPull()
+        sidePanelController.dismissSidePanelsImmediately()
+        if (!privacyBrowserActive) return
+        privacyBrowserActive = false
+        replacingPrivateBrowser = true
+        currentPath = STORAGE_ROOT_PATH
+        directoryLoadGeneration.incrementAndGet()
+        directoryRefreshController.cancelPendingDirectoryPresentation()
+        dismissBrowserItemMenu()
+        dismissOrganizeUi()
+        dismissBrowserOperationDialogs()
+        privacyScrollStateCache.restore(emptyList())
+        directoryChildCountCache.clear()
+        fileListAdapter.invalidateCollectionVisibility()
+        clearBrowserRows()
+        fileTransferWorkflowController.onPrivacyLocked()
+        updateFileTransferToolbar()
+    }
+
+    private fun openNormalDirectoryAfterPrivacy(path: String) {
+        browserInitialized = true
+        val directory = PrivacyAccessGuard.resolveNormalRestoreDirectory(this, path)
+        setCurrentPath(directory?.path ?: STORAGE_ROOT_PATH)
+        loadCurrentDirectory(scrollStateToRestore = directoryScrollStateCache.get(currentPath))
+    }
+
+    private fun onPrivacyMarksChanged() {
+        val marks = PrivacyStore.privacyDirectories(this)
+        if (marks == displayedPrivacyMarks) return
+        displayedPrivacyMarks = marks
+        interruptedExportNotice?.takeIf { it.isShowing }?.let { notice ->
+            notice.window?.decorView?.visibility = View.INVISIBLE
+            notice.dismiss()
+            interruptedExportNotice = null
+            if (!isFinishing && !isDestroyed) showInterruptedExportNotice()
+        }
+        directoryChildCountCache.updatePrivacyMarks(marks)
+        fileListAdapter.invalidateCollectionVisibility()
+        sidePanelController.dismissSidePanelsImmediately()
+        dismissBrowserItemMenu()
+        dismissOrganizeUi()
+        dismissBrowserOperationDialogs()
+        fileTransferWorkflowController.onPrivacyMarksChanged()
+        if (!browserInitialized || replacingPrivateBrowser) return
+        val scrollState = captureFileListScrollState()
+        clearBrowserRows()
+        loadCurrentDirectory(scrollStateToRestore = scrollState)
+    }
+
+    private fun clearBrowserRows() {
+        if (!isNasSourceSelected) etPath.text.clear()
+        listView.visibility = View.INVISIBLE
+        privacyEmptyView.visibility = View.GONE
+        fileItems.clear()
+        notifyListChanged()
+    }
+
+    private fun onDirectoryDisplayed(path: String?) {
+        if (!isNasSourceSelected) {
+            listView.visibility = View.VISIBLE
+            privacyEmptyView.visibility = if (path == PRIVACY_VIRTUAL_ROOT_PATH && fileItems.isEmpty()) View.VISIBLE else View.GONE
+        }
+        if (!privacyBrowserActive && replacingPrivateBrowser) {
+            waitingForSafePrivacyDraw = true
+            replacingPrivateBrowser = false
+            updateFileTransferToolbar()
+            val presentation = privacyBrowserPresentation
+            window.decorView.doOnPreDraw {
+                window.decorView.post {
+                    if (presentation == privacyBrowserPresentation && !privacyBrowserActive &&
+                        !replacingPrivateBrowser && !isDestroyed
+                    ) {
+                        waitingForSafePrivacyDraw = false
+                        updatePrivacyWindowProtection()
+                    }
+                }
+            }
+        } else if (privacyBrowserActive) updateFileTransferToolbar()
+        if (path != null) saveCurrentPath()
+    }
+
+    private fun updatePrivacyWindowProtection() {
+        if (privacyAuthVisible || privacyBrowserActive || replacingPrivateBrowser || waitingForSafePrivacyDraw) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
+    private fun dismissBrowserItemMenu() {
+        browserItemMenu?.let { dialog ->
+            dialog.window?.decorView?.visibility = View.INVISIBLE
+            dialog.dismiss()
+        }
+        browserItemMenu = null
+    }
+
+    private fun canUseBrowserItem(file: File): Boolean = !replacingPrivateBrowser &&
+        PrivacyAccessGuard.canAccessPath(this, file.path) &&
+        PrivacyStore.isUnderPrivacyDirectory(this, file) == privacyBrowserActive
+
+    private fun browserOperationEpoch(): Long? = PrivacySessionManager.sessionEpoch.takeIf { privacyBrowserActive }
+
+    private fun matchesBrowserOperationEpoch(epoch: Long?): Boolean =
+        epoch?.let(PrivacySessionManager::isCurrentSession) ?: !PrivacySessionManager.isInPrivacySpace
+
+    private fun inBrowserOperationScope(epoch: Long?): Boolean = !replacingPrivateBrowser && matchesBrowserOperationEpoch(epoch)
+
+    private fun allowDirectoryOperation(directory: File, deleting: Boolean = false): Boolean {
+        if (!inBrowserOperationScope(browserOperationEpoch())) return false
+        val reason = PrivacyAccessGuard.directoryChangeRestriction(this, directory, privacyBrowserActive, deleting)
+            ?: return true
+        showBrowserOperationDialog(AlertDialog.Builder(this).setMessage(reason)
+            .setPositiveButton(android.R.string.ok, null).createRounded())
+        return false
+    }
+
+    private fun showBrowserOperationDialog(dialog: AlertDialog) {
+        if (privacyBrowserActive) dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        browserOperationDialogs.add(dialog)
+        dialog.setOnDismissListener { browserOperationDialogs.remove(dialog) }
+        dialog.show()
+    }
+
+    private fun dismissBrowserOperationDialogs() {
+        browserOperationDialogs.toList().forEach { dialog ->
+            if (dialog.isShowing) dialog.window?.decorView?.visibility = View.INVISIBLE
+            dialog.dismiss()
+        }
+        browserOperationDialogs.clear()
     }
 
     private fun goParent() {
+        if (replacingPrivateBrowser) return
         if (isNasSourceSelected) {
             if (currentNasRelativePath.isNotEmpty()) {
                 currentNasRelativePath =
@@ -850,6 +1115,11 @@ class MainActivity : AppCompatActivity() {
 
         if (!Environment.isExternalStorageManager()) {
             openManageAllFilesAccessSettings()
+            return
+        }
+
+        if (currentPath == PRIVACY_VIRTUAL_ROOT_PATH) {
+            PrivacySessionManager.exitPrivacySpace()?.let(::openNormalDirectoryAfterPrivacy)
             return
         }
 
@@ -877,10 +1147,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleSystemBack() {
-        if (isFileTransferInProgress) {
+        if (isBrowserTransferInProgress) {
             return
         }
-        if (pendingFileTransfer != null) {
+        if (browserPendingTransfer != null) {
             goParent()
             return
         }
@@ -962,49 +1232,90 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isAtStorageRoot(): Boolean {
-        return File(currentPath).absolutePath == File(STORAGE_ROOT_PATH).absolutePath
+        return currentPath != PRIVACY_VIRTUAL_ROOT_PATH && File(currentPath).absolutePath == File(STORAGE_ROOT_PATH).absolutePath
     }
 
     private fun loadCurrentDirectory(
         pathToCenter: String? = null,
-        scrollStateToRestore: FileListScrollState? = null
+        scrollStateToRestore: FileListScrollState? = null,
+        highlightTarget: Boolean = false
     ) {
-        directoryRefreshController.loadCurrentDirectory(pathToCenter, scrollStateToRestore)
+        directoryRefreshController.loadCurrentDirectory(pathToCenter, scrollStateToRestore, highlightTarget)
     }
 
     private fun invalidateDirectoryChildCount(directory: File?) {
         directory?.let { directoryChildCountCache.invalidate(it.absolutePath) }
     }
 
-    private fun captureFileListScrollState(): FileListScrollState? {
-        return directoryRefreshController.captureFileListScrollState()
+    private fun refreshAfterDetachedNormalPaste(changedDirectories: List<File>) {
+        if (isDestroyed || isFinishing || !browserInitialized || isNasSourceSelected || privacyBrowserActive ||
+            !inBrowserOperationScope(null) || !Environment.isExternalStorageManager()
+        ) return
+
+        val currentDirectory = PrivacyAccessGuard.resolveLocalPathInMode(this, File(currentPath), false) ?: return
+        val ordinaryChanges = changedDirectories.mapNotNull {
+            PrivacyAccessGuard.resolveLocalPathInMode(this, it, false)
+        }
+        if (ordinaryChanges.isEmpty()) return
+        ordinaryChanges.forEach(::invalidateDirectoryChildCount)
+        if (!currentDirectory.isDirectory || ordinaryChanges.any { it == currentDirectory || it.parentFile == currentDirectory }) {
+            directoryRefreshController.refreshCurrentDirectory(captureFileListScrollState())
+        }
+    }
+
+    private fun captureFileListScrollState(): FileListScrollState? = if (isNasSourceSelected) {
+        directoryScrollStateCache.get(currentPath)
+    } else {
+        directoryRefreshController.captureFileListScrollState()
     }
 
     private fun showClassifyMenu() {
-        val items = listOf(
-            RoundedPopupMenuItem(getString(R.string.create_directory_name)) {
+        val path = currentPath
+        val privateMode = privacyBrowserActive
+        val epoch = PrivacySessionManager.sessionEpoch
+        fun isCurrentDirectory(): Boolean = !replacingPrivateBrowser && currentPath == path &&
+            (if (privateMode) PrivacySessionManager.isCurrentSession(epoch) else !PrivacySessionManager.isInPrivacySpace) &&
+            PrivacyAccessGuard.resolveLocalPathInMode(this, File(path), privateMode)?.isDirectory == true
+        if (!isCurrentDirectory()) return
+        fun item(label: Int, action: () -> Unit) = RoundedPopupMenuItem(getString(label)) {
+            if (isCurrentDirectory()) action()
+        }
+        val items = listOfNotNull(
+            item(R.string.create_directory_name) {
                 showCreateDirectoryDialog()
             },
-            RoundedPopupMenuItem(getString(R.string.classify_comics)) {
+            item(R.string.classify_comics) {
                 comicOrganizeController.confirmClassifyCurrentDirectory()
             },
-            RoundedPopupMenuItem(getString(R.string.comic_migration)) {
+            if (privateMode) null else item(R.string.comic_migration) {
                 startComicMigration()
             },
-            RoundedPopupMenuItem(getString(ComicOrganizeController.MENU_TITLE_MERGE_COMICS_NON_RECURSIVE)) {
+            item(ComicOrganizeController.MENU_TITLE_MERGE_COMICS_NON_RECURSIVE) {
                 comicOrganizeController.startMergeComicsNonRecursive()
             },
-            RoundedPopupMenuItem(getString(ComicOrganizeController.MENU_TITLE_MERGE_FILES_NON_RECURSIVE)) {
+            item(ComicOrganizeController.MENU_TITLE_MERGE_FILES_NON_RECURSIVE) {
                 comicOrganizeController.startMergeFilesNonRecursive()
             }
         )
 
-        showRoundedPopupMenu(btnClassify, items, widthDp = 252)
+        organizeMenu?.dismiss()
+        organizeMenu = showRoundedPopupMenu(btnClassify, items, widthDp = 252)
+    }
+
+    private fun dismissOrganizeUi() {
+        organizeMenu?.dismiss()
+        organizeMenu = null
+        createFolderDialog?.let { dialog ->
+            if (dialog.isShowing) dialog.window?.decorView?.visibility = View.INVISIBLE
+            dialog.dismiss()
+        }
+        createFolderDialog = null
+        comicOrganizeController.onPrivacyScopeChanged()
     }
 
     private fun showCreateDirectoryDialog() {
         val parentDirectory = File(currentPath)
-        if (!parentDirectory.isDirectory) {
+        if (!parentDirectory.isDirectory || !canUseBrowserItem(parentDirectory)) {
             showMessage(getString(R.string.message_invalid_directory))
             return
         }
@@ -1016,17 +1327,34 @@ class MainActivity : AppCompatActivity() {
             setSelection(text.length)
         }
 
-        AlertDialog.Builder(this)
+        val privateMode = privacyBrowserActive
+        val epoch = PrivacySessionManager.sessionEpoch
+        createFolderDialog = AlertDialog.Builder(this)
             .setTitle(R.string.create_directory_name)
             .setView(input)
             .setPositiveButton(R.string.confirm) { _, _ ->
-                createDirectory(parentDirectory, input.text?.toString().orEmpty())
+                val name = input.text?.toString().orEmpty()
+                val inSameMode = if (privateMode) PrivacySessionManager.isCurrentSession(epoch)
+                    else !PrivacySessionManager.isInPrivacySpace
+                if (inSameMode && canUseBrowserItem(parentDirectory) &&
+                    canUseBrowserItem(File(parentDirectory, name.trim()))
+                ) createDirectory(parentDirectory, name)
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .showRounded()
+            .createRounded().also { dialog ->
+                if (privateMode) dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                dialog.show()
+            }
     }
 
     private fun createDirectory(parentDirectory: File, requestedName: String) {
+        val name = requestedName.trim()
+        if (DirectoryTransferOperations.directoryNameError(name) == null &&
+            !PrivacyAccessGuard.allowsLocalChild(this, parentDirectory, File(parentDirectory, name), privacyBrowserActive)
+        ) {
+            showMessage(R.string.privacy_operation_denied)
+            return
+        }
         when (DirectoryTransferOperations.createDirectory(parentDirectory, requestedName)) {
             DirectoryTransferOperations.CreateDirectoryResult.SUCCESS -> {
                 invalidateDirectoryChildCount(parentDirectory)
@@ -1054,6 +1382,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startComicMigration() {
+        if (privacyBrowserActive || replacingPrivateBrowser || PrivacySessionManager.isInPrivacySpace) return
         if (!Environment.isExternalStorageManager()) {
             openManageAllFilesAccessSettings()
             return
@@ -1080,7 +1409,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val sourceDirectory = File(currentPath)
-        if (!sourceDirectory.isDirectory) {
+        if (PrivacyAccessGuard.resolveLocalPathInMode(this, sourceDirectory, false)?.isDirectory != true) {
             showMessage(getString(R.string.message_invalid_directory))
             return
         }
@@ -1115,11 +1444,58 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun privacyDirectoryAction(directory: File): Int? {
+        if (isNasSourceSelected || !Environment.isExternalStorageManager() || !canUseBrowserItem(directory) ||
+            isFileTransferInProgress || containsPendingFileTransferSource(directory) ||
+            !PrivacyAccessGuard.canMarkDirectory(directory)
+        ) return null
+        if (!privacyBrowserActive) return R.string.privacy_set_directory
+        if (!PrivacyStore.isPrivacyDirectoryMarked(this, directory.path)) return null
+        return if (currentPath == PRIVACY_VIRTUAL_ROOT_PATH) R.string.privacy_remove_directory
+        else R.string.privacy_clear_independent_mark
+    }
+
+    private fun applyPrivacyDirectoryAction(directory: File, action: Int) {
+        val target = PrivacyAccessGuard.resolveLocalPath(directory, allowRoot = false) ?: return
+        fun applyMark() {
+            if (privacyDirectoryAction(target) != action) return
+            val saved = if (action == R.string.privacy_set_directory) {
+                PrivacyStore.addPrivacyDirectory(this, target)
+            } else {
+                PrivacyStore.removePrivacyDirectory(this, target)
+            }
+            if (saved) onPrivacyMarksChanged()
+            showMessage(when {
+                !saved -> R.string.privacy_directory_write_failed
+                action == R.string.privacy_set_directory -> R.string.privacy_directory_marked
+                action == R.string.privacy_remove_directory -> R.string.privacy_directory_removed
+                else -> R.string.privacy_independent_mark_removed
+            })
+        }
+        if (action != R.string.privacy_set_directory) {
+            applyMark()
+            return
+        }
+        when (PrivacyStore.credentialState(this)) {
+            PrivacyStore.CredentialState.UNINITIALIZED -> privacyAuth.startInitializationFlow(target) {
+                onPrivacyMarksChanged()
+                showMessage(R.string.privacy_directory_marked)
+            }
+            PrivacyStore.CredentialState.READY -> applyMark()
+            PrivacyStore.CredentialState.PIN_ONLY_RECOVERABLE -> privacyAuth.showPinRecoveryPatternFlow(::applyMark)
+            PrivacyStore.CredentialState.CORRUPTED_LOCKED -> privacyAuth.showCorruptedNotice()
+        }
+    }
+
     private fun showDirectoryMenu(directory: File) {
+        if (!canUseBrowserItem(directory)) return
         val dialog = BottomSheetDialog(this)
+        val epoch = browserOperationEpoch()
+        fun canUseMenu() = dialog.isShowing && inBrowserOperationScope(epoch) && canUseBrowserItem(directory)
         val content = layoutInflater.inflate(R.layout.bottom_sheet_directory_actions, null)
         val tvDirectoryActionTitle = content.findViewById<TextView>(R.id.tvDirectoryActionTitle)
         val btnFavoritePath = content.findViewById<TextView>(R.id.btnFavoritePathAction)
+        val btnPrivacyAction = content.findViewById<TextView>(R.id.btnPrivacyDirectoryAction)
         val btnBookcaseDirectory = content.findViewById<TextView>(R.id.btnBookcaseDirectoryAction)
         val btnSetChildDirectoriesAsBookcases =
             content.findViewById<TextView>(R.id.btnSetChildDirectoriesAsBookcases)
@@ -1132,11 +1508,14 @@ class MainActivity : AppCompatActivity() {
         val btnDeleteDirectory = content.findViewById<TextView>(R.id.btnDeleteDirectory)
         val isFavorite = FavoritePathStore.isFavorite(this, directory)
         val isProtectedByPendingTransfer = containsPendingFileTransferSource(directory)
+        val topLevelPrivate = privacyBrowserActive &&
+            PrivacyAccessGuard.directoryChangeRestriction(this, directory, true) == R.string.privacy_top_level_operation_denied
         val canStartTransfer = pendingFileTransfer == null && !isFileTransferInProgress
 
         tvDirectoryActionTitle.text = directory.name
         sizeBottomSheetActionIcons(
             btnFavoritePath,
+            btnPrivacyAction,
             btnBookcaseDirectory,
             btnSetChildDirectoriesAsBookcases,
             btnCancelChildDirectoriesAsBookcases,
@@ -1149,12 +1528,23 @@ class MainActivity : AppCompatActivity() {
         btnFavoritePath.text = getString(
             if (isFavorite) R.string.cancel_favorite else R.string.favorite_path_action
         )
+        val privacyAction = privacyDirectoryAction(directory)
+        if (privacyAction != null) {
+            btnPrivacyAction.visibility = View.VISIBLE
+            btnPrivacyAction.setText(privacyAction)
+            btnPrivacyAction.setOnClickListener {
+                if (!canUseMenu() || privacyDirectoryAction(directory) != privacyAction) return@setOnClickListener
+                dialog.dismiss()
+                applyPrivacyDirectoryAction(directory, privacyAction)
+            }
+        }
         val isBookcase = AppSettings.isBookcaseDirectory(this, directory)
         btnBookcaseDirectory.text = getString(
             if (isBookcase) R.string.cancel_bookcase else R.string.set_as_bookcase
         )
 
         btnBookcaseDirectory.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             val enableBookcase = !AppSettings.isBookcaseDirectory(this, directory)
             AppSettings.setBookcaseDirectory(this, directory, enableBookcase)
             showMessage(
@@ -1174,16 +1564,19 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnSetChildDirectoriesAsBookcases.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             dialog.dismiss()
             updateChildDirectoryBookcases(directory, enabled = true)
         }
 
         btnCancelChildDirectoriesAsBookcases.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             dialog.dismiss()
             updateChildDirectoryBookcases(directory, enabled = false)
         }
 
         btnFavoritePath.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             if (FavoritePathStore.isFavorite(this, directory)) {
                 FavoritePathStore.remove(this, directory)
                 showMessage(getString(R.string.favorite_path_removed))
@@ -1216,6 +1609,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnCopyPathName.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             copyToClipboard(
                 label = getString(R.string.copy_path_name),
                 text = directory.absolutePath,
@@ -1232,49 +1626,64 @@ class MainActivity : AppCompatActivity() {
         btnDeleteDirectory.isEnabled = !isProtectedByPendingTransfer
         btnRenameDirectoryName.alpha = if (isProtectedByPendingTransfer) 0.38f else 1f
         btnDeleteDirectory.alpha = if (isProtectedByPendingTransfer) 0.38f else 1f
+        if (topLevelPrivate) {
+            btnCopyDirectory.visibility = View.GONE
+            btnCutDirectory.visibility = View.GONE
+            btnRenameDirectoryName.visibility = View.GONE
+        }
 
         btnCopyDirectory.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             dialog.dismiss()
             beginFileTransfer(directory, FileTransferMode.COPY)
         }
 
         btnCutDirectory.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             dialog.dismiss()
             beginFileTransfer(directory, FileTransferMode.CUT)
         }
 
         btnRenameDirectoryName.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             dialog.dismiss()
             showRenameDirectoryDialog(directory)
         }
 
         btnDeleteDirectory.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             dialog.dismiss()
             confirmDeleteDirectory(directory)
         }
 
+        browserItemMenu = dialog
+        if (privacyBrowserActive) dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         dialog.showRoundedContent(content)
     }
 
     private fun updateChildDirectoryBookcases(directory: File, enabled: Boolean) {
+        val epoch = browserOperationEpoch()
+        if (!canUseBrowserItem(directory)) return
         directoryLoadExecutor.execute {
+            if (!matchesBrowserOperationEpoch(epoch)) return@execute
             val childDirectories = try {
-                if (!directory.isDirectory) {
+                if (PrivacyAccessGuard.resolveLocalPathInMode(applicationContext, directory, epoch != null)?.isDirectory != true) {
                     null
                 } else {
                     directory.listFiles()
-                        ?.filter { !it.name.startsWith(".") && it.isDirectory }
+                        ?.filter { !it.name.startsWith(".") && it.isDirectory &&
+                            PrivacyAccessGuard.resolveLocalPathInMode(applicationContext, it, epoch != null) != null }
                 }
             } catch (_: SecurityException) {
                 null
             }
 
-            val changedCount = childDirectories?.let {
+            val changedCount = childDirectories?.takeIf { matchesBrowserOperationEpoch(epoch) }?.let {
                 AppSettings.setBookcaseDirectories(this, it, enabled)
             }
 
             runOnUiThread {
-                if (isFinishing || isDestroyed) {
+                if (isFinishing || isDestroyed || !inBrowserOperationScope(epoch)) {
                     return@runOnUiThread
                 }
 
@@ -1309,6 +1718,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showRenameDirectoryDialog(directory: File) {
+        if (!allowDirectoryOperation(directory)) return
         if (!directory.isDirectory) {
             showMessage(getString(R.string.message_invalid_directory))
             return
@@ -1320,17 +1730,25 @@ class MainActivity : AppCompatActivity() {
             setSelection(text.length)
         }
 
-        AlertDialog.Builder(this)
+        val epoch = browserOperationEpoch()
+        showBrowserOperationDialog(AlertDialog.Builder(this)
             .setTitle(R.string.rename_directory_name_title)
             .setView(input)
-            .setPositiveButton(R.string.confirm) { _, _ ->
-                renameDirectory(directory, input.text?.toString().orEmpty())
+            .setPositiveButton(R.string.confirm) { dialog, _ ->
+                if (dialog in browserOperationDialogs && inBrowserOperationScope(epoch)) {
+                    renameDirectory(directory, input.text?.toString().orEmpty())
+                }
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .showRounded()
+            .createRounded())
     }
 
     private fun renameDirectory(directory: File, rawName: String) {
+        if (!allowDirectoryOperation(directory)) return
+        if (!directory.isDirectory) {
+            showMessage(R.string.message_invalid_directory)
+            return
+        }
         if (containsPendingFileTransferSource(directory)) {
             showMessage(getString(R.string.file_transfer_source_in_use))
             return
@@ -1355,6 +1773,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         val targetDirectory = File(parent, trimmedName)
+        if (!PrivacyAccessGuard.allowsLocalChild(this, parent, targetDirectory, privacyBrowserActive) ||
+            PrivacyStore.hasOwnOrDescendantPrivacyMark(this, targetDirectory.path)
+        ) {
+            showMessage(R.string.privacy_operation_denied)
+            return
+        }
         if (targetDirectory.exists()) {
             showMessage(getString(R.string.rename_directory_name_exists))
             return
@@ -1398,6 +1822,9 @@ class MainActivity : AppCompatActivity() {
             ?: return
         val source = File(sourcePath)
         val isDirectory = state.getBoolean(KEY_PENDING_FILE_TRANSFER_IS_DIRECTORY)
+        if (PrivacyAccessGuard.resolveLocalPathInMode(this, source, false) == null ||
+            (isDirectory && PrivacyAccessGuard.directoryChangeRestriction(this, source, false) != null)
+        ) return
         val sourceExists = if (isDirectory) source.isDirectory else source.isFile
         if (!sourceExists) {
             return
@@ -1414,8 +1841,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateFileTransferToolbar() {
-        val isActive = pendingFileTransfer != null
-        val canUseLocalSourceActions = !isNasSourceSelected
+        val transfer = browserPendingTransfer
+        val isActive = transfer != null
+        val canUseLocalSourceActions = !isNasSourceSelected && !replacingPrivateBrowser
+        val atPrivacyRoot = currentPath == PRIVACY_VIRTUAL_ROOT_PATH
+        val pasteInCurrentArea = transfer?.let { inBrowserOperationScope(it.privacyEpoch) } == true && !atPrivacyRoot
         val normalToolbarButtons = arrayOf(
             btnFavoritePaths,
             btnFavoriteComics,
@@ -1429,15 +1859,20 @@ class MainActivity : AppCompatActivity() {
             button.isEnabled = !isActive && canUseLocalSourceActions
             button.alpha = if (!isActive && canUseLocalSourceActions) 1f else 0.38f
         }
+        if (privacyBrowserActive) {
+            if (atPrivacyRoot) btnClassify.visibility = View.GONE
+        }
         val canNavigateBack = !isNasSourceSelected || currentNasRelativePath.isNotEmpty()
+        btnBack.contentDescription = getString(if (atPrivacyRoot) R.string.privacy_exit_space else R.string.back)
         btnBack.visibility = if (isActive) View.GONE else View.VISIBLE
         btnBack.isEnabled = !isActive && !nasDownloadInProgress && canNavigateBack &&
             !nasDirectoryLoadInProgress
         btnBack.alpha = if (btnBack.isEnabled) 1f else 0.38f
 
-        sourceNasButton.isEnabled = !isActive && !nasDownloadInProgress
-        sourceLocalButton.isEnabled = !isActive && !nasDownloadInProgress
-        sourceSwitchTrack.alpha = if (isActive || nasDownloadInProgress) 0.45f else 1f
+        val canSwitchSource = pendingFileTransfer == null && !nasDownloadInProgress
+        sourceNasButton.isEnabled = canSwitchSource
+        sourceLocalButton.isEnabled = canSwitchSource
+        sourceSwitchTrack.alpha = if (canSwitchSource) 1f else 0.45f
 
         btnIncognitoMode.isEnabled = !isActive && !nasDownloadInProgress
         btnHelp.isEnabled = !isActive && !nasDownloadInProgress
@@ -1446,11 +1881,10 @@ class MainActivity : AppCompatActivity() {
         btnHelp.alpha = if (isActive || nasDownloadInProgress) 0.38f else 1f
         btnOptions.alpha = if (isActive || nasDownloadInProgress) 0.38f else 1f
 
-        btnPasteFile.visibility = if (isActive) View.VISIBLE else View.GONE
-        btnCreateTransferDirectory.visibility = if (isActive) View.VISIBLE else View.GONE
+        btnPasteFile.visibility = if (pasteInCurrentArea) View.VISIBLE else View.GONE
+        btnCreateTransferDirectory.visibility = if (pasteInCurrentArea) View.VISIBLE else View.GONE
         btnExitFileTransfer.visibility = if (isActive) View.VISIBLE else View.GONE
-        btnTransferParent.visibility = if (isActive) View.VISIBLE else View.GONE
-        val transfer = pendingFileTransfer
+        btnTransferParent.visibility = if (isActive && !atPrivacyRoot) View.VISIBLE else View.GONE
         if (transfer != null) {
             btnPasteFile.setImageResource(
                 if (transfer.mode == FileTransferMode.COPY) {
@@ -1461,27 +1895,41 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        val canInteract = isActive && !isFileTransferInProgress
-        btnPasteFile.isEnabled = canInteract
-        btnCreateTransferDirectory.isEnabled = canInteract
+        val canInteract = isActive && !isBrowserTransferInProgress
+        btnPasteFile.isEnabled = canInteract && pasteInCurrentArea
+        btnCreateTransferDirectory.isEnabled = canInteract && pasteInCurrentArea
         btnExitFileTransfer.isEnabled = canInteract
         btnTransferParent.isEnabled = canInteract
-        listView.isEnabled = !isFileTransferInProgress && canUseLocalSourceActions
+        listView.isEnabled = !isBrowserTransferInProgress && canUseLocalSourceActions
         nasDirectoryListView.isEnabled = !isFileTransferInProgress &&
             !nasDirectoryLoadInProgress && !nasDownloadInProgress
     }
 
     private fun selectFileSource(isNas: Boolean) {
-        if (isNas == isNasSourceSelected || pendingFileTransfer != null) {
-            return
-        }
+        if (isNas == isNasSourceSelected || pendingFileTransfer != null) return
 
         val wasNas = isNasSourceSelected
+        var replacingLocal = false
+        var localPathChanged = false
         if (wasNas) {
             pendingNasArchiveReopen = null
             cancelNasDirectoryRequest()
+            val directory = PrivacyAccessGuard.resolveNormalRestoreDirectory(this, currentPath)
+            val ordinaryPath = directory?.path ?: STORAGE_ROOT_PATH
+            if (ordinaryPath != currentPath) {
+                clearBrowserRows()
+                setCurrentPath(ordinaryPath)
+                localPathChanged = true
+            }
         } else {
-            captureFileListScrollState()?.let(directoryScrollStateCache::save)
+            val restorePath = PrivacySessionManager.exitPrivacySpace()
+                ?: PrivacySessionManager.consumePendingNormalRestorePath()
+            replacingLocal = replacingPrivateBrowser || restorePath != null
+            if (restorePath != null) {
+                openNormalDirectoryAfterPrivacy(restorePath)
+            } else if (!replacingLocal) {
+                captureFileListScrollState()?.let(::normalScrollState)?.let(directoryScrollStateCache::save)
+            }
         }
         val generation = ++sourceTransitionGeneration
         listView.animate().cancel()
@@ -1490,7 +1938,7 @@ class MainActivity : AppCompatActivity() {
         listView.alpha = 1f
         nasEmptyState.translationX = 0f
         nasEmptyState.alpha = 1f
-        listView.visibility = if (wasNas) View.GONE else View.VISIBLE
+        listView.visibility = if (wasNas || replacingLocal) View.GONE else View.VISIBLE
         nasEmptyState.visibility = if (wasNas) View.VISIBLE else View.GONE
 
         isNasSourceSelected = isNas
@@ -1501,7 +1949,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             val downloadedDirectory = pendingLocalDownloadDirectory
             pendingLocalDownloadDirectory = null
-            if (downloadedDirectory != null && downloadedDirectory == canonicalPathWithinStorageRoot(currentPath)) {
+            if (localPathChanged || replacingPrivateBrowser || downloadedDirectory?.path == currentPath) {
                 loadCurrentDirectory(scrollStateToRestore = directoryScrollStateCache.get(currentPath))
             }
         }
@@ -1509,7 +1957,7 @@ class MainActivity : AppCompatActivity() {
         updateFileTransferToolbar()
 
         val width = findViewById<View>(R.id.fileListPanel).width.toFloat()
-        if (width <= 0f) {
+        if (replacingLocal || width <= 0f) {
             listView.visibility = if (isNas) View.GONE else View.VISIBLE
             nasEmptyState.visibility = if (isNas) View.VISIBLE else View.GONE
             return
@@ -1591,7 +2039,8 @@ class MainActivity : AppCompatActivity() {
                 )
             }
         } else if (Environment.isExternalStorageManager()) {
-            etPath.setText(currentPath)
+            if (currentPath == PRIVACY_VIRTUAL_ROOT_PATH) etPath.setText(R.string.privacy_browser_title)
+            else etPath.setText(currentPath)
         } else {
             etPath.setText(R.string.storage_permission_required)
         }
@@ -2004,6 +2453,15 @@ class MainActivity : AppCompatActivity() {
                 .showRounded()
             return
         }
+        val cacheRoot = NasShareArchiveDownloader.cacheDirectory(cacheDir)
+        val destinationDirectory = if (saveToLocal) {
+            try {
+                NasShareArchiveDownloader.resolveLocalDownloadDirectory(this, NasShareStore.downloadPath(this))
+            } catch (_: Exception) {
+                showMessage(R.string.nas_download_path_choose_ordinary)
+                return
+            }
+        } else cacheRoot
         val profile = selectedNasProfile ?: run {
             showMessage(R.string.nas_directory_password_required)
             return
@@ -2015,24 +2473,6 @@ class MainActivity : AppCompatActivity() {
             } else {
                 showNasSessionPasswordDialog(profile) { startNasArchiveDownload(entry, saveToLocal) }
             }
-            return
-        }
-        val cacheRoot = NasShareArchiveDownloader.cacheDirectory(cacheDir)
-        val destinationDirectory = try {
-            if (saveToLocal) {
-                NasShareArchiveDownloader.resolveLocalDownloadDirectory(
-                    Environment.getExternalStorageDirectory(),
-                    NasShareStore.downloadPath(this)
-                )
-            } else {
-                cacheRoot
-            }
-        } catch (exception: Exception) {
-            android.util.Log.e("ComicLabNAS", "Invalid NAS local download directory", exception)
-            showNasFailureDialog(
-                if (saveToLocal) NasFailureClassifier.localPathFailure(exception)
-                else NasFailureClassifier.classify(exception)
-            )
             return
         }
         val destination = try {
@@ -2051,7 +2491,11 @@ class MainActivity : AppCompatActivity() {
         }
         val cached = !saveToLocal && destination.isFile && destination.length() == entry.sizeBytes
         try {
+            if (saveToLocal) NasShareArchiveDownloader.requireOrdinaryLocalPath(this, destination)
             if (!cached) NasShareArchiveDownloader.checkAvailableSpace(destinationDirectory, entry.sizeBytes)
+        } catch (_: NasShareArchiveDownloader.LocalDownloadPathException) {
+            showMessage(R.string.nas_download_path_choose_ordinary)
+            return
         } catch (exception: NasShareArchiveDownloader.InsufficientStorageException) {
             showNasDownloadInsufficientSpace(exception.requiredBytes, exception.availableBytes)
             return
@@ -2101,6 +2545,8 @@ class MainActivity : AppCompatActivity() {
                 NasDownloadResult.Cancelled
             } catch (_: NasShareArchiveDownloader.RemoteVersionChangedException) {
                 NasDownloadResult.RemoteVersionChanged
+            } catch (_: NasShareArchiveDownloader.LocalDownloadPathException) {
+                NasDownloadResult.InvalidLocalPath
             } catch (exception: Exception) {
                 val failure = NasFailureClassifier.classify(exception, localDownload = saveToLocal)
                 discardRejectedNasPassword(profile, password, failure)
@@ -2123,6 +2569,13 @@ class MainActivity : AppCompatActivity() {
                         if (result.openForReading && selectedNasProfile?.id == profile.id) {
                             openMangaPreview(result.file)
                         } else if (!result.openForReading) {
+                            if (runCatching {
+                                    NasShareArchiveDownloader.requireOrdinaryLocalPath(this, result.file)
+                                }.isFailure
+                            ) {
+                                showMessage(R.string.nas_download_path_choose_ordinary)
+                                return@runOnUiThread
+                            }
                             val downloadedDirectory = result.file.parentFile
                             invalidateDirectoryChildCount(downloadedDirectory)
                             pendingLocalDownloadDirectory = downloadedDirectory
@@ -2138,6 +2591,8 @@ class MainActivity : AppCompatActivity() {
                     )
 
                     NasDownloadResult.Cancelled -> showMessage(R.string.nas_download_cancelled)
+
+                    NasDownloadResult.InvalidLocalPath -> showMessage(R.string.nas_download_path_choose_ordinary)
 
                     NasDownloadResult.RemoteVersionChanged -> {
                         AlertDialog.Builder(this)
@@ -2652,13 +3107,14 @@ class MainActivity : AppCompatActivity() {
             count = content.findViewById(R.id.tvFileOperationProgressCount)
         )
         views.progressBar.isIndeterminate = true
-        views.dialog.show()
+        showBrowserOperationDialog(views.dialog)
         return views
     }
 
     internal fun createFileOperationProgressReporter(
         views: FileOperationProgressViews
     ): (FileOperationProgress) -> Unit {
+        val epoch = browserOperationEpoch()
         var lastUpdateAt = 0L
         var lastPhase: FileOperationProgress.Phase? = null
         return { progress ->
@@ -2671,7 +3127,7 @@ class MainActivity : AppCompatActivity() {
                 lastPhase = progress.phase
                 lastUpdateAt = now
                 runOnUiThread {
-                    if (!isDestroyed && !isFinishing && views.dialog.isShowing) {
+                    if (!isDestroyed && !isFinishing && views.dialog.isShowing && inBrowserOperationScope(epoch)) {
                         updateFileOperationProgress(views, progress)
                     }
                 }
@@ -2755,7 +3211,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showArchiveMenu(file: File) {
+        if (!canUseBrowserItem(file)) return
         val dialog = BottomSheetDialog(this)
+        val epoch = browserOperationEpoch()
+        fun canUseMenu() = dialog.isShowing && inBrowserOperationScope(epoch) && canUseBrowserItem(file)
         val content = layoutInflater.inflate(R.layout.bottom_sheet_archive_actions, null)
         val tvArchiveActionTitle = content.findViewById<TextView>(R.id.tvArchiveActionTitle)
         val btnCopyFileName = content.findViewById<TextView>(R.id.btnCopyFileName)
@@ -2786,10 +3245,12 @@ class MainActivity : AppCompatActivity() {
             btnDeleteFile
         )
         val canStartTransfer = pendingFileTransfer == null && !isFileTransferInProgress
-        btnEnhance.visibility = if (ComicArchive.isSupportedArchive(file) &&
+        val derivationPath = ReaderDerivationPrivacy.ordinaryPath(this, file)
+        btnEnhance.visibility = if (derivationPath != null && ComicArchive.isSupportedArchive(file) &&
             !file.extension.equals("pdf", true)) View.VISIBLE else View.GONE
         btnTranslate.visibility = if (TranslationModels.isAvailable(this)) btnEnhance.visibility else View.GONE
         val conversionTarget = when {
+            derivationPath == null -> null
             ComicArchive.isPdf(file) -> ComicConversionTarget.CBZ
             ComicArchive.isSupportedArchive(file) -> ComicConversionTarget.PDF
             else -> null
@@ -2815,6 +3276,7 @@ class MainActivity : AppCompatActivity() {
         )
 
         btnCopyFileName.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             copyToClipboard(
                 label = getString(R.string.copy_file_name),
                 text = file.name,
@@ -2824,11 +3286,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnRenameFileName.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             dialog.dismiss()
             showRenameFileDialog(file)
         }
 
         btnCopyStartMarker.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             val marker = CommonFunc.extractStartMarker(
                 file.name,
                 AppSettings.getStartMarkerErrorTags(this)
@@ -2846,6 +3310,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnFavoriteComic.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             if (!ReaderFileDetector.isSupported(file)) {
                 showMessage(getString(R.string.unsupported_archive_format))
                 dialog.dismiss()
@@ -2884,56 +3349,68 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnRead.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             dialog.dismiss()
             openMangaPreview(file)
         }
 
         btnConvert.setOnClickListener {
+            if (!canUseMenu() || !ReaderDerivationPrivacy.allows(this, file, derivationPath)) return@setOnClickListener
             val target = conversionTarget ?: return@setOnClickListener
             dialog.dismiss()
             ComicFormatConversionDialog.show(this, file, target)
         }
 
         btnEnhance.setOnClickListener {
+            if (!canUseMenu() || !ReaderDerivationPrivacy.allows(this, file, derivationPath)) return@setOnClickListener
             dialog.dismiss()
             ArchiveEnhancementDialog.show(this, file)
         }
 
         btnTranslate.setOnClickListener {
+            if (!canUseMenu() || !ReaderDerivationPrivacy.allows(this, file, derivationPath)) return@setOnClickListener
             dialog.dismiss()
             ArchiveTranslationDialog.show(this, file)
         }
 
         btnCopyFile.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             dialog.dismiss()
             beginFileTransfer(file, FileTransferMode.COPY)
         }
 
         btnCutFile.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             dialog.dismiss()
             beginFileTransfer(file, FileTransferMode.CUT)
         }
 
         btnDeleteFile.setOnClickListener {
+            if (!canUseMenu()) return@setOnClickListener
             dialog.dismiss()
             confirmDeleteFile(file)
         }
 
+        browserItemMenu = dialog
+        if (privacyBrowserActive) dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         dialog.showRoundedContent(content)
     }
 
     private fun confirmDeleteFile(file: File) {
-        AlertDialog.Builder(this)
+        if (!canUseBrowserItem(file)) return
+        val epoch = browserOperationEpoch()
+        showBrowserOperationDialog(AlertDialog.Builder(this)
             .setTitle(R.string.delete_file_title)
             .setMessage(R.string.delete_file_message)
-            .setPositiveButton(R.string.yes) { _, _ ->
-                deleteFileFromBrowser(file)
+            .setPositiveButton(R.string.yes) { dialog, _ ->
+                if (dialog in browserOperationDialogs && inBrowserOperationScope(epoch)) deleteFileFromBrowser(file)
             }
             .setNegativeButton(R.string.no, null)
-            .showRounded()
+            .createRounded())
     }
 
     private fun deleteFileFromBrowser(file: File) {
+        if (!canUseBrowserItem(file)) return
         if (isPendingFileTransferSource(file)) {
             showMessage(getString(R.string.file_transfer_source_in_use))
             return
@@ -2945,6 +3422,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         val scrollState = captureFileListScrollState()
+        val epoch = browserOperationEpoch()
+        val approved = PrivacyAccessGuard.resolveLocalPathInMode(this, file, epoch != null) ?: return
+        val pathCheck = { PrivacyAccessGuard.resolveLocalPathInMode(applicationContext, file, epoch != null) == approved }
         val progressViews = showFileOperationProgress()
         val reportProgress = createFileOperationProgressReporter(progressViews)
         directoryLoadExecutor.execute {
@@ -2954,8 +3434,11 @@ class MainActivity : AppCompatActivity() {
                     currentItemName = file.name
                 )
             )
-            val deleted = runCatching { file.delete() }.getOrDefault(false)
+            val deleted = runCatching { pathCheck() && file.isFile && file.delete() }.getOrDefault(false)
             if (deleted) {
+                runCatching { FavoriteComicStore.remove(applicationContext, file) }
+                runCatching { ReadingHistoryStore.remove(applicationContext, file) }
+                invalidateDirectoryChildCount(file.parentFile)
                 reportProgress(
                     FileOperationProgress(
                         phase = FileOperationProgress.Phase.DELETING,
@@ -2967,13 +3450,10 @@ class MainActivity : AppCompatActivity() {
             }
             runOnUiThread {
                 dismissFileOperationProgress(progressViews)
-                if (isDestroyed || isFinishing) {
+                if (isDestroyed || isFinishing || !inBrowserOperationScope(epoch) || !pathCheck()) {
                     return@runOnUiThread
                 }
                 if (deleted) {
-                    FavoriteComicStore.remove(this, file)
-                    ReadingHistoryStore.remove(this, file)
-                    invalidateDirectoryChildCount(File(currentPath))
                     showMessage(getString(R.string.delete_file_success))
                     loadCurrentDirectory(scrollStateToRestore = scrollState)
                 } else {
@@ -2984,17 +3464,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun confirmDeleteDirectory(directory: File) {
-        AlertDialog.Builder(this)
+        if (!allowDirectoryOperation(directory, deleting = true)) return
+        val epoch = browserOperationEpoch()
+        showBrowserOperationDialog(AlertDialog.Builder(this)
             .setTitle(R.string.delete_directory_title)
             .setMessage(R.string.delete_directory_message)
-            .setPositiveButton(R.string.yes) { _, _ ->
-                deleteDirectoryFromBrowser(directory)
+            .setPositiveButton(R.string.yes) { dialog, _ ->
+                if (dialog in browserOperationDialogs && inBrowserOperationScope(epoch)) deleteDirectoryFromBrowser(directory)
             }
             .setNegativeButton(R.string.no, null)
-            .showRounded()
+            .createRounded())
     }
 
     private fun deleteDirectoryFromBrowser(directory: File) {
+        if (!allowDirectoryOperation(directory, deleting = true)) return
         if (!directory.isDirectory ||
             File(directory.absolutePath).absolutePath == File(STORAGE_ROOT_PATH).absolutePath
         ) {
@@ -3008,30 +3491,42 @@ class MainActivity : AppCompatActivity() {
         }
 
         val scrollState = captureFileListScrollState()
+        val epoch = browserOperationEpoch()
+        val approved = PrivacyAccessGuard.resolveLocalPath(directory, allowRoot = false) ?: return
+        val pathCheck = {
+            PrivacyAccessGuard.resolveLocalPath(directory, allowRoot = false) == approved &&
+                PrivacyAccessGuard.directoryChangeRestriction(applicationContext, directory, epoch != null, deleting = true) == null
+        }
         val progressViews = showFileOperationProgress()
         val reportProgress = createFileOperationProgressReporter(progressViews)
         directoryLoadExecutor.execute {
-            val deleted = DirectoryFileTree.deleteRecursively(directory, reportProgress)
+            val deleted = DirectoryFileTree.deleteRecursively(directory, canContinue = pathCheck, onProgress = reportProgress)
+            var privacyMarksCleaned = true
             if (deleted) {
-                FavoritePathStore.removeDirectory(applicationContext, directory)
-                FavoriteComicStore.removeDirectory(applicationContext, directory)
-                ReadingHistoryStore.removeDirectory(applicationContext, directory)
-                ReaderProgressStore.removeDirectory(applicationContext, directory)
-                EbookProgressStore.removeDirectory(applicationContext, directory)
+                if (epoch != null) {
+                    privacyMarksCleaned = runCatching {
+                        PrivacyStore.removeDirectorySubtree(applicationContext, approved)
+                        !PrivacyStore.hasOwnOrDescendantPrivacyMark(applicationContext, approved.path)
+                    }.getOrDefault(false)
+                }
+                runCatching { FavoritePathStore.removeDirectory(applicationContext, directory) }
+                runCatching { FavoriteComicStore.removeDirectory(applicationContext, directory) }
+                runCatching { ReadingHistoryStore.removeDirectory(applicationContext, directory) }
+                runCatching { ReaderProgressStore.removeDirectory(applicationContext, directory) }
+                runCatching { EbookProgressStore.removeDirectory(applicationContext, directory) }
+                runCatching { AppSettings.removeBookcaseDirectory(applicationContext, directory) }
+                invalidateDirectoryChildCount(directory.parentFile)
             }
+            invalidateDirectoryChildCount(directory)
             runOnUiThread {
                 dismissFileOperationProgress(progressViews)
-                if (isDestroyed || isFinishing) {
+                if (isDestroyed || isFinishing || !inBrowserOperationScope(epoch) || (!deleted && !pathCheck())) {
                     return@runOnUiThread
                 }
                 if (deleted) {
-                    AppSettings.removeBookcaseDirectory(this, directory)
-                    invalidateDirectoryChildCount(File(currentPath))
-                    invalidateDirectoryChildCount(directory)
-                    showMessage(getString(R.string.delete_directory_success))
+                    showMessage(if (privacyMarksCleaned) R.string.delete_directory_success else R.string.privacy_directory_mark_cleanup_failed)
                     loadCurrentDirectory(scrollStateToRestore = scrollState)
                 } else {
-                    invalidateDirectoryChildCount(directory)
                     showMessage(getString(R.string.delete_directory_failed))
                 }
             }
@@ -3039,6 +3534,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showRenameFileDialog(file: File) {
+        if (!canUseBrowserItem(file)) return
         if (!file.isFile) {
             showMessage(getString(R.string.message_invalid_file))
             return
@@ -3050,17 +3546,25 @@ class MainActivity : AppCompatActivity() {
             setSelection(text.length)
         }
 
-        AlertDialog.Builder(this)
+        val epoch = browserOperationEpoch()
+        showBrowserOperationDialog(AlertDialog.Builder(this)
             .setTitle(R.string.rename_file_name_title)
             .setView(input)
-            .setPositiveButton(R.string.confirm) { _, _ ->
-                renameArchiveFile(file, input.text?.toString().orEmpty())
+            .setPositiveButton(R.string.confirm) { dialog, _ ->
+                if (dialog in browserOperationDialogs && inBrowserOperationScope(epoch)) {
+                    renameArchiveFile(file, input.text?.toString().orEmpty())
+                }
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .showRounded()
+            .createRounded())
     }
 
     private fun renameArchiveFile(file: File, rawName: String) {
+        if (!canUseBrowserItem(file)) return
+        if (!file.isFile) {
+            showMessage(R.string.message_invalid_file)
+            return
+        }
         if (isPendingFileTransferSource(file)) {
             showMessage(getString(R.string.file_transfer_source_in_use))
             return
@@ -3090,6 +3594,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         val targetFile = File(parent, newFileName)
+        if (!PrivacyAccessGuard.allowsLocalChild(this, parent, targetFile, privacyBrowserActive)) {
+            showMessage(R.string.privacy_operation_denied)
+            return
+        }
         if (targetFile.exists()) {
             showMessage(getString(R.string.rename_file_name_exists))
             return
@@ -3132,28 +3640,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openMangaPreview(file: File) {
-        when (ReaderFileDetector.typeOf(file)) {
+        val intent = when (ReaderFileDetector.typeOf(file)) {
             ReaderFileType.MOBI,
             ReaderFileType.EPUB,
-            ReaderFileType.TXT -> {
-                startActivity(
-                    Intent(this, EbookPreviewActivity::class.java).apply {
-                        putExtra(EbookPreviewActivity.EXTRA_BOOK_PATH, file.absolutePath)
-                    }
-                )
+            ReaderFileType.TXT -> Intent(this, EbookPreviewActivity::class.java).apply {
+                putExtra(EbookPreviewActivity.EXTRA_BOOK_PATH, file.absolutePath)
             }
 
             ReaderFileType.IMAGE_ARCHIVE,
-            ReaderFileType.PDF -> {
-                startActivity(
-                    Intent(this, MangaPreviewActivity::class.java).apply {
-                        putExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
-                    }
-                )
+            ReaderFileType.PDF -> Intent(this, MangaPreviewActivity::class.java).apply {
+                putExtra(MangaPreviewActivity.EXTRA_ARCHIVE_PATH, file.absolutePath)
             }
 
-            null -> showMessage(getString(R.string.unsupported_archive_format))
+            null -> {
+                showMessage(getString(R.string.unsupported_archive_format))
+                return
+            }
         }
+        if (ReaderSourcePrivacy.authorizeLaunch(this, intent, file)) startActivity(intent)
     }
 
     private fun getMimeType(file: File): String {
@@ -3195,7 +3699,6 @@ class MainActivity : AppCompatActivity() {
     private fun resetViewState(view: View) {
         view.isPressed = false
         view.isSelected = false
-        view.isActivated = false
     }
 
     private fun copyToClipboard(label: String, text: String, copiedMessage: String) {
@@ -3217,30 +3720,37 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setCurrentPath(path: String) {
-        captureFileListScrollState()?.let(directoryScrollStateCache::save)
-        currentPath = File(path).absolutePath
+        if (!replacingPrivateBrowser) {
+            captureFileListScrollState()?.let { state ->
+                if (privacyBrowserActive) privacyScrollStateCache.save(state)
+                else normalScrollState(state)?.let(directoryScrollStateCache::save)
+            }
+        }
+        currentPath = if (path == PRIVACY_VIRTUAL_ROOT_PATH) path else File(path).absolutePath
         saveCurrentPath()
+        updateFileTransferToolbar()
     }
 
     private fun saveCurrentPath() {
+        if (privacyBrowserActive || replacingPrivateBrowser ||
+            PrivacyAccessGuard.resolveLocalPath(File(currentPath)) == null ||
+            PrivacyStore.isUnderPrivacyDirectory(this, currentPath)
+        ) return
         prefs.edit()
             .putString(KEY_CURRENT_PATH, currentPath)
             .apply()
     }
 
-    private fun savedCurrentPath(): String {
-        val originalStorageRoot = File(STORAGE_ROOT_PATH)
-        val canonicalStorageRoot = runCatching { originalStorageRoot.canonicalFile }
-            .getOrNull()
-        val savedPath = prefs.getString(KEY_CURRENT_PATH, null)
-            ?.takeIf { it.isNotBlank() }
-            ?.let(::File)
-            ?.let { canonicalPathWithinStorageRoot(it.path) }
-            ?.takeIf { it.isDirectory }
-        if (savedPath == null || savedPath == canonicalStorageRoot) {
-            return originalStorageRoot.absolutePath
-        }
-        return savedPath.absolutePath
+    private fun savedCurrentPath(): String = PrivacyAccessGuard.resolveNormalRestoreDirectory(
+        this, prefs.getString(KEY_CURRENT_PATH, null)
+    )?.absolutePath ?: STORAGE_ROOT_PATH
+
+    private fun normalScrollState(state: FileListScrollState): FileListScrollState? {
+        if (PrivacyAccessGuard.resolveLocalPath(File(state.directoryPath)) == null ||
+            PrivacyStore.isUnderPrivacyDirectory(this, state.directoryPath)
+        ) return null
+        val anchor = state.anchorPath?.takeUnless { PrivacyStore.isUnderPrivacyDirectory(this, it) }
+        return if (anchor == state.anchorPath) state else state.copy(anchorPath = anchor)
     }
 
     private fun Bundle.readFileListScrollState(): FileListScrollState? {
@@ -3279,6 +3789,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val PREFS_NAME = "saf_prefs"
         const val EXTRA_CENTER_TARGET_PATH = "center_target_path"
+        internal const val EXTRA_CENTER_TARGET_PRIVACY_EPOCH = "center_target_privacy_epoch"
         private const val KEY_STORAGE_PERMISSION_PROMPTED = "storage_permission_prompted"
         private const val KEY_CURRENT_PATH = "current_path"
         private const val KEY_FILE_LIST_SCROLL_DIRECTORY_PATH = "file_list_scroll_directory_path"

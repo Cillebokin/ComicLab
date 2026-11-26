@@ -116,6 +116,19 @@ internal class PreparedReaderCacheLeaseRegistry(
         acquiredAtMillis = createdAtMillis
     )
 
+    /** Cancels only a pending handoff. A reader that has already taken ownership keeps its lease. */
+    fun cancelHandoff(directory: File, handoffId: Long) {
+        val canonicalPath = canonicalPath(directory) ?: return
+        val pathToDelete = synchronized(lock) {
+            val state = directories[canonicalPath] ?: return@synchronized null
+            if (state.leases[handoffId]?.kind != LeaseKind.HANDOFF) return@synchronized null
+            state.leases.remove(handoffId)
+            state.pendingDelete = true
+            reserveDeletionLocked(canonicalPath, state)
+        }
+        pathToDelete?.let(::scheduleDeletion)
+    }
+
     /** Acquires the reader owner and consumes one matching prepare-to-reader handoff atomically. */
     fun acquireReaderOwner(directory: File): Lease? {
         val canonicalPath = canonicalPath(directory) ?: return null

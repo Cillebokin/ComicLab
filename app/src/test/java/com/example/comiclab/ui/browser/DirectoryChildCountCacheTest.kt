@@ -9,6 +9,22 @@ import org.junit.Test
 class DirectoryChildCountCacheTest {
 
     @Test
+    fun modesKeepSeparateCountsAndMarkChangesInvalidateBoth() {
+        val cache = DirectoryChildCountCache()
+        val directory = "/books/manga"
+        cache.put(directory, 100L, 4)
+        cache.put(directory, 100L, 7, inPrivacySpace = true)
+        assertEquals(4, cache.get(directory, 100L))
+        assertEquals(7, cache.get(directory, 100L, inPrivacySpace = true))
+        val oldGeneration = cache.generation()
+
+        cache.updatePrivacyMarks(setOf("/books/manga/private"))
+        assertNull(cache.get(directory, 100L))
+        assertNull(cache.get(directory, 100L, inPrivacySpace = true))
+        assertFalse(cache.putIfUnchangedSince(directory, 100L, 7, oldGeneration, inPrivacySpace = true))
+    }
+
+    @Test
     fun returnsCountWhenDirectoryTimestampIsUnchanged() {
         val cache = DirectoryChildCountCache(maxEntries = 2)
         cache.put("/books/manga", lastModified = 100L, childCount = 4)

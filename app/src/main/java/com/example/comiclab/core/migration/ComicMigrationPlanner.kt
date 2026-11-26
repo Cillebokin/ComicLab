@@ -46,6 +46,7 @@ data class ComicMigrationCopyResult(
 
 class ComicMigrationPlanner(
     val allowFileCopy: Boolean = false,
+    private val canUsePath: (File) -> Boolean = { true },
     private val isComicFile: (File) -> Boolean = { file ->
         ReaderFileDetector.isSupported(file)
     }
@@ -56,7 +57,7 @@ class ComicMigrationPlanner(
         workerExecutor: ExecutorService? = null
     ): List<File> {
         ensurePreparationNotInterrupted()
-        if (!rootDirectory.isDirectory) {
+        if (!canUsePath(rootDirectory) || !rootDirectory.isDirectory) {
             throw IOException("Source directory is unavailable")
         }
 
@@ -97,7 +98,7 @@ class ComicMigrationPlanner(
                 }
                 val supportedComicFiles = mapWithWorkerPool(files, workerExecutor) { file ->
                     ensurePreparationNotInterrupted()
-                    file.takeIf { runCatching { isComicFile(file) }.getOrDefault(false) }
+                    file.takeIf { canUsePath(it) && runCatching { isComicFile(it) }.getOrDefault(false) }
                 }
                 supportedComicFiles.filterNotNull().forEach { file ->
                     if (visitedFiles.add(file.stablePath())) {
@@ -115,7 +116,7 @@ class ComicMigrationPlanner(
         startMarker: String,
         excludedDirectory: File? = null
     ): List<ComicMigrationDirectoryMatch> {
-        if (!rootDirectory.isDirectory) {
+        if (!canUsePath(rootDirectory) || !rootDirectory.isDirectory) {
             throw IOException("Destination tree is unavailable")
         }
         if (startMarker.isBlank()) {
@@ -123,6 +124,7 @@ class ComicMigrationPlanner(
         }
 
         return scanDestinationDirectories(rootDirectory, excludedDirectory)
+            .filter(canUsePath)
             .mapNotNull { directory ->
                 matchStartMarkerToDirectoryName(startMarker, directory.name)?.let { reason ->
                     ComicMigrationDirectoryMatch(directory, reason)
@@ -141,11 +143,11 @@ class ComicMigrationPlanner(
         onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> }
     ): List<ComicMigrationTargetPlan> {
         ensurePreparationNotInterrupted()
-        if (!rootDirectory.isDirectory) {
+        if (!canUsePath(rootDirectory) || !rootDirectory.isDirectory || !canUsePath(defaultDirectory)) {
             throw IOException("Destination tree is unavailable")
         }
 
-        val comicsWithMarkers = mapWithWorkerPool(comicFiles, workerExecutor) { file ->
+        val comicsWithMarkers = mapWithWorkerPool(comicFiles.filter(canUsePath), workerExecutor) { file ->
             ensurePreparationNotInterrupted()
             file to markerForFile(file)
         }
@@ -165,7 +167,7 @@ class ComicMigrationPlanner(
         return mapWithWorkerPool(comicsWithMarkers, workerExecutor) { (comicFile, marker) ->
             val matches = candidateDirectories.mapNotNull { directory ->
                 ensurePreparationNotInterrupted()
-                matchStartMarkerToDirectoryName(marker, directory.name)?.let { reason ->
+                directory.takeIf(canUsePath)?.let { matchStartMarkerToDirectoryName(marker, it.name) }?.let { reason ->
                     ComicMigrationDirectoryMatch(directory, reason)
                 }
             }
@@ -189,7 +191,7 @@ class ComicMigrationPlanner(
         targetDirectory: File,
         shouldCancel: () -> Boolean = { false }
     ): ComicMigrationCopyResult {
-        if (!sourceFile.isFile || !targetDirectory.isDirectory) {
+        if (!canUsePath(sourceFile) || !canUsePath(targetDirectory) || !sourceFile.isFile || !targetDirectory.isDirectory) {
             return ComicMigrationCopyResult(ComicMigrationCopyStatus.FAILED)
         }
         if (!allowFileCopy) {
@@ -202,11 +204,15 @@ class ComicMigrationPlanner(
                 return ComicMigrationCopyResult(ComicMigrationCopyStatus.CANCELLED)
             }
             val destinationFile = File(targetDirectory, sourceFile.name)
+            if (!canUsePath(destinationFile)) return ComicMigrationCopyResult(ComicMigrationCopyStatus.FAILED)
             if (destinationFile.exists()) {
                 return ComicMigrationCopyResult(ComicMigrationCopyStatus.ALREADY_EXISTS)
             }
             val tempPath = Files.createTempFile(targetDirectory.toPath(), ".cl-", ".part")
             temporaryPath = tempPath
+            if (!canUsePath(sourceFile) || !canUsePath(tempPath.toFile())) {
+                return ComicMigrationCopyResult(ComicMigrationCopyStatus.FAILED)
+            }
             sourceFile.inputStream().use { input ->
                 Files.newOutputStream(tempPath).use { output ->
                     val buffer = ByteArray(COPY_BUFFER_SIZE)
@@ -225,6 +231,9 @@ class ComicMigrationPlanner(
             }
             if (isCopyCancelled(shouldCancel)) {
                 throw ComicMigrationCopyCancelledException()
+            }
+            if (!canUsePath(sourceFile) || !canUsePath(destinationFile) || !canUsePath(tempPath.toFile())) {
+                return ComicMigrationCopyResult(ComicMigrationCopyStatus.FAILED)
             }
             Files.move(tempPath, destinationFile.toPath())
             ComicMigrationCopyResult(ComicMigrationCopyStatus.COPIED)
@@ -249,7 +258,8 @@ class ComicMigrationPlanner(
     }
 
     private fun readChildren(directory: File): List<File> {
-        return directory.listFiles()?.toList()
+        if (!canUsePath(directory)) return emptyList()
+        return directory.listFiles()?.filter(canUsePath)
             ?: throw IOException("Unable to read directory")
     }
 

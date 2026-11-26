@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.MutableLiveData
 import com.example.comiclab.core.reader.enhance.EnhancementRuntime
+import com.example.comiclab.core.reader.ReaderDerivationPrivacy
 import com.example.comiclab.core.reader.translation.*
 import java.io.File
 import java.util.UUID
@@ -56,8 +57,13 @@ internal class PageTranslationViewModel(application: Application) : AndroidViewM
     @Synchronized fun acquirePreview() { previews++ }
     @Synchronized fun releasePreview() { previews--; cleanup() }
 
-    @Synchronized fun start(archive: File, entry: String, language: String, style: TranslationStyle) {
+    @Synchronized fun start(archive: File, entry: String, language: String, style: TranslationStyle,
+        sourcePath: String? = ReaderDerivationPrivacy.ordinaryPath(app, archive)) {
         if (running || pendingPublication || disposed) return
+        if (!ReaderDerivationPrivacy.allows(app, archive, sourcePath)) {
+            state.value = TranslationUiState(error = "private")
+            return
+        }
         if (!EnhancementRuntime.busy.compareAndSet(false, true)) { state.value = (state.value ?: TranslationUiState()).copy(error = "busy"); return }
         running = true; cancelled.set(false)
         processingStage = "models"
@@ -65,14 +71,18 @@ internal class PageTranslationViewModel(application: Application) : AndroidViewM
         val previous = state.value?.result
         EnhancementRuntime.worker.execute {
             try {
+                ReaderDerivationPrivacy.check(app, archive, sourcePath)
                 check(directory.mkdirs() || directory.isDirectory)
                 val pipeline = SinglePageTranslation(app, cancelled) { stage ->
+                    ReaderDerivationPrivacy.check(app, archive, sourcePath)
                     processingStage = stage
                     state.postValue(TranslationUiState(stage, true, previous))
                 }
-                val current = analysis ?: pipeline.process(archive, entry, directory, TranslationSettingsStore.load(app), language).also { analysis = it }
+                val current = analysis ?: pipeline.process(archive, entry, directory, TranslationSettingsStore.load(app), language,
+                    sourcePath = sourcePath).also { analysis = it }
                 processingStage = "render"
                 val output = pipeline.render(current, directory, style)
+                ReaderDerivationPrivacy.check(app, archive, sourcePath)
                 publish(TranslationUiState("done", result = output))
             } catch (_: CancellationException) {
                 publish(TranslationUiState("cancelled", result = previous))

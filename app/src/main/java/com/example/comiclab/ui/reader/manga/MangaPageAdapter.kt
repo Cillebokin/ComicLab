@@ -86,7 +86,7 @@ internal class MangaPageAdapter(
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val isPdfSource = session.isPdfSource()
-    private val pdfDiagnostics = if (isPdfSource) PdfReaderDiagnostics.begin(archiveFile) else null
+    private val pdfDiagnostics = if (isPdfSource) PdfReaderDiagnostics.begin(context, archiveFile) else null
     private val hasIndependentPdfSessions = isPdfSource &&
         archiveFile.extension.equals("pdf", ignoreCase = true)
     private val decoderSessions = Collections.synchronizedSet(mutableSetOf(session))
@@ -766,9 +766,9 @@ internal class MangaPageAdapter(
 
     private fun closeSessionAfterDecoderStops() {
         Thread(
-            {
+            CrashLogManager.readerCleanupAction(context, archiveFile) cleanup@{
                 if (!awaitDecodeExecutorTermination()) {
-                    return@Thread
+                    return@cleanup
                 }
                 synchronized(cacheLock) {
                     previewBitmapCache.evictAll()

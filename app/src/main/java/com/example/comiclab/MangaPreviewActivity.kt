@@ -3,7 +3,8 @@ package com.example.comiclab
 import com.example.comiclab.core.concurrent.BoundedKeyedTaskQueue
 import com.example.comiclab.ui.common.SystemBars
 import com.example.comiclab.ui.common.RoundedPopupMenu
-import com.example.comiclab.ui.common.showRounded
+import com.example.comiclab.ui.common.createRounded
+import com.example.comiclab.ui.privacy.ReaderSourcePrivacy
 
 import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
@@ -68,8 +69,13 @@ class MangaPreviewActivity : AppCompatActivity() {
     private lateinit var tvFavoriteError: TextView
 
     private var archiveFile: File? = null
+    private var pagePopup: android.widget.PopupWindow? = null
+    private val sourcePrivacy = ReaderSourcePrivacy(this) {
+        pagePopup?.dismiss()
+        previewTasks.close()
+    }
     private val readingProgressListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
-        updateReadingProgress()
+        if (isPreviewActive()) updateReadingProgress()
     }
     private var imageEntries: List<String> = emptyList()
     private var previewPageCount = 0
@@ -134,6 +140,7 @@ class MangaPreviewActivity : AppCompatActivity() {
 
         val path = intent.getStringExtra(EXTRA_ARCHIVE_PATH)
         val file = path?.let(::File)
+        if (file != null && !sourcePrivacy.bind(file)) return
         if (file == null || (!file.isFile && !ComicArchive.hasPendingArchiveReplacement(file))) {
             showError(getString(R.string.message_invalid_file))
             return
@@ -144,6 +151,7 @@ class MangaPreviewActivity : AppCompatActivity() {
         tvComicFileSize.text = CommonFunc.formatFileSize(file.length())
 
         btnFavoriteComic.setOnClickListener {
+            if (!sourcePrivacy.checkAccess()) return@setOnClickListener
             if (!file.isFile || deletePreviewInProgress) {
                 updateFavoriteButton()
                 return@setOnClickListener
@@ -188,6 +196,7 @@ class MangaPreviewActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        if (!sourcePrivacy.checkAccess()) return
         ReaderProgressStore.registerChangeListener(this, readingProgressListener)
     }
 
@@ -198,6 +207,7 @@ class MangaPreviewActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (!sourcePrivacy.checkAccess()) return
         updateReadingProgress()
         updateFavoriteButton()
     }
@@ -220,6 +230,9 @@ class MangaPreviewActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         destroyed = true
+        sourcePrivacy.close()
+        pagePopup?.dismiss()
+        pagePopup = null
         archiveGeneration++
         coverGeneration++
         gridGeneration++
@@ -281,7 +294,7 @@ class MangaPreviewActivity : AppCompatActivity() {
         }
     }
 
-    private fun canUsePreviewPages(): Boolean = imageEntries.isNotEmpty() && !deletePreviewInProgress
+    private fun canUsePreviewPages(): Boolean = imageEntries.isNotEmpty() && !deletePreviewInProgress && isPreviewActive()
 
     private fun updatePageActions() {
         btnFullRead.visibility = if (imageEntries.isEmpty()) View.GONE else View.VISIBLE
@@ -316,12 +329,15 @@ class MangaPreviewActivity : AppCompatActivity() {
                 }
             }.getOrNull()
             if (!isActive()) {
+                bitmap?.recycle()
                 return@executePreviewTask
             }
 
             runOnUiThread {
                 if (isPreviewActive() && generation == coverGeneration && bitmap != null) {
                     imgCover.setImageBitmap(bitmap)
+                } else {
+                    bitmap?.recycle()
                 }
             }
         }
@@ -539,7 +555,8 @@ class MangaPreviewActivity : AppCompatActivity() {
         val file = archiveFile ?: return
         val entryName = imageEntries.getOrNull(imageIndex) ?: return
 
-        RoundedPopupMenu.show(
+        pagePopup?.dismiss()
+        pagePopup = RoundedPopupMenu.show(
             context = this,
             anchor = anchor,
             widthDp = 148,
@@ -572,14 +589,15 @@ class MangaPreviewActivity : AppCompatActivity() {
     }
 
     private fun confirmDeletePreviewImage(file: File, entryName: String) {
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle(R.string.delete_archive_image_title)
             .setMessage(getString(R.string.delete_archive_image_message))
             .setPositiveButton(R.string.yes) { _, _ ->
                 deletePreviewImage(file, entryName)
             }
             .setNegativeButton(R.string.no, null)
-            .showRounded()
+            .createRounded()
+        sourcePrivacy.showDialog(dialog)
     }
 
     private fun deletePreviewImage(file: File, entryName: String) {
@@ -680,7 +698,7 @@ class MangaPreviewActivity : AppCompatActivity() {
         dialog.setOnShowListener {
             dialog.window?.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
         }
-        dialog.show()
+        sourcePrivacy.showDialog(dialog)
     }
 
     private fun openMangaReader(
@@ -699,6 +717,7 @@ class MangaPreviewActivity : AppCompatActivity() {
             putExtra(MangaReaderActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning)
             putExtra(MangaReaderActivity.EXTRA_START_PAGE_INDEX, startPageIndex)
         }
+        if (!ReaderSourcePrivacy.authorizeLaunch(this, intent, file)) return
         startActivity(intent)
     }
 
@@ -708,7 +727,7 @@ class MangaPreviewActivity : AppCompatActivity() {
         onRejected: () -> Unit = {},
         block: (isActive: () -> Boolean) -> Unit
     ) {
-        if (destroyed) {
+        if (!isPreviewActive()) {
             return
         }
 
@@ -723,8 +742,9 @@ class MangaPreviewActivity : AppCompatActivity() {
 
         val accepted = previewTasks.executeCancellable(executionKey, onRejected) { isActive ->
             try {
-                if (!destroyed && isActive()) {
-                    block(isActive)
+                val canContinue = { isActive() && sourcePrivacy.canRead() }
+                if (!destroyed && canContinue()) {
+                    block(canContinue)
                 }
             } finally {
                 if (replaceQueued) {
@@ -742,7 +762,7 @@ class MangaPreviewActivity : AppCompatActivity() {
     }
 
     private fun isPreviewActive(): Boolean {
-        return !destroyed && !isFinishing && !isDestroyed
+        return !destroyed && !isFinishing && !isDestroyed && sourcePrivacy.canRead()
     }
 
     companion object {

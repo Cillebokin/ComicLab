@@ -14,6 +14,9 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import java.util.concurrent.AbstractExecutorService
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executor
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -22,12 +25,20 @@ import com.davemorrissey.labs.subscaleview.ImageSource
 import com.davemorrissey.labs.subscaleview.decoder.DecoderFactory
 import com.davemorrissey.labs.subscaleview.decoder.ImageRegionDecoder
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
+import com.example.comiclab.core.diagnostics.CrashLogManager
+import com.example.comiclab.core.store.PrivacyStore
 import com.example.comiclab.ui.reader.manga.MangaPageAdapter
+import com.example.comiclab.ui.reader.manga.ReaderPageAdapterController
 import com.example.comiclab.ui.reader.manga.ReaderPreviewAdapter
 import com.example.comiclab.ui.reader.manga.ReaderSubsamplingImageView
 import com.example.comiclab.ui.reader.manga.SubsamplingMangaPageAdapter
+import com.example.comiclab.ui.privacy.PrivacySessionManager
+import com.example.comiclab.ui.privacy.ReaderSourcePrivacy
+import java.lang.reflect.Proxy
+import android.content.Context
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -48,6 +59,154 @@ class MangaReaderCacheLifecycleRobolectricTest {
 
     @get:Rule
     val temporaryFolder = TemporaryFolder()
+
+    @Test
+    fun destroyingLockedPrivateReaderKeepsDiagnosticsUntilAdapterCloseReturns() {
+        val context = RuntimeEnvironment.getApplication()
+        val directory = temporaryFolder.newFolder("private reader")
+        val archive = File(directory, "private teardown title.cbz")
+        writeZip(archive, "page.png" to createPng())
+        assertTrue(PrivacyStore.addPrivacyDirectory(context, directory))
+        assertTrue(PrivacySessionManager.enterPrivacySpace(null, PrivacySessionManager.sessionEpoch))
+        try {
+            val intent = Intent(context, MangaReaderActivity::class.java)
+                .putExtra(MangaReaderActivity.EXTRA_ARCHIVE_PATH, archive.absolutePath)
+            assertTrue(ReaderSourcePrivacy.authorizeLaunch(context, intent, archive))
+            val controller = Robolectric.buildActivity(
+                MangaReaderActivity::class.java,
+                intent
+            )
+            val activity = controller.get()
+            activity.readerLoadExecutorForTest = ManualExecutorService()
+            controller.create().start().resume()
+            PrivacySessionManager.lock()
+            val adapterClass = ReaderPageAdapterController::class.java
+            val adapter = Proxy.newProxyInstance(adapterClass.classLoader, arrayOf(adapterClass)) { _, method, _ ->
+                when (method.name) {
+                    "close" -> writeCrashForTest(context, Thread.currentThread(), IllegalStateException(archive.name))
+                    "readerItemCount" -> 0
+                    else -> null
+                }
+            }
+            MangaReaderActivity::class.java.getDeclaredField("pageAdapter").apply { isAccessible = true }
+                .set(activity, adapter)
+            controller.pause().stop().destroy()
+
+            val raw = CrashLogManager.latestCrashLog(context)!!.readText()
+            assertTrue(raw.contains("Reader session: state=active file=[privacy-redacted]"))
+            assertFalse(raw.contains(archive.name))
+            assertNull(context.getSharedPreferences("reader_diagnostics", 0).getString("active_reader_session", null))
+        } finally {
+            PrivacySessionManager.lock()
+            PrivacySessionManager.consumePendingNormalRestorePath()
+        }
+    }
+
+    @Test
+    fun preparedReaderExtractorCloseKeepsPrivateDiagnosticsAfterHandoff() {
+        val context = RuntimeEnvironment.getApplication()
+        val privateDirectory = temporaryFolder.newFolder("private prepared source")
+        val archive = File(privateDirectory, "private prepared title.cbz").apply { writeText("fixture") }
+        val cache = temporaryFolder.newFolder("prepared close cache")
+        val page = File(cache, "page.png").apply { writeText("fixture") }
+        val lease = PreparedReaderCacheLeaseRegistry().acquireUsageLease(cache)!!
+        val adapter = newPreparedMangaPageAdapter(cache, page, lease, archiveFile = archive)
+        val proceed = CountDownLatch(1)
+        val finished = CountDownLatch(1)
+        val handlerFailure = AtomicReference<Throwable?>()
+        adapter.extractExecutorForTest = object : ThreadPoolExecutor(
+            1, 1, 0, TimeUnit.MILLISECONDS, LinkedBlockingQueue<Runnable>()
+        ) {
+            override fun awaitTermination(timeout: Long, unit: TimeUnit): Boolean {
+                check(proceed.await(5, TimeUnit.SECONDS))
+                throw IllegalStateException(archive.name)
+            }
+        }
+        assertTrue(PrivacyStore.addPrivacyDirectory(context, privateDirectory))
+        assertTrue(PrivacySessionManager.enterPrivacySpace(null, PrivacySessionManager.sessionEpoch))
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            if (thread.name == "ComicLabPreparedReaderClose") {
+                handlerFailure.set(runCatching { writeCrashForTest(context, thread, throwable) }.exceptionOrNull())
+                finished.countDown()
+            } else {
+                previousHandler?.uncaughtException(thread, throwable)
+            }
+        }
+        try {
+            val marker = CrashLogManager.recordReaderSessionStarted(context, archive)
+            PrivacySessionManager.lock()
+            CrashLogManager.finishReaderSession(context, marker, adapter::close)
+            assertTrue(PrivacyStore.removePrivacyDirectory(context, privateDirectory))
+            CrashLogManager.recordReaderSessionStarted(context, File(cache, "ordinary.cbz"))
+            proceed.countDown()
+            assertTrue(finished.await(5, TimeUnit.SECONDS))
+            assertNull(handlerFailure.get())
+
+            val raw = CrashLogManager.latestCrashLog(context)!!.readText()
+            assertTrue(raw.contains("Throwable: java.lang.IllegalStateException"))
+            assertFalse(raw.contains(archive.name))
+            assertFalse(CrashLogManager.createLatestCrashLogExport(context)!!.readText().contains(archive.name))
+        } finally {
+            proceed.countDown()
+            Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            PrivacySessionManager.lock()
+            PrivacySessionManager.consumePendingNormalRestorePath()
+            lease.close()
+        }
+    }
+
+    @Test
+    fun preparedReaderLeaseReleaseKeepsTheSourceCapturedBeforeAsyncDependenciesFinish() {
+        val context = RuntimeEnvironment.getApplication()
+        val privateDirectory = temporaryFolder.newFolder("private lease source")
+        val archive = File(privateDirectory, "private lease title.cbz").apply { writeText("fixture") }
+        val cache = temporaryFolder.newFolder("prepared lease cache")
+        val page = File(cache, "page.png").apply { writeText("fixture") }
+        val proceed = CountDownLatch(1)
+        val finished = CountDownLatch(1)
+        val callbackFailure = AtomicReference<Throwable?>()
+        val registry = PreparedReaderCacheLeaseRegistry(deletionExecutor = Executor { deletion ->
+            callbackFailure.set(runCatching {
+                val thread = Thread.currentThread()
+                assertEquals("ComicLabPreparedReaderLeaseClose", thread.name)
+                writeCrashForTest(context, thread, IllegalStateException(archive.name))
+                deletion.run()
+            }.exceptionOrNull())
+            finished.countDown()
+        })
+        val lease = registry.acquireUsageLease(cache)!!
+        lease.requestDelete()
+        val adapter = newPreparedMangaPageAdapter(cache, page, lease, archiveFile = archive)
+        adapter.extractExecutorForTest = object : ThreadPoolExecutor(
+            1, 1, 0, TimeUnit.MILLISECONDS, LinkedBlockingQueue<Runnable>()
+        ) {
+            override fun awaitTermination(timeout: Long, unit: TimeUnit): Boolean =
+                proceed.await(5, TimeUnit.SECONDS)
+        }
+        assertTrue(PrivacyStore.addPrivacyDirectory(context, privateDirectory))
+        val marker = CrashLogManager.recordReaderSessionStarted(context, archive)
+        try {
+            CrashLogManager.finishReaderSession(context, marker, adapter::close)
+            assertTrue(PrivacyStore.removePrivacyDirectory(context, privateDirectory))
+            CrashLogManager.recordReaderSessionStarted(context, File(temporaryFolder.root, "ordinary.cbz"))
+            proceed.countDown()
+            assertTrue(finished.await(5, TimeUnit.SECONDS))
+            assertNull(callbackFailure.get())
+            val raw = CrashLogManager.latestCrashLog(context)!!.readText()
+            assertTrue(raw.contains("Throwable: java.lang.IllegalStateException"))
+            assertFalse(raw.contains(archive.name))
+        } finally {
+            proceed.countDown()
+            lease.close()
+        }
+    }
+
+    private fun writeCrashForTest(context: Context, thread: Thread, throwable: Throwable) {
+        CrashLogManager::class.java.getDeclaredMethod(
+            "writeCrashLog", Context::class.java, Thread::class.java, Throwable::class.java
+        ).apply { isAccessible = true }.invoke(CrashLogManager, context, thread, throwable)
+    }
 
     @Test
     @Config(qualifiers = "land")
@@ -862,13 +1021,14 @@ class MangaReaderCacheLifecycleRobolectricTest {
         preparedCache: File,
         imageFile: File,
         cacheUseLease: PreparedReaderCacheLeaseRegistry.Lease,
-        closeWaitTimeoutMs: Long = 8_000L
+        closeWaitTimeoutMs: Long = 8_000L,
+        archiveFile: File = temporaryFolder.newFile("prepared-adapter-close.cbz")
     ): SubsamplingMangaPageAdapter {
         val context = RuntimeEnvironment.getApplication()
         return SubsamplingMangaPageAdapter(
             context = context,
             recyclerView = androidx.recyclerview.widget.RecyclerView(context),
-            archiveFile = temporaryFolder.newFile("prepared-adapter-close.cbz"),
+            archiveFile = archiveFile,
             entryNames = listOf("page.png"),
             pageFiles = listOf(imageFile),
             boundsByPosition = emptyMap<Int, ComicArchive.ImageBounds>(),

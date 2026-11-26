@@ -21,6 +21,7 @@ import com.example.comiclab.AppSettings
 import com.example.comiclab.R
 import com.example.comiclab.ComicArchive
 import com.example.comiclab.core.archive.cache.PreparedReaderCacheLeaseRegistry
+import com.example.comiclab.core.diagnostics.CrashLogManager
 import com.example.comiclab.core.reader.decode.preparedReaderNearbyPositions
 import com.example.comiclab.core.reader.layout.ReaderPagePositionMapper
 import com.example.comiclab.readerPageContentGravity
@@ -380,6 +381,10 @@ internal class SubsamplingMangaPageAdapter(
         var pendingCloseDependencies = viewsToClose.size + 1
         var allCloseDependenciesSucceeded = true
         var cacheLeaseCloseStarted = false
+        val closeCacheLease = CrashLogManager.readerCleanupAction(context, archiveFile) {
+            runCatching { cacheUseLease.close() }
+                .onFailure { Log.w(READER_ADAPTER_LOG_TAG, "prepared reader cache lease close failed", it) }
+        }
 
         fun recordCloseDependency(result: Result<Unit>) {
             val releaseCacheLease = synchronized(closeLock) {
@@ -399,16 +404,7 @@ internal class SubsamplingMangaPageAdapter(
             }
             if (releaseCacheLease) {
                 Thread(
-                    {
-                        runCatching { cacheUseLease.close() }
-                            .onFailure {
-                                Log.w(
-                                    READER_ADAPTER_LOG_TAG,
-                                    "prepared reader cache lease close failed",
-                                    it
-                                )
-                            }
-                    },
+                    closeCacheLease,
                     "ComicLabPreparedReaderLeaseClose"
                 ).apply { isDaemon = true }.start()
             }
@@ -432,7 +428,7 @@ internal class SubsamplingMangaPageAdapter(
 
     private fun closeExtractorAfterExtractionStops(onClosed: (Result<Unit>) -> Unit) {
         Thread(
-            {
+            CrashLogManager.readerCleanupAction(context, archiveFile) {
                 if (!awaitExtractorTermination()) {
                     awaitExtractorTerminationAfterTimeout()
                 }

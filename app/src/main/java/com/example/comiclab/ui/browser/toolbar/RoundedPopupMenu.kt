@@ -22,9 +22,9 @@ internal fun AppCompatActivity.showRoundedPopupMenu(
     anchor: View,
     items: List<RoundedPopupMenuItem>,
     widthDp: Int
-) {
+): PopupWindow? {
     if (items.isEmpty()) {
-        return
+        return null
     }
 
     val content = LinearLayout(this).apply {
@@ -94,6 +94,7 @@ internal fun AppCompatActivity.showRoundedPopupMenu(
             dpToPx(ROUNDED_MENU_VERTICAL_OFFSET_DP)
         )
     }
+    return popupWindow
 }
 
 private const val ROUNDED_MENU_PADDING_HORIZONTAL_DP = 6

@@ -8,6 +8,7 @@ import android.util.LruCache
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.PopupWindow
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.ProgressBar
@@ -33,8 +34,11 @@ class ReadingHistoryAdapter(
     private val items: MutableList<ReadingHistoryStore.Item>,
     private val onItemClick: (ReadingHistoryStore.Item) -> Unit,
     private val onJumpToPath: (ReadingHistoryStore.Item) -> Unit,
-    private val onItemsEmptyChanged: (Boolean) -> Unit
+    private val onItemsEmptyChanged: (Boolean) -> Unit,
+    private val canUseItem: (ReadingHistoryStore.Item) -> Boolean = { true }
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+    private var optionsPopup: PopupWindow? = null
+
 
     private val coverCache = object : LruCache<String, Bitmap>(HISTORY_COVER_CACHE_SIZE) {}
     private val pageCounts = object : LruCache<String, Int>(HISTORY_COVER_CACHE_SIZE) {}
@@ -115,6 +119,8 @@ class ReadingHistoryAdapter(
 
     fun close() {
         closed = true
+        optionsPopup?.dismiss()
+        optionsPopup = null
         ReaderProgressStore.unregisterChangeListener(context, progressListener)
         EbookProgressStore.unregisterChangeListener(context, progressListener)
         mainHandler.removeCallbacks(refreshProgress)
@@ -146,8 +152,10 @@ class ReadingHistoryAdapter(
 
     private fun showItemOptionsMenu(anchor: View, position: Int) {
         val item = historyItemAt(position) ?: return
+        if (closed || !canUseItem(item)) return
 
-        RoundedPopupMenu.show(
+        optionsPopup?.dismiss()
+        optionsPopup = RoundedPopupMenu.show(
             context = context,
             anchor = anchor,
             widthDp = 148,
@@ -168,6 +176,7 @@ class ReadingHistoryAdapter(
     }
 
     private fun removeItem(item: ReadingHistoryStore.Item) {
+        if (closed || !canUseItem(item)) return
         val itemIndex = items.indexOfFirst { it.file.absolutePath == item.file.absolutePath }
         if (itemIndex < 0) {
             return

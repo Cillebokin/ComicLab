@@ -20,7 +20,12 @@ import com.example.comiclab.core.organize.ImageFileMergeOperations
 import com.example.comiclab.core.organize.ImageFileMergeProgress
 import com.example.comiclab.core.organize.ImageFileMergeResult
 import com.example.comiclab.ui.common.createRounded
-import com.example.comiclab.ui.common.showRounded
+import com.example.comiclab.core.store.BookcaseFolderPaths
+import com.example.comiclab.core.store.PrivacyStore
+import com.example.comiclab.ui.privacy.PrivacyAccessGuard
+import com.example.comiclab.ui.privacy.PrivacySessionManager
+import android.view.View
+import android.view.WindowManager
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.atomic.AtomicInteger
@@ -57,6 +62,41 @@ internal class ComicOrganizeController(
     internal var isMergingFiles = false
         private set
 
+    @Volatile private var privacyRevision = 0L
+    private var organizeDialog: AlertDialog? = null
+
+    internal fun onPrivacyScopeChanged() {
+        privacyRevision++
+        organizeDialog?.let { dialog ->
+            if (dialog.isShowing) dialog.window?.decorView?.visibility = View.INVISIBLE
+            dialog.dismiss()
+        }
+        organizeDialog = null
+    }
+
+    private fun showOrganizeDialog(dialog: AlertDialog) {
+        if (PrivacySessionManager.isInPrivacySpace) dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        organizeDialog = dialog
+        dialog.show()
+    }
+
+    private fun operationAccess(root: File): (File) -> Boolean {
+        val revision = privacyRevision
+        val privateMode = PrivacySessionManager.isInPrivacySpace
+        val epoch = PrivacySessionManager.sessionEpoch
+        val marks = PrivacyStore.privacyDirectories(activity)
+        val resolvedRoot = PrivacyAccessGuard.resolveLocalPath(root)
+        return { file ->
+            revision == privacyRevision &&
+                (if (privateMode) PrivacySessionManager.isCurrentSession(epoch) else !PrivacySessionManager.isInPrivacySpace) &&
+                marks == PrivacyStore.privacyDirectories(activity) &&
+                resolvedRoot != null && PrivacyAccessGuard.resolveLocalPath(file)?.let { resolved ->
+                    resolved.toPath().startsWith(resolvedRoot.toPath()) &&
+                        marks.any { BookcaseFolderPaths.isPathInDirectory(resolved.path, it) } == privateMode
+                } == true
+        }
+    }
+
     internal fun confirmClassifyCurrentDirectory() {
         if (!Environment.isExternalStorageManager()) {
             openManageAllFilesAccessSettings()
@@ -84,7 +124,8 @@ internal class ComicOrganizeController(
         }
 
         val rootDirectory = File(currentPathProvider())
-        if (!rootDirectory.isDirectory) {
+        val canUsePath = operationAccess(rootDirectory)
+        if (!canUsePath(rootDirectory) || !rootDirectory.isDirectory) {
             showMessage(getString(R.string.message_invalid_directory))
             return
         }
@@ -93,13 +134,13 @@ internal class ComicOrganizeController(
             .setTitle(R.string.classify_comics_confirm_title)
             .setMessage(R.string.classify_comics_confirm_message)
             .setPositiveButton(R.string.yes) { _, _ ->
-                startClassifyComics(rootDirectory)
+                if (canUsePath(rootDirectory)) startClassifyComics(rootDirectory, canUsePath)
             }
             .setNegativeButton(R.string.no, null)
-            .showRounded()
+            .createRounded().also(::showOrganizeDialog)
     }
 
-    private fun startClassifyComics(rootDirectory: File) {
+    private fun startClassifyComics(rootDirectory: File, canUsePath: (File) -> Boolean) {
         val generation = classifyGeneration.incrementAndGet()
         val content = activity.layoutInflater.inflate(R.layout.dialog_classify_progress, null)
         val tvStatus = content.findViewById<TextView>(R.id.tvClassifyProgressStatus)
@@ -112,15 +153,15 @@ internal class ComicOrganizeController(
             .createRounded()
 
         isClassifyingComics = true
-        progressDialog.show()
+        showOrganizeDialog(progressDialog)
 
         val errorTags = AppSettings.getStartMarkerErrorTags(activity)
         runCatching {
             classifyExecutor.execute {
                 val result = runCatching {
-                    ComicClassifier.classify(rootDirectory, errorTags) { progress ->
+                    ComicClassifier.classify(rootDirectory, errorTags, canUsePath) { progress ->
                         activity.runOnUiThread {
-                            if (generation == classifyGeneration.get() && !activity.isDestroyed) {
+                            if (generation == classifyGeneration.get() && !activity.isDestroyed && canUsePath(rootDirectory)) {
                                 updateClassifyProgress(progress, progressBar, tvStatus, tvCount)
                             }
                         }
@@ -134,6 +175,7 @@ internal class ComicOrganizeController(
 
                     isClassifyingComics = false
                     progressDialog.dismiss()
+                    if (!canUsePath(rootDirectory)) return@runOnUiThread
                     result
                         .onSuccess { classifyResult ->
                             handleClassifyResult(classifyResult)
@@ -178,7 +220,8 @@ internal class ComicOrganizeController(
         }
 
         val rootDirectory = File(currentPathProvider())
-        if (!rootDirectory.isDirectory) {
+        val canUsePath = operationAccess(rootDirectory)
+        if (!canUsePath(rootDirectory) || !rootDirectory.isDirectory) {
             showMessage(getString(R.string.message_invalid_directory))
             return
         }
@@ -200,17 +243,18 @@ internal class ComicOrganizeController(
         progressBar.isIndeterminate = true
         tvStatus.setText(MESSAGE_SCANNING_DIRECTORIES)
         tvCount.text = ""
-        progressDialog.show()
+        showOrganizeDialog(progressDialog)
 
         runCatching {
             classifyExecutor.execute {
                 val result = runCatching {
                     DirectorySimilarityScanner.createReport(
                         rootDirectory = rootDirectory,
-                        formatMessage = ::formatDirectorySimilarityReportMessage
+                        formatMessage = ::formatDirectorySimilarityReportMessage,
+                        canUsePath = canUsePath
                     ) { progress ->
                         activity.runOnUiThread {
-                            if (generation == classifyGeneration.get() && !activity.isDestroyed) {
+                            if (generation == classifyGeneration.get() && !activity.isDestroyed && canUsePath(rootDirectory)) {
                                 updateDirectorySimilarityProgress(progress, progressBar, tvStatus, tvCount)
                             }
                         }
@@ -224,6 +268,7 @@ internal class ComicOrganizeController(
 
                     isBuildingDirectorySimilarityReport = false
                     progressDialog.dismiss()
+                    if (!canUsePath(rootDirectory)) return@runOnUiThread
                     result
                         .onSuccess { report ->
                             showMessage(
@@ -276,7 +321,8 @@ internal class ComicOrganizeController(
         }
 
         val rootDirectory = File(currentPathProvider())
-        if (!rootDirectory.isDirectory) {
+        val canUsePath = operationAccess(rootDirectory)
+        if (!canUsePath(rootDirectory) || !rootDirectory.isDirectory) {
             showMessage(getString(R.string.message_invalid_directory))
             return
         }
@@ -298,14 +344,14 @@ internal class ComicOrganizeController(
         progressBar.isIndeterminate = true
         tvStatus.setText(MESSAGE_SCANNING_COMIC_ARCHIVES)
         tvCount.text = ""
-        progressDialog.show()
+        showOrganizeDialog(progressDialog)
 
         runCatching {
             classifyExecutor.execute {
                 val result = runCatching {
-                    ComicMergeOperations.merge(rootDirectory) { progress ->
+                    ComicMergeOperations.merge(rootDirectory, canUsePath = canUsePath) { progress ->
                         activity.runOnUiThread {
-                            if (generation == classifyGeneration.get() && !activity.isDestroyed) {
+                            if (generation == classifyGeneration.get() && !activity.isDestroyed && canUsePath(rootDirectory)) {
                                 updateComicArchiveMergeProgress(progress, progressBar, tvStatus, tvCount)
                             }
                         }
@@ -319,6 +365,7 @@ internal class ComicOrganizeController(
 
                     isMergingComics = false
                     progressDialog.dismiss()
+                    if (!canUsePath(rootDirectory)) return@runOnUiThread
                     result
                         .onSuccess { mergeResult ->
                             val shouldRefresh = handleComicMergeResult(mergeResult)
@@ -365,7 +412,8 @@ internal class ComicOrganizeController(
         }
 
         val rootDirectory = File(currentPathProvider())
-        if (!rootDirectory.isDirectory) {
+        val canUsePath = operationAccess(rootDirectory)
+        if (!canUsePath(rootDirectory) || !rootDirectory.isDirectory) {
             showMessage(getString(R.string.message_invalid_directory))
             return
         }
@@ -387,14 +435,14 @@ internal class ComicOrganizeController(
         progressBar.isIndeterminate = true
         tvStatus.setText(MESSAGE_SCANNING_IMAGE_DIRECTORIES)
         tvCount.text = ""
-        progressDialog.show()
+        showOrganizeDialog(progressDialog)
 
         runCatching {
             classifyExecutor.execute {
                 val result = runCatching {
-                    ImageFileMergeOperations.merge(rootDirectory) { progress ->
+                    ImageFileMergeOperations.merge(rootDirectory, canUsePath = canUsePath) { progress ->
                         activity.runOnUiThread {
-                            if (generation == classifyGeneration.get() && !activity.isDestroyed) {
+                            if (generation == classifyGeneration.get() && !activity.isDestroyed && canUsePath(rootDirectory)) {
                                 updateImageFileMergeProgress(progress, progressBar, tvStatus, tvCount)
                             }
                         }
@@ -408,6 +456,7 @@ internal class ComicOrganizeController(
 
                     isMergingFiles = false
                     progressDialog.dismiss()
+                    if (!canUsePath(rootDirectory)) return@runOnUiThread
                     result
                         .onSuccess { mergeResult ->
                             val shouldRefresh = handleFileMergeResult(mergeResult)
@@ -554,7 +603,7 @@ internal class ComicOrganizeController(
             .setTitle(R.string.language_comics_merge_result_title)
             .setMessage(details)
             .setPositiveButton(android.R.string.ok, null)
-            .showRounded()
+            .createRounded().also(::showOrganizeDialog)
     }
 
     private fun updateImageFileMergeProgress(

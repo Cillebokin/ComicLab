@@ -1,5 +1,7 @@
 package com.example.comiclab
 
+import com.example.comiclab.ui.privacy.ReaderSourcePrivacy
+
 import android.annotation.SuppressLint
 import android.graphics.Color
 import android.os.Bundle
@@ -65,6 +67,13 @@ class EbookReaderActivity : AppCompatActivity() {
     private lateinit var readerBrightnessController: ReaderBrightnessController
 
     private val loadExecutor = Executors.newSingleThreadExecutor()
+    private val sourcePrivacy = ReaderSourcePrivacy(this) { maySaveLastPosition ->
+        if (maySaveLastPosition) persistCurrentProgress(force = true)
+        pageReady = false
+        progressSaveHandler.removeCallbacks(savePendingProgress)
+        loadExecutor.shutdownNow()
+        if (!webReaderDestroyed) webReader.stopLoading()
+    }
     @Volatile
     private var loadGeneration = 0
     @Volatile
@@ -133,6 +142,7 @@ class EbookReaderActivity : AppCompatActivity() {
         configureBrightnessControls()
 
         val file = intent.getStringExtra(EXTRA_BOOK_PATH)?.let(::File)
+        if (file != null && !sourcePrivacy.bind(file)) return
         if (file == null || !file.isFile) {
             showError(getString(R.string.message_invalid_file))
             return
@@ -165,8 +175,14 @@ class EbookReaderActivity : AppCompatActivity() {
         showReaderControlsTemporarily()
     }
 
+    override fun onStart() {
+        super.onStart()
+        sourcePrivacy.checkAccess()
+    }
+
     override fun onResume() {
         super.onResume()
+        if (!sourcePrivacy.checkAccess()) return
         autoHideSystemBarsEnabled = AppSettings.isAutoHideSystemBarsEnabled(this)
         readerControlsController.setAutoHideSystemBarsEnabled(autoHideSystemBarsEnabled)
         applyReaderBrightnessSetting()
@@ -211,6 +227,7 @@ class EbookReaderActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         destroyed = true
+        sourcePrivacy.close()
         progressSaveHandler.removeCallbacks(savePendingProgress)
         loadGeneration++
         readerControlsController.close()
@@ -415,7 +432,7 @@ class EbookReaderActivity : AppCompatActivity() {
         webReader.addJavascriptInterface(ReaderBridge(), JS_BRIDGE_NAME)
         webReader.webViewClient = object : WebViewClient() {
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-                if (destroyed || webReaderDestroyed) return true
+                if (destroyed || webReaderDestroyed || !sourcePrivacy.checkAccess()) return true
                 pageReady = false
                 webReaderDestroyed = true
                 loadGeneration++
@@ -428,12 +445,14 @@ class EbookReaderActivity : AppCompatActivity() {
                 (view.parent as? ViewGroup)?.removeView(view)
                 view.destroy()
                 showError(getString(R.string.ebook_load_failed))
-                rendererErrorDialog = AlertDialog.Builder(this@EbookReaderActivity)
+                val dialog = AlertDialog.Builder(this@EbookReaderActivity)
                     .setMessage(R.string.ebook_load_failed)
-                    .setPositiveButton(R.string.retry) { _, _ -> recreate() }
+                    .setPositiveButton(R.string.retry) { _, _ -> if (sourcePrivacy.checkAccess()) recreate() }
                     .setNegativeButton(R.string.back) { _, _ -> finish() }
                     .setOnCancelListener { finish() }
-                    .show()
+                    .create()
+                rendererErrorDialog = dialog
+                sourcePrivacy.showDialog(dialog)
                 return true
             }
 
@@ -451,6 +470,7 @@ class EbookReaderActivity : AppCompatActivity() {
                 view: WebView,
                 request: WebResourceRequest
             ): WebResourceResponse? {
+                if (!sourcePrivacy.canRead()) return blockedResponse()
                 val uri = request.url
                 if (request.isForMainFrame && uri.toString() == BASE_URL) {
                     val stream = preparedDocument?.openHtml() ?: return blockedResponse()
@@ -484,7 +504,9 @@ class EbookReaderActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
-                if (destroyed || webReaderDestroyed || pageReady || url.substringBefore('#') != BASE_URL) return
+                if (destroyed || webReaderDestroyed || pageReady || url.substringBefore('#') != BASE_URL ||
+                    !sourcePrivacy.checkAccess()
+                ) return
                 if (preparedDocument?.readFailed == true) {
                     pageReady = false
                     showError(getString(R.string.ebook_load_failed))
@@ -506,19 +528,20 @@ class EbookReaderActivity : AppCompatActivity() {
 
         runCatching {
             loadExecutor.execute {
+                if (!sourcePrivacy.canRead()) return@execute
                 val result = runCatching {
                     PreparedEbookDocument.prepare(
                         EbookSessionFactory.open(file, untitledBookTitle, untitledChapterTitle),
                         cacheDir, style
                     )
                 }
-                if (destroyed || generation != loadGeneration) {
+                if (destroyed || generation != loadGeneration || !sourcePrivacy.canRead()) {
                     result.getOrNull()?.close()
                     return@execute
                 }
 
                 runOnUiThread {
-                    if (destroyed || generation != loadGeneration) {
+                    if (destroyed || generation != loadGeneration || !sourcePrivacy.checkAccess() || isFinishing) {
                         result.getOrNull()?.close()
                         return@runOnUiThread
                     }
@@ -570,12 +593,16 @@ class EbookReaderActivity : AppCompatActivity() {
     }
 
     private fun navigateReader(script: String) {
-        if (!pageReady || destroyed || webReaderDestroyed) return
+        if (!pageReady || destroyed || webReaderDestroyed || !sourcePrivacy.checkAccess()) return
         navigationToken++
         webReader.evaluateJavascript("window.comicLabNavigationToken=$navigationToken;" + script.removePrefix("javascript:"), null)
     }
 
     private fun saveCurrentProgress(force: Boolean) {
+        if (sourcePrivacy.canRead()) persistCurrentProgress(force)
+    }
+
+    private fun persistCurrentProgress(force: Boolean) {
         if (AppSettings.isIncognitoModeEnabled(this)) return
         val file = bookFile ?: return
         val progress = currentProgress ?: return
@@ -606,6 +633,7 @@ class EbookReaderActivity : AppCompatActivity() {
     }
 
     private fun showContents() {
+        if (!sourcePrivacy.checkAccess()) return
         val prepared = preparedDocument ?: return
         if (!pageReady) return
         val book = prepared.session.book
@@ -617,6 +645,7 @@ class EbookReaderActivity : AppCompatActivity() {
         val dialog = AlertDialog.Builder(this)
             .setTitle(R.string.ebook_contents)
             .setItems(titles) { _, which ->
+                if (!sourcePrivacy.checkAccess()) return@setItems
                 val entry = entries[which]
                 val anchor = prepared.contentsAnchors[entry]
                 if (anchor != null) {
@@ -631,11 +660,11 @@ class EbookReaderActivity : AppCompatActivity() {
             .setNegativeButton(R.string.cancel, null)
             .create()
         dialog.setOnDismissListener {
-            if (!destroyed) {
+            if (!destroyed && sourcePrivacy.canRead()) {
                 showReaderControlsTemporarily()
             }
         }
-        dialog.show()
+        sourcePrivacy.showDialog(dialog)
     }
 
     private fun showError(message: String) {
@@ -684,7 +713,9 @@ class EbookReaderActivity : AppCompatActivity() {
     private inner class ReaderBridge {
         @JavascriptInterface
         fun reportProgress(chapterIndex: Int, fraction: Float, token: Int) {
-            if (destroyed || webReaderDestroyed || token != navigationToken || !fraction.isFinite()) return
+            if (destroyed || webReaderDestroyed || token != navigationToken || !fraction.isFinite() ||
+                !sourcePrivacy.canRead()
+            ) return
             val generation = loadGeneration
             val chapterCount = session?.book?.chapters?.size ?: return
             if (chapterIndex !in 0 until chapterCount) return
@@ -693,7 +724,9 @@ class EbookReaderActivity : AppCompatActivity() {
                 scrollFraction = fraction
             ).normalized()
             runOnUiThread {
-                if (destroyed || generation != loadGeneration || session == null || !pageReady || token != navigationToken) {
+                if (destroyed || generation != loadGeneration || session == null || !pageReady || token != navigationToken ||
+                    !sourcePrivacy.checkAccess()
+                ) {
                     return@runOnUiThread
                 }
 
@@ -709,7 +742,7 @@ class EbookReaderActivity : AppCompatActivity() {
         @JavascriptInterface
         fun documentError(token: Int) {
             runOnUiThread {
-                if (!destroyed && !webReaderDestroyed && token == navigationToken) {
+                if (!destroyed && !webReaderDestroyed && token == navigationToken && sourcePrivacy.checkAccess()) {
                     showError(getString(R.string.ebook_load_failed))
                 }
             }

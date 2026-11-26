@@ -4,6 +4,7 @@ import android.content.Context
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.PopupWindow
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.TextView
@@ -16,8 +17,12 @@ class FavoritePathAdapter(
     private val context: Context,
     private val items: MutableList<FavoritePathStore.Item>,
     private val onItemClick: (FavoritePathStore.Item) -> Unit,
-    private val onItemsEmptyChanged: (Boolean) -> Unit
+    private val onItemsEmptyChanged: (Boolean) -> Unit,
+    private val canUseItem: (FavoritePathStore.Item) -> Boolean = { true }
 ) : RecyclerView.Adapter<FavoritePathAdapter.PathViewHolder>() {
+    private var optionsPopup: PopupWindow? = null
+    private var closed = false
+
 
     init {
         setHasStableIds(true)
@@ -56,10 +61,18 @@ class FavoritePathAdapter(
         onItemsEmptyChanged(true)
     }
 
+    fun close() {
+        closed = true
+        optionsPopup?.dismiss()
+        optionsPopup = null
+    }
+
     private fun showItemOptionsMenu(anchor: View, position: Int) {
         val item = items.getOrNull(position) ?: return
+        if (closed || !canUseItem(item)) return
 
-        RoundedPopupMenu.show(
+        optionsPopup?.dismiss()
+        optionsPopup = RoundedPopupMenu.show(
             context = context,
             anchor = anchor,
             widthDp = 148,
@@ -72,6 +85,7 @@ class FavoritePathAdapter(
     }
 
     private fun removeItem(item: FavoritePathStore.Item) {
+        if (closed || !canUseItem(item)) return
         val itemIndex = items.indexOfFirst {
             it.directory.absolutePath == item.directory.absolutePath
         }
