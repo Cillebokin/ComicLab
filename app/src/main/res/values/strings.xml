@@ -624,6 +624,7 @@
     <string name="privacy_remove_directory">移出隐私区</string>
     <string name="privacy_clear_independent_mark">取消独立隐私标记</string>
     <string name="privacy_directory_marked">已设为隐私文件夹</string>
+    <string name="privacy_first_mark_hint">本地列表顶部下拉，即可进入隐私空间</string>
     <string name="privacy_directory_removed">已移出隐私区</string>
     <string name="privacy_independent_mark_removed">已取消独立标记，外层隐私目录仍会保护此文件夹。</string>
     <string name="privacy_directory_write_failed">无法更新隐私标记，请重试。</string>

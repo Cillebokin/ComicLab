@@ -1479,7 +1479,7 @@ class MainActivity : AppCompatActivity() {
         when (PrivacyStore.credentialState(this)) {
             PrivacyStore.CredentialState.UNINITIALIZED -> privacyAuth.startInitializationFlow(target) {
                 onPrivacyMarksChanged()
-                showMessage(R.string.privacy_directory_marked)
+                showMessage(R.string.privacy_first_mark_hint)
             }
             PrivacyStore.CredentialState.READY -> applyMark()
             PrivacyStore.CredentialState.PIN_ONLY_RECOVERABLE -> privacyAuth.showPinRecoveryPatternFlow(::applyMark)

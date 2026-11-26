@@ -626,6 +626,7 @@ Candidates use folder names only and may match parenthetical components or kana/
     <string name="privacy_remove_directory">Remove from Privacy Space</string>
     <string name="privacy_clear_independent_mark">Remove independent privacy mark</string>
     <string name="privacy_directory_marked">Folder marked as private</string>
+    <string name="privacy_first_mark_hint">Pull down from the top of the local list to enter Privacy Space.</string>
     <string name="privacy_directory_removed">Folder removed from Privacy Space</string>
     <string name="privacy_independent_mark_removed">Independent mark removed. The enclosing private folder still protects this folder.</string>
     <string name="privacy_directory_write_failed">Could not update the privacy mark. Try again.</string>
