@@ -8,6 +8,7 @@ import android.widget.EditText
 import android.widget.ListView
 import android.widget.TextView
 import com.example.comiclab.core.store.PrivacyStore
+import com.example.comiclab.ui.browser.model.FileItem
 import com.example.comiclab.ui.privacy.PrivacyAccessGuard.PRIVACY_VIRTUAL_ROOT_PATH
 import com.example.comiclab.ui.privacy.PrivacySessionManager
 import java.io.File
@@ -101,9 +102,10 @@ class SearchPrivacyRobolectricTest {
         try { assertTrue(stale.get().isFinishing) } finally { stale.pause().stop().destroy() }
     }
 
-    @Test fun toolbarVirtualSearchReturnsTopLevelMatchToMainVirtualRoot() {
+    @Test fun toolbarVirtualSearchHighlightsOnlyTheLocatedRowWithinItsDirectoryAndSession() {
         val root = storageRoot()
         val top = markedDirectory(root, "chapter top")
+        val other = markedDirectory(root, "other folder")
         val main = Robolectric.buildActivity(MainActivity::class.java).setup()
         try {
             val browser = main.get()
@@ -126,11 +128,40 @@ class SearchPrivacyRobolectricTest {
                 assertEquals(PrivacySessionManager.sessionEpoch,
                     returned.getLongExtra(MainActivity.EXTRA_CENTER_TARGET_PRIVACY_EPOCH, -1))
                 browser.currentPathForTest = top.path
-                MainActivity::class.java.getDeclaredMethod("onNewIntent", Intent::class.java).apply {
-                    isAccessible = true
-                }.invoke(browser, returned)
+                val receiveIntent = MainActivity::class.java.getDeclaredMethod("onNewIntent", Intent::class.java)
+                    .apply { isAccessible = true }
+                receiveIntent.invoke(browser, returned)
                 awaitWorker(browser.directoryLoadExecutorForTest)
                 assertEquals(PRIVACY_VIRTUAL_ROOT_PATH, browser.currentPathForTest)
+                val browserList = browser.findViewById<ListView>(R.id.listFiles)
+                val row = browserList.adapter.getView(rowPosition(browserList, top), null, browserList)
+                assertTrue("the located directory is highlighted", row.isActivated)
+                val recycled = browserList.adapter.getView(rowPosition(browserList, other), row, browserList)
+                assertSame(row, recycled)
+                assertEquals(other.name, recycled.findViewById<TextView>(R.id.tvName).text.toString())
+                assertFalse("another directory cannot inherit the highlight", recycled.isActivated)
+
+                val topPosition = rowPosition(browserList, top)
+                assertTrue(browserList.performItemClick(null, topPosition, browserList.getItemIdAtPosition(topPosition)))
+                awaitWorker(browser.directoryLoadExecutorForTest)
+                assertEquals(top.path, browser.currentPathForTest)
+                assertTrue(browser.findViewById<View>(R.id.btnBack).performClick())
+                awaitWorker(browser.directoryLoadExecutorForTest)
+                assertEquals(PRIVACY_VIRTUAL_ROOT_PATH, browser.currentPathForTest)
+                val parentReturn = browserList.adapter.getView(rowPosition(browserList, top), null, browserList)
+                assertFalse("ordinary parent navigation cannot bring the search highlight back", parentReturn.isActivated)
+
+                receiveIntent.invoke(browser, returned)
+                awaitWorker(browser.directoryLoadExecutorForTest)
+                assertTrue(browserList.adapter.getView(rowPosition(browserList, top), null, browserList).isActivated)
+                lock()
+                browser.currentPathForTest = root.path
+                assertTrue(browser.enterPrivacyBrowser(PrivacySessionManager.sessionEpoch))
+                awaitWorker(browser.directoryLoadExecutorForTest)
+                receiveIntent.invoke(browser, returned)
+                awaitWorker(browser.directoryLoadExecutorForTest)
+                val reopened = browserList.adapter.getView(rowPosition(browserList, top), null, browserList)
+                assertFalse("the highlight cannot survive a session lock", reopened.isActivated)
             } finally { search.pause().stop().destroy() }
         } finally { main.pause().stop().destroy() }
     }
@@ -175,6 +206,11 @@ class SearchPrivacyRobolectricTest {
         worker.submit {}.get(10, TimeUnit.SECONDS)
         if (drainUi) shadowOf(Looper.getMainLooper()).idle()
     }
+
+    private fun rowPosition(list: ListView, file: File): Int =
+        (0 until list.adapter.count).first { position ->
+            (list.getItemAtPosition(position) as FileItem).file == file
+        }
 
     private fun results(activity: SearchActivity): List<File> {
         val list = activity.findViewById<ListView>(R.id.listSearchResults)

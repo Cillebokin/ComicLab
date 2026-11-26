@@ -92,8 +92,10 @@ internal class NasPublicDownloadPartJournal(private val context: Context, storag
         private val lock = Any()
         private val activePaths = mutableSetOf<String>()
 
-        fun openIfWritable(context: Context): NasPublicDownloadPartJournal? {
-            val root = Environment.getExternalStorageDirectory()
+        fun openIfWritable(
+            context: Context,
+            root: File = Environment.getExternalStorageDirectory()
+        ): NasPublicDownloadPartJournal? {
             if (!Environment.isExternalStorageManager() ||
                 Environment.getExternalStorageState(root) != Environment.MEDIA_MOUNTED
             ) return null

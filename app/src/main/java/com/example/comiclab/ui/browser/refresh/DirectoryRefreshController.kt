@@ -41,7 +41,12 @@ internal class DirectoryRefreshController(
     private val listView: ListView
         get() = checkNotNull(listViewOrNull())
 
-    private class CenterRequest(val directoryPath: String, val targetPath: String, val generation: Int)
+    private class CenterRequest(
+        val directoryPath: String,
+        val targetPath: String,
+        val generation: Int,
+        val highlightTarget: Boolean
+    )
 
     private var pendingFirstPreDrawListener: ViewTreeObserver.OnPreDrawListener? = null
     private var pendingCenter: CenterRequest? = null
@@ -57,18 +62,22 @@ internal class DirectoryRefreshController(
         val requestedPath = currentPathProvider()
         val target = pendingCenter?.takeIf {
             it.directoryPath == requestedPath && it.generation == directoryLoadGeneration.get()
-        }?.targetPath
-        loadCurrentDirectory(target, scrollStateToRestore)
+        }
+        loadCurrentDirectory(target?.targetPath, scrollStateToRestore, target?.highlightTarget == true)
     }
 
     internal fun loadCurrentDirectory(
         pathToCenter: String? = null,
-        scrollStateToRestore: FileListScrollState? = null
+        scrollStateToRestore: FileListScrollState? = null,
+        highlightTarget: Boolean = false
     ) {
         val generation = directoryLoadGeneration.incrementAndGet()
         val hasPermission = Environment.isExternalStorageManager()
         val requestedPath = currentPathProvider()
-        val center = pathToCenter?.takeIf { hasPermission }?.let { CenterRequest(requestedPath, it, generation) }
+        val center = pathToCenter?.takeIf { hasPermission }?.let {
+            CenterRequest(requestedPath, it, generation, highlightTarget)
+        }
+        clearSearchHighlight()
         clearPendingCenter()
         pendingCenter = center
         if (hasPermission) {
@@ -106,6 +115,9 @@ internal class DirectoryRefreshController(
                     } else {
                         pathInputProvider().setText(resolvedPath)
                     }
+                    fileListAdapterProvider().searchHighlightPath = center
+                        ?.takeIf { it.highlightTarget && it.directoryPath == resolvedPath }
+                        ?.targetPath
                     notifyListChanged()
                     if (center == null) {
                         if (result.scrollState != null) {
@@ -145,8 +157,19 @@ internal class DirectoryRefreshController(
     }
 
     internal fun cancelPendingDirectoryPresentation() {
+        clearSearchHighlight()
         clearPendingCenter()
         removePendingFirstPreDrawListener()
+    }
+
+    private fun clearSearchHighlight() {
+        val list = listViewOrNull() ?: return
+        val adapter = list.adapter as? FileListAdapter ?: return
+        if (adapter.searchHighlightPath == null) return
+        adapter.searchHighlightPath = null
+        for (index in 0 until list.childCount) {
+            list.getChildAt(index).isActivated = false
+        }
     }
 
     private fun clearPendingCenter() {

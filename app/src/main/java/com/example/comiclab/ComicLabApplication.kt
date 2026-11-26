@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Environment
 import android.util.Log
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
@@ -31,9 +32,12 @@ class ComicLabApplication : Application() {
             .onFailure {
                 Log.w("ComicLabNAS", "Could not clean interrupted NAS partial files", it)
             }
+        val publicStorageRoot = runCatching { Environment.getExternalStorageDirectory() }
         Thread(
             {
-                runCatching { NasPublicDownloadPartJournal.openIfWritable(this)?.recover() }
+                runCatching {
+                    NasPublicDownloadPartJournal.openIfWritable(this, publicStorageRoot.getOrThrow())?.recover()
+                }
                     .onFailure { Log.w("ComicLabNAS", "Could not recover public NAS staging files", it) }
                 runCatching { ArchiveEntryFileCache.cleanupStaleSessions(cacheDir) }
             },

@@ -917,7 +917,7 @@ class MainActivity : AppCompatActivity() {
             else -> parentDirectory.absolutePath
         }
         setCurrentPath(parentPath)
-        loadCurrentDirectory(targetAbsolutePath)
+        loadCurrentDirectory(targetAbsolutePath, highlightTarget = targetIsPrivate)
         return true
     }
 
@@ -1237,9 +1237,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadCurrentDirectory(
         pathToCenter: String? = null,
-        scrollStateToRestore: FileListScrollState? = null
+        scrollStateToRestore: FileListScrollState? = null,
+        highlightTarget: Boolean = false
     ) {
-        directoryRefreshController.loadCurrentDirectory(pathToCenter, scrollStateToRestore)
+        directoryRefreshController.loadCurrentDirectory(pathToCenter, scrollStateToRestore, highlightTarget)
     }
 
     private fun invalidateDirectoryChildCount(directory: File?) {
@@ -3698,7 +3699,6 @@ class MainActivity : AppCompatActivity() {
     private fun resetViewState(view: View) {
         view.isPressed = false
         view.isSelected = false
-        view.isActivated = false
     }
 
     private fun copyToClipboard(label: String, text: String, copiedMessage: String) {

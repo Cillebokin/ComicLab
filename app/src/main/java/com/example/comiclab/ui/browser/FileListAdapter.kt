@@ -61,6 +61,7 @@ class FileListAdapter(
     private val listScrollState = AbsListViewScrollStateTracker()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var attachedListView: AbsListView? = null
+    internal var searchHighlightPath: String? = null
     private val refreshProgress = Runnable {
         if (closed) return@Runnable
         val listView = attachedListView
@@ -150,7 +151,7 @@ class FileListAdapter(
 
         view.isPressed = false
         view.isSelected = false
-        view.isActivated = false
+        view.isActivated = file != null && file.absolutePath == searchHighlightPath
         view.setOnClickListener(null)
         view.isClickable = false
         view.setOnLongClickListener(null)
